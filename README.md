@@ -59,6 +59,8 @@ Optional:
 - `COMMERCE_DATABASE_URL` — PostgreSQL URL for hosted commercial state; empty uses staging SQLite
 - `RECEIPT_LLM_BASE_URL`, `RECEIPT_LLM_MODEL`, `RECEIPT_LLM_API_KEY` — optional OpenAI-compatible vision endpoint. If absent/unavailable, receipts stay in manual review.
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
+- `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
+- `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Postgres, handler, and maintenance timings.
 
 Do not expose `OUTLINE_API_URL`, bot token, DB, or generated access URLs. Firewall Outline Management API so only bot host can reach it.
 
@@ -196,6 +198,10 @@ controlled testing.
 For the complete offline-to-dashboard handoff, environment-variable table,
 failure diagnosis, acceptance test, backup, and rollback procedure, use
 [`docs/RENDER_DEPLOYMENT.md`](docs/RENDER_DEPLOYMENT.md).
+
+For repeatable production diagnosis with Codex, use the Supabase and Render
+MCP setup in [`codex-mcp.toml.example`](codex-mcp.toml.example) and follow the
+correlation workflow in [`docs/MCP_DEBUGGING.md`](docs/MCP_DEBUGGING.md).
 
 ### Expiry and quota enforcement
 

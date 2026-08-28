@@ -1,0 +1,23 @@
+# Project-scoped MCP servers for this trusted repository.
+# Copy these entries into the Codex project MCP settings (or a trusted
+# `.codex/config.toml`) and authenticate each server with `codex mcp login`.
+
+[mcp_servers.supabase]
+# Singapore project (the former Tokyo project reference is no longer the
+# active MCP target).
+url = "https://mcp.supabase.com/mcp?project_ref=cmyhluyqgeivzihhsvol&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching"
+auth = "oauth"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+default_tools_approval_mode = "writes"
+
+[mcp_servers.render]
+url = "https://mcp.render.com/mcp"
+auth = "oauth"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+default_tools_approval_mode = "writes"
+
+[mcp_servers.render.oauth]
+client_id = "codex"
+resource = "https://mcp.render.com/mcp"
