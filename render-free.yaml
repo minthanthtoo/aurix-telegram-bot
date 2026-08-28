@@ -1,24 +1,22 @@
+# Experimental $0 pilot profile.
+# Use this file as the Blueprint path; it is not the persistent MVP profile in
+# render.yaml.  The application state is stored in Supabase PostgreSQL.
 services:
-  - type: worker
-    name: aurix-telegram-bot
+  - type: web
+    name: aurix-telegram-bot-free
     runtime: python
     region: singapore
-    plan: starter
+    plan: free
     numInstances: 1
     buildCommand: pip install -r requirements.txt
-    startCommand: python deploy/render_preflight.py && python -u app.py
+    startCommand: python deploy/render_preflight.py && python -u deploy/render_web.py
+    healthCheckPath: /healthz
     maxShutdownDelaySeconds: 30
-    disk:
-      name: aurix-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.4
-      - key: DATABASE_PATH
-        value: /var/data/bot.db
       - key: AURIX_STORAGE_MODE
-        value: disk
+        value: postgres
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: ADMIN_TELEGRAM_IDS
@@ -32,7 +30,7 @@ services:
       - key: AURIX_ACCESS_URL_KEY
         sync: false
       - key: COMMERCE_DATABASE_URL
-        value: ""
+        sync: false
       - key: RECEIPT_LLM_BASE_URL
         value: ""
       - key: RECEIPT_LLM_MODEL

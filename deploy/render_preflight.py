@@ -15,13 +15,16 @@ def fail(message: str) -> None:
 
 
 def main() -> None:
+    storage_mode = os.environ.get("AURIX_STORAGE_MODE", "disk").strip().lower()
+    if storage_mode not in {"disk", "postgres"}:
+        fail("AURIX_STORAGE_MODE must be 'disk' or 'postgres'")
+
     required = (
         "TELEGRAM_BOT_TOKEN",
         "ADMIN_TELEGRAM_IDS",
         "OUTLINE_API_URL",
         "OUTLINE_CERT_SHA256",
         "AURIX_ACCESS_URL_KEY",
-        "DATABASE_PATH",
     )
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
@@ -51,14 +54,27 @@ def main() -> None:
     except (TypeError, ValueError):
         fail("AURIX_ACCESS_URL_KEY is not a valid Fernet key")
 
-    database_path = Path(os.environ["DATABASE_PATH"])
-    if not database_path.is_absolute():
-        fail("DATABASE_PATH must be absolute on Render")
-    if str(database_path) != "/var/data/bot.db":
-        fail("DATABASE_PATH must be /var/data/bot.db so state uses the persistent disk")
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    if not os.access(database_path.parent, os.W_OK):
-        fail("the /var/data persistent disk is not writable")
+    if storage_mode == "disk":
+        database_value = os.environ.get("DATABASE_PATH", "").strip()
+        if not database_value:
+            fail("DATABASE_PATH is required when AURIX_STORAGE_MODE=disk")
+        database_path = Path(database_value)
+        if not database_path.is_absolute():
+            fail("DATABASE_PATH must be absolute on Render")
+        if str(database_path) != "/var/data/bot.db":
+            fail("DATABASE_PATH must be /var/data/bot.db so state uses the persistent disk")
+        try:
+            database_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            fail(f"the /var/data persistent disk is not accessible: {type(exc).__name__}")
+        if not os.access(database_path.parent, os.W_OK):
+            fail("the /var/data persistent disk is not writable")
+    else:
+        if not os.environ.get("COMMERCE_DATABASE_URL", "").strip():
+            fail("COMMERCE_DATABASE_URL is required when AURIX_STORAGE_MODE=postgres")
+        parsed_database = urlsplit(os.environ["COMMERCE_DATABASE_URL"].strip())
+        if parsed_database.scheme not in {"postgres", "postgresql"} or not parsed_database.hostname:
+            fail("COMMERCE_DATABASE_URL must be a PostgreSQL URL")
 
     if os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").strip().lower() in {
         "1", "true", "yes",
@@ -73,7 +89,8 @@ def main() -> None:
     if any(llm_values) and not all(llm_values):
         fail("configure all three RECEIPT_LLM_* values together or leave all blank")
 
-    print("Render preflight passed: persistent single-worker configuration is valid")
+    profile = "persistent disk" if storage_mode == "disk" else "hosted PostgreSQL"
+    print(f"Render preflight passed: single-worker {profile} configuration is valid")
 
 
 if __name__ == "__main__":

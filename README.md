@@ -187,6 +187,12 @@ and termination records across restarts. Render disk snapshots are useful for
 recovery, but deployment remains a single-process topology; moving all state to
 PostgreSQL plus webhook/outbox workers is still the production scaling gate.
 
+An experimental `render-free.yaml` profile is also included for a $0 Web
+Service pilot using Supabase PostgreSQL and the `/healthz` wrapper monitored by
+UptimeRobot. It is intentionally separate from `render.yaml`: Free Render has
+no persistent disk and can sleep/restart, so use that profile only for
+controlled testing.
+
 For the complete offline-to-dashboard handoff, environment-variable table,
 failure diagnosis, acceptance test, backup, and rollback procedure, use
 [`docs/RENDER_DEPLOYMENT.md`](docs/RENDER_DEPLOYMENT.md).

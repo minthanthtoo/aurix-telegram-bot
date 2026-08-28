@@ -77,6 +77,10 @@ class Database:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
+    @staticmethod
+    def begin_write(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
@@ -148,9 +152,15 @@ class Database:
                     "INSERT INTO telegram_updates (update_id, received_at) VALUES (?, ?)",
                     (int(update_id), datetime.now(UTC).isoformat()),
                 )
-            except sqlite3.IntegrityError:
-                return False
+            except Exception as exc:
+                if self.is_integrity_error(exc):
+                    return False
+                raise
         return True
+
+    @staticmethod
+    def is_integrity_error(error: Exception) -> bool:
+        return isinstance(error, sqlite3.IntegrityError)
 
 
 class OutlineClient:
@@ -327,7 +337,7 @@ class ClaimService:
         now = (now or datetime.now(UTC)).astimezone(UTC)
         now_text = now.isoformat()
         with self.database.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.database.begin_write(connection)
             connection.execute(
                 """INSERT INTO users (telegram_id, first_name, username, created_at)
                    VALUES (?, ?, ?, ?)
@@ -382,7 +392,7 @@ class ClaimService:
         now = (now or datetime.now(UTC)).astimezone(UTC)
         now_text = now.isoformat()
         with self.database.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.database.begin_write(connection)
             connection.execute(
                 """INSERT INTO users (telegram_id, first_name, username, created_at)
                    VALUES (?, ?, ?, ?)
@@ -433,7 +443,7 @@ class ClaimService:
         """Record, delete, and (when supported) verify one remote credential."""
         now_text = now.astimezone(UTC).isoformat()
         with self.database.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.database.begin_write(connection)
             connection.execute(
                 """UPDATE keys SET status = 'revoke_failed', last_usage_bytes = COALESCE(?, last_usage_bytes),
                           quota_reason = CASE WHEN ? = 'quota' THEN 'quota' ELSE quota_reason END
@@ -473,7 +483,7 @@ class ClaimService:
             return False
         remote_state = "deleted_verified" if verified else "delete_accepted"
         with self.database.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self.database.begin_write(connection)
             connection.execute(
                 "UPDATE keys SET status = 'revoked' WHERE id = ?", (row["id"],)
             )
@@ -1945,15 +1955,18 @@ def main() -> None:
         print(f"Bot authorized: @{result['result'].get('username', 'unknown')}")
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
         raise SystemExit(f"Telegram getMe failed: {exc}")
-    database = Database(Path(os.environ.get("DATABASE_PATH", "data/bot.db")))
+    commerce_database_url = os.environ.get("COMMERCE_DATABASE_URL", "").strip()
+    if commerce_database_url:
+        # The free Render profile stores both free entitlements and commerce
+        # state in one hosted PostgreSQL database.  This avoids losing claim
+        # timestamps and Telegram-update deduplication on an ephemeral web FS.
+        database: Any = PostgresCommerceDatabase(commerce_database_url)
+        commerce_database: Any = database
+    else:
+        database = Database(Path(os.environ.get("DATABASE_PATH", "data/bot.db")))
+        commerce_database = CommerceDatabase(database.path)
     database.initialize()
     outline = OutlineClient(api_url, fingerprint)
-    commerce_database_url = os.environ.get("COMMERCE_DATABASE_URL", "").strip()
-    commerce_database = (
-        PostgresCommerceDatabase(commerce_database_url)
-        if commerce_database_url
-        else CommerceDatabase(database.path)
-    )
     allow_text_payment = os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").lower() in ("1", "true", "yes")
     commerce = CommerceService(
         commerce_database,

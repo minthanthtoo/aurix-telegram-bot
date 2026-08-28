@@ -430,7 +430,13 @@ class PostgresCommerceDatabase:
             from psycopg.rows import dict_row
         except ImportError as exc:
             raise CommerceError("PostgreSQL support requires the psycopg package") from exc
-        return _PostgresConnection(psycopg.connect(self.url, row_factory=dict_row))
+        # Supabase's poolers can route successive statements to different
+        # backend connections; disable psycopg's automatic prepared statements
+        # so qmark-adapted transactions remain compatible with transaction
+        # pooling.
+        return _PostgresConnection(
+            psycopg.connect(self.url, row_factory=dict_row, prepare_threshold=None)
+        )
 
     @staticmethod
     def begin_write(connection: _PostgresConnection) -> None:
@@ -451,8 +457,45 @@ class PostgresCommerceDatabase:
             first_name TEXT NOT NULL DEFAULT '',
             username TEXT,
             last_claim_at TEXT,
+            trial_claimed_at TEXT,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS keys (
+            id BIGSERIAL PRIMARY KEY,
+            telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
+            outline_key_id TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            data_limit_bytes BIGINT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'revoke_failed')),
+            last_usage_bytes BIGINT,
+            quota_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS keys_expiry ON keys(status, expires_at);
+        CREATE TABLE IF NOT EXISTS telegram_updates (
+            update_id BIGINT PRIMARY KEY,
+            received_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS key_termination_events (
+            id BIGSERIAL PRIMARY KEY,
+            key_id BIGINT NOT NULL REFERENCES keys(id),
+            telegram_id BIGINT NOT NULL,
+            outline_key_id TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            used_bytes BIGINT,
+            quota_bytes BIGINT NOT NULL,
+            expires_at TEXT NOT NULL,
+            detected_at TEXT NOT NULL,
+            remote_state TEXT NOT NULL,
+            delete_attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            deletion_verified_at TEXT,
+            user_notice_state TEXT,
+            admin_notice_state TEXT,
+            UNIQUE(key_id, reason)
+        );
+        CREATE INDEX IF NOT EXISTS key_termination_pending
+            ON key_termination_events(remote_state, detected_at);
         CREATE TABLE IF NOT EXISTS plans (
             code TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -641,6 +684,7 @@ class PostgresCommerceDatabase:
             connection.execute("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS activated_at TEXT")
             connection.execute("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dead_lettered_at TEXT")
             connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT")
+            connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_claimed_at TEXT")
             connection.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS normalized_reference TEXT NOT NULL DEFAULT ''")
             connection.execute("UPDATE payments SET normalized_reference = LOWER(REPLACE(provider_reference, ' ', '')) WHERE normalized_reference = ''")
             connection.execute("CREATE INDEX IF NOT EXISTS payments_reference_lookup ON payments(provider, normalized_reference)")

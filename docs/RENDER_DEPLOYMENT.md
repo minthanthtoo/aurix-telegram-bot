@@ -43,6 +43,12 @@ The source archive in `dist/` deliberately excludes `.env`, databases, Git
 history, Python caches, and the archived design conversation. It is a backup of
 the deployable source, not a backup of live customer state.
 
+`render.yaml` is the durable paid-worker profile. `render-free.yaml` is an
+experimental Web Service profile for a $0 pilot that stores all AuriX tables in
+Supabase PostgreSQL and exposes `/healthz` for an external monitor. Use the
+free profile only for controlled testing; it is subject to Render sleep/restart
+and Supabase Free project limits.
+
 ## 3. Collect the six required values offline
 
 Never add these values to Git, the source archive, screenshots, or support
@@ -273,3 +279,91 @@ Before broad public launch, separately validate provider/payment/legal rules,
 support ownership, privacy/retention, real backup restoration, measured Myanmar
 network quality, actual quota cutoff timing on Outline 1.12.3, and server cost
 per transferred GiB.
+
+## 11. Optional $0 pilot profile (Supabase + UptimeRobot)
+
+This section is separate from the persistent MVP above. It is useful when a
+paid Render worker is not yet available, but it is not a no-downtime or
+customer-payment guarantee.
+
+### Create Supabase storage
+
+1. Create a Supabase project from the [Supabase dashboard](https://supabase.com/dashboard).
+2. Choose the Free plan for testing.
+3. In **Project Settings → Database**, copy a PostgreSQL connection string
+   that includes SSL (`sslmode=require`). Keep it private.
+4. Do not put the connection string in GitHub. Paste it into Render as the
+   secret `COMMERCE_DATABASE_URL`.
+
+The free profile uses the same PostgreSQL schema for free claims, trial claims,
+Telegram update deduplication, orders, wallets, payment evidence, jobs,
+notifications, audit events, and paid subscriptions. On first startup the bot
+creates/migrates these tables automatically.
+
+Supabase Free currently provides 500 MB of database space and pauses a project
+after one week of inactivity. Render Free may also restart or sleep the Web
+Service. Treat this profile as a test environment and keep an export before
+any destructive experiment.
+
+### Create the free Render service
+
+Use **New → Blueprint**, connect the AuriX repository, and select
+`render-free.yaml` as the Blueprint file if Render asks for a non-default file.
+Do not replace `render.yaml`; that is the paid persistent profile.
+
+Confirm:
+
+```text
+Service type: Web Service
+Plan: Free
+Region: Singapore
+Instances: 1
+Health check: /healthz
+```
+
+The free profile's start command is:
+
+```text
+python deploy/render_preflight.py && python -u deploy/render_web.py
+```
+
+`render_web.py` binds `0.0.0.0:$PORT`, starts `app.py` as a child process, and
+returns HTTP 200 only while the bot process is alive. If the bot exits, the web
+process exits as well so Render can restart it.
+
+### Configure UptimeRobot
+
+Create an HTTP monitor for:
+
+```text
+https://YOUR-FREE-SERVICE.onrender.com/healthz
+```
+
+Use the Free UptimeRobot interval of five minutes and expect HTTP 200. This
+helps prevent the 15-minute idle sleep window, but it cannot prevent Render
+maintenance/restarts, Supabase pauses, quota exhaustion, or network failure.
+
+### Free-profile environment differences
+
+Set:
+
+```text
+AURIX_STORAGE_MODE=postgres
+COMMERCE_DATABASE_URL=<Supabase SSL PostgreSQL URL>
+```
+
+Do not set `/var/data/bot.db` in this profile; there is no persistent Render
+disk. Leave `TRIAL_TELEGRAM_IDS` blank and keep
+`ALLOW_TEXT_PAYMENT_REFERENCES=0`. The remaining Telegram, Outline, Fernet, and
+optional LLM variables are the same as the paid profile.
+
+### Free-profile acceptance boundary
+
+Before any real use, test `/start`, `/claim`, `/trial`, `/usage`, `/myorders`,
+receipt review, `/reconcile`, and a restart. Verify the data remains in
+Supabase. Do not accept real payments until the service survives a forced
+restart and the Supabase project has an appropriate backup/export process.
+
+Never use a Telegram channel as the database. If desired, add an encrypted
+append-only audit copy later, but keep PostgreSQL authoritative for balances,
+orders, entitlement, and access state.
