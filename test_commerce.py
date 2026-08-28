@@ -458,6 +458,11 @@ class PostgresAdapterTest(unittest.TestCase):
             "INSERT INTO telegram_updates (update_id, received_at) VALUES (%s, %s)",
         )
 
+    def test_postgres_begin_write_relies_on_psycopg_transaction_boundary(self):
+        raw = FakeRawPostgresConnection()
+        PostgresCommerceDatabase.begin_write(_PostgresConnection(raw))
+        self.assertEqual(raw.calls, [])
+
     def test_postgres_schema_is_executable_without_sqlite_pragmas(self):
         database = PostgresCommerceDatabase("postgresql://example.invalid/aurix")
         raw = FakeRawPostgresConnection()

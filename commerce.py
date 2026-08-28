@@ -440,7 +440,11 @@ class PostgresCommerceDatabase:
 
     @staticmethod
     def begin_write(connection: _PostgresConnection) -> None:
-        connection.execute("BEGIN")
+        # psycopg starts a transaction automatically before the first
+        # statement when autocommit is disabled.  Sending an explicit BEGIN
+        # here would create a nested BEGIN and Supabase logs status 25001
+        # ("there is already a transaction in progress") for every write.
+        return None
 
     @staticmethod
     def is_integrity_error(error: Exception) -> bool:
