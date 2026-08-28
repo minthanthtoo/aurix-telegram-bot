@@ -448,6 +448,16 @@ class PostgresAdapterTest(unittest.TestCase):
         connection.execute("SELECT * FROM plans WHERE code = ? LIMIT ?", ("basic_50gb", 1))
         self.assertEqual(raw.calls[0], ("SELECT * FROM plans WHERE code = %s LIMIT %s", ("basic_50gb", 1)))
 
+    def test_postgres_update_dedupe_insert_is_available_to_polling_loop(self):
+        raw = FakeRawPostgresConnection()
+        database = PostgresCommerceDatabase("postgresql://example.invalid/aurix")
+        database.connect = lambda: _PostgresConnection(raw)
+        self.assertTrue(database.mark_update_seen(12345))
+        self.assertEqual(
+            raw.calls[0][0],
+            "INSERT INTO telegram_updates (update_id, received_at) VALUES (%s, %s)",
+        )
+
     def test_postgres_schema_is_executable_without_sqlite_pragmas(self):
         database = PostgresCommerceDatabase("postgresql://example.invalid/aurix")
         raw = FakeRawPostgresConnection()

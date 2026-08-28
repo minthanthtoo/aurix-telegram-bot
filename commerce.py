@@ -450,6 +450,20 @@ class PostgresCommerceDatabase:
             return False
         return isinstance(error, psycopg.IntegrityError)
 
+    def mark_update_seen(self, update_id: int) -> bool:
+        """Durably deduplicate Telegram updates across restarts."""
+        with self.connect() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO telegram_updates (update_id, received_at) VALUES (?, ?)",
+                    (int(update_id), _now_text()),
+                )
+            except Exception as exc:
+                if self.is_integrity_error(exc):
+                    return False
+                raise
+        return True
+
     def initialize(self) -> None:
         schema = """
         CREATE TABLE IF NOT EXISTS users (
