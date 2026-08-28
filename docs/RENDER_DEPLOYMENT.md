@@ -357,6 +357,27 @@ disk. Leave `TRIAL_TELEGRAM_IDS` blank and keep
 `ALLOW_TEXT_PAYMENT_REFERENCES=0`. The remaining Telegram, Outline, Fernet, and
 optional LLM variables are the same as the paid profile.
 
+### Latency workflow
+
+Keep the Render service, Supabase project, and Outline management server in
+Singapore when the customer base is primarily in Myanmar or nearby APAC. This
+reduces network round trips, but it does not remove connection setup or remote
+API work. The worker now keeps a small PostgreSQL connection pool and polls
+Telegram continuously while a dedicated maintenance thread runs quota, expiry,
+job, and notification work. Free and paid enforcement share one Outline metrics
+snapshot per pass instead of making duplicate management API requests.
+
+For a short diagnostic window, set `AURIX_LATENCY_LOG=1` in Render. The logs
+then report Telegram, Outline, Postgres checkout/transaction, update-handler,
+and maintenance timings without request payloads or credentials. Return it to
+`0` after measuring. `AURIX_MAINTENANCE_INTERVAL_SECONDS=60` is the default;
+increase it only to reduce maintenance load, not to repair command latency.
+
+For a long-lived Render worker, use the Supabase **Session** pooler (port
+`5432`) or a direct connection when IPv6 is available. Use the Transaction
+pooler (port `6543`) for short-lived/serverless workloads; the application has
+prepared statements disabled for compatibility.
+
 ### Free-profile acceptance boundary
 
 Before any real use, test `/start`, `/claim`, `/trial`, `/usage`, `/myorders`,

@@ -13,6 +13,7 @@ import signal
 import sqlite3
 import ssl
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -37,6 +38,17 @@ LIMIT_BYTES = PUBLIC_LIMIT_BYTES
 TRIAL_LIMIT_BYTES = 3 * 1024**3
 CLAIM_PERIOD = timedelta(hours=24)
 TRIAL_PERIOD = timedelta(days=30)
+DEFAULT_MAINTENANCE_INTERVAL_SECONDS = 60.0
+
+
+def _latency_log(event: str, started_at: float, **fields: Any) -> None:
+    """Emit bounded timing evidence without logging secrets or request payloads."""
+    if os.environ.get("AURIX_LATENCY_LOG", "0").lower() not in {"1", "true", "yes", "on"}:
+        return
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    details = " ".join(f"{key}={value}" for key, value in fields.items())
+    suffix = f" {details}" if details else ""
+    print(f"latency event={event} duration_ms={duration_ms:.1f}{suffix}", file=sys.stderr)
 
 
 def _outline_key_name(
@@ -187,8 +199,10 @@ class OutlineClient:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
+        started_at = time.perf_counter()
         connection = http.client.HTTPSConnection(self.host, self.port, context=context, timeout=15)
         payload = json.dumps(body).encode() if body is not None else None
+        response_status: int | None = None
         try:
             connection.connect()
             certificate = connection.sock.getpeercert(binary_form=True)
@@ -202,11 +216,19 @@ class OutlineClient:
                 headers={"Content-Type": "application/json"} if payload else {},
             )
             response = connection.getresponse()
+            response_status = response.status
             raw = response.read()
         except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             raise OutlineError(f"Outline request failed: {exc}") from exc
         finally:
             connection.close()
+            _latency_log(
+                "outline_request",
+                started_at,
+                method=method,
+                resource=path.split("/", 2)[1] if path.startswith("/") and "/" in path[1:] else path,
+                status=response_status or "error",
+            )
         if response.status not in accepted_statuses:
             raise OutlineError(
                 f"Outline returned HTTP {response.status}", status=response.status
@@ -496,12 +518,17 @@ class ClaimService:
             )
         return True
 
-    def enforce_quota(self, now: datetime | None = None) -> int:
+    def enforce_quota(
+        self,
+        now: datetime | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> int:
         """Fail closed and revoke free/trial keys whose Outline metric hit its cap."""
-        try:
-            metrics = self.outline.transfer_metrics()
-        except Exception:
-            return 0
+        if metrics is None:
+            try:
+                metrics = self.outline.transfer_metrics()
+            except Exception:
+                return 0
         by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
         if not isinstance(by_key, dict):
             return 0
@@ -638,6 +665,7 @@ class TelegramBot:
         trial_ids: set[int] | None = None,
         receipt_extractor: Any | None = None,
         allow_text_payment: bool = True,
+        maintenance_interval_seconds: float = DEFAULT_MAINTENANCE_INTERVAL_SECONDS,
     ):
         self.api = f"https://api.telegram.org/bot{token}"
         self.service = service
@@ -646,17 +674,24 @@ class TelegramBot:
         self.trial_ids = trial_ids or set()
         self.receipt_extractor = receipt_extractor or OpenAICompatibleReceiptExtractor()
         self.allow_text_payment = bool(allow_text_payment)
+        self.maintenance_interval_seconds = max(1.0, float(maintenance_interval_seconds))
         self.offset = 0
         self.running = True
+        self._maintenance_stop = threading.Event()
+        self._maintenance_thread: threading.Thread | None = None
 
     def request(self, method: str, payload: dict[str, Any]) -> Any:
+        started_at = time.perf_counter()
         request = urllib.request.Request(
             f"{self.api}/{method}",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            result = json.load(response)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                result = json.load(response)
+        finally:
+            _latency_log("telegram_request", started_at, method=method)
         if not result.get("ok"):
             raise RuntimeError("Telegram API request failed")
         return result["result"]
@@ -1300,6 +1335,47 @@ class TelegramBot:
             if delivered:
                 self.service.mark_termination_notice(event["id"], "admin", event["remote_state"])
 
+    def _run_maintenance(self) -> None:
+        """Run one bounded housekeeping pass outside the Telegram poll loop."""
+        started_at = time.perf_counter()
+        try:
+            raw_metrics = self.service.outline.transfer_metrics()
+            metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+        except Exception as exc:
+            metrics = {}
+            _latency_log(
+                "maintenance_metrics",
+                started_at,
+                status="error",
+                error=type(exc).__name__,
+            )
+        # Quota first preserves the more informative cause when a key is both
+        # over quota and past its wall-clock entitlement.
+        self.service.enforce_quota(metrics=metrics)
+        self.service.revoke_expired()
+        self._send_termination_notices()
+        if self.commerce is not None:
+            self.commerce.enforce_quotas(metrics=metrics)
+            self.commerce.expire_and_process()
+            self._send_pending_notifications()
+        _latency_log("maintenance", started_at)
+
+    def _maintenance_loop(self) -> None:
+        while self.running and not self._maintenance_stop.is_set():
+            try:
+                self._run_maintenance()
+            except Exception as exc:
+                print(
+                    f"maintenance error: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+            if self._maintenance_stop.wait(self.maintenance_interval_seconds):
+                break
+
+    def stop(self) -> None:
+        self.running = False
+        self._maintenance_stop.set()
+
     def handle(self, message: dict[str, Any]) -> None:
         chat = message.get("chat") or {}
         user = message.get("from") or {}
@@ -1891,38 +1967,49 @@ class TelegramBot:
             self.send(chat["id"], "Use the menu for daily 300 MiB, monthly 3 GiB, or paid upgrades.")
 
     def run(self) -> None:
-        while self.running:
-            try:
-                # Quota first preserves the more informative cause when a key is
-                # both over quota and past its wall-clock entitlement.
-                self.service.enforce_quota()
-                self.service.revoke_expired()
-                self._send_termination_notices()
-                if self.commerce is not None:
-                    self.commerce.enforce_quotas()
-                    self.commerce.expire_and_process()
-                    self._send_pending_notifications()
-                updates = self.request(
-                    "getUpdates",
-                    {
-                        "offset": self.offset,
-                        "timeout": 20,
-                        "allowed_updates": ["message", "callback_query"],
-                    },
-                )
-                for update in updates:
-                    self.offset = update["update_id"] + 1
-                    if not self.service.database.mark_update_seen(update["update_id"]):
-                        continue
-                    if "message" in update:
-                        self.handle(update["message"])
-                    elif "callback_query" in update:
-                        self.handle_callback(update["callback_query"])
-            except KeyboardInterrupt:
-                break
-            except Exception as exc:
-                print(f"bot loop error: {type(exc).__name__}: {exc}", file=sys.stderr)
-                time.sleep(5)
+        self._maintenance_stop.clear()
+        maintenance_thread = threading.Thread(
+            target=self._maintenance_loop,
+            name="aurix-maintenance",
+            daemon=True,
+        )
+        self._maintenance_thread = maintenance_thread
+        maintenance_thread.start()
+        try:
+            while self.running:
+                try:
+                    updates = self.request(
+                        "getUpdates",
+                        {
+                            "offset": self.offset,
+                            "timeout": 20,
+                            "allowed_updates": ["message", "callback_query"],
+                        },
+                    )
+                    for update in updates:
+                        self.offset = update["update_id"] + 1
+                        if not self.service.database.mark_update_seen(update["update_id"]):
+                            continue
+                        started_at = time.perf_counter()
+                        if "message" in update:
+                            self.handle(update["message"])
+                        elif "callback_query" in update:
+                            self.handle_callback(update["callback_query"])
+                        _latency_log(
+                            "update_handler",
+                            started_at,
+                            update_id=update["update_id"],
+                            kind="message" if "message" in update else "callback",
+                        )
+                except KeyboardInterrupt:
+                    break
+                except Exception as exc:
+                    print(f"bot loop error: {type(exc).__name__}: {exc}", file=sys.stderr)
+                    self._maintenance_stop.wait(5)
+        finally:
+            self.stop()
+            maintenance_thread.join(timeout=5)
+            self._maintenance_thread = None
 
 
 def main() -> None:
@@ -1998,6 +2085,17 @@ def main() -> None:
 
     admin_ids = parse_ids("ADMIN_TELEGRAM_IDS")
     trial_ids = parse_ids("TRIAL_TELEGRAM_IDS")
+    try:
+        maintenance_interval_seconds = float(
+            os.environ.get(
+                "AURIX_MAINTENANCE_INTERVAL_SECONDS",
+                str(DEFAULT_MAINTENANCE_INTERVAL_SECONDS),
+            )
+        )
+    except ValueError as exc:
+        raise SystemExit("AURIX_MAINTENANCE_INTERVAL_SECONDS must be numeric") from exc
+    if maintenance_interval_seconds < 1:
+        raise SystemExit("AURIX_MAINTENANCE_INTERVAL_SECONDS must be at least 1")
     if not admin_ids:
         print(
             "WARNING: ADMIN_TELEGRAM_IDS is empty; paid receipt verification and approvals are unavailable.",
@@ -2024,6 +2122,7 @@ def main() -> None:
         admin_ids,
         trial_ids,
         allow_text_payment=allow_text_payment,
+        maintenance_interval_seconds=maintenance_interval_seconds,
     )
     # Long polling cannot coexist with a previously configured webhook. Keep
     # queued updates while explicitly converging the bot into polling mode.
@@ -2038,8 +2137,13 @@ def main() -> None:
             f"WARNING: Telegram command menu configuration failed: {type(exc).__name__}",
             file=sys.stderr,
         )
-    signal.signal(signal.SIGTERM, lambda *_: setattr(bot, "running", False))
-    bot.run()
+    signal.signal(signal.SIGTERM, lambda *_: bot.stop())
+    try:
+        bot.run()
+    finally:
+        close_database = getattr(commerce_database, "close", None)
+        if callable(close_database):
+            close_database()
 
 
 if __name__ == "__main__":

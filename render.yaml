@@ -41,3 +41,7 @@ services:
         value: ""
       - key: ALLOW_TEXT_PAYMENT_REFERENCES
         value: "0"
+      - key: AURIX_MAINTENANCE_INTERVAL_SECONDS
+        value: "60"
+      - key: AURIX_LATENCY_LOG
+        value: "0"

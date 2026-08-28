@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import re
 import sqlite3
+import sys
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -23,6 +27,16 @@ from cryptography.fernet import Fernet, InvalidToken
 UTC = timezone.utc
 JOB_RETRY_DELAY = timedelta(seconds=30)
 NOTIFICATION_RETRY_DELAY = timedelta(minutes=1)
+
+
+def _latency_log(event: str, started_at: float, **fields: Any) -> None:
+    """Emit bounded timing evidence without logging SQL, credentials, or payloads."""
+    if os.environ.get("AURIX_LATENCY_LOG", "0").lower() not in {"1", "true", "yes", "on"}:
+        return
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    details = " ".join(f"{key}={value}" for key, value in fields.items())
+    suffix = f" {details}" if details else ""
+    print(f"latency event={event} duration_ms={duration_ms:.1f}{suffix}", file=sys.stderr)
 
 
 def _paid_outline_key_name(subscription: Any) -> str:
@@ -398,15 +412,32 @@ class CommerceDatabase:
 class _PostgresConnection:
     """Small qmark-parameter adapter shared by the existing service queries."""
 
-    def __init__(self, connection: Any):
+    def __init__(self, connection: Any, context: Any | None = None):
+        # ``connection`` is a raw psycopg connection for the adapter tests. In
+        # production it is replaced on enter by a psycopg_pool checkout.
         self._connection = connection
+        self._context = context
+        self._entered_at: float | None = None
 
     def __enter__(self) -> "_PostgresConnection":
-        self._connection.__enter__()
+        started_at = time.perf_counter()
+        if self._context is not None:
+            self._connection = self._context.__enter__()
+        else:
+            self._connection.__enter__()
+        self._entered_at = time.perf_counter()
+        _latency_log("postgres_checkout", started_at)
         return self
 
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Any:
-        return self._connection.__exit__(exc_type, exc_value, traceback)
+        try:
+            if self._context is not None:
+                return self._context.__exit__(exc_type, exc_value, traceback)
+            return self._connection.__exit__(exc_type, exc_value, traceback)
+        finally:
+            if self._entered_at is not None:
+                _latency_log("postgres_transaction", self._entered_at)
+                self._entered_at = None
 
     def execute(self, query: str, params: Any = None) -> Any:
         query = query.replace("?", "%s")
@@ -423,20 +454,64 @@ class PostgresCommerceDatabase:
 
     def __init__(self, url: str):
         self.url = url
+        self._pool: Any | None = None
+        self._pool_lock = threading.Lock()
+        self._closed = False
 
-    def connect(self) -> _PostgresConnection:
+    def _create_pool(self) -> Any:
         try:
-            import psycopg
             from psycopg.rows import dict_row
         except ImportError as exc:
             raise CommerceError("PostgreSQL support requires the psycopg package") from exc
-        # Supabase's poolers can route successive statements to different
-        # backend connections; disable psycopg's automatic prepared statements
-        # so qmark-adapted transactions remain compatible with transaction
-        # pooling.
-        return _PostgresConnection(
-            psycopg.connect(self.url, row_factory=dict_row, prepare_threshold=None)
+        try:
+            from psycopg_pool import ConnectionPool
+        except ImportError as exc:
+            raise CommerceError(
+                "PostgreSQL support requires the psycopg-pool package"
+            ) from exc
+        # A persistent client-side pool removes DNS/TLS/authentication setup
+        # from each repository call. Prepared statements stay disabled so the
+        # same code remains safe with either Supabase pooler mode.
+        started_at = time.perf_counter()
+        pool = ConnectionPool(
+            conninfo=self.url,
+            kwargs={
+                "row_factory": dict_row,
+                "prepare_threshold": None,
+                "connect_timeout": 10,
+            },
+            min_size=1,
+            # The process has two database-using execution paths: Telegram
+            # polling/handlers and one maintenance thread.
+            max_size=2,
+            timeout=10,
+            open=False,
         )
+        try:
+            pool.open(wait=True, timeout=10)
+        except Exception:
+            pool.close()
+            _latency_log("postgres_pool_open", started_at, status="error")
+            raise
+        _latency_log("postgres_pool_open", started_at, status="ready")
+        return pool
+
+    def connect(self) -> _PostgresConnection:
+        with self._pool_lock:
+            if self._closed:
+                raise CommerceError("PostgreSQL connection pool is closed")
+            if self._pool is None:
+                self._pool = self._create_pool()
+            pool = self._pool
+        return _PostgresConnection(None, pool.connection())
+
+    def close(self) -> None:
+        """Return pooled connections cleanly during process shutdown."""
+        with self._pool_lock:
+            self._closed = True
+            pool, self._pool = self._pool, None
+        if pool is not None:
+            pool.close()
 
     @staticmethod
     def begin_write(connection: _PostgresConnection) -> None:
@@ -2722,7 +2797,11 @@ class CommerceService:
         self._expire(current)
         return self.process_jobs(current)
 
-    def enforce_quotas(self, now: datetime | None = None) -> int:
+    def enforce_quotas(
+        self,
+        now: datetime | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> int:
         """Observe Outline transfer metrics and queue one idempotent hard revoke.
 
         Outline's per-key data limit is the immediate safety brake.  Metrics are
@@ -2731,10 +2810,11 @@ class CommerceService:
         restore or disable a key.
         """
         current = (now or datetime.now(UTC)).astimezone(UTC)
-        try:
-            metrics = self.outline.transfer_metrics()
-        except Exception:
-            return 0
+        if metrics is None:
+            try:
+                metrics = self.outline.transfer_metrics()
+            except Exception:
+                return 0
         by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
         if not isinstance(by_key, dict):
             return 0

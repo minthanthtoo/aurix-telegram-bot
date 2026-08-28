@@ -441,6 +441,33 @@ class FakeRawPostgresConnection:
         return None
 
 
+class FakePoolCheckout:
+    def __init__(self, raw, events):
+        self.raw = raw
+        self.events = events
+
+    def __enter__(self):
+        self.events.append("checkout")
+        return self.raw
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.events.append("return")
+        return False
+
+
+class FakePostgresPool:
+    def __init__(self):
+        self.raw = FakeRawPostgresConnection()
+        self.events = []
+        self.closed = False
+
+    def connection(self):
+        return FakePoolCheckout(self.raw, self.events)
+
+    def close(self):
+        self.closed = True
+
+
 class PostgresAdapterTest(unittest.TestCase):
     def test_qmark_adapter_translates_service_parameters(self):
         raw = FakeRawPostgresConnection()
@@ -462,6 +489,32 @@ class PostgresAdapterTest(unittest.TestCase):
         raw = FakeRawPostgresConnection()
         PostgresCommerceDatabase.begin_write(_PostgresConnection(raw))
         self.assertEqual(raw.calls, [])
+
+    def test_postgres_database_reuses_pool_and_returns_checked_out_connections(self):
+        pool = FakePostgresPool()
+        database = PostgresCommerceDatabase("postgresql://example.invalid/aurix")
+        create_calls = []
+
+        def create_pool():
+            create_calls.append(True)
+            return pool
+
+        database._create_pool = create_pool
+        for value in (1, 2):
+            with database.connect() as connection:
+                connection.execute("SELECT ?", (value,))
+
+        self.assertEqual(len(create_calls), 1)
+        self.assertEqual(pool.events, ["checkout", "return", "checkout", "return"])
+        self.assertEqual(
+            pool.raw.calls,
+            [("SELECT %s", (1,)), ("SELECT %s", (2,))],
+        )
+        database.close()
+        self.assertTrue(pool.closed)
+        self.assertIsNone(database._pool)
+        with self.assertRaisesRegex(CommerceError, "pool is closed"):
+            database.connect()
 
     def test_postgres_schema_is_executable_without_sqlite_pragmas(self):
         database = PostgresCommerceDatabase("postgresql://example.invalid/aurix")

@@ -345,6 +345,63 @@ class RecordingTelegramBot(TelegramBot):
         self.markups.append(reply_markup)
 
 
+class NonBlockingMaintenanceBot(TelegramBot):
+    def __init__(self):
+        super().__init__("test-token", object(), maintenance_interval_seconds=60)
+        self.poll_started = threading.Event()
+        self.maintenance_started = threading.Event()
+        self.release_maintenance = threading.Event()
+
+    def request(self, method, payload):
+        self.poll_started.set()
+        self.maintenance_started.wait(1)
+        self.running = False
+        return []
+
+    def _run_maintenance(self):
+        self.maintenance_started.set()
+        self.release_maintenance.wait(2)
+
+
+class MaintenanceOutline:
+    def __init__(self):
+        self.calls = 0
+        self.snapshot = {"bytesTransferredByUserId": {"key-1": 123}}
+
+    def transfer_metrics(self):
+        self.calls += 1
+        return self.snapshot
+
+
+class MaintenanceClaimService:
+    def __init__(self, outline):
+        self.outline = outline
+        self.metrics = None
+        self.expiry_calls = 0
+
+    def enforce_quota(self, metrics=None):
+        self.metrics = metrics
+        return 0
+
+    def revoke_expired(self):
+        self.expiry_calls += 1
+        return 0
+
+
+class MaintenanceCommerceService:
+    def __init__(self):
+        self.metrics = None
+        self.process_calls = 0
+
+    def enforce_quotas(self, metrics=None):
+        self.metrics = metrics
+        return 0
+
+    def expire_and_process(self):
+        self.process_calls += 1
+        return 0
+
+
 class TelegramBotCommerceTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -430,6 +487,35 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("📷 Send Receipt", labels)
         self.assertIn("💰 Pay Wallet", labels)
         self.assertIn("🔄 Refresh", labels)
+
+    def test_polling_remains_available_while_housekeeping_is_blocked(self):
+        bot = NonBlockingMaintenanceBot()
+        thread = threading.Thread(target=bot.run)
+        thread.start()
+        try:
+            self.assertTrue(bot.maintenance_started.wait(1))
+            self.assertTrue(bot.poll_started.wait(1))
+        finally:
+            bot.release_maintenance.set()
+            bot.stop()
+            thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
+    def test_maintenance_reuses_one_outline_metrics_snapshot(self):
+        outline = MaintenanceOutline()
+        claim = MaintenanceClaimService(outline)
+        commerce = MaintenanceCommerceService()
+        bot = TelegramBot("test-token", claim, commerce)
+        bot._send_termination_notices = lambda: None
+        bot._send_pending_notifications = lambda: None
+
+        bot._run_maintenance()
+
+        self.assertEqual(outline.calls, 1)
+        self.assertIs(claim.metrics, outline.snapshot)
+        self.assertIs(commerce.metrics, outline.snapshot)
+        self.assertEqual(claim.expiry_calls, 1)
+        self.assertEqual(commerce.process_calls, 1)
 
     def test_admin_reject_button_requires_confirmation(self):
         order = self.commerce.create_order(123, "Min", "basic_50gb")
