@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1080" height="1350" viewBox="0 0 1080 1350" role="img" aria-labelledby="title desc">
+  <title id="title">AuriX Burmese controlled-test launch post</title>
+  <desc id="desc">Burmese Facebook launch creative inviting a small Myanmar tester group.</desc>
+  <defs>
+    <linearGradient id="left-shade-mm" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#071421" stop-opacity=".94"/><stop offset=".72" stop-color="#071421" stop-opacity=".5"/><stop offset="1" stop-color="#071421" stop-opacity="0"/></linearGradient>
+    <linearGradient id="cta-mm" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#36E2FF"/><stop offset="1" stop-color="#7765FF"/></linearGradient>
+    <linearGradient id="mark-gold-mm" x1="104" y1="402" x2="250" y2="104" gradientUnits="userSpaceOnUse"><stop stop-color="#FF982F"/><stop offset="1" stop-color="#FFD36A"/></linearGradient>
+    <linearGradient id="mark-shared-mm" x1="238" y1="108" x2="388" y2="405" gradientUnits="userSpaceOnUse"><stop stop-color="#FFD36A"/><stop offset=".46" stop-color="#FFC254"/><stop offset=".64" stop-color="#46D9F5"/><stop offset="1" stop-color="#7667F5"/></linearGradient>
+    <linearGradient id="mark-signal-mm" x1="410" y1="122" x2="260" y2="402" gradientUnits="userSpaceOnUse"><stop stop-color="#31D9F5"/><stop offset="1" stop-color="#7862F2"/></linearGradient>
+  </defs>
+  <image xlink:href="aurix-controlled-test-launch-plate.png" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
+  <rect width="750" height="1000" fill="url(#left-shade-mm)"/>
+  <g transform="translate(84 84) scale(.16)">
+    <rect x="16" y="16" width="480" height="480" rx="126" fill="#071521" stroke="#24445E" stroke-width="5"/>
+    <path d="M112 398 239 116" fill="none" stroke="url(#mark-gold-mm)" stroke-width="50" stroke-linecap="round"/>
+    <path d="m239 116 145 282" fill="none" stroke="url(#mark-shared-mm)" stroke-width="50" stroke-linecap="round"/>
+    <path d="M167 305h133" fill="none" stroke="#E7EEF5" stroke-width="24" stroke-linecap="round"/>
+    <circle cx="325" cy="283" r="33" fill="#071521"/>
+    <path d="M408 127 263 398" fill="none" stroke="url(#mark-signal-mm)" stroke-width="42" stroke-linecap="round"/>
+  </g>
+  <text x="184" y="140" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="40" font-weight="800" letter-spacing="-1.5">Auri<tspan fill="#36E2FF">X</tspan></text>
+  <text x="84" y="258" fill="#FFC857" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="25" font-weight="700">ကနဦး စမ်းသပ်သူများ ဖိတ်ခေါ်နေပါပြီ</text>
+  <text x="84" y="374" fill="#F6F8FC" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="66" font-weight="800">AuriX ကို</text>
+  <text x="84" y="466" fill="#F6F8FC" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="66" font-weight="800">အတူစမ်းကြည့်ရအောင်။</text>
+  <text x="84" y="550" fill="#C8D5E0" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="29" font-weight="600">အများပြည်သူသုံး မဖွင့်မီ</text>
+  <text x="84" y="600" fill="#C8D5E0" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="29" font-weight="600">စမ်းသပ်သူ အနည်းငယ်ကို ဖိတ်ခေါ်နေပါတယ်။</text>
+  <rect x="84" y="674" width="350" height="78" rx="39" fill="url(#cta-mm)"/>
+  <text x="259" y="724" text-anchor="middle" fill="#071421" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="25" font-weight="800">Telegram မှာ စာရင်းပေးပါ</text>
+  <text x="84" y="810" fill="#91A4B5" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="20" font-weight="700">နေရာကန့်သတ်ထားသည် · အကြံပြုချက်ပေးရန်လိုသည်</text>
+  <text x="84" y="846" fill="#91A4B5" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="20" font-weight="700">အတည်ပြုပြီးမှ အသုံးပြုနိုင်သည်</text>
+</svg>

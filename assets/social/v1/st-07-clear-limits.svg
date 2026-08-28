@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1080" height="1350" viewBox="0 0 1080 1350">
+  <defs><linearGradient id="copy" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#071421" stop-opacity=".88"/><stop offset="1" stop-color="#071421" stop-opacity="0"/></linearGradient></defs>
+  <image xlink:href="st-07-clear-limits-plate.png" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
+  <rect width="720" height="1350" fill="url(#copy)"/>
+  <image xlink:href="../../../brand/v2/aurix-logo-mark-v2.svg" x="96" y="96" width="96" height="96"/>
+  <text x="96" y="744" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="67" font-weight="800" letter-spacing="-2">Know your data.</text>
+  <text x="96" y="824" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="67" font-weight="800" letter-spacing="-2">Know your time.</text>
+  <text x="96" y="900" fill="#C3CFDA" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="29" font-weight="600">Clear entitlements. No confusing promise.</text>
+  <rect x="96" y="982" width="236" height="70" rx="35" fill="#FFC857"/>
+  <text x="214" y="1027" text-anchor="middle" fill="#071421" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="25" font-weight="800">See the plan</text>
+</svg>

@@ -1,0 +1,8 @@
+.env
+.venv/
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+.DS_Store
+dist/

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1080" height="1350" viewBox="0 0 1080 1350">
+  <defs>
+    <linearGradient id="shade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#071421" stop-opacity=".99"/>
+      <stop offset=".55" stop-color="#071421" stop-opacity=".92"/>
+      <stop offset="1" stop-color="#071421" stop-opacity=".25"/>
+    </linearGradient>
+    <linearGradient id="cta" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#36E2FF"/>
+      <stop offset="1" stop-color="#7765FF"/>
+    </linearGradient>
+    <pattern id="grid" width="72" height="72" patternUnits="userSpaceOnUse">
+      <path d="M72 0H0V72" fill="none" stroke="#36E2FF" stroke-opacity=".06" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1080" height="1350" fill="#071421"/>
+  <image xlink:href="st-07-clear-limits-plate.png" x="0" y="0" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
+  <rect width="1080" height="1350" fill="url(#shade)"/>
+  <rect width="1080" height="1350" fill="url(#grid)"/>
+
+  <image xlink:href="aurix-logo-mark-v2.svg" x="78" y="70" width="74" height="74"/>
+  <text x="169" y="119" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="38" font-weight="850">Auri</text>
+  <text x="241" y="119" fill="#36E2FF" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="38" font-weight="850">X</text>
+
+  <text x="78" y="218" fill="#FFC857" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="800">ASK AURIX</text>
+
+  <text x="78" y="307" fill="#F6F8FC" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="59" font-weight="850">ဒေတာကုန်ရင်</text>
+  <text x="78" y="391" fill="#F6F8FC" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="59" font-weight="850">ဘာဖြစ်မလဲ။</text>
+
+  <text x="78" y="465" fill="#DCE6EF" font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif" font-size="25" font-weight="700">သတ်မှတ်ပမာဏပြည့်ရင် လက်ရှိ key ကို ရပ်မယ်။</text>
+
+  <rect x="78" y="505" width="590" height="248" rx="27" fill="#102D43" fill-opacity=".91" stroke="#36E2FF" stroke-opacity=".42" stroke-width="2"/>
+  <text x="108" y="570" fill="#36E2FF" font-family="Noto Sans Myanmar, Inter, sans-serif" font-size="34" font-weight="850">Key ရပ်</text>
+  <text x="108" y="625" fill="#36E2FF" font-family="Noto Sans Myanmar, Inter, sans-serif" font-size="34" font-weight="850">Plan အသစ်ရွေး</text>
+  <text x="108" y="680" fill="#36E2FF" font-family="Noto Sans Myanmar, Inter, sans-serif" font-size="34" font-weight="850">Telegram မှာ မေး</text>
+  <text x="108" y="724" fill="#B7C6D3" font-family="Noto Sans Myanmar, sans-serif" font-size="20" font-weight="700">ပမာဏမပြည့်ခင် ကိုယ့်အသုံးကို ကြိုစစ်ပါ။</text>
+
+  <rect x="78" y="1120" width="350" height="70" rx="35" fill="url(#cta)"/>
+  <text x="253" y="1165" text-anchor="middle" fill="#071421" font-family="Noto Sans Myanmar, sans-serif" font-size="23" font-weight="850">နောက်တစ်ဆင့်ကို ကြည့်ပါ</text>
+  <text x="78" y="1231" fill="#93A7B8" font-family="Noto Sans Myanmar, sans-serif" font-size="17" font-weight="700">ဒေတာအသုံးပြုမှုကို server မှတ်တမ်းအပေါ် မူတည်ပြီး စစ်ဆေးသည်။</text>
+</svg>

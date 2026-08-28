@@ -1,0 +1,5 @@
+လက်ရှိ plan အဆုံးသတ်မယ့်အချိန်ကို Telegram bot မှာ အရင်စစ်ပါ။ ဆက်သုံးဖို့လိုရင် သက်တမ်းမကုန်ခင် plan ကို ကြိုရွေးထားနိုင်ပါတယ်။
+
+သက်တမ်းတိုးမှုမှာ plan availability နဲ့ payment review အကျုံးဝင်ပါတယ်။
+
+#AuriX #Renewal #TelegramBot

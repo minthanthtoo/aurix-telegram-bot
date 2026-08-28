@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">AuriX Telegram bot avatar</title>
+  <desc id="desc">A circular-safe AuriX AX mark optimized for Telegram bot lists and profile headers.</desc>
+  <defs>
+    <radialGradient id="bot-bg" cx="50%" cy="42%" r="72%">
+      <stop offset="0" stop-color="#102A3F"/>
+      <stop offset=".62" stop-color="#071521"/>
+      <stop offset="1" stop-color="#050E17"/>
+    </radialGradient>
+    <linearGradient id="bot-gold" x1="104" y1="402" x2="250" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF982F"/><stop offset="1" stop-color="#FFD36A"/>
+    </linearGradient>
+    <linearGradient id="bot-shared" x1="238" y1="108" x2="388" y2="405" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD36A"/><stop offset=".46" stop-color="#FFC254"/><stop offset=".64" stop-color="#46D9F5"/><stop offset="1" stop-color="#7667F5"/>
+    </linearGradient>
+    <linearGradient id="bot-signal" x1="410" y1="122" x2="260" y2="402" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#31D9F5"/><stop offset="1" stop-color="#7862F2"/>
+    </linearGradient>
+    <linearGradient id="bot-ring" x1="160" y1="130" x2="850" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#36E2FF" stop-opacity=".42"/>
+      <stop offset=".5" stop-color="#24445E" stop-opacity=".3"/>
+      <stop offset="1" stop-color="#7765FF" stop-opacity=".44"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bot-bg)"/>
+  <circle cx="512" cy="512" r="486" fill="none" stroke="url(#bot-ring)" stroke-width="8"/>
+  <circle cx="512" cy="512" r="430" fill="#071521" opacity=".26"/>
+  <g transform="translate(-31 -31) scale(2.12)">
+    <path d="M112 398 239 116" fill="none" stroke="url(#bot-gold)" stroke-width="50" stroke-linecap="round"/>
+    <path d="m239 116 145 282" fill="none" stroke="url(#bot-shared)" stroke-width="50" stroke-linecap="round"/>
+    <path d="M167 305h133" fill="none" stroke="#E7EEF5" stroke-width="24" stroke-linecap="round"/>
+    <circle cx="325" cy="283" r="33" fill="#071521"/>
+    <path d="M408 127 263 398" fill="none" stroke="url(#bot-signal)" stroke-width="42" stroke-linecap="round"/>
+  </g>
+</svg>

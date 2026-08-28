@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1080" height="1350" viewBox="0 0 1080 1350">
+  <defs><linearGradient id="copy" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#071421" stop-opacity=".82"/><stop offset="1" stop-color="#071421" stop-opacity="0"/></linearGradient></defs>
+  <image xlink:href="st-01-clear-gateway-plate.png" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
+  <rect width="700" height="1350" fill="url(#copy)"/>
+  <image xlink:href="../../../brand/v2/aurix-logo-mark-v2.svg" x="96" y="96" width="96" height="96"/>
+  <text x="96" y="760" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="72" font-weight="800" letter-spacing="-2">VPN should</text>
+  <text x="96" y="842" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="72" font-weight="800" letter-spacing="-2">feel simple.</text>
+  <text x="96" y="910" fill="#FFC857" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="32" font-weight="700">Clear access. Human help.</text>
+  <rect x="96" y="982" width="272" height="70" rx="35" fill="#36E2FF"/>
+  <text x="232" y="1027" text-anchor="middle" fill="#071421" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="25" font-weight="800">Start on Telegram</text>
+</svg>

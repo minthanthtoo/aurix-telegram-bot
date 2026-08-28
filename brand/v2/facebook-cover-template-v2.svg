@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1640 624" role="img" aria-labelledby="title desc">
+  <title id="title">AuriX V2 Facebook cover</title>
+  <desc id="desc">A durable AuriX page identity with centered brand lockup and woven signal artwork.</desc>
+  <defs>
+    <linearGradient id="cover-v2-bg" x1="0" y1="0" x2="1640" y2="624" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#071521"/>
+      <stop offset="0.58" stop-color="#0B1D2D"/>
+      <stop offset="1" stop-color="#151939"/>
+    </linearGradient>
+    <linearGradient id="cover-v2-band-a" x1="940" y1="590" x2="1570" y2="45" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#31D9F5" stop-opacity="0"/>
+      <stop offset="0.42" stop-color="#31D9F5" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#7862F2" stop-opacity="0.1"/>
+    </linearGradient>
+    <linearGradient id="cover-v2-band-b" x1="1020" y1="52" x2="1640" y2="585" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD36A" stop-opacity="0"/>
+      <stop offset="0.48" stop-color="#FFC254" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#FF982F" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="cover-v2-gold" x1="24" y1="176" x2="99" y2="41" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF982F"/>
+      <stop offset="1" stop-color="#FFD36A"/>
+    </linearGradient>
+    <linearGradient id="cover-v2-shared" x1="98" y1="41" x2="169" y2="176" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD36A"/>
+      <stop offset="0.5" stop-color="#FFC254"/>
+      <stop offset="0.68" stop-color="#46D9F5"/>
+      <stop offset="1" stop-color="#7667F5"/>
+    </linearGradient>
+    <linearGradient id="cover-v2-signal" x1="179" y1="46" x2="111" y2="176" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#31D9F5"/>
+      <stop offset="1" stop-color="#7862F2"/>
+    </linearGradient>
+  </defs>
+  <rect width="1640" height="624" fill="url(#cover-v2-bg)"/>
+  <circle cx="1370" cy="310" r="300" fill="#7862F2" opacity="0.045"/>
+  <path d="M900 650C1110 540 1165 176 1572 22" fill="none" stroke="url(#cover-v2-band-a)" stroke-width="92" stroke-linecap="round"/>
+  <path d="M980-25c244 93 293 415 672 548" fill="none" stroke="url(#cover-v2-band-b)" stroke-width="34" stroke-linecap="round"/>
+  <g transform="translate(286 196)">
+    <rect width="212" height="212" rx="58" fill="#071521" stroke="#24445E" stroke-width="2"/>
+    <path d="M39 174 96 44" fill="none" stroke="url(#cover-v2-gold)" stroke-width="23" stroke-linecap="round"/>
+    <path d="m96 44 65 130" fill="none" stroke="url(#cover-v2-shared)" stroke-width="23" stroke-linecap="round"/>
+    <path d="M64 132h65" fill="none" stroke="#E7EEF5" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="136" cy="124" r="16" fill="#071521"/>
+    <path d="M174 50 109 174" fill="none" stroke="url(#cover-v2-signal)" stroke-width="20" stroke-linecap="round"/>
+  </g>
+  <text x="548" y="300" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="128" font-weight="750" letter-spacing="-6">Auri<tspan dx="-4" fill="#31D9F5" font-weight="800">X</tspan></text>
+  <text x="555" y="357" fill="#FFC254" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="31" font-weight="700" letter-spacing="0.4">Clear access. Human help.</text>
+  <text x="555" y="407" fill="#C3CFDA" font-family="Noto Sans Myanmar, Inter, Arial, sans-serif" font-size="25" font-weight="500">Simple, transparent VPN access for Myanmar.</text>
+  <!-- Durable identity only: use Facebook's real action button for the Telegram destination. -->
+</svg>

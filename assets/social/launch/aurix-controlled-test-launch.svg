@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1080" height="1350" viewBox="0 0 1080 1350" role="img" aria-labelledby="title desc">
+  <title id="title">AuriX controlled test launch post</title>
+  <desc id="desc">Facebook portrait launch creative inviting a small Myanmar tester group.</desc>
+  <defs>
+    <linearGradient id="left-shade" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#071421" stop-opacity=".92"/>
+      <stop offset=".72" stop-color="#071421" stop-opacity=".46"/>
+      <stop offset="1" stop-color="#071421" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="cta" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#36E2FF"/>
+      <stop offset="1" stop-color="#7765FF"/>
+    </linearGradient>
+    <linearGradient id="mark-gold" x1="104" y1="402" x2="250" y2="104" gradientUnits="userSpaceOnUse"><stop stop-color="#FF982F"/><stop offset="1" stop-color="#FFD36A"/></linearGradient>
+    <linearGradient id="mark-shared" x1="238" y1="108" x2="388" y2="405" gradientUnits="userSpaceOnUse"><stop stop-color="#FFD36A"/><stop offset=".46" stop-color="#FFC254"/><stop offset=".64" stop-color="#46D9F5"/><stop offset="1" stop-color="#7667F5"/></linearGradient>
+    <linearGradient id="mark-signal" x1="410" y1="122" x2="260" y2="402" gradientUnits="userSpaceOnUse"><stop stop-color="#31D9F5"/><stop offset="1" stop-color="#7862F2"/></linearGradient>
+  </defs>
+  <image xlink:href="aurix-controlled-test-launch-plate.png" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
+  <rect width="720" height="980" fill="url(#left-shade)"/>
+  <g transform="translate(84 84) scale(.16)">
+    <rect x="16" y="16" width="480" height="480" rx="126" fill="#071521" stroke="#24445E" stroke-width="5"/>
+    <path d="M112 398 239 116" fill="none" stroke="url(#mark-gold)" stroke-width="50" stroke-linecap="round"/>
+    <path d="m239 116 145 282" fill="none" stroke="url(#mark-shared)" stroke-width="50" stroke-linecap="round"/>
+    <path d="M167 305h133" fill="none" stroke="#E7EEF5" stroke-width="24" stroke-linecap="round"/>
+    <circle cx="325" cy="283" r="33" fill="#071521"/>
+    <path d="M408 127 263 398" fill="none" stroke="url(#mark-signal)" stroke-width="42" stroke-linecap="round"/>
+  </g>
+  <text x="184" y="140" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="40" font-weight="800" letter-spacing="-1.5">Auri<tspan fill="#36E2FF">X</tspan></text>
+  <text x="84" y="260" fill="#FFC857" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="22" font-weight="800" letter-spacing="2.4">CONTROLLED TEST · MYANMAR</text>
+  <text x="84" y="374" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="78" font-weight="800" letter-spacing="-3">Help us test</text>
+  <text x="84" y="462" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="78" font-weight="800" letter-spacing="-3">Auri<tspan fill="#36E2FF">X</tspan>.</text>
+  <text x="84" y="542" fill="#C8D5E0" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="30" font-weight="600">A small tester group before public launch.</text>
+  <text x="84" y="590" fill="#C8D5E0" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="30" font-weight="600">Clear limits. Human help. Real feedback.</text>
+  <rect x="84" y="666" width="290" height="76" rx="38" fill="url(#cta)"/>
+  <text x="229" y="714" text-anchor="middle" fill="#071421" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="27" font-weight="850">Apply in Telegram</text>
+  <text x="84" y="794" fill="#91A4B5" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="19" font-weight="700" letter-spacing=".3">LIMITED TEST · FEEDBACK REQUIRED</text>
+  <text x="84" y="824" fill="#91A4B5" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="19" font-weight="700" letter-spacing=".3">ACCESS BY APPROVAL AND AVAILABILITY</text>
+</svg>

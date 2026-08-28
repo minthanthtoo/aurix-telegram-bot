@@ -1,0 +1,41 @@
+services:
+  - type: worker
+    name: aurix-telegram-bot
+    runtime: python
+    region: singapore
+    plan: starter
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: python deploy/render_preflight.py && python -u app.py
+    maxShutdownDelaySeconds: 30
+    disk:
+      name: aurix-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.4
+      - key: DATABASE_PATH
+        value: /var/data/bot.db
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      - key: TRIAL_TELEGRAM_IDS
+        value: ""
+      - key: OUTLINE_API_URL
+        sync: false
+      - key: OUTLINE_CERT_SHA256
+        sync: false
+      - key: AURIX_ACCESS_URL_KEY
+        sync: false
+      - key: COMMERCE_DATABASE_URL
+        value: ""
+      - key: RECEIPT_LLM_BASE_URL
+        value: ""
+      - key: RECEIPT_LLM_MODEL
+        value: ""
+      - key: RECEIPT_LLM_API_KEY
+        value: ""
+      - key: ALLOW_TEXT_PAYMENT_REFERENCES
+        value: "0"

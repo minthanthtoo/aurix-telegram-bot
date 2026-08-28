@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1640 624" role="img" aria-labelledby="title desc">
+  <title id="title">AuriX mobile-safe Facebook cover V3</title>
+  <desc id="desc">A compact central lockup protected from narrow mobile center crops, profile overlap, and page controls.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1640" y2="624" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#071521"/><stop offset=".56" stop-color="#0B1D2D"/><stop offset="1" stop-color="#151939"/>
+    </linearGradient>
+    <linearGradient id="band-a" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#31D9F5" stop-opacity="0"/><stop offset=".5" stop-color="#31D9F5" stop-opacity=".44"/><stop offset="1" stop-color="#7862F2" stop-opacity="0"/></linearGradient>
+    <linearGradient id="band-b" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#FF982F" stop-opacity="0"/><stop offset=".5" stop-color="#FFC254" stop-opacity=".25"/><stop offset="1" stop-color="#FFD36A" stop-opacity="0"/></linearGradient>
+    <linearGradient id="gold" x1="24" y1="176" x2="99" y2="41" gradientUnits="userSpaceOnUse"><stop stop-color="#FF982F"/><stop offset="1" stop-color="#FFD36A"/></linearGradient>
+    <linearGradient id="shared" x1="98" y1="41" x2="169" y2="176" gradientUnits="userSpaceOnUse"><stop stop-color="#FFD36A"/><stop offset=".5" stop-color="#FFC254"/><stop offset=".68" stop-color="#46D9F5"/><stop offset="1" stop-color="#7667F5"/></linearGradient>
+    <linearGradient id="signal" x1="179" y1="46" x2="111" y2="176" gradientUnits="userSpaceOnUse"><stop stop-color="#31D9F5"/><stop offset="1" stop-color="#7862F2"/></linearGradient>
+  </defs>
+  <rect width="1640" height="624" fill="url(#bg)"/>
+  <circle cx="1375" cy="300" r="310" fill="#7862F2" opacity=".04"/>
+  <path d="M1115 654C1245 482 1360 244 1634 88" fill="none" stroke="url(#band-a)" stroke-width="86" stroke-linecap="round"/>
+  <path d="M1265-40c126 90 214 292 405 390" fill="none" stroke="url(#band-b)" stroke-width="31" stroke-linecap="round"/>
+  <path d="M-45 540C110 438 165 290 310 206" fill="none" stroke="url(#band-a)" stroke-width="38" stroke-linecap="round" opacity=".22"/>
+
+  <!-- Universal safe-zone lockup: x=500..1120, y=158..302. -->
+  <g transform="translate(500 158) scale(.68)">
+    <rect width="212" height="212" rx="58" fill="#071521" stroke="#24445E" stroke-width="3"/>
+    <path d="M39 174 96 44" fill="none" stroke="url(#gold)" stroke-width="23" stroke-linecap="round"/>
+    <path d="m96 44 65 130" fill="none" stroke="url(#shared)" stroke-width="23" stroke-linecap="round"/>
+    <path d="M64 132h65" fill="none" stroke="#E7EEF5" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="136" cy="124" r="16" fill="#071521"/>
+    <path d="M174 50 109 174" fill="none" stroke="url(#signal)" stroke-width="20" stroke-linecap="round"/>
+  </g>
+  <text x="678" y="245" fill="#F6F8FC" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="104" font-weight="750" letter-spacing="-5">Auri<tspan dx="-3" fill="#31D9F5" font-weight="800">X</tspan></text>
+  <text x="685" y="294" fill="#FFC254" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="28" font-weight="700" letter-spacing=".3">Clear access. Human help.</text>
+  <!-- Keep the lower center clear for Facebook's profile-picture overlay. -->
+</svg>

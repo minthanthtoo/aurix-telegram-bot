@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">AuriX logo mark</title>
+  <desc id="desc">A luminous letter A gateway with a signal X on a midnight rounded square.</desc>
+  <defs>
+    <linearGradient id="aurix-gold" x1="112" y1="404" x2="336" y2="92" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF9F43"/>
+      <stop offset="1" stop-color="#FFD66B"/>
+    </linearGradient>
+    <linearGradient id="aurix-signal" x1="326" y1="142" x2="418" y2="238" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#36E2FF"/>
+      <stop offset="1" stop-color="#7765FF"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="132" fill="#071421"/>
+  <path d="M112 398 238 120c8-18 34-18 42 0l126 278" fill="none" stroke="url(#aurix-gold)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m194 286 124 82m0-82-124 82" fill="none" stroke="url(#aurix-signal)" stroke-width="34" stroke-linecap="round"/>
+</svg>
