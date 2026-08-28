@@ -1,0 +1,19 @@
+Windows ကွန်ပျူတာမှာ AuriX VPN သုံးနည်း—
+
+၁။ Official Outline Client for Windows ကို Download လုပ်ပြီး သွင်းပါ။
+https://s3.amazonaws.com/outline-releases/client/windows/stable/Outline-Client.exe
+
+၂။ AuriX Bot ကရတဲ့ `ss://` နဲ့စတဲ့ access key အပြည့်ကို Copy လုပ်ပါ။
+၃။ Outline Client ကိုဖွင့်ပြီး key ကို Add လုပ်ပါ။
+၄။ Connect လုပ်ပါ။ Firewall သို့မဟုတ် antivirus က Outline traffic ကိုပိတ်ထားရင် ခွင့်ပြုချက်ကို စစ်ပါ။
+
+Official minimum requirement: Windows 10 နှင့်အထက်။
+
+🤖 AuriX key ရယူရန် — https://t.me/aurix_outline_vpn_bot
+💬 အကူအညီ — https://t.me/+oA18TDWAD9NiNWU1
+
+AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။ AuriX က Outline-compatible access key ကို သီးခြားဝန်ဆောင်မှုပေးပြီး official Outline Client ဖြင့် အသုံးပြုရပါသည်။
+
+#AuriXVPN #OutlineWindows #VPNSetup
+
+🔐 AuriX access key အပြည့်အစုံကို public post၊ comment၊ group သို့မဟုတ် screenshot ထဲ မဖော်ပြပါနဲ့။

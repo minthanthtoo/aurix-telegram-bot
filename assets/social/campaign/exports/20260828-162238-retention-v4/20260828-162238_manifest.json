@@ -1,0 +1,58 @@
+{
+  "batch": "20260828-162238",
+  "version": "V4",
+  "strategy": "support recovery, quota recovery, plan continuation",
+  "posts": [
+    {
+      "id": "setup",
+      "slug": "setup-connection-help",
+      "base": "20260828-162238_setup_setup-connection-help_v4",
+      "metric": {
+        "bottom": 1240,
+        "headline": "ချိတ်ဆက်မရဘူးလား။",
+        "headlineRight": 702,
+        "scroll": [
+          1080,
+          1350
+        ],
+        "support": "ဖြစ်နေတဲ့နေရာကို ပုံနဲ့ပြောပါ။",
+        "supportRight": 680
+      },
+      "captionLength": 352
+    },
+    {
+      "id": "quota",
+      "slug": "data-limit-next-step",
+      "base": "20260828-162238_quota_data-limit-next-step_v4",
+      "metric": {
+        "bottom": 1240,
+        "headline": "ဒေတာပြည့်သွားရင်\nဘာဆက်လုပ်မလဲ။",
+        "headlineRight": 702,
+        "scroll": [
+          1080,
+          1350
+        ],
+        "support": "လက်ရှိချိတ်ဆက်လင့်ခ်ကို ဆက်သုံးလို့ မရတော့ဘူး။ ဆက်သုံးဖို့ အစီအစဉ်အသစ် ရွေးနိုင်တယ်။",
+        "supportRight": 680
+      },
+      "captionLength": 376
+    },
+    {
+      "id": "renewal",
+      "slug": "plan-expiry-renewal",
+      "base": "20260828-162238_renewal_plan-expiry-renewal_v4",
+      "metric": {
+        "bottom": 1240,
+        "headline": "ဆက်သုံးမယ်ဆို\nကြိုစီစဉ်ထားပါ။",
+        "headlineRight": 702,
+        "scroll": [
+          1080,
+          1350
+        ],
+        "support": "လက်ရှိအစီအစဉ် ကုန်ဆုံးမယ့်ရက်ကို Telegram မှာ အရင်စစ်ပါ။",
+        "supportRight": 680
+      },
+      "captionLength": 373
+    }
+  ]
+}

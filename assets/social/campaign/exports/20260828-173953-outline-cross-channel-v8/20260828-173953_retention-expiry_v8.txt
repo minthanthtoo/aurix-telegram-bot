@@ -1,0 +1,17 @@
+Outline Client မှာ AuriX VPN သုံးနေရင်း access key သက်တမ်းကုန်သွားတာမျိုး မဖြစ်ရအောင် ကြိုတင်စီစဉ်ထားပါ။
+
+AuriX Bot ရဲ့ 📊 Status မှာ လက်ရှိ key သက်တမ်းကုန်ဆုံးမယ့်ရက်ကို စစ်နိုင်ပါတယ်။ ဆက်သုံးဖို့လိုရင် နောက်ဆုံးနေ့မရောက်ခင် နောက်အစီအစဉ်ကို ရွေးထားပါ။
+
+💎 50 GB · ရက် 30 · 3,000 ကျပ်
+💠 100 GB · ရက် 30 · 6,000 ကျပ်
+
+🤖 သက်တမ်းစစ်ရန်နှင့် ဝယ်ယူရန် — https://t.me/aurix_outline_vpn_bot
+💬 အကူအညီတောင်းရန် — https://t.me/+oA18TDWAD9NiNWU1
+📥 Official Outline Client — https://developer.getoutline.org/download-links/
+📣 AuriX သတင်းများ — https://t.me/AurixDigitalStore
+
+ငွေလွှဲပြေစာကို စစ်ဆေးအတည်ပြုပြီးမှ အခပေးအစီအစဉ် စတင်နိုင်ပါတယ်။
+
+AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။ AuriX က Outline-compatible access key ကို သီးခြားဝန်ဆောင်မှုပေးပြီး official Outline Client ဖြင့် အသုံးပြုရပါသည်။
+
+#AuriXVPN #OutlineClient #VPNသက်တမ်း

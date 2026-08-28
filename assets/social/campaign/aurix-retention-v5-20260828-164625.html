@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="my">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <title>AuriX retention V5</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:1080px;height:1350px;overflow:hidden;background:#071421}
+    body{font-family:"Noto Sans Myanmar","Myanmar Sangam MN",sans-serif}
+    .canvas{position:relative;width:1080px;height:1350px;overflow:hidden;color:#f7f9fc;background:#071421}
+    .plate{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    .shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,17,29,.98) 0%,rgba(5,17,29,.91) 38%,rgba(5,17,29,.52) 61%,rgba(5,17,29,.06) 100%)}
+    .shade:after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,rgba(4,14,24,.44),transparent 35%)}
+    .content{position:absolute;left:76px;top:68px;width:600px;height:1210px;display:flex;flex-direction:column}
+    .brand{display:flex;align-items:center;gap:16px;height:72px}.brand img{width:72px;height:72px}
+    .wordmark{font-family:Inter,"Avenir Next",Arial,sans-serif;font-size:37px;font-weight:850;letter-spacing:-1.7px}.wordmark span{color:#36e2ff}
+    .message{margin-top:96px;width:592px}
+    .series{display:flex;align-items:center;gap:14px;color:#ffc857;font-size:21px;line-height:1.5;font-weight:850;letter-spacing:.2px}
+    .series:before{content:"";width:43px;height:4px;border-radius:4px;background:linear-gradient(90deg,#ffc857,#ff9d34)}
+    h1{margin:24px 0 0;width:592px;font-size:63px;line-height:1.38;font-weight:900;white-space:pre-line;letter-spacing:-.6px;text-wrap:balance}
+    .support{margin-top:25px;width:550px;color:#dbe6ef;font-size:29px;line-height:1.62;font-weight:650;white-space:pre-line}
+    .signature{margin-top:auto;display:flex;align-items:center;gap:13px;color:#bfd0dd;font-family:Inter,"Avenir Next",Arial,sans-serif;font-size:18px;font-weight:750;letter-spacing:2.8px;text-transform:uppercase}
+    .signal{display:flex;gap:5px;align-items:flex-end;height:20px}.signal i{display:block;width:5px;border-radius:5px;background:#36e2ff}.signal i:nth-child(1){height:7px}.signal i:nth-child(2){height:13px}.signal i:nth-child(3){height:20px;background:#7765ff}
+    .canvas[data-id="quota"] h1{font-size:58px}.canvas[data-id="quota"] .support{width:535px}
+    .canvas[data-id="renewal"] h1{font-size:61px}
+  </style>
+</head>
+<body>
+  <main class="canvas" id="canvas">
+    <img class="plate" id="plate" alt="">
+    <div class="shade"></div>
+    <section class="content">
+      <div class="brand"><img src="../../../brand/v2/aurix-logo-mark-v2.svg" alt=""><div class="wordmark">Auri<span>X</span></div></div>
+      <div class="message">
+        <div class="series" id="series"></div>
+        <h1 id="headline"></h1>
+        <div class="support" id="support"></div>
+      </div>
+      <div class="signature"><span class="signal"><i></i><i></i><i></i></span>AuriX on Telegram</div>
+    </section>
+  </main>
+  <script>
+    window.POSTS={
+      setup:{slug:"setup-human-help",plate:"v4-plates/setup-help-v4-plate.png",series:"AURIX အကူအညီ",headline:"အခက်အခဲရှိရင်\nAuriX ရှိတယ်။",support:"ချိတ်ဆက်မရတာကို Telegram မှာ လူကိုယ်တိုင် ကူညီပေးမယ်။"},
+      quota:{slug:"data-finished-next-plan",plate:"v4-plates/data-finished-v4-plate.png",series:"ASK AURIX",headline:"ဒေတာပြည့်သွားပြီလား။\nဆက်သုံးဖို့ လမ်းရှိတယ်။",support:"ကိုယ်နဲ့ကိုက်တဲ့ အစီအစဉ်အသစ်ကို Telegram မှာ ရွေးနိုင်တယ်။"},
+      renewal:{slug:"renew-before-expiry",plate:"v4-plates/renewal-v4-plate.png",series:"ဆက်လက်အသုံးပြုရန်",headline:"ဆက်သုံးဖို့\nကြိုတင်စီစဉ်ထားပါ။",support:"ကုန်ဆုံးမယ့်ရက်ကို ကြိုစစ်ပြီး နောက်အစီအစဉ်ကို ရွေးထားပါ။"}
+    };
+    const id=new URLSearchParams(location.search).get("post")||"setup";const p=window.POSTS[id]||window.POSTS.setup;
+    document.getElementById("canvas").dataset.id=id;document.getElementById("plate").src=p.plate;document.getElementById("series").textContent=p.series;document.getElementById("headline").textContent=p.headline;document.getElementById("support").textContent=p.support;document.title=id+" — "+p.slug;window.CURRENT_POST=p;
+  </script>
+</body>
+</html>

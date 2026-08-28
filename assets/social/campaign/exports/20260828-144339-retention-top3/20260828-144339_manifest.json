@@ -1,0 +1,95 @@
+{
+  "batch": "20260828-144339",
+  "strategy": "activation recovery renewal",
+  "posts": [
+    {
+      "id": "12",
+      "slug": "w06-setup-help",
+      "base": "20260828-144339_12_w06-setup-help",
+      "metrics": {
+        "body": "AuriX\nAURIX HELP\nတပ်ဆင်တာ မရဘူးလား။\nError screenshot နဲ့အတူ Telegram မှာ မေးပါ။\nမြင်ရတဲ့ error ကို ပို့ပါ\nဖြစ်နေတဲ့အဆင့်ကို တစ်ကြောင်းလောက် ရှင်းပြပါ။\nTelegram မှာ မေးပါ\nKey အပြည့်အစုံနှင့် ကိုယ်ရေးအချက်အလက်များကို screenshot ထဲ မထည့်ပါနှင့်။\n12 / 30",
+        "bottomBottom": 1238,
+        "contentBottom": 1238,
+        "scroll": [
+          1080,
+          1350
+        ],
+        "viewport": [
+          1080,
+          1350
+        ]
+      },
+      "captionLength": 220
+    },
+    {
+      "id": "20",
+      "slug": "w14-when-data-ends",
+      "base": "20260828-144339_20_w14-when-data-ends",
+      "metrics": {
+        "body": "AuriX\nASK AURIX\nဒေတာကုန်ရင် ဘာဖြစ်မလဲ။\nသတ်မှတ်ပမာဏပြည့်ရင် လက်ရှိ key ကို ရပ်မယ်။\nKey ရပ်\nPlan အသစ်ရွေး\nTelegram မှာ မေး\nပမာဏမပြည့်ခင် ကိုယ့်အသုံးကို ကြိုစစ်ပါ။\nနောက်တစ်ဆင့်ကို ကြည့်ပါ\nQuota enforcement သည် server metrics အပေါ် အခြေခံသည်။\n20 / 30",
+        "bottomBottom": 1238,
+        "contentBottom": 1238,
+        "scroll": [
+          1080,
+          1350
+        ],
+        "viewport": [
+          1080,
+          1350
+        ]
+      },
+      "captionLength": 158
+    },
+    {
+      "id": "30",
+      "slug": "w24-renew-early",
+      "base": "20260828-144339_30_w24-renew-early",
+      "metrics": {
+        "body": "AuriX\nRENEWAL\nသက်တမ်းမကုန်ခင် ကြိုတိုးထားပါ။\nလက်ရှိ plan အဆုံးသတ်မယ့်အချိန်ကို အရင်စစ်ပါ။\nသက်တမ်းစစ် · Plan ရွေး · သက်တမ်းတိုး\nမရှင်းရင် Telegram မှာ မေးပါ။\nTelegram မှာ သက်တမ်းတိုးပါ\nPlan availability နှင့် payment review အကျုံးဝင်သည်။\n30 / 30",
+        "bottomBottom": 1238,
+        "contentBottom": 1238,
+        "scroll": [
+          1080,
+          1350
+        ],
+        "viewport": [
+          1080,
+          1350
+        ]
+      },
+      "captionLength": 229
+    }
+  ],
+  "finalVisualAudit": [
+    {
+      "id": "12",
+      "headline": "တပ်ဆင်တာ\nမရဘူးလား။",
+      "indexDisplay": "none",
+      "scroll": [
+        1080,
+        1350
+      ],
+      "terms": "Key အပြည့်အစုံနှင့် ကိုယ်ရေးအချက်အလက်များကို screenshot ထဲ မထည့်ပါနှင့်။"
+    },
+    {
+      "id": "20",
+      "headline": "ဒေတာကုန်ရင်\nဘာဖြစ်မလဲ။",
+      "indexDisplay": "none",
+      "scroll": [
+        1080,
+        1350
+      ],
+      "terms": "ဒေတာအသုံးပြုမှုကို server မှတ်တမ်းအပေါ် မူတည်ပြီး စစ်ဆေးသည်။"
+    },
+    {
+      "id": "30",
+      "headline": "သက်တမ်းမကုန်ခင်\nကြိုတိုးထားပါ။",
+      "indexDisplay": "none",
+      "scroll": [
+        1080,
+        1350
+      ],
+      "terms": "Plan ရရှိနိုင်မှုနှင့် ငွေလွှဲစစ်ဆေးမှု အကျုံးဝင်သည်။"
+    }
+  ]
+}

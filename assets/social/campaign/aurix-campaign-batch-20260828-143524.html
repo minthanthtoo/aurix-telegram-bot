@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="my">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <title>AuriX campaign batch renderer</title>
+  <style>
+    * { box-sizing:border-box; }
+    html,body { margin:0; width:1080px; height:1350px; overflow:hidden; background:#071421; }
+    body { font-family:"Noto Sans Myanmar","Myanmar Sangam MN",sans-serif; }
+    .canvas { position:relative; width:1080px; height:1350px; overflow:hidden; color:#f6f8fc; background:#071421; }
+    .plate { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:none; }
+    .canvas[data-family="gateway"] .gateway,
+    .canvas[data-family="free"] .gateway,
+    .canvas[data-family="plan"] .gateway,
+    .canvas[data-family="community"] .gateway { opacity:1; }
+    .canvas[data-family="support"] .support,
+    .canvas[data-family="payment"] .support { opacity:1; }
+    .canvas[data-family="clarity"] .clarity,
+    .canvas[data-family="education"] .clarity,
+    .canvas[data-family="device"] .clarity { opacity:1; }
+    .shade { position:absolute; inset:0; background:linear-gradient(90deg,rgba(7,20,33,.99) 0%,rgba(7,20,33,.94) 53%,rgba(7,20,33,.48) 78%,rgba(7,20,33,.18) 100%); }
+    .shade:after { content:""; position:absolute; inset:0; background:radial-gradient(circle at 86% 16%,rgba(54,226,255,.14),transparent 31%),radial-gradient(circle at 74% 79%,rgba(119,101,255,.14),transparent 34%); }
+    .grid { position:absolute; inset:0; opacity:.18; background-image:linear-gradient(rgba(54,226,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(54,226,255,.08) 1px,transparent 1px); background-size:72px 72px; mask-image:linear-gradient(90deg,#000,transparent 75%); }
+    .content { position:absolute; left:78px; top:68px; width:650px; min-height:1170px; display:flex; flex-direction:column; }
+    .brand { display:flex; align-items:center; gap:17px; height:74px; }
+    .brand img { width:74px; height:74px; }
+    .wordmark { font-family:Inter,"Avenir Next",Arial,sans-serif; font-size:38px; font-weight:850; letter-spacing:-1.8px; }
+    .wordmark span { color:#36e2ff; }
+    .series { margin-top:64px; color:#ffc857; font-size:23px; line-height:1.5; font-weight:800; }
+    h1 { margin:17px 0 0; max-width:640px; font-size:59px; line-height:1.43; letter-spacing:-.7px; font-weight:850; white-space:pre-line; }
+    .support-copy { margin-top:24px; max-width:600px; color:#dce6ef; font-size:28px; line-height:1.62; font-weight:700; text-wrap:balance; }
+    .fact-card { margin-top:34px; width:590px; padding:26px 29px 25px; border-radius:27px; border:1.5px solid rgba(54,226,255,.34); background:linear-gradient(135deg,rgba(16,45,67,.92),rgba(13,34,53,.78)); box-shadow:0 18px 54px rgba(0,0,0,.22); }
+    .fact-card .fact { color:#36e2ff; font-family:Inter,"Noto Sans Myanmar",sans-serif; font-size:34px; line-height:1.55; font-weight:850; white-space:pre-line; }
+    .fact-card .detail { margin-top:4px; color:#b7c6d3; font-size:20px; line-height:1.65; font-weight:700; white-space:pre-line; }
+    .visual-symbol { position:absolute; right:42px; top:126px; width:310px; height:310px; border-radius:50%; border:2px solid rgba(54,226,255,.24); box-shadow:0 0 95px rgba(54,226,255,.14) inset; opacity:.74; }
+    .visual-symbol:before,.visual-symbol:after { content:""; position:absolute; border-radius:999px; transform:rotate(-28deg); }
+    .visual-symbol:before { width:286px; height:30px; right:-35px; top:111px; background:linear-gradient(90deg,transparent,#36e2ff,#7765ff); box-shadow:0 0 28px rgba(54,226,255,.46); }
+    .visual-symbol:after { width:112px; height:13px; left:39px; top:203px; background:#ffc857; box-shadow:0 0 21px rgba(255,200,87,.5); }
+    .bottom { margin-top:auto; padding-bottom:0; }
+    .cta { display:inline-flex; align-items:center; justify-content:center; min-width:310px; min-height:70px; padding:12px 30px; border-radius:38px; color:#071421; background:linear-gradient(135deg,#36e2ff,#7765ff); font-size:23px; line-height:1.45; font-weight:850; text-align:center; }
+    .terms { margin-top:20px; max-width:620px; color:#93a7b8; font-size:17px; line-height:1.65; font-weight:700; }
+    .index { display:none; }
+    .canvas[data-density="compact"] h1 { font-size:51px; line-height:1.47; }
+    .canvas[data-density="compact"] .support-copy { font-size:25px; }
+    .canvas[data-density="compact"] .series { margin-top:50px; }
+    .canvas[data-family="plan"] .fact-card { border-color:rgba(255,200,87,.38); }
+    .canvas[data-family="plan"] .fact-card .fact { color:#ffc857; }
+    .canvas[data-family="support"] .cta,.canvas[data-family="payment"] .cta { background:linear-gradient(135deg,#ffc857,#36e2ff); }
+  </style>
+</head>
+<body>
+  <main class="canvas" id="canvas">
+    <img class="plate gateway" src="../v1/st-01-clear-gateway-plate.png" alt="">
+    <img class="plate support" src="../v1/st-02-telegram-human-help-plate.png" alt="">
+    <img class="plate clarity" src="../v1/st-07-clear-limits-plate.png" alt="">
+    <div class="shade"></div><div class="grid"></div><div class="visual-symbol"></div>
+    <section class="content">
+      <div class="brand"><img src="../../../brand/v2/aurix-logo-mark-v2.svg" alt=""><div class="wordmark">Auri<span>X</span></div></div>
+      <div class="series" id="series"></div>
+      <h1 id="headline"></h1>
+      <div class="support-copy" id="support"></div>
+      <div class="fact-card" id="factCard"><div class="fact" id="fact"></div><div class="detail" id="detail"></div></div>
+      <div class="bottom"><div class="cta" id="cta"></div><div class="terms" id="terms"></div></div>
+    </section>
+    <div class="index" id="index"></div>
+  </main>
+  <script>
+    window.BATCH_TIMESTAMP = "20260828-143524";
+    window.POSTS = [
+      {
+        id:"01",slug:"l01-master-launch",family:"gateway",series:"AuriX LAUNCH",audience:"Facebook audience အားလုံး",
+        v1:"AuriX စတင်မိတ်ဆက်ပါပြီ။",c1:"Burmese editor: ရုံးသုံးဆန်ပြီး အသုံးပြုနိုင်ပြီဆိုသည့် action မရှင်း။ Brand judge: offer မထည့်ဘဲ brand memory ကို ဦးစားပေးရန်။",
+        v2:"AuriX ကို စသုံးနိုင်ပါပြီ။",c2:"Conversion judge: ပိုတိုပြီး စကားပြောသလိုဖြစ်ရန်။ Visual judge: headline နှစ်ကြောင်းအတွင်းထားရန်။",
+        headline:"AuriX ကို\nစသုံးလို့ရပါပြီ။",support:"ပမာဏရှင်းရှင်း၊ စတင်ရလွယ်လွယ်။",fact:"Telegram ကနေ စပါ",detail:"မရှင်းတာရှိရင် လူကိုယ်တိုင် ကူညီပေးမယ်။",cta:"Telegram မှာ စသုံးပါ",terms:"ရရှိနိုင်မှုနှင့် ဝန်ဆောင်မှုသတ်မှတ်ချက်များ အကျုံးဝင်သည်။",
+        caption:"AuriX ကို စသုံးလို့ရပါပြီ။\n\nVPN သုံးဖို့ ရှုပ်ရှုပ်ထွေးထွေး မလိုပါဘူး။ AuriX မှာ ရမယ့်ဒေတာပမာဏ၊ သုံးလို့ရမယ့်သက်တမ်းနဲ့ ဈေးနှုန်းကို ကြိုသိနိုင်ပါတယ်။\n\nစသုံးချင်ရင် Telegram bot ကိုဖွင့်ပြီး /start ကိုနှိပ်ပါ။ မရှင်းတာရှိရင် လူကိုယ်တိုင် ကူညီပေးပါမယ်။\n\n#AuriX #VPNMyanmar #TelegramBot"
+      },
+      {
+        id:"02",slug:"l02-free-daily",family:"free",series:"အခမဲ့ စမ်းသုံး",audience:"ဈေးနှုန်းစဉ်းစားသူ",
+        v1:"အခမဲ့ 300 MB ရယူပါ။",c1:"Strategy judge: နေ့စဉ်နှင့် 24 နာရီ rule မပါ။ Burmese editor: ကြော်ငြာသံမာလွန်း။",
+        v2:"နေ့စဉ် 300 MB အခမဲ့ စမ်းပါ။",c2:"Claims judge: ရယူပြီး 24 နာရီအသုံးပြုနိုင်ကြောင်း fact card သို့ခွဲရန်။",
+        headline:"အရင်စမ်း၊\nအဆင်ပြေမှ ရွေး။",support:"နေ့စဉ် အခမဲ့စမ်းနိုင်တယ်။",fact:"300 MB",detail:"ရယူပြီး 24 နာရီ အသုံးပြုနိုင်သည်။",cta:"အခမဲ့ ရယူပါ",terms:"နောက်တစ်ကြိမ်ရယူနိုင်မည့်အချိန်ကို bot တွင် ကြည့်နိုင်သည်။",
+        caption:"Paid plan မရွေးခင် AuriX ကို အရင်စမ်းကြည့်လို့ရပါတယ်။\n\nနေ့စဉ် 300 MB ကို အခမဲ့ရယူပြီး 24 နာရီအတွင်း အသုံးပြုနိုင်ပါတယ်။ နောက်တစ်ကြိမ်ရယူနိုင်မယ့်အချိန်ကိုလည်း bot မှာ ပြပေးပါမယ်။\n\nTelegram bot မှာ /claim ကိုနှိပ်ပြီး စမ်းကြည့်ပါ။\n\n#AuriX #အခမဲ့VPN #TelegramBot"
+      },
+      {
+        id:"03",slug:"l03-two-free-options",family:"free",series:"အခမဲ့ရွေးချယ်စရာ",audience:"Students နှင့် free users",
+        v1:"300 MB နှင့် 3 GB အခမဲ့။",c1:"Claims judge: renewal windows မရှင်း။ Burmese editor: audience decision aid မရှိ။",
+        v2:"အခမဲ့စမ်းဖို့ နှစ်မျိုးရှိတယ်။",c2:"Visual judge: numbers ကို card ထဲတွင် ခွဲဖတ်စေရန်။ Conversion judge: Telegram action တစ်ခုထည့်ရန်။",
+        headline:"အခမဲ့စမ်းဖို့\n၂ မျိုးရှိတယ်။",support:"ကိုယ်သုံးချင်တဲ့ပုံစံနဲ့ ကိုက်တာကိုရွေးပါ။",fact:"နေ့စဉ် 300 MB\nရက် 30 တိုင်း 3 GB",detail:"Key တစ်ခုချင်းစီမှာ ပမာဏနဲ့ သက်တမ်း သီးခြားရှိတယ်။",cta:"Telegram မှာ ရယူပါ",terms:"300 MB = 24 နာရီ · 3 GB = ရက် 30",
+        caption:"AuriX မှာ အခမဲ့စမ်းဖို့ နှစ်မျိုးရှိပါတယ်။\n\nခဏခဏ နည်းနည်းသုံးချင်ရင် နေ့စဉ် 300 MB။ ပမာဏပိုလိုပြီး ကြာကြာစမ်းချင်ရင် ရက် 30 တိုင်း 3 GB။\n\nBot ထဲမှာ ကိုယ်သုံးချင်တာကို ရွေးပြီး ရယူနိုင်ပါတယ်။ Key တစ်ခုချင်းစီမှာ ပမာဏနဲ့ သက်တမ်း သီးခြားရှိပါတယ်။\n\n#AuriX #VPNMyanmar #FreeTrial"
+      },
+      {
+        id:"04",slug:"l04-paid-plans",family:"plan",series:"AuriX PLAN",audience:"Paid-intent users",
+        v1:"50 GB နှင့် 100 GB Plan များ။",c1:"Conversion judge: ဈေးနှုန်းနှင့် သက်တမ်းမပါ၍ ဆုံးဖြတ်မရ။ Burmese editor: headline မဖမ်းစား။",
+        v2:"ကိုယ်သုံးသလောက် Plan ရွေးပါ။",c2:"Brand judge: English Plan ကို support copy သို့ လျှော့ပြီး offer ကို hierarchy တင်ရန်။",
+        headline:"ကိုယ်သုံးသလောက်\nရွေးပါ။",support:"ပမာဏ၊ သက်တမ်းနဲ့ ဈေးနှုန်း—တစ်ခါတည်းကြည့်ပါ။",fact:"50 GB · 3,000 ကျပ်\n100 GB · 6,000 ကျပ်",detail:"Plan နှစ်မျိုးလုံး ရက် 30 အသုံးပြုနိုင်သည်။",cta:"Plan ကို ကြည့်ပါ",terms:"Receipt ကို ဝန်ထမ်းစစ်ဆေးပြီးမှ access ပေးသည်။",
+        caption:"ကိုယ်သုံးမယ့်ပမာဏနဲ့ ကိုက်တာကို ရွေးပါ။\n\n• 50 GB · ရက် 30 · 3,000 ကျပ်\n• 100 GB · ရက် 30 · 6,000 ကျပ်\n\nTelegram bot မှာ order ဖွင့်ပြီး ငွေလွှဲပြေစာပို့ပါ။ AuriX ဝန်ထမ်းက စစ်ဆေးပြီးမှ access ပေးပါမယ်။\n\n#AuriX #VPNPlan #TelegramBot"
+      },
+      {
+        id:"05",slug:"l05-human-help",family:"support",series:"AURIX HELP",audience:"First-time and support-sensitive users",
+        v1:"Telegram Support ရှိပါတယ်။",c1:"Burmese editor: generic နှင့် မနွေးထွေး။ Strategy judge: လူကိုယ်တိုင်ကူညီမှုကို foreground လုပ်ရန်။",
+        v2:"လိုအပ်ရင် Telegram မှာ ကူညီပေးမယ်။",c2:"Conversion judge: user problem ကို headline အဖြစ် စတင်ရန်။",
+        headline:"မရှင်းတာရှိရင်\nမေးလို့ရတယ်။",support:"တပ်ဆင်တာကစပြီး plan ရွေးတာအထိ။",fact:"လူကိုယ်တိုင် ကူညီပေးမယ်",detail:"Screenshot နဲ့အတူ Telegram မှာ မေးပါ။",cta:"Telegram မှာ မေးပါ",terms:"Support response သည် ဝန်ဆောင်မှုပေးနိုင်ချိန်အပေါ် မူတည်သည်။",
+        caption:"တပ်ဆင်တာမရတာ၊ key ထည့်တာမသိတာ၊ plan ဘယ်ဟာရွေးရမလဲ မသေချာတာ—Telegram မှာ မေးလို့ရပါတယ်။\n\nBot က လုပ်ဆောင်ချက်တွေကို အဆင့်လိုက်ပြပေးပြီး လိုအပ်ရင် AuriX ဝန်ထမ်းက ဆက်ကူညီပေးပါမယ်။\n\n#AuriX #HumanHelp #TelegramSupport"
+      },
+      {
+        id:"06",slug:"l06-clear-terms",family:"clarity",series:"ရှင်းရှင်းလင်းလင်း",audience:"Existing VPN users",
+        v1:"Clear data. Clear duration.",c1:"Burmese editor: English-first ဖြစ်၍ local audience memory နည်း။ Brand judge: competitor attack မဖြစ်စေရ။",
+        v2:"ပမာဏနဲ့ သက်တမ်းကို ကြိုသိပါ။",c2:"Strategy judge: buyer question နှစ်ခုဖြင့် hook ပြုလုပ်ရန်။",
+        headline:"ဒေတာဘယ်လောက်ရမလဲ။\nဘယ်လောက်ကြာ သုံးလို့ရမလဲ။",support:"AuriX မှာ မဝယ်ခင် ကြိုသိနိုင်တယ်။",fact:"ပမာဏ · သက်တမ်း · ဈေးနှုန်း",detail:"မရှင်းတဲ့ unlimited စကားထက် တိကျတဲ့ terms ကိုရွေးပါ။",cta:"အစီအစဉ်ကို ကြည့်ပါ",terms:"အခြားဝန်ဆောင်မှုကို အမည်တပ်နှိုင်းယှဉ်ထားခြင်း မဟုတ်ပါ။",
+        caption:"“Unlimited” ဆိုတဲ့စကားတစ်လုံးထက် ကိုယ်တကယ်ရမယ့် ပမာဏနဲ့ သက်တမ်းက ပိုအရေးကြီးပါတယ်။\n\nAuriX မှာ plan တစ်ခုချင်းစီရဲ့ ဒေတာ၊ သက်တမ်းနဲ့ ဈေးနှုန်းကို မဝယ်ခင် ကြိုပြပါတယ်။ ကိုယ်နဲ့ကိုက်တာကို သိပြီးမှ ရွေးနိုင်ပါတယ်။\n\n#AuriX #ClearPlan #VPNMyanmar"
+      },
+      {
+        id:"07",slug:"w01-vpn-simple",family:"gateway",series:"WEEK 1 · BRAND",audience:"Broad audience",
+        v1:"VPN should feel simple.",c1:"Burmese editor: English မလို။ Brand judge: AuriX ရဲ့ transparent promise ထည့်ရန်။",
+        v2:"VPN သုံးရတာ ရိုးရှင်းသင့်တယ်။",c2:"Burmese editor: ရိုးရှင်းသင့်တယ်ထက် နေ့စဉ်ပြောဟန်ဖြစ်သည့် မရှုပ်သင့်ဘူး ပိုသဘာဝကျ။",
+        headline:"VPN သုံးရတာ\nမရှုပ်သင့်ဘူး။",support:"ပမာဏရှင်းရှင်း၊ စတင်ရလွယ်လွယ်။",fact:"AuriX",detail:"Telegram ကနေ စပြီး မရှင်းတာရှိရင် မေးနိုင်တယ်။",cta:"Telegram မှာ စသုံးပါ",terms:"ဝန်ဆောင်မှုရရှိနိုင်မှု အကျုံးဝင်သည်။",
+        caption:"VPN သုံးဖို့ စကားလုံးခက်ခက်၊ အဆင့်ရှုပ်ရှုပ် မလိုပါဘူး။ AuriX မှာ ရမယ့်ပမာဏနဲ့ သက်တမ်းကို ကြိုပြပြီး Telegram ကနေ စသုံးနိုင်ပါတယ်။\n\n#AuriX #VPNMyanmar"
+      },
+      {
+        id:"08",slug:"w02-how-to-start",family:"education",series:"စတင်ပုံ ၄ ဆင့်",audience:"First-time users",density:"compact",
+        v1:"AuriX ကို ဘယ်လိုစမလဲ။",c1:"Visual judge: question ကောင်းပေမယ့် steps မမြင်ရ။ UX judge: OS-specific setup ကို မစမ်းသပ်ရသေး၍ မထည့်ရ။",
+        v2:"Telegram ဖွင့်၊ plan ရွေး၊ key ရယူ။",c2:"Burmese editor: step သုံးခုနှင့် help step တစ်ခုကို fact card ထဲထားရန်။",
+        headline:"AuriX ကို\nဘယ်လိုစမလဲ။",support:"ရှုပ်မနေဘဲ အဆင့်လိုက်သွားပါ။",fact:"1 · Bot ဖွင့်\n2 · အစီအစဉ်ရွေး\n3 · Key ရယူ\n4 · မရရင် မေး",detail:"Device setup ကို bot နှင့် support အတိုင်း ဆက်လုပ်ပါ။",cta:"Telegram မှာ စပါ",terms:"Device အလိုက် setup အဆင့်များ ကွာနိုင်သည်။",
+        caption:"AuriX ကို စသုံးဖို့—\n\n1. Telegram bot ကိုဖွင့်ပါ။\n2. အခမဲ့ သို့မဟုတ် paid plan ကိုရွေးပါ။\n3. ရရှိတဲ့ key ကို VPN app ထဲထည့်ပါ။\n4. မရရင် screenshot နဲ့ Telegram မှာ မေးပါ။\n\nDevice အလိုက် setup အဆင့်တွေ ကွာနိုင်ပါတယ်။\n\n#AuriX #HowTo #TelegramBot"
+      },
+      {
+        id:"09",slug:"w03-free-two-ways",family:"free",series:"WEEK 1 · FREE",audience:"Free acquisition",
+        v1:"Free access available.",c1:"Burmese editor: local language နှင့် exact offer မရှိ။ Claims judge: windows တိကျစေရန်။",
+        v2:"အခမဲ့စမ်းဖို့ ၂ မျိုး။",c2:"Conversion judge: numbers ကို အဓိက visual memory ပြုလုပ်ရန်။",
+        headline:"အခမဲ့စမ်းဖို့\n၂ မျိုးရှိတယ်။",support:"နည်းနည်းခဏသုံးမလား၊ ပိုပြီးကြာကြာစမ်းမလား။",fact:"300 MB · နေ့စဉ်\n3 GB · ရက် 30 တိုင်း",detail:"ကိုယ်နဲ့ကိုက်တာကို bot မှာရွေးပါ။",cta:"အခမဲ့ ရယူပါ",terms:"300 MB = 24 နာရီ · 3 GB = ရက် 30",
+        caption:"ခဏခဏ နည်းနည်းသုံးချင်ရင် နေ့စဉ် 300 MB။ ပမာဏပိုလိုပြီး ကြာကြာစမ်းချင်ရင် ရက် 30 တိုင်း 3 GB။\n\nကိုယ်နဲ့ကိုက်တာကို AuriX bot မှာ ရွေးပြီး ရယူပါ။\n\n#AuriX #FreeVPN #VPNMyanmar"
+      },
+      {
+        id:"10",slug:"w04-what-is-key",family:"education",series:"ASK AURIX",audience:"VPN beginners",
+        v1:"Key ဆိုတာ ဘာလဲ။",c1:"Education judge: question ကောင်းပေမယ့် English concept ကို ရိုးရိုးရှင်းရှင်း ရှင်းရန်။",
+        v2:"Key က ချိတ်ဆက်ဖို့ link ပါ။",c2:"Claims judge: password သို့ account ဟု မထင်စေရန် app context ထည့်ရန်။",
+        headline:"Key ဆိုတာ\nဘာလဲ။",support:"VPN app နဲ့ ချိတ်ဆက်ဖို့ AuriX က ပေးတဲ့ access link ပါ။",fact:"ရယူ · ထည့် · ချိတ်ဆက်",detail:"Key ကို bot ကနေ ရယူပြီး သင့် VPN app ထဲထည့်ပါ။",cta:"နောက်ထပ် မေးပါ",terms:"Key ကို public နေရာတွင် မတင်ပါနှင့်။",
+        caption:"AuriX key ဆိုတာ VPN app နဲ့ ချိတ်ဆက်ဖို့ ပေးတဲ့ access link ပါ။ Bot ကနေ key ရယူပြီး သင့် VPN app ထဲထည့်ရပါတယ်။\n\nKey ကို public post၊ comment သို့မဟုတ် group ထဲ မတင်ပါနဲ့။ မရှင်းရင် Telegram မှာ မေးနိုင်ပါတယ်။\n\n#AskAuriX #VPNBasics"
+      },
+      {
+        id:"11",slug:"w05-after-key",family:"education",series:"START SIMPLE",audience:"New claimants",
+        v1:"Key ရပြီးရင် app ထဲထည့်ပါ။",c1:"UX judge: OS-specific live test မရှိ၍ universal steps ကိုသာ သုံးရန်။ Visual judge: action sequence ရှင်းရန်။",
+        v2:"Key ရပြီလား။ နောက်တစ်ဆင့်ကို ဆက်ပါ။",c2:"Burmese editor: မတိကျသေး။ Bot instruction ကို follow လုပ်ရန် တိုက်ရိုက်ပြောရန်။",
+        headline:"Key ရပြီလား။\nBot ပြတဲ့အဆင့်အတိုင်း ဆက်ပါ။",support:"Device အလိုက် setup ပုံစံက ကွာနိုင်တယ်။",fact:"Key ကို copy လုပ်\nVPN app ထဲထည့်\nချိတ်ဆက်စမ်း",detail:"အဆင့်တစ်ခုမှာ မရရင် screenshot နဲ့ မေးပါ။",cta:"Setup အကူအညီယူပါ",terms:"အသုံးပြုမည့် app နှင့် OS အလိုက် menu အမည် ကွာနိုင်သည်။",
+        caption:"Key ရပြီးရင် bot ပြတဲ့ setup အဆင့်အတိုင်း ဆက်လုပ်ပါ။ Device နဲ့ VPN app အလိုက် menu အမည်တွေ ကွာနိုင်ပါတယ်။\n\nအဆင့်တစ်ခုမှာ မရရင် error screenshot နဲ့ Telegram မှာ မေးပါ။\n\n#AuriX #VPNSetup #TelegramSupport"
+      },
+      {
+        id:"12",slug:"w06-setup-help",family:"support",series:"AURIX HELP",audience:"Users with setup problems",
+        v1:"Setup မရဘူးလား။ ဆက်သွယ်ပါ။",c1:"Burmese editor: generic။ Support judge: အသုံးဝင်သော next step ထည့်ရန်။",
+        v2:"တပ်ဆင်တာ မရဘူးလား။ Screenshot ပို့ပါ။",c2:"Privacy judge: screenshot ထဲ sensitive data မပါစေရန် terms ထည့်ရန်။",
+        headline:"တပ်ဆင်တာ\nမရဘူးလား။",support:"Error screenshot နဲ့အတူ Telegram မှာ မေးပါ။",fact:"မြင်ရတဲ့ error ကို ပို့ပါ",detail:"ဖြစ်နေတဲ့အဆင့်ကို တစ်ကြောင်းလောက် ရှင်းပြပါ။",cta:"Telegram မှာ မေးပါ",terms:"Key အပြည့်အစုံနှင့် ကိုယ်ရေးအချက်အလက်များကို screenshot ထဲ မထည့်ပါနှင့်။",
+        caption:"တပ်ဆင်တာမရရင် “မရဘူး” လို့ပဲမပို့ဘဲ ဖြစ်နေတဲ့အဆင့်နဲ့ error screenshot ကို အတူပို့ပါ။ ပိုမြန်မြန်နားလည်ပြီး ကူညီပေးနိုင်ပါတယ်။\n\nKey အပြည့်အစုံနဲ့ ကိုယ်ရေးအချက်အလက်တွေကို screenshot ထဲ မထည့်ပါနဲ့။\n\n#AuriX #TelegramSupport"
+      },
+      {
+        id:"13",slug:"w07-try-first",family:"free",series:"WEEK 3 · VALUE",audience:"Students and budget-aware users",
+        v1:"Free 300 MB before purchase.",c1:"Burmese editor: English-heavy။ Strategy judge: risk reversal ကို human phrasing ဖြင့်ပြောရန်။",
+        v2:"မဝယ်ခင် 300 MB စမ်းပါ။",c2:"Brand judge: aggressive purchase frame မဟုတ်ဘဲ calm invitation ဖြစ်ရန်။",
+        headline:"အရင်စမ်း၊\nအဆင်ပြေမှ ရွေး။",support:"နေ့စဉ် 300 MB အခမဲ့ ရယူနိုင်တယ်။",fact:"300 MB · 24 နာရီ",detail:"Paid plan မရွေးခင် စမ်းသုံးကြည့်ပါ။",cta:"အခမဲ့ စမ်းပါ",terms:"နေ့စဉ် claim window အကျုံးဝင်သည်။",
+        caption:"Paid plan မရွေးခင် AuriX ကို အရင်စမ်းကြည့်ပါ။ နေ့စဉ် 300 MB ကို ရယူပြီး 24 နာရီအတွင်း အသုံးပြုနိုင်ပါတယ်။\n\n#AuriX #TryFirst #VPNMyanmar"
+      },
+      {
+        id:"14",slug:"w08-choose-data",family:"education",series:"CLEAR PLAN",audience:"Data-conscious users",density:"compact",
+        v1:"ဒေတာကို ဘယ်လိုရွေးမလဲ။",c1:"Strategy judge: answer မရှိ။ Claims judge: video-hours ကဲ့သို့ မတိုင်းတာထားသော estimate မသုံးရ။",
+        v2:"ကိုယ်သုံးမယ့်ပုံစံကို အရင်စဉ်းစားပါ။",c2:"Visual judge: three decision cues ကို short phrases ဖြင့်ပြရန်။",
+        headline:"ဒေတာကို\nဘယ်လိုရွေးမလဲ။",support:"အသုံးပုံကို အရင်စဉ်းစားပါ။",fact:"ခဏခဏ နည်းနည်း\nရက်ရှည် ပိုသုံး\nပမာဏကြိုစီမံ",detail:"မသေချာရင် Telegram မှာ ကိုယ်သုံးပုံကို ပြောပြီး မေးပါ။",cta:"ကိုက်တဲ့ plan ကို ရွေးပါ",terms:"အသုံးပြုမှုအလိုက် ဒေတာကုန်နှုန်း ကွာနိုင်သည်။",
+        caption:"Plan ရွေးတဲ့အခါ “ဘယ်လောက်ကြာ video ကြည့်လို့ရမလဲ” ဆိုတဲ့ ခန့်မှန်းချက်တစ်ခုတည်းကို မကြည့်ပါနဲ့။ App၊ quality နဲ့ အသုံးပုံအလိုက် ဒေတာကုန်နှုန်း ကွာနိုင်ပါတယ်။\n\nကိုယ်သုံးမယ့်ပုံစံကို ပြောပြီး Telegram မှာ မေးနိုင်ပါတယ်။\n\n#AuriX #DataPlanning"
+      },
+      {
+        id:"15",slug:"w09-50gb-plan",family:"plan",series:"AURIX PLAN",audience:"Entry paid users",
+        v1:"50 GB for 3,000 MMK.",c1:"Burmese editor: ကျပ်သုံးရန်။ Claims judge: ရက် 30 ထည့်ရန်။",
+        v2:"3,000 ကျပ်နဲ့ 50 GB။",c2:"Conversion judge: CTA နှင့် receipt review expectation ထည့်ရန်။",
+        headline:"3,000 ကျပ်နဲ့\n50 GB",support:"ရက် 30 အသုံးပြုနိုင်တယ်။",fact:"50 GB · ရက် 30",detail:"Order ဖွင့်ပြီး ငွေလွှဲပြေစာ ပို့ပါ။",cta:"Telegram မှာ ဝယ်ပါ",terms:"ဝန်ထမ်းစစ်ဆေးအတည်ပြုပြီးမှ access ရမည်။",
+        caption:"ပုံမှန်အသုံးအတွက် AuriX 50 GB plan ကို 3,000 ကျပ်နဲ့ ရက် 30 အသုံးပြုနိုင်ပါတယ်။\n\nTelegram bot မှာ order ဖွင့်ပြီး ငွေလွှဲပြေစာပို့ပါ။ ဝန်ထမ်းစစ်ဆေးအတည်ပြုပြီးမှ access ရပါမယ်။\n\n#AuriX #50GB #VPNPlan"
+      },
+      {
+        id:"16",slug:"w10-check-duration",family:"clarity",series:"WORK & STUDY",audience:"Freelancers and remote workers",
+        v1:"အလုပ်မစခင် သက်တမ်းကြည့်ပါ။",c1:"Burmese editor: အမိန့်ပေးသံမာ။ Strategy judge: preparedness benefit ထည့်ရန်။",
+        v2:"အလုပ်စမယ့်နေ့နဲ့ plan သက်တမ်းကို ကိုက်အောင်ရွေးပါ။",c2:"Visual judge: headline တိုစေရန်။ Claims judge: reliability မတောင်းဆိုရ။",
+        headline:"အလုပ်မစခင်\nသက်တမ်းကို ကြိုကြည့်။",support:"ပမာဏနဲ့ သက်တမ်းကို bot မှာ အရင်စစ်ပါ။",fact:"ကိုယ်လိုတဲ့ရက်နဲ့ ကိုက်အောင်ရွေး",detail:"Plan တစ်ခုချင်းစီမှာ ဒေတာနဲ့ သက်တမ်းကို ပြထားတယ်။",cta:"အစီအစဉ်ကို ကြည့်ပါ",terms:"Connection quality claim မဟုတ်ပါ။",
+        caption:"အလုပ်လုပ်မယ့်ရက်နဲ့ plan သက်တမ်း မကိုက်ရင် အလယ်မှာပြန်ရွေးရနိုင်ပါတယ်။ မစခင် ဒေတာပမာဏနဲ့ သက်တမ်းကို bot မှာ ကြိုစစ်ပါ။\n\n#AuriX #RemoteWork #ClearPlan"
+      },
+      {
+        id:"17",slug:"w11-important-time-help",family:"support",series:"AURIX HELP",audience:"Time-sensitive users",
+        v1:"အရေးကြီးတဲ့အချိန် Support ရှိတယ်။",c1:"Claims judge: response-time guarantee သဘောသက်ရောက်နိုင်။ Burmese editor: မေးခွန်း hook သုံးရန်။",
+        v2:"အရေးကြီးတဲ့အချိန် မရှင်းတာရှိရင် မေးပါ။",c2:"Support judge: availability terms နှင့် actionable screenshot advice ထည့်ရန်။",
+        headline:"အရေးကြီးတဲ့အချိန်\nမရှင်းတာရှိရင်?",support:"ဖြစ်နေတဲ့အဆင့်ကို Telegram မှာ ပြောပါ။",fact:"Error + Screenshot + Device",detail:"အချက်သုံးခုနဲ့ မေးရင် ပြဿနာကို နားလည်ရလွယ်တယ်။",cta:"Telegram မှာ မေးပါ",terms:"Response time သည် support availability အပေါ် မူတည်သည်။",
+        caption:"အရေးကြီးတဲ့အချိန် ပြဿနာဖြစ်ရင် error စာသား၊ screenshot နဲ့ သုံးနေတဲ့ device ကို အတူပြောပါ။ အခြေအနေကို ပိုမြန်မြန်နားလည်နိုင်ပါတယ်။\n\nResponse time က support availability အပေါ် မူတည်ပါတယ်။\n\n#AuriX #TelegramSupport"
+      },
+      {
+        id:"18",slug:"w12-100gb-plan",family:"plan",series:"AURIX PLAN",audience:"Higher-usage paid users",
+        v1:"100 GB 6,000 ကျပ်။",c1:"Claims judge: duration မပါ။ Conversion judge: ဘယ်သူအတွက်လဲ မရှင်း။",
+        v2:"ပိုသုံးဖို့ 100 GB။",c2:"Burmese editor: concise; price and duration card ထဲ ထည့်ရန်။",
+        headline:"ပိုသုံးဖို့\n100 GB",support:"ပမာဏပိုလိုသူအတွက် ရွေးချယ်စရာ။",fact:"100 GB · 6,000 ကျပ်",detail:"ရက် 30 အသုံးပြုနိုင်သည်။",cta:"Telegram မှာ ဝယ်ပါ",terms:"Receipt review နှင့် capacity availability အကျုံးဝင်သည်။",
+        caption:"ဒေတာပမာဏပိုလိုရင် AuriX 100 GB plan ကို 6,000 ကျပ်နဲ့ ရက် 30 အသုံးပြုနိုင်ပါတယ်။\n\nTelegram bot မှာ order ဖွင့်ပြီး ငွေလွှဲပြေစာပို့ပါ။ စစ်ဆေးအတည်ပြုပြီးမှ access ရပါမယ်။\n\n#AuriX #100GB #VPNPlan"
+      },
+      {
+        id:"19",slug:"w13-data-awareness",family:"education",series:"DATA SMART",audience:"Video and social users",
+        v1:"Video ကြည့်ရင် data ကုန်တယ်။",c1:"Burmese editor: သိသာလွန်းပြီး value နည်း။ Education judge: usage awareness behavior ထည့်ရန်။",
+        v2:"ကြည့်တာများလေ၊ ဒေတာပိုသုံးလေ။",c2:"Claims judge: exact hours မခန့်မှန်းရ။ CTA ကို usage check သို့ပြောင်းရန်။",
+        headline:"ကြည့်တာများလေ၊\nဒေတာပိုသုံးလေ။",support:"App နဲ့ quality အလိုက် ကုန်နှုန်းကွာနိုင်တယ်။",fact:"ကိုယ့်ဒေတာကျန်တာကို စစ်ပါ",detail:"အသုံးများတဲ့နေ့တွေမှာ ပိုမကြာခဏ ကြည့်ပါ။",cta:"ဒေတာကို စီမံပါ",terms:"Video-hour estimate မဟုတ်ပါ။",
+        caption:"Video၊ social နဲ့ download တွေက သုံးပုံနဲ့ quality အလိုက် ဒေတာကုန်နှုန်း ကွာနိုင်ပါတယ်။ “ဒီလောက် GB ဆို ဘယ်နှနာရီ” ဆိုတဲ့ ခန့်မှန်းချက်တစ်ခုတည်းကို မယုံဘဲ ကိုယ့်ဒေတာကျန်တာကို စစ်ပါ။\n\n#AuriX #DataSmart"
+      },
+      {
+        id:"20",slug:"w14-when-data-ends",family:"education",series:"ASK AURIX",audience:"Active users",density:"compact",
+        v1:"ဒေတာကုန်ရင် key ပိတ်မယ်။",c1:"Burmese editor: ကြမ်းပြီး customer fear ဖြစ်နိုင်။ Claims judge: correct enforcement fact ကို calm sequence ဖြင့်ပြရန်။",
+        v2:"သတ်မှတ်ပမာဏပြည့်ရင် လက်ရှိ key ရပ်မယ်။",c2:"Support judge: next step ထည့်ရန်။ Visual judge: three-step card ဖြင့်ရှင်းရန်။",
+        headline:"ဒေတာကုန်ရင်\nဘာဖြစ်မလဲ။",support:"သတ်မှတ်ပမာဏပြည့်ရင် လက်ရှိ key ကို ရပ်မယ်။",fact:"Key ရပ်\nPlan အသစ်ရွေး\nTelegram မှာ မေး",detail:"ပမာဏမပြည့်ခင် ကိုယ့်အသုံးကို ကြိုစစ်ပါ။",cta:"နောက်တစ်ဆင့်ကို ကြည့်ပါ",terms:"ဒေတာအသုံးပြုမှုကို server မှတ်တမ်းအပေါ် မူတည်ပြီး စစ်ဆေးသည်။",
+        caption:"သတ်မှတ်ထားတဲ့ ဒေတာပမာဏပြည့်ရင် လက်ရှိ key ကို ရပ်ပါမယ်။ ဆက်သုံးဖို့လိုရင် plan အသစ်ရွေးနိုင်ပြီး မရှင်းတာကို Telegram မှာ မေးနိုင်ပါတယ်။\n\n#AskAuriX #DataLimit"
+      },
+      {
+        id:"21",slug:"w15-50-or-100",family:"plan",series:"CLEAR PLAN",audience:"Comparing buyers",
+        v1:"50 GB or 100 GB?",c1:"Burmese editor: English question ကို localize လုပ်ရန်။ Strategy judge: bigger-is-better ဖိအားမဖြစ်စေရ။",
+        v2:"50 GB လား၊ 100 GB လား။",c2:"Conversion judge: self-selection benefit နှင့် prices ထည့်ရန်။",
+        headline:"50 GB လား၊\n100 GB လား။",support:"ပိုကြီးတာကိုမရွေးခင် ကိုယ်သုံးမယ့်ပမာဏကို စဉ်းစားပါ။",fact:"50 GB · 3,000 ကျပ်\n100 GB · 6,000 ကျပ်",detail:"နှစ်မျိုးလုံး ရက် 30 အသုံးပြုနိုင်သည်။",cta:"ကိုက်တဲ့ plan ကို ရွေးပါ",terms:"အသုံးပြုမှုအလိုက် ဒေတာလိုအပ်ချက် ကွာနိုင်သည်။",
+        caption:"Plan ပိုကြီးတာက လူတိုင်းအတွက် ပိုကောင်းတယ်လို့ မဆိုလိုပါဘူး။ ကိုယ်သုံးမယ့်ပမာဏနဲ့ ကိုက်တာကို ရွေးပါ။\n\n• 50 GB · 3,000 ကျပ်\n• 100 GB · 6,000 ကျပ်\nနှစ်မျိုးလုံး ရက် 30 အသုံးပြုနိုင်ပါတယ်။\n\n#AuriX #ClearPlan"
+      },
+      {
+        id:"22",slug:"w16-receipt-not-instant",family:"payment",series:"PAYMENT CHECK",audience:"First-time paid buyers",
+        v1:"Receipt ပို့ပြီး စောင့်ပါ။",c1:"Burmese editor: အမိန့်ပေးသံနှင့် process မရှင်း။ Trust judge: review reason ကို ရိုးရိုးပြရန်။",
+        v2:"Receipt ပို့ပြီးရင် ဝန်ထမ်းစစ်ပါမယ်။",c2:"Claims judge: ချက်ချင်း activation မဟုတ်ကြောင်း expectation ထည့်ရန်။",
+        headline:"ငွေလွှဲပြေစာပို့ပြီးရင်\nချက်ချင်းမဖွင့်သေးပါ။",support:"AuriX ဝန်ထမ်း စစ်ဆေးပြီးမှ access ပေးတယ်။",fact:"ပို့ · စစ် · အတည်ပြု · ပေး",detail:"စစ်ဆေးမှုမပြီးခင် payment approved မဖြစ်သေးပါ။",cta:"လုပ်ဆောင်ပုံကို ကြည့်ပါ",terms:"Review time သည် support availability အပေါ် မူတည်သည်။",
+        caption:"ငွေလွှဲပြေစာပို့လိုက်တာနဲ့ access ချက်ချင်းမဖွင့်သေးပါဘူး။ AuriX ဝန်ထမ်းက လက်ခံသူ၊ ပမာဏနဲ့ transaction အချက်အလက်တွေကို စစ်ဆေးအတည်ပြုပြီးမှ access ပေးပါတယ်။\n\n#AuriX #PaymentReview"
+      },
+      {
+        id:"23",slug:"w17-payment-steps",family:"payment",series:"PAYMENT · ၄ ဆင့်",audience:"Paid buyers",density:"compact",
+        v1:"Order, receipt, review, access.",c1:"Burmese editor: English-only။ UX judge: customer action နဲ့ staff action ခွဲရန်။",
+        v2:"Order ဖွင့်၊ receipt ပို့၊ စစ်ဆေး၊ access ရ။",c2:"Visual judge: numbered sequence; Claims judge: approval before access ကို ထင်ရှားရန်။",
+        headline:"Payment review\nဘယ်လိုလုပ်သလဲ။",support:"Customer နဲ့ AuriX လုပ်ဆောင်ချက်ကို အဆင့်လိုက်ကြည့်ပါ။",fact:"1 · Order ဖွင့်\n2 · ပြေစာပို့\n3 · ဝန်ထမ်းစစ်\n4 · Access ရ",detail:"အတည်ပြုချက်ရပြီးမှ access ပေးသည်။",cta:"Telegram မှာ စပါ",terms:"Receipt screenshot သည် evidence ဖြစ်ပြီး approval မဟုတ်သေးပါ။",
+        caption:"AuriX paid plan ဝယ်ယူပုံ—\n\n1. Bot မှာ order ဖွင့်ပါ။\n2. ငွေလွှဲပြေစာ screenshot ပို့ပါ။\n3. AuriX ဝန်ထမ်း စစ်ဆေးပါမယ်။\n4. အတည်ပြုပြီးရင် access ရပါမယ်။\n\n#AuriX #PaymentSteps"
+      },
+      {
+        id:"24",slug:"w18-evidence-not-proof",family:"payment",series:"PAYMENT TRUST",audience:"Payment-cautious users",
+        v1:"Screenshot is evidence, not proof.",c1:"Burmese editor: core meaning ကောင်းသော်လည်း English။ Trust judge: customer ကို သံသယရှိသလို မဖြစ်စေရ။",
+        v2:"Screenshot က အထောက်အထားပါ။ အတည်ပြုချက် မဟုတ်သေးပါ။",c2:"Burmese editor: ပြေစာ screenshot ဟု context ထည့်ရန်။",
+        headline:"ပြေစာ Screenshot က\nအထောက်အထားပါ။",support:"စစ်ဆေးပြီးမှ အတည်ပြုချက် ဖြစ်လာတယ်။",fact:"Evidence ≠ Approval",detail:"တစ်ခုချင်းစီကို ဝန်ထမ်းက စစ်ဆေးတယ်။",cta:"Payment ပုံစံကို ကြည့်ပါ",terms:"ကိုယ်ရေးအချက်အလက်များကို public post တွင် မတင်ပါနှင့်။",
+        caption:"ငွေလွှဲပြေစာ screenshot က စစ်ဆေးဖို့ အထောက်အထားတစ်ခုပါ။ Payment approved ဖြစ်ပြီလို့ မဆိုလိုသေးပါဘူး။ AuriX ဝန်ထမ်း စစ်ဆေးအတည်ပြုပြီးမှ access ပေးပါတယ်။\n\n#AuriX #PaymentTrust"
+      },
+      {
+        id:"25",slug:"w19-one-key-one-data",family:"device",series:"ONE KEY",audience:"Multi-device users",
+        v1:"Key တစ်ခု၊ quota တစ်ခု။",c1:"Burmese editor: quota ကို လူတိုင်းမနားလည်နိုင်။ Education judge: device sharing behavior ရှင်းရန်။",
+        v2:"Key တစ်ခုမှာ ဒေတာပမာဏတစ်ခုပဲရှိတယ်။",c2:"Visual judge: shared reservoir metaphor; Claims judge: device limit ဟု မရေးရ။",
+        headline:"Key တစ်ခု၊\nဒေတာပမာဏတစ်ခု။",support:"ဖုန်းရော ကွန်ပျူတာရော သုံးရင် အဲဒီပမာဏထဲကပဲ လျော့မယ်။",fact:"Device များ → Shared Data",detail:"Physical device limit မဟုတ်ပါ။",cta:"ပိုမိုသိရှိရန် မေးပါ",terms:"တူညီသော key သုံးသည့် device များအကြောင်း ဖြစ်သည်။",
+        caption:"Key တစ်ခုတည်းကို ဖုန်းနဲ့ ကွန်ပျူတာမှာ သုံးရင် device နှစ်ခုလုံးက အဲဒီ key ရဲ့ ဒေတာပမာဏတစ်ခုတည်းကို အတူသုံးသွားပါတယ်။ Physical device limit မဟုတ်ပါဘူး။\n\n#AskAuriX #SharedData"
+      },
+      {
+        id:"26",slug:"w20-phone-laptop",family:"device",series:"ASK AURIX",audience:"Phone and laptop users",density:"compact",
+        v1:"Phone နှင့် laptop နှစ်ခုလုံးသုံးနိုင်သည်။",c1:"Claims judge: unrestricted compatibility claim ဖြစ်နိုင်။ Education judge: same-key shared data ကိုသာပြောရန်။",
+        v2:"တူညီတဲ့ key ကို device နှစ်ခုမှာ သုံးရင်?",c2:"Burmese editor: question ပိုသဘာဝကျ။ Visual judge: three-step explanation ထည့်ရန်။",
+        headline:"ဖုန်းရော laptop ရော\nသုံးရင်?",support:"တူညီတဲ့ key ဆို ဒေတာပမာဏကို အတူသုံးမယ်။",fact:"Key တစ်ခု\nDevice နှစ်ခု\nData တစ်ပမာဏ",detail:"App compatibility ကို device အလိုက် သီးခြားစစ်ရမယ်။",cta:"Device အကြောင်း မေးပါ",terms:"တိကျသော app/device support ကို မအသုံးပြုမီ အတည်ပြုပါ။",
+        caption:"တူညီတဲ့ AuriX key ကို ဖုန်းနဲ့ laptop မှာ သုံးရင် device နှစ်ခုလုံးက data allowance တစ်ခုတည်းကို အတူသုံးပါတယ်။\n\nအသုံးပြုမယ့် app နဲ့ device support ကို မသေချာရင် Telegram မှာ အရင်မေးပါ။\n\n#AskAuriX #MultiDevice"
+      },
+      {
+        id:"27",slug:"w21-key-sharing",family:"device",series:"KEY SAFETY",audience:"Users considering sharing",
+        v1:"Key ကို မမျှဝေပါနဲ့။",c1:"Policy judge: repo တွင် public sharing rule မသတ်မှတ်ရသေး၍ absolute prohibition မရေးရ။ Burmese editor: support-first guidance ပြုလုပ်ရန်။",
+        v2:"Key မျှဝေမယ့်အရင် AuriX ကို မေးပါ။",c2:"Privacy judge: public posting risk ကို တိတိကျကျတားရန်။",
+        headline:"Key ကို\nPublic မှာ မတင်ပါနဲ့။",support:"မျှဝေသုံးဖို့ စဉ်းစားနေရင် AuriX ကို အရင်မေးပါ။",fact:"Key = သင့် access link",detail:"Comment၊ public group နဲ့ screenshot ထဲ မဖော်ပြပါနှင့်။",cta:"Telegram မှာ မေးပါ",terms:"Sharing policy အသေးစိတ်သည် သတ်မှတ်ချက်များအပေါ် မူတည်သည်။",
+        caption:"AuriX key က သင့် access link ဖြစ်လို့ comment၊ public group သို့မဟုတ် screenshot ထဲ မတင်ပါနဲ့။ တခြား device သို့မဟုတ် လူတစ်ယောက်နဲ့ မျှဝေသုံးဖို့ စဉ်းစားနေရင် AuriX ကို အရင်မေးပါ။\n\n#AuriX #KeySafety"
+      },
+      {
+        id:"28",slug:"w22-ask-aurix",family:"community",series:"ASK AURIX",audience:"Community and prospects",
+        v1:"Ask us anything.",c1:"Burmese editor: scope မကန့်သတ်ဘဲ English ဖြစ်နေ။ Community judge: VPN/AuriX question ကို ဖိတ်ခေါ်ရန်။",
+        v2:"AuriX အကြောင်း မေးချင်တာရှိလား။",c2:"Engagement judge: comment နှင့် Telegram action နှစ်ခုလုံးပေးရန်။",
+        headline:"AuriX အကြောင်း\nမေးချင်တာရှိလား။",support:"မရှင်းတာကို သိချင်သလို မေးပါ။",fact:"Plan · Key · Setup · Payment",detail:"Public မရေးချင်ရင် Telegram မှာ မေးနိုင်တယ်။",cta:"မေးခွန်းပို့ပါ",terms:"ကိုယ်ရေးအချက်အလက်နှင့် key ကို comment တွင် မတင်ပါနှင့်။",
+        caption:"AuriX plan၊ key၊ setup ဒါမှမဟုတ် payment အကြောင်း မရှင်းတာရှိလား။ Comment မှာ မေးနိုင်သလို public မရေးချင်ရင် Telegram မှာလည်း မေးနိုင်ပါတယ်။\n\nKey နဲ့ ကိုယ်ရေးအချက်အလက်တွေကို comment ထဲ မတင်ပါနဲ့။\n\n#AskAuriX #VPNMyanmar"
+      },
+      {
+        id:"29",slug:"w23-real-results-only",family:"clarity",series:"REAL RESULTS",audience:"Trust-seeking prospects",
+        v1:"Customer success story.",c1:"Claims judge: verified customer quote မရှိ၍ testimonial ဖန်တီးမရ။ Ethics judge: placeholder testimonial မသုံးရ။",
+        v2:"လက်တွေ့ရလဒ်ကိုပဲ မျှဝေမယ်။",c2:"Brand judge: evidence-first principle ကို post အဖြစ်ပြောင်းရန်။ Consent term ထည့်ရန်။",
+        headline:"လက်တွေ့ရလဒ်ကိုပဲ\nမျှဝေမယ်။",support:"မစမ်းသပ်ရသေးတာကို ကတိမပေးဘူး။",fact:"စမ်းသပ် · အတည်ပြု · မျှဝေ",detail:"Customer story ဆိုရင် ခွင့်ပြုချက်ရပြီးမှ တင်မယ်။",cta:"Signal Check ကို စောင့်ကြည့်ပါ",terms:"Fabricated testimonial နှင့် မတိုင်းတာထားသော result မသုံးပါ။",
+        caption:"AuriX မှာ မစမ်းသပ်ရသေးတာကို ကတိမပေးပါဘူး။ Connection result၊ setup outcome နဲ့ customer story တွေကို အတည်ပြုနိုင်ပြီး ခွင့်ပြုချက်ရတဲ့အခါမှ မျှဝေပါမယ်။\n\n#AuriX #RealResults #SignalCheck"
+      },
+      {
+        id:"30",slug:"w24-renew-early",family:"gateway",series:"RENEWAL",audience:"Current customers",
+        v1:"သက်တမ်းမကုန်ခင် renew လုပ်ပါ။",c1:"Burmese editor: English verb နှင့် hard command။ Lifecycle judge: bot မှ expiry ကို ကြိုစစ်ရန်ပြောပါ။",
+        v2:"သက်တမ်းမကုန်ခင် ကြိုတိုးထားပါ။",c2:"Claims judge: seamless continuation မကတိပေးရ။ CTA ကို Telegram renewal သို့ထားရန်။",
+        headline:"သက်တမ်းမကုန်ခင်\nကြိုတိုးထားပါ။",support:"လက်ရှိ plan အဆုံးသတ်မယ့်အချိန်ကို အရင်စစ်ပါ။",fact:"သက်တမ်းစစ် · Plan ရွေး · သက်တမ်းတိုး",detail:"မရှင်းရင် Telegram မှာ မေးပါ။",cta:"Telegram မှာ သက်တမ်းတိုးပါ",terms:"Plan ရရှိနိုင်မှုနှင့် ငွေလွှဲစစ်ဆေးမှု အကျုံးဝင်သည်။",
+        caption:"လက်ရှိ plan အဆုံးသတ်မယ့်အချိန်ကို Telegram bot မှာ အရင်စစ်ပါ။ ဆက်သုံးဖို့လိုရင် သက်တမ်းမကုန်ခင် plan ကို ကြိုရွေးထားနိုင်ပါတယ်။\n\nသက်တမ်းတိုးမှုမှာ plan availability နဲ့ payment review အကျုံးဝင်ပါတယ်။\n\n#AuriX #Renewal #TelegramBot"
+      }
+    ];
+
+    const params = new URLSearchParams(location.search);
+    const requested = params.get("post") || "01";
+    const post = window.POSTS.find(item => item.id === requested || item.slug === requested) || window.POSTS[0];
+    const canvas = document.getElementById("canvas");
+    canvas.dataset.family = post.family;
+    canvas.dataset.density = post.density || "normal";
+    document.getElementById("series").textContent = post.series;
+    document.getElementById("headline").textContent = post.headline;
+    document.getElementById("support").textContent = post.support;
+    document.getElementById("fact").textContent = post.fact;
+    document.getElementById("detail").textContent = post.detail;
+    document.getElementById("cta").textContent = post.cta;
+    document.getElementById("terms").textContent = post.terms;
+    document.getElementById("index").textContent = post.id + " / 30";
+    document.title = post.id + " — " + post.slug;
+    window.CURRENT_POST = post;
+  </script>
+</body>
+</html>

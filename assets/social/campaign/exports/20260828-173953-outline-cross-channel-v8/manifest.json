@@ -1,0 +1,85 @@
+{
+  "campaign": "aurix-outline-cross-channel-v8",
+  "created_at": "2026-08-28T17:39:53+06:30",
+  "publish_ready": true,
+  "format": "1080x1350 PNG plus UTF-8 Burmese TXT",
+  "distribution": [
+    "Facebook Page",
+    "Telegram public channel",
+    "Telegram community group",
+    "Telegram bot onboarding"
+  ],
+  "outline_positioning": "AuriX independently provides Outline-compatible access keys for use in the official Outline Client; no official partnership is claimed.",
+  "posts": [
+    {
+      "id": "retention-setup",
+      "kind": "retention",
+      "image": "20260828-173953_retention-setup_v8.png",
+      "caption": "20260828-173953_retention-setup_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_retention-setup_v8.svg"
+    },
+    {
+      "id": "retention-allowance",
+      "kind": "retention",
+      "image": "20260828-173953_retention-allowance_v8.png",
+      "caption": "20260828-173953_retention-allowance_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_retention-allowance_v8.svg"
+    },
+    {
+      "id": "retention-expiry",
+      "kind": "retention",
+      "image": "20260828-173953_retention-expiry_v8.png",
+      "caption": "20260828-173953_retention-expiry_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_retention-expiry_v8.svg"
+    },
+    {
+      "id": "guide-overview",
+      "kind": "guide",
+      "image": "20260828-173953_guide-overview_v8.png",
+      "caption": "20260828-173953_guide-overview_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_guide-overview_v8.svg"
+    },
+    {
+      "id": "guide-android",
+      "kind": "guide",
+      "image": "20260828-173953_guide-android_v8.png",
+      "caption": "20260828-173953_guide-android_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_guide-android_v8.svg"
+    },
+    {
+      "id": "guide-ios",
+      "kind": "guide",
+      "image": "20260828-173953_guide-ios_v8.png",
+      "caption": "20260828-173953_guide-ios_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_guide-ios_v8.svg"
+    },
+    {
+      "id": "guide-windows",
+      "kind": "guide",
+      "image": "20260828-173953_guide-windows_v8.png",
+      "caption": "20260828-173953_guide-windows_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_guide-windows_v8.svg"
+    },
+    {
+      "id": "guide-macos",
+      "kind": "guide",
+      "image": "20260828-173953_guide-macos_v8.png",
+      "caption": "20260828-173953_guide-macos_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_guide-macos_v8.svg"
+    },
+    {
+      "id": "guide-linux",
+      "kind": "guide",
+      "image": "20260828-173953_guide-linux_v8.png",
+      "caption": "20260828-173953_guide-linux_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_guide-linux_v8.svg"
+    },
+    {
+      "id": "guide-chromeos",
+      "kind": "guide",
+      "image": "20260828-173953_guide-chromeos_v8.png",
+      "caption": "20260828-173953_guide-chromeos_v8.txt",
+      "source": "assets/social/campaign/outline-v8-sources/20260828-173953/20260828-173953_guide-chromeos_v8.svg"
+    }
+  ]
+}

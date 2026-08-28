@@ -1,0 +1,29 @@
+{
+  "campaign": "aurix-retention-v9-natural-hooks",
+  "created_at": "2026-08-28T20:21:31+06:30",
+  "publish_ready": true,
+  "format": "1080x1350 labeled PNG + TXT caption + separate graphics-only 1080x1350 PNG",
+  "posts": [
+    {
+      "id": "setup",
+      "image": "20260828-202131_retention-setup_v9.png",
+      "caption": "20260828-202131_retention-setup_v9.txt",
+      "graphics_only": "20260828-202131_setup-human-help_graphics-only.png",
+      "source": "assets/social/campaign/retention-v9-sources/20260828-202131_retention-setup_v9.svg"
+    },
+    {
+      "id": "allowance",
+      "image": "20260828-202131_retention-allowance_v9.png",
+      "caption": "20260828-202131_retention-allowance_v9.txt",
+      "graphics_only": "20260828-202131_allowance-worry_graphics-only.png",
+      "source": "assets/social/campaign/retention-v9-sources/20260828-202131_retention-allowance_v9.svg"
+    },
+    {
+      "id": "expiry",
+      "image": "20260828-202131_retention-expiry_v9.png",
+      "caption": "20260828-202131_retention-expiry_v9.txt",
+      "graphics_only": "20260828-202131_expiry-worry_graphics-only.png",
+      "source": "assets/social/campaign/retention-v9-sources/20260828-202131_retention-expiry_v9.svg"
+    }
+  ]
+}

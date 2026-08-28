@@ -1,0 +1,16 @@
+{
+  "campaign": "aurix-retention-v6",
+  "created_at": "2026-08-28T16:51:44+06:30",
+  "publish_ready": true,
+  "format": "1080x1350 PNG plus UTF-8 Burmese TXT",
+  "telegram": {
+    "bot": "https://t.me/aurix_outline_vpn_bot",
+    "group": "https://t.me/+oA18TDWAD9NiNWU1",
+    "channel": "https://t.me/AurixDigitalStore"
+  },
+  "posts": [
+    {"id": "setup", "image": "20260828-165144_setup_setup-human-help_v6.png", "caption": "20260828-165144_setup_setup-human-help_v6.txt"},
+    {"id": "quota", "image": "20260828-165144_quota_data-finished-next-plan_v6.png", "caption": "20260828-165144_quota_data-finished-next-plan_v6.txt"},
+    {"id": "renewal", "image": "20260828-165144_renewal_renew-before-expiry_v6.png", "caption": "20260828-165144_renewal_renew-before-expiry_v6.txt"}
+  ]
+}

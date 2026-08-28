@@ -1,0 +1,12 @@
+{
+  "campaign": "aurix-retention-v5",
+  "created_at": "2026-08-28T16:46:25+06:30",
+  "publish_ready": false,
+  "blocker": "Replace {{TELEGRAM_BOT_LINK}} in all caption files with the real bot URL.",
+  "format": "1080x1350 PNG plus UTF-8 Burmese TXT",
+  "posts": [
+    {"id": "setup", "image": "20260828-164625_setup_setup-human-help_v5.png", "caption": "20260828-164625_setup_setup-human-help_v5.txt"},
+    {"id": "quota", "image": "20260828-164625_quota_data-finished-next-plan_v5.png", "caption": "20260828-164625_quota_data-finished-next-plan_v5.txt"},
+    {"id": "renewal", "image": "20260828-164625_renewal_renew-before-expiry_v5.png", "caption": "20260828-164625_renewal_renew-before-expiry_v5.txt"}
+  ]
+}

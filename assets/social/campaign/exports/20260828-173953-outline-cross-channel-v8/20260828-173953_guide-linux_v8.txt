@@ -1,0 +1,19 @@
+Linux မှာ AuriX VPN သုံးနည်း—
+
+၁။ Official Linux installation guide အတိုင်း Outline Client ကို repository သို့မဟုတ် `.deb` package ကနေ သွင်းပါ။
+https://support.getoutline.org/en-GB/client/getting-started/install-linux/
+
+၂။ AuriX Bot ကရတဲ့ `ss://` နဲ့စတဲ့ access key အပြည့်ကို Copy လုပ်ပါ။
+၃။ Outline Client ကိုဖွင့်ပြီး key ကို Add လုပ်ပါ။
+၄။ Connect လုပ်ပါ။ Linux Client မှာ in-app auto-update မရှိတဲ့အတွက် package update ကို ကိုယ်တိုင်စစ်ပါ။
+
+Official minimum requirement: Ubuntu 20.04 နှင့်အထက်။
+
+🤖 AuriX key ရယူရန် — https://t.me/aurix_outline_vpn_bot
+💬 အကူအညီ — https://t.me/+oA18TDWAD9NiNWU1
+
+AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။ AuriX က Outline-compatible access key ကို သီးခြားဝန်ဆောင်မှုပေးပြီး official Outline Client ဖြင့် အသုံးပြုရပါသည်။
+
+#AuriXVPN #OutlineLinux #VPNSetup
+
+🔐 AuriX access key အပြည့်အစုံကို public post၊ comment၊ group သို့မဟုတ် screenshot ထဲ မဖော်ပြပါနဲ့။

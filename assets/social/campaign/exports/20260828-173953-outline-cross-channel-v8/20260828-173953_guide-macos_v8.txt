@@ -1,0 +1,19 @@
+Mac မှာ AuriX VPN သုံးနည်း—
+
+၁။ Mac App Store မှ official Outline Client ကို သွင်းပါ။
+https://itunes.apple.com/us/app/outline-app/id1356178125
+
+၂။ AuriX Bot ကရတဲ့ `ss://` နဲ့စတဲ့ access key အပြည့်ကို Copy လုပ်ပါ။
+၃။ Outline Client ကိုဖွင့်ပြီး key ကို Add လုပ်ပါ။
+၄။ Connect လုပ်ပြီး macOS က VPN configuration ခွင့်ပြုချက်တောင်းရင် အတည်ပြုပါ။
+
+Official minimum requirement: macOS 12 နှင့်အထက်။
+
+🤖 AuriX key ရယူရန် — https://t.me/aurix_outline_vpn_bot
+💬 အကူအညီ — https://t.me/+oA18TDWAD9NiNWU1
+
+AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။ AuriX က Outline-compatible access key ကို သီးခြားဝန်ဆောင်မှုပေးပြီး official Outline Client ဖြင့် အသုံးပြုရပါသည်။
+
+#AuriXVPN #OutlinemacOS #VPNSetup
+
+🔐 AuriX access key အပြည့်အစုံကို public post၊ comment၊ group သို့မဟုတ် screenshot ထဲ မဖော်ပြပါနဲ့။

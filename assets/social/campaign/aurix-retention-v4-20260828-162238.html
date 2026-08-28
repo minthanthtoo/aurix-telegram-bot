@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="my">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <title>AuriX retention V4</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:1080px;height:1350px;overflow:hidden;background:#071421}
+    body{font-family:"Noto Sans Myanmar","Myanmar Sangam MN",sans-serif}
+    .canvas{position:relative;width:1080px;height:1350px;overflow:hidden;color:#f6f8fc;background:#071421}
+    .plate{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    .shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(7,20,33,.99) 0%,rgba(7,20,33,.94) 47%,rgba(7,20,33,.45) 71%,rgba(7,20,33,.05) 100%)}
+    .content{position:absolute;left:78px;top:68px;width:624px;height:1172px;display:flex;flex-direction:column}
+    .brand{display:flex;align-items:center;gap:17px;height:74px}.brand img{width:74px;height:74px}
+    .wordmark{font-family:Inter,"Avenir Next",Arial,sans-serif;font-size:38px;font-weight:850;letter-spacing:-1.8px}.wordmark span{color:#36e2ff}
+    .series{margin-top:55px;color:#ffc857;font-size:22px;line-height:1.5;font-weight:800}
+    h1{margin:16px 0 0;width:624px;font-size:55px;line-height:1.45;font-weight:850;white-space:pre-line;letter-spacing:-.5px}
+    .support{margin-top:18px;width:602px;color:#dce6ef;font-size:27px;line-height:1.62;font-weight:700;white-space:pre-line}
+    .card{margin-top:27px;width:590px;padding:24px 29px;border-radius:27px;border:1.7px solid rgba(54,226,255,.43);background:linear-gradient(135deg,rgba(16,45,67,.94),rgba(13,34,53,.82));box-shadow:0 18px 54px rgba(0,0,0,.23)}
+    .fact{color:#36e2ff;font-size:30px;line-height:1.68;font-weight:850;white-space:pre-line}.detail{margin-top:4px;color:#bdcad5;font-size:19px;line-height:1.65;font-weight:700;white-space:pre-line}
+    .bottom{margin-top:auto}.cta{display:inline-flex;align-items:center;justify-content:center;min-width:350px;min-height:70px;padding:12px 29px;border-radius:37px;background:linear-gradient(135deg,#36e2ff,#7765ff);color:#071421;font-size:22px;line-height:1.45;font-weight:850;text-align:center}
+    .terms{margin-top:18px;width:600px;color:#a4b5c3;font-size:17px;line-height:1.65;font-weight:700;white-space:pre-line}
+    .canvas[data-id="setup"] .cta{background:linear-gradient(135deg,#ffc857,#36e2ff)}
+    .canvas[data-id="quota"] h1{font-size:51px}
+  </style>
+</head>
+<body>
+  <main class="canvas" id="canvas">
+    <img class="plate" id="plate" alt="">
+    <div class="shade"></div>
+    <section class="content">
+      <div class="brand"><img src="../../../brand/v2/aurix-logo-mark-v2.svg" alt=""><div class="wordmark">Auri<span>X</span></div></div>
+      <div class="series" id="series"></div>
+      <h1 id="headline"></h1>
+      <div class="support" id="support"></div>
+      <div class="card"><div class="fact" id="fact"></div><div class="detail" id="detail"></div></div>
+      <div class="bottom"><div class="cta" id="cta"></div><div class="terms" id="terms"></div></div>
+    </section>
+  </main>
+  <script>
+    window.POSTS={
+      setup:{slug:"setup-connection-help",plate:"v4-plates/setup-help-v4-plate.png",series:"AURIX အကူအညီ",headline:"ချိတ်ဆက်မရဘူးလား။",support:"ဖြစ်နေတဲ့နေရာကို ပုံနဲ့ပြောပါ။",fact:"အမှားပြ စာမျက်နှာပုံ\nသုံးနေတဲ့ ဖုန်းအမျိုးအစား\nဘယ်အဆင့်မှာ ရပ်နေလဲ",detail:"ဒီအချက်သုံးခုပါရင် ဖြစ်နေတာကို နားလည်ရ ပိုလွယ်တယ်။",cta:"Telegram မှာ အကူအညီတောင်းပါ",terms:"ချိတ်ဆက်လင့်ခ်အပြည့်အစုံနှင့် ကိုယ်ရေးအချက်အလက်များကို ပုံထဲ မထည့်ပါနှင့်။",caption:"ချိတ်ဆက်မရရင် “မရဘူး” လို့ တစ်ကြောင်းတည်းမပို့ဘဲ—\n\n• အမှားပြနေတဲ့ စာမျက်နှာပုံ\n• သုံးနေတဲ့ ဖုန်းအမျိုးအစား\n• ဘယ်အဆင့်မှာ ရပ်နေလဲဆိုတာ\n\nဒီအချက်သုံးခုနဲ့အတူ Telegram မှာ ပို့ပေးပါ။ ဖြစ်နေတာကို နားလည်ရ ပိုလွယ်ပြီး လိုအပ်တာကို တိတိကျကျ ကူညီပေးနိုင်ပါတယ်။\n\nချိတ်ဆက်လင့်ခ်အပြည့်အစုံနဲ့ ကိုယ်ရေးအချက်အလက်တွေကို ပုံထဲ မထည့်ပါနဲ့။\n\n#AuriX #AuriXအကူအညီ #Telegram"},
+      quota:{slug:"data-limit-next-step",plate:"v4-plates/data-finished-v4-plate.png",series:"ASK AURIX",headline:"ဒေတာပြည့်သွားရင်\nဘာဆက်လုပ်မလဲ။",support:"လက်ရှိချိတ်ဆက်လင့်ခ်ကို ဆက်သုံးလို့ မရတော့ဘူး။ ဆက်သုံးဖို့ အစီအစဉ်အသစ် ရွေးနိုင်တယ်။",fact:"၁ · ဒေတာလက်ကျန်စစ်\n၂ · အစီအစဉ်အသစ်ရွေး\n၃ · မရှင်းရင် Telegram မှာမေး",detail:"ဒေတာမပြည့်ခင် လက်ကျန်ကို ကြိုစစ်ထားပါ။",cta:"အစီအစဉ်တွေကို ကြည့်ပါ",terms:"သတ်မှတ်ထားသော ဒေတာပမာဏပြည့်လျှင် လက်ရှိချိတ်ဆက်လင့်ခ်ကို ရပ်ဆိုင်းသည်။",caption:"သတ်မှတ်ထားတဲ့ ဒေတာပမာဏပြည့်သွားရင် အခုသုံးနေတဲ့ ချိတ်ဆက်လင့်ခ်ကို ဆက်သုံးလို့ မရတော့ပါဘူး။ ဒါက ဖုန်း ဒါမှမဟုတ် VPN အက်ပ် ပျက်တာမဟုတ်ပါဘူး။\n\nဆက်သုံးဖို့လိုရင်—\n\n၁။ ကိုယ့်ဒေတာလက်ကျန်ကို စစ်ပါ။\n၂။ ကိုယ်နဲ့ကိုက်တဲ့ အစီအစဉ်အသစ်ကို ရွေးပါ။\n၃။ မရှင်းတာရှိရင် Telegram မှာ မေးပါ။\n\nဒေတာမပြည့်ခင် လက်ကျန်ကို ကြိုစစ်ထားရင် နောက်တစ်ဆင့်ကို စီစဉ်ရ ပိုလွယ်ပါတယ်။\n\n#AuriX #AskAuriX #ဒေတာပမာဏ"},
+      renewal:{slug:"plan-expiry-renewal",plate:"v4-plates/renewal-v4-plate.png",series:"ဆက်လက်အသုံးပြုရန်",headline:"ဆက်သုံးမယ်ဆို\nကြိုစီစဉ်ထားပါ။",support:"လက်ရှိအစီအစဉ် ကုန်ဆုံးမယ့်ရက်ကို Telegram မှာ အရင်စစ်ပါ။",fact:"၁ · ကုန်ဆုံးမယ့်ရက်စစ်\n၂ · နောက်အစီအစဉ်ရွေး\n၃ · ပြေစာအတည်ပြုချက် စောင့်",detail:"အတည်ပြုပြီးမှ နောက်အစီအစဉ် စတင်နိုင်မယ်။",cta:"နောက်အစီအစဉ်ကို ရွေးပါ",terms:"အစီအစဉ်ရရှိနိုင်မှုနှင့် ငွေလွှဲအတည်ပြုမှု အကျုံးဝင်သည်။",caption:"AuriX ကို ဆက်သုံးမယ်ဆို လက်ရှိအစီအစဉ် ကုန်ဆုံးမယ့်ရက်ကို Telegram မှာ ကြိုစစ်ထားပါ။\n\nဆက်လက်အသုံးပြုဖို့—\n\n၁။ ကုန်ဆုံးမယ့်ရက်ကို စစ်ပါ။\n၂။ ကိုယ်နဲ့ကိုက်တဲ့ နောက်အစီအစဉ်ကို ရွေးပါ။\n၃။ ငွေလွှဲပြေစာပို့ပြီး အတည်ပြုချက်ကို စောင့်ပါ။\n\nအတည်ပြုပြီးမှ နောက်အစီအစဉ် စတင်နိုင်မှာဖြစ်လို့ နောက်ဆုံးအချိန်အထိ မစောင့်ဘဲ ကြိုစီစဉ်ထားတာ ပိုကောင်းပါတယ်။\n\n#AuriX #ဆက်လက်အသုံးပြုရန် #Telegram"}
+    };
+    const id=new URLSearchParams(location.search).get("post")||"setup";const p=window.POSTS[id]||window.POSTS.setup;
+    document.getElementById("canvas").dataset.id=id;document.getElementById("plate").src=p.plate;document.getElementById("series").textContent=p.series;document.getElementById("headline").textContent=p.headline;document.getElementById("support").textContent=p.support;document.getElementById("fact").textContent=p.fact;document.getElementById("detail").textContent=p.detail;document.getElementById("cta").textContent=p.cta;document.getElementById("terms").textContent=p.terms;document.title=id+" — "+p.slug;window.CURRENT_POST=p;
+  </script>
+</body>
+</html>

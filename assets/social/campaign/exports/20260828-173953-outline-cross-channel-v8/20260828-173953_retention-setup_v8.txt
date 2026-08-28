@@ -1,0 +1,14 @@
+AuriX VPN က ဘယ် app နဲ့ သုံးရတာလဲဆိုရင်—official Outline Client နဲ့ သုံးရတာပါ။
+
+AuriX Bot ကရတဲ့ access key အပြည့်အစုံကို Copy လုပ်ပြီး Outline Client ထဲထည့်ပါ။ Key က `ss://` နဲ့ စရပါမယ်။ Outline app တစ်ခုတည်းသွင်းထားရုံနဲ့ မချိတ်ဆက်နိုင်ပါဘူး—AuriX access key လည်း လိုပါတယ်။
+
+ချိတ်ဆက်မရရင် ဖုန်းအမျိုးအစား၊ ဘယ်အဆင့်မှာ ရပ်နေလဲနဲ့ အမှားပြစာမျက်နှာပုံကို အဖွဲ့ထဲမှာ ပို့ပြီး အကူအညီတောင်းနိုင်ပါတယ်။ Key အပြည့်အစုံကို public group သို့မဟုတ် screenshot ထဲ မဖော်ပြပါနဲ့။
+
+🤖 AuriX key ရယူရန် — https://t.me/aurix_outline_vpn_bot
+💬 အကူအညီအဖွဲ့ — https://t.me/+oA18TDWAD9NiNWU1
+📥 Official Outline Client — https://developer.getoutline.org/download-links/
+📣 AuriX သတင်းများ — https://t.me/AurixDigitalStore
+
+AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။ AuriX က Outline-compatible access key ကို သီးခြားဝန်ဆောင်မှုပေးပြီး official Outline Client ဖြင့် အသုံးပြုရပါသည်။
+
+#AuriXVPN #OutlineClient #VPNSetup

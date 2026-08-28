@@ -1,0 +1,17 @@
+{
+  "campaign": "aurix-retention-v7",
+  "created_at": "2026-08-28T17:30:07+06:30",
+  "publish_ready": true,
+  "core_promise": "Help existing users avoid losing AuriX VPN access when they need it.",
+  "format": "1080x1350 PNG plus UTF-8 Burmese TXT",
+  "telegram": {
+    "bot": "https://t.me/aurix_outline_vpn_bot",
+    "group": "https://t.me/+oA18TDWAD9NiNWU1",
+    "channel": "https://t.me/AurixDigitalStore"
+  },
+  "posts": [
+    {"id": "setup", "image": "20260828-173007_setup_vpn-connection-help_v7.png", "caption": "20260828-173007_setup_vpn-connection-help_v7.txt"},
+    {"id": "quota", "image": "20260828-173007_quota_vpn-allowance-running-low_v7.png", "caption": "20260828-173007_quota_vpn-allowance-running-low_v7.txt"},
+    {"id": "renewal", "image": "20260828-173007_renewal_vpn-expiry-prevention_v7.png", "caption": "20260828-173007_renewal_vpn-expiry-prevention_v7.txt"}
+  ]
+}

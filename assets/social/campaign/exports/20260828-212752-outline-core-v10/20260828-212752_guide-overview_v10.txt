@@ -1,0 +1,17 @@
+AuriX VPN စသုံးဖို့ official Outline Client app နဲ့ AuriX access key—နှစ်ခုလုံး လိုပါတယ်။
+
+၁။ ကိုယ့်စက်အတွက် official Outline Client ကို သွင်းပါ။
+၂။ AuriX Bot ကရတဲ့ `ss://` နဲ့စတဲ့ key အပြည့်အစုံကို Copy လုပ်ပါ။
+၃။ Outline Client ထဲမှာ key ကို ထည့်ပါ။
+၄။ Connect လုပ်ပြီး စသုံးပါ။
+
+Outline app သွင်းထားရုံနဲ့ VPN မချိတ်ဆက်နိုင်ပါဘူး။ AuriX access key လည်း လိုပါတယ်။ Key အပြည့်အစုံကို public post၊ comment၊ group သို့မဟုတ် screenshot ထဲ မဖော်ပြပါနဲ့။
+
+🤖 AuriX key ရယူရန် — https://t.me/aurix_outline_vpn_bot
+📥 Official Outline Client — https://developer.getoutline.org/download-links/
+💬 အကူအညီ — https://t.me/+oA18TDWAD9NiNWU1
+📣 AuriX သတင်းများ — https://t.me/AurixDigitalStore
+
+AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။ AuriX က Outline-compatible access key ကို သီးခြားဝန်ဆောင်မှုပေးပြီး official Outline Client ဖြင့် အသုံးပြုရပါသည်။
+
+#AuriXVPN #OutlineClient #OutlineKey
