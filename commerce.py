@@ -691,6 +691,39 @@ class PostgresCommerceDatabase:
             )
         return int(getattr(deleted, "rowcount", 0) or 0)
 
+    def maintenance_heartbeat(
+        self,
+        *,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+        success_at: str | None = None,
+        stage: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        now = _now_text()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO maintenance_heartbeat
+                   (id, last_started_at, last_completed_at, last_success_at,
+                    last_stage, last_error, updated_at)
+                   VALUES (1, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     last_started_at = COALESCE(EXCLUDED.last_started_at, maintenance_heartbeat.last_started_at),
+                     last_completed_at = COALESCE(EXCLUDED.last_completed_at, maintenance_heartbeat.last_completed_at),
+                     last_success_at = COALESCE(EXCLUDED.last_success_at, maintenance_heartbeat.last_success_at),
+                     last_stage = EXCLUDED.last_stage,
+                     last_error = EXCLUDED.last_error,
+                     updated_at = EXCLUDED.updated_at""",
+                (started_at, completed_at, success_at, stage, error, now),
+            )
+
+    def get_maintenance_heartbeat(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM maintenance_heartbeat WHERE id = 1"
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def initialize(self) -> None:
         schema = """
         CREATE TABLE IF NOT EXISTS users (
@@ -705,6 +738,8 @@ class PostgresCommerceDatabase:
             id BIGSERIAL PRIMARY KEY,
             telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
             outline_key_id TEXT NOT NULL UNIQUE,
+            key_type TEXT NOT NULL DEFAULT 'daily_free'
+                CHECK (key_type IN ('daily_free', 'monthly_trial', 'paid')),
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             data_limit_bytes BIGINT NOT NULL,
@@ -714,6 +749,15 @@ class PostgresCommerceDatabase:
             quota_warning_percent INTEGER
         );
         CREATE INDEX IF NOT EXISTS keys_expiry ON keys(status, expires_at);
+        CREATE TABLE IF NOT EXISTS maintenance_heartbeat (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_started_at TEXT,
+            last_completed_at TEXT,
+            last_success_at TEXT,
+            last_stage TEXT,
+            last_error TEXT,
+            updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS telegram_updates (
             update_id BIGINT PRIMARY KEY,
             received_at TEXT NOT NULL
@@ -946,6 +990,12 @@ class PostgresCommerceDatabase:
             connection.execute("ALTER TABLE paid_vpn_keys ADD COLUMN IF NOT EXISTS quota_reason TEXT")
             connection.execute("ALTER TABLE paid_vpn_keys ADD COLUMN IF NOT EXISTS quota_warning_percent INTEGER")
             connection.execute("ALTER TABLE keys ADD COLUMN IF NOT EXISTS quota_warning_percent INTEGER")
+            connection.execute("ALTER TABLE keys ADD COLUMN IF NOT EXISTS key_type TEXT NOT NULL DEFAULT 'daily_free'")
+            connection.execute(
+                """UPDATE keys SET key_type = 'monthly_trial'
+                   WHERE key_type = 'daily_free' AND data_limit_bytes >= %s""",
+                (3 * 1024 * 1024 * 1024,),
+            )
             connection.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS plan_name TEXT NOT NULL DEFAULT ''")
             connection.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS quota_bytes_snapshot BIGINT")
             connection.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS duration_days_snapshot INTEGER")

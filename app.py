@@ -187,6 +187,8 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
                     outline_key_id TEXT NOT NULL UNIQUE,
+                    key_type TEXT NOT NULL DEFAULT 'daily_free'
+                        CHECK (key_type IN ('daily_free', 'monthly_trial', 'paid')),
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
                     data_limit_bytes INTEGER NOT NULL,
@@ -196,6 +198,15 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS keys_expiry
                     ON keys(status, expires_at);
+                CREATE TABLE IF NOT EXISTS maintenance_heartbeat (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    last_started_at TEXT,
+                    last_completed_at TEXT,
+                    last_success_at TEXT,
+                    last_stage TEXT,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS telegram_updates (
                     update_id INTEGER PRIMARY KEY,
                     received_at TEXT NOT NULL
@@ -265,12 +276,55 @@ class Database:
             if "username" not in user_columns:
                 connection.execute("ALTER TABLE users ADD COLUMN username TEXT")
             key_columns = {row[1] for row in connection.execute("PRAGMA table_info(keys)")}
+            if "key_type" not in key_columns:
+                connection.execute(
+                    "ALTER TABLE keys ADD COLUMN key_type TEXT NOT NULL DEFAULT 'daily_free'"
+                )
+            connection.execute(
+                """UPDATE keys SET key_type = 'monthly_trial'
+                   WHERE key_type = 'daily_free' AND data_limit_bytes >= ?""",
+                (TRIAL_LIMIT_BYTES,),
+            )
             if "last_usage_bytes" not in key_columns:
                 connection.execute("ALTER TABLE keys ADD COLUMN last_usage_bytes INTEGER")
             if "quota_reason" not in key_columns:
                 connection.execute("ALTER TABLE keys ADD COLUMN quota_reason TEXT")
             if "quota_warning_percent" not in key_columns:
                 connection.execute("ALTER TABLE keys ADD COLUMN quota_warning_percent INTEGER")
+
+    def maintenance_heartbeat(
+        self,
+        *,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+        success_at: str | None = None,
+        stage: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Persist the latest housekeeping lifecycle for health checks."""
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO maintenance_heartbeat
+                   (id, last_started_at, last_completed_at, last_success_at,
+                    last_stage, last_error, updated_at)
+                   VALUES (1, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     last_started_at = COALESCE(excluded.last_started_at, maintenance_heartbeat.last_started_at),
+                     last_completed_at = COALESCE(excluded.last_completed_at, maintenance_heartbeat.last_completed_at),
+                     last_success_at = COALESCE(excluded.last_success_at, maintenance_heartbeat.last_success_at),
+                     last_stage = excluded.last_stage,
+                     last_error = excluded.last_error,
+                     updated_at = excluded.updated_at""",
+                (started_at, completed_at, success_at, stage, error, now),
+            )
+
+    def get_maintenance_heartbeat(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM maintenance_heartbeat WHERE id = 1"
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def mark_update_seen(self, update_id: int) -> bool:
         """Durably dedupe Telegram updates across restarts."""
@@ -616,8 +670,8 @@ class ClaimService:
             try:
                 cursor = connection.execute(
                     """INSERT INTO keys
-                       (telegram_id, outline_key_id, created_at, expires_at, data_limit_bytes, status)
-                       VALUES (?, ?, ?, ?, ?, 'active')""",
+                       (telegram_id, outline_key_id, key_type, created_at, expires_at, data_limit_bytes, status)
+                       VALUES (?, ?, 'daily_free', ?, ?, ?, 'active')""",
                     (telegram_id, str(key["id"]), now_text, expires_at.isoformat(), self.limit_bytes),
                 )
                 connection.execute(
@@ -670,8 +724,8 @@ class ClaimService:
             try:
                 connection.execute(
                     """INSERT INTO keys
-                       (telegram_id, outline_key_id, created_at, expires_at, data_limit_bytes, status)
-                       VALUES (?, ?, ?, ?, ?, 'active')""",
+                       (telegram_id, outline_key_id, key_type, created_at, expires_at, data_limit_bytes, status)
+                       VALUES (?, ?, 'monthly_trial', ?, ?, ?, 'active')""",
                     (telegram_id, str(key["id"]), now_text, expires_at.isoformat(), self.trial_limit_bytes),
                 )
                 connection.execute(
@@ -1063,6 +1117,17 @@ class TelegramBot:
         self._command_menu_ready = False
         self._command_menu_retry_enabled = hasattr(self.service, "database")
         self._command_menu_configure_attempted = False
+        self._maintenance_lock = threading.Lock()
+        self._panel_lock = threading.Lock()
+        self._panels: dict[str, dict[str, Any]] = {}
+        self._maintenance_last_status: dict[str, Any] = {
+            "status": "never_run",
+            "last_started_at": None,
+            "last_completed_at": None,
+            "last_success_at": None,
+            "last_stage": None,
+            "last_error": None,
+        }
 
     def request(self, method: str, payload: dict[str, Any]) -> Any:
         started_at = time.perf_counter()
@@ -1085,7 +1150,7 @@ class TelegramBot:
         chat_id: int,
         text: str,
         reply_markup: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> Any:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
@@ -1093,7 +1158,24 @@ class TelegramBot:
         }
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        self.request("sendMessage", payload)
+        return self.request("sendMessage", payload)
+
+    def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> Any:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": int(message_id),
+            "text": text[:4096],
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        return self.request("editMessageText", payload)
 
     @staticmethod
     def _reply_keyboard(rows: list[list[str]]) -> dict[str, Any]:
@@ -1117,6 +1199,180 @@ class TelegramBot:
                 for row in rows
             ]
         }
+
+    def _new_panel(self, chat_id: int, telegram_id: int, view: str) -> str:
+        token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
+        with self._panel_lock:
+            cutoff = time.monotonic() - 1800
+            self._panels = {
+                key: value
+                for key, value in self._panels.items()
+                if float(value.get("updated_at", 0)) >= cutoff
+            }
+            self._panels[token] = {
+                "chat_id": int(chat_id),
+                "telegram_id": int(telegram_id),
+                "view": view,
+                "page": 0,
+                "updated_at": time.monotonic(),
+                "message_id": None,
+                "items": [],
+            }
+        return token
+
+    def _panel_markup(self, token: str, page: int, pages: int) -> dict[str, Any]:
+        rows: list[list[tuple[str, str]]] = []
+        state = self._panels[token]
+        for index, item in enumerate(state.get("items", [])):
+            label = str(item.get("label") or item.get("id") or "Open")[:40]
+            rows.append([(label, f"v2:{token}:item:{index}")])
+        navigation: list[tuple[str, str]] = []
+        if page > 0:
+            navigation.append(("◀ Previous", f"v2:{token}:prev"))
+        navigation.append((f"{page + 1}/{max(1, pages)}", f"v2:{token}:refresh"))
+        if page + 1 < pages:
+            navigation.append(("Next ▶", f"v2:{token}:next"))
+        rows.append(navigation)
+        rows.append([("🔄 Refresh", f"v2:{token}:refresh"), ("🏠 Admin Home", "a:n:admin")])
+        return self._inline_keyboard(rows)
+
+    @staticmethod
+    def _panel_item(item: dict[str, Any], view: str) -> tuple[str, str]:
+        item_id = str(item.get("id") or item.get("job_id") or "-")
+        short_id = item_id[:10]
+        if view == "orders":
+            text = f"#{short_id} · tg:{str(item.get('telegram_id') or '-')[-6:]} · {item.get('plan_code') or '-'}\n{item.get('stage') or item.get('status') or '-'} · {item.get('receipt_status') or 'no receipt'}"
+        elif view == "receipts":
+            text = f"Receipt {short_id} · order:{str(item.get('order_id') or '-')[:10]}\ntg:{str(item.get('telegram_id') or '-')[-6:]} · {int(item.get('amount_minor') or 0):,} {item.get('currency') or ''}"
+        elif view == "failed":
+            text = f"{item.get('operation') or '-'} · job:{short_id}\norder:{str(item.get('order_id') or '-')[:10]} · attempts:{item.get('attempts') or 0}"
+        else:
+            text = f"tg:{str(item.get('telegram_id') or '-')[-6:]} · key:{str(item.get('outline_key_id') or '-')[:12]}\n{item.get('reason') or '-'} · {item.get('remote_state') or '-'}"
+        return text[:700], short_id
+
+    def _panel_data(self, telegram_id: int, view: str) -> list[dict[str, Any]]:
+        if view == "orders":
+            return list(self._admin_call(telegram_id, "list_pending_orders", limit=100) or [])
+        if view == "receipts":
+            return list(self._admin_call(telegram_id, "list_pending_receipts", limit=100) or [])
+        if view == "failed":
+            return list(self._admin_call(telegram_id, "failed_jobs", limit=100, include_nonterminal=True) or [])
+        if view == "enforcement":
+            return list(self._admin_service_call(telegram_id, "termination_summary", limit=100) or [])
+        return []
+
+    def _render_panel(self, token: str) -> tuple[str, dict[str, Any]]:
+        with self._panel_lock:
+            state = self._panels.get(token)
+            if state is None:
+                raise KeyError(token)
+            view = state["view"]
+            page = max(0, int(state.get("page", 0)))
+            items = list(state.get("all_items", []))
+        page_size = 5
+        pages = max(1, (len(items) + page_size - 1) // page_size)
+        page = min(page, pages - 1)
+        current = items[page * page_size : (page + 1) * page_size]
+        prepared = []
+        blocks = []
+        for item in current:
+            block, _short = self._panel_item(item, view)
+            prepared.append(item)
+            blocks.append(block)
+        title = {
+            "orders": "📥 Pending Orders",
+            "receipts": "🧾 Receipt Review",
+            "failed": "🔁 Worker Jobs",
+            "enforcement": "🚨 Enforcement",
+        }.get(view, "AuriX Admin")
+        text = f"{title} · {len(items)} open\nPage {page + 1}/{pages} · updated {datetime.now(UTC).strftime('%H:%M UTC')}"
+        if blocks:
+            text += "\n\n" + "\n\n".join(blocks)
+        else:
+            text += "\n\nNothing needs attention."
+        with self._panel_lock:
+            state = self._panels[token]
+            state["page"] = page
+            state["items"] = prepared
+            state["updated_at"] = time.monotonic()
+        return text[:4096], self._panel_markup(token, page, pages)
+
+    def _open_admin_panel(self, chat_id: int, telegram_id: int, view: str, message_id: int | None = None) -> None:
+        if not self._is_admin(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        token = self._new_panel(chat_id, telegram_id, view)
+        items = self._panel_data(telegram_id, view)
+        if not items:
+            empty = {
+                "orders": "No pending orders.",
+                "receipts": "No unreviewed receipts.",
+                "failed": "No terminal worker failures.",
+                "enforcement": "No free/trial termination events recorded.",
+            }.get(view, "Nothing needs attention.")
+            self.send(chat_id, empty)
+            return
+        with self._panel_lock:
+            self._panels[token]["all_items"] = items
+        text, markup = self._render_panel(token)
+        if message_id is not None:
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                with self._panel_lock:
+                    self._panels[token]["message_id"] = int(message_id)
+                return
+            except Exception:
+                pass
+        result = self.send(chat_id, text, markup)
+        if isinstance(result, dict) and result.get("message_id"):
+            with self._panel_lock:
+                self._panels[token]["message_id"] = int(result["message_id"])
+
+    def _handle_panel_callback(self, query: dict[str, Any], token: str, action: str, arg: str | None) -> bool:
+        user = query.get("from") or {}
+        message = query.get("message") or {}
+        chat = message.get("chat") or {}
+        telegram_id, chat_id = user.get("id"), chat.get("id")
+        with self._panel_lock:
+            state = self._panels.get(token)
+            if state is None or state.get("telegram_id") != telegram_id or state.get("chat_id") != chat_id:
+                return False
+            if time.monotonic() - float(state.get("updated_at", 0)) > 1800:
+                self._panels.pop(token, None)
+                return False
+            if action == "next":
+                state["page"] = int(state.get("page", 0)) + 1
+            elif action == "prev":
+                state["page"] = max(0, int(state.get("page", 0)) - 1)
+            elif action == "refresh":
+                pass
+            elif action == "item":
+                items = state.get("items", [])
+                try:
+                    item = items[int(arg or "-1")]
+                except (ValueError, IndexError):
+                    item = None
+                if item is not None:
+                    view = state["view"]
+                    target = item.get("id") or item.get("job_id")
+                    if view == "orders":
+                        self._send_order_detail(chat_id, telegram_id, str(target), admin_view=True)
+                    elif view == "receipts":
+                        self.handle({"chat":{"id":chat_id,"type":"private"},"from":{"id":telegram_id},"text":f"/receipt {target}"})
+                    elif view == "failed":
+                        self.handle({"chat":{"id":chat_id,"type":"private"},"from":{"id":telegram_id},"text":f"/order {item.get('order_id')}"})
+                    return True
+            state["all_items"] = self._panel_data(telegram_id, state["view"])
+            message_id = message.get("message_id") or state.get("message_id")
+        text, markup = self._render_panel(token)
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                return True
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+        return True
 
     def _customer_keyboard(self, telegram_id: int) -> dict[str, Any]:
         rows = [
@@ -1410,6 +1666,37 @@ class TelegramBot:
     def _trial_allowed(self, telegram_id: int) -> bool:
         """Keep the optional trial allow-list consistent across every entrypoint."""
         return not self.trial_ids or int(telegram_id) in self.trial_ids
+
+    def _free_claim_blocked_by_paid(self, telegram_id: int) -> bool:
+        """Block daily claims only for a confirmed, currently usable paid key.
+
+        A stale ``pending`` subscription without a paid key must not consume a
+        customer's daily entitlement indefinitely.
+        """
+        if self.commerce is None:
+            return False
+        try:
+            subscriptions = (
+                self.commerce.user_vpns(telegram_id)
+                if hasattr(self.commerce, "user_vpns")
+                else [self.commerce.user_vpn(telegram_id)]
+            )
+        except Exception as exc:
+            print(f"paid claim guard error: {type(exc).__name__}", file=sys.stderr)
+            return False
+        now = datetime.now(UTC)
+        for subscription in subscriptions or []:
+            if not subscription or subscription.get("status") != "active":
+                continue
+            if subscription.get("key_status") != "active":
+                continue
+            try:
+                if datetime.fromisoformat(str(subscription.get("expires_at"))).astimezone(UTC) <= now:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            return True
+        return False
 
     def _admin_call(
         self, telegram_id: int, operation: str, *args: Any, **kwargs: Any
@@ -1894,6 +2181,16 @@ class TelegramBot:
         self.request("answerCallbackQuery", {"callback_query_id": query_id})
         telegram_id = int(user["id"])
         chat_id = int(chat["id"])
+        if data.startswith("v2:"):
+            panel_parts = data.split(":", 3)
+            if len(panel_parts) == 3:
+                panel_parts.append("")
+            if len(panel_parts) == 4 and self._handle_panel_callback(
+                query, panel_parts[1], panel_parts[2], panel_parts[3] or None
+            ):
+                return
+            self.send(chat_id, "This panel has expired. Open the admin menu again.")
+            return
         first_name = str(user.get("first_name") or "")
         username = user.get("username") if isinstance(user.get("username"), str) else None
         synthetic = {
@@ -2030,6 +2327,7 @@ class TelegramBot:
                 )
             elif action == "n":
                 admin_navigation = {
+                    "admin": "/admin",
                     "orders": "/orders",
                     "receipts": "/receipts",
                     "capacity": "/capacity",
@@ -2040,6 +2338,16 @@ class TelegramBot:
                 target = admin_navigation.get(entity_id)
                 if target is None:
                     self.send(chat_id, "This admin action is no longer valid.")
+                elif entity_id in {"orders", "receipts", "failed", "enforcement"}:
+                    if self.commerce is None and entity_id != "enforcement":
+                        self.send(chat_id, "Commerce is not configured.")
+                    else:
+                        self._open_admin_panel(
+                            chat_id,
+                            telegram_id,
+                            entity_id,
+                            message_id=message.get("message_id"),
+                        )
                 else:
                     synthetic["text"] = target
                     self.handle(synthetic)
@@ -2336,51 +2644,111 @@ class TelegramBot:
             if delivered:
                 self.service.mark_termination_notice(event["id"], "admin", event["remote_state"])
 
+    def _record_maintenance_heartbeat(
+        self,
+        *,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+        success_at: str | None = None,
+        stage: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Persist housekeeping health without allowing health reporting to fail it."""
+        if started_at is not None:
+            self._maintenance_last_status["last_started_at"] = started_at
+        if completed_at is not None:
+            self._maintenance_last_status["last_completed_at"] = completed_at
+        if success_at is not None:
+            self._maintenance_last_status["last_success_at"] = success_at
+        if stage is not None:
+            self._maintenance_last_status["last_stage"] = stage
+        self._maintenance_last_status["last_error"] = error
+        self._maintenance_last_status["status"] = "ok" if success_at else ("error" if error else "running")
+        store = getattr(self.service, "database", None)
+        recorder = getattr(store, "maintenance_heartbeat", None)
+        if callable(recorder):
+            try:
+                recorder(
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    success_at=success_at,
+                    stage=stage,
+                    error=error,
+                )
+            except Exception as exc:
+                print(f"maintenance heartbeat persistence error: {type(exc).__name__}", file=sys.stderr)
+        heartbeat_path = os.environ.get("AURIX_MAINTENANCE_HEARTBEAT_PATH")
+        if heartbeat_path:
+            try:
+                Path(heartbeat_path).write_text(
+                    json.dumps(self._maintenance_last_status, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+            except Exception as exc:
+                print(f"maintenance heartbeat file error: {type(exc).__name__}", file=sys.stderr)
+
     def _run_maintenance(self) -> None:
+        """Serialize housekeeping passes across manual and scheduled invocations."""
+        if not self._maintenance_lock.acquire(blocking=False):
+            return
+        try:
+            self._run_maintenance_pass()
+        finally:
+            self._maintenance_lock.release()
+
+    def _run_maintenance_pass(self) -> None:
         """Run one bounded housekeeping pass outside the Telegram poll loop."""
         started_at = time.perf_counter()
+        started_text = datetime.now(UTC).isoformat()
+        self._record_maintenance_heartbeat(started_at=started_text, stage="starting")
+        failures: list[tuple[str, Exception]] = []
+
+        def run_stage(name: str, callback: Any) -> Any:
+            self._record_maintenance_heartbeat(stage=name)
+            try:
+                return callback()
+            except Exception as exc:
+                failures.append((name, exc))
+                print(f"maintenance stage={name} error={type(exc).__name__}: {exc}", file=sys.stderr)
+                self._record_maintenance_heartbeat(stage=name, error=f"{type(exc).__name__}: {exc}")
+                return None
+
         if (
             self._command_menu_retry_enabled
             and self._command_menu_configure_attempted
             and not self._command_menu_ready
         ):
-            try:
-                self.configure_commands()
-            except Exception as exc:
-                print(
-                    f"Telegram command menu retry failed: {type(exc).__name__}",
-                    file=sys.stderr,
-                )
-        try:
-            raw_metrics = self.service.outline.transfer_metrics()
-            metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
-        except Exception as exc:
-            metrics = {}
-            _latency_log(
-                "maintenance_metrics",
-                started_at,
-                status="error",
-                error=type(exc).__name__,
-            )
+            run_stage("command_menu", self.configure_commands)
+
+        metrics_result = run_stage("metrics", self.service.outline.transfer_metrics)
+        metrics = metrics_result if isinstance(metrics_result, dict) else {}
+        if metrics_result is None:
+            _latency_log("maintenance_metrics", started_at, status="error")
         # Quota first preserves the more informative cause when a key is both
         # over quota and past its wall-clock entitlement.
-        self.service.enforce_quota(metrics=metrics)
-        self.service.revoke_expired()
+        run_stage("free_quota", lambda: self.service.enforce_quota(metrics=metrics))
+        run_stage("free_expiry", self.service.revoke_expired)
         reconcile_terminations = getattr(self.service, "reconcile_terminations", None)
         if callable(reconcile_terminations):
-            reconcile_terminations()
-        self._send_termination_notices()
+            run_stage("free_revocation_retry", reconcile_terminations)
+        run_stage("termination_notices", self._send_termination_notices)
         if self.commerce is not None:
-            self.commerce.enforce_quotas(metrics=metrics)
-            self.commerce.expire_and_process()
-            self._send_pending_notifications()
+            run_stage("paid_quota", lambda: self.commerce.enforce_quotas(metrics=metrics))
+            run_stage("paid_expiry", self.commerce.expire_and_process)
+            run_stage("notifications", self._send_pending_notifications)
         challenge_store = getattr(self.service, "database", None)
         prune = getattr(challenge_store, "prune_admin_challenges", None)
         if callable(prune):
-            try:
-                prune(datetime.now(UTC).isoformat())
-            except Exception as exc:
-                print(f"admin challenge cleanup error: {type(exc).__name__}", file=sys.stderr)
+            run_stage("challenge_cleanup", lambda: prune(datetime.now(UTC).isoformat()))
+        completed_text = datetime.now(UTC).isoformat()
+        success_text = completed_text if not failures else None
+        error_text = "; ".join(f"{name}: {type(exc).__name__}" for name, exc in failures) or None
+        self._record_maintenance_heartbeat(
+            completed_at=completed_text,
+            success_at=success_text,
+            stage="completed",
+            error=error_text,
+        )
         _latency_log("maintenance", started_at)
 
     def _maintenance_loop(self) -> None:
@@ -2490,10 +2858,8 @@ class TelegramBot:
             if command == "/start":
                 if self.trial_ids and telegram_id not in self.trial_ids:
                     return
-                if self.commerce is not None:
-                    current_paid = self.commerce.user_vpn(telegram_id)
-                    if current_paid and current_paid.get("status") in ("active", "pending"):
-                        return
+                if self._free_claim_blocked_by_paid(telegram_id):
+                    return
                 try:
                     welcome_claim = self.service.claim(
                         telegram_id, first_name, username=username
@@ -2681,11 +3047,9 @@ class TelegramBot:
             if not self._trial_allowed(telegram_id):
                 self.send(chat["id"], "The monthly trial is currently invite-only. Use /claim or /plans instead.")
                 return
-            if self.commerce is not None:
-                current_paid = self.commerce.user_vpn(telegram_id)
-                if current_paid and current_paid.get("status") in ("active", "pending"):
-                    self.send(chat["id"], "Your paid account is already active; the free trial is not needed.")
-                    return
+            if self._free_claim_blocked_by_paid(telegram_id):
+                self.send(chat["id"], "Your paid account is already active; the free trial is not needed.")
+                return
             try:
                 result = self.service.claim_trial(
                     telegram_id, first_name, username=username
@@ -2825,43 +3189,12 @@ class TelegramBot:
             elif self.commerce is None:
                 self.send(chat["id"], "Commerce is not configured.")
             else:
-                if command == "/receipts":
-                    receipts = self._admin_call(telegram_id, "list_pending_receipts")
-                    if not receipts:
-                        self.send(chat["id"], "No unreviewed receipts.")
-                    else:
-                        lines = []
-                        for row in receipts:
-                            extraction = row.get("extraction") or {}
-                            lines.append(
-                                f"{row['id']} | order:{row['order_id']} | tg:{row['telegram_id']} | "
-                                f"{row['amount_minor']:,} {row['currency']} | tx:{extraction.get('transaction_id') or '-'} | "
-                                f"confidence:{extraction.get('confidence', 0)}"
-                            )
-                        self.send(
-                            chat["id"],
-                            "\n".join(lines),
-                            self._inline_keyboard(
-                                [[(f"Open {str(row['id'])[:8]}", f"a:r:{row['id']}")]
-                                 for row in receipts]
-                            ),
-                        )
-                    return
-                orders = self._admin_call(telegram_id, "list_pending_orders")
-                if not orders:
-                    self.send(chat["id"], "No pending orders.")
+                view = "receipts" if command == "/receipts" else "orders"
+                items = self._panel_data(telegram_id, view)
+                if not items:
+                    self.send(chat["id"], "No unreviewed receipts." if view == "receipts" else "No pending orders.")
                 else:
-                    self.send(
-                        chat["id"],
-                        "\n".join(
-                            f"{row['id']} | tg:{row['telegram_id']} | {row['plan_code']} | {row['amount_minor']:,} {row['currency']} | stage:{row.get('stage', row['status'])} | receipt:{row.get('receipt_status') or '-'} | ref:{row['provider_reference'] or '-'}"
-                            for row in orders
-                        ),
-                        self._inline_keyboard(
-                            [[(f"Review {str(row['id'])[:8]}", f"a:o:{row['id']}")]
-                             for row in orders]
-                        ),
-                    )
+                    self._open_admin_panel(chat["id"], telegram_id, view)
         elif command == "/capacity":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -2919,13 +3252,7 @@ class TelegramBot:
                 if not events:
                     self.send(chat["id"], "No free/trial termination events recorded.", self._admin_keyboard(telegram_id))
                 else:
-                    lines = ["Recent free/trial enforcement"]
-                    lines.extend(
-                        f"tg:{row['telegram_id']} | key:{row['outline_key_id']} | {row['reason']} | "
-                        f"{row['remote_state']} | attempts:{row['delete_attempts']} | {row['detected_at']}"
-                        for row in events
-                    )
-                    self.send(chat["id"], "\n".join(lines), self._admin_keyboard(telegram_id))
+                    self._open_admin_panel(chat["id"], telegram_id, "enforcement")
         elif command == "/failed":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -2936,20 +3263,7 @@ class TelegramBot:
                 if not jobs:
                     self.send(chat["id"], "No terminal worker failures.", self._admin_keyboard(telegram_id))
                 else:
-                    lines = ["Worker operations needing attention"]
-                    rows = []
-                    for job in jobs:
-                        lines.append(
-                            f"{job['operation']} | {job.get('job_status', 'failed')} | job:{job['job_id']} | order:{job['order_id']} | tg:{job['telegram_id']} | "
-                            f"attempts:{job['attempts']} | {job['last_error'] or '-'}"
-                        )
-                        retry_callback = f"a:p:{job['job_id']}"
-                        if job.get("job_status") == "failed":
-                            rows.append([
-                                ("Open Order", f"a:o:{job['order_id']}"),
-                                ("Retry", retry_callback),
-                            ])
-                    self.send(chat["id"], "\n".join(lines), self._inline_keyboard(rows))
+                    self._open_admin_panel(chat["id"], telegram_id, "failed")
         elif command == "/retry":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -3063,11 +3377,9 @@ class TelegramBot:
             if self.trial_ids and telegram_id not in self.trial_ids:
                 self.send(chat["id"], "Free staging claims are limited to the configured test accounts.")
                 return
-            if self.commerce is not None:
-                current_paid = self.commerce.user_vpn(telegram_id)
-                if current_paid and current_paid.get("status") in ("active", "pending"):
-                    self.send(chat["id"], "Your paid account is active; free claims are paused until it ends.")
-                    return
+            if self._free_claim_blocked_by_paid(telegram_id):
+                self.send(chat["id"], "Your paid account is active; free claims are paused until it ends.")
+                return
             try:
                 result = self.service.claim(
                     telegram_id, first_name, username=username

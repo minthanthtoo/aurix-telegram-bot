@@ -441,6 +441,12 @@ class MaintenanceCommerceService:
         return 0
 
 
+class FailingQuotaClaimService(MaintenanceClaimService):
+    def enforce_quota(self, metrics=None):
+        self.metrics = metrics
+        raise RuntimeError("quota provider unavailable")
+
+
 class TelegramBotCommerceTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -651,6 +657,56 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIs(commerce.metrics, outline.snapshot)
         self.assertEqual(claim.expiry_calls, 1)
         self.assertEqual(commerce.process_calls, 1)
+
+    def test_maintenance_expiry_runs_when_quota_stage_fails(self):
+        outline = MaintenanceOutline()
+        claim = FailingQuotaClaimService(outline)
+        bot = TelegramBot("test-token", claim)
+        bot._send_termination_notices = lambda: None
+
+        bot._run_maintenance()
+
+        self.assertEqual(claim.expiry_calls, 1)
+        self.assertEqual(bot._maintenance_last_status["status"], "error")
+        self.assertIn("free_quota", bot._maintenance_last_status["last_error"])
+
+    def test_maintenance_heartbeat_is_persisted(self):
+        bot = self.bot
+        bot._send_termination_notices = lambda: None
+        bot._send_pending_notifications = lambda: None
+
+        bot._run_maintenance()
+
+        heartbeat = self.db.get_maintenance_heartbeat()
+        self.assertIsNotNone(heartbeat)
+        self.assertIsNotNone(heartbeat["last_started_at"])
+        self.assertIsNotNone(heartbeat["last_completed_at"])
+        self.assertIsNotNone(heartbeat["last_success_at"])
+        self.assertEqual(heartbeat["last_stage"], "completed")
+
+    def test_admin_panel_refresh_reuses_same_message(self):
+        order = self.commerce.create_order(123, "Min", "basic_50gb")
+        self.bot.handle(self.message(999, "/orders"))
+        self.assertIn(order.order_id[:8], self.bot.sent[-1][1])
+        sent_count = len(self.bot.sent)
+        refresh = next(
+            button["callback_data"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["text"] == "🔄 Refresh"
+        )
+        requests = []
+        self.bot.request = lambda method, payload: requests.append((method, payload)) or True
+        self.bot.handle_callback(
+            {
+                "id": "panel-refresh",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}, "message_id": 77},
+                "data": refresh,
+            }
+        )
+        self.assertEqual(len(self.bot.sent), sent_count)
+        self.assertTrue(any(method == "editMessageText" for method, _payload in requests))
 
     def test_maintenance_delivers_free_quota_warning_through_telegram(self):
         now = datetime(2026, 8, 27, 3, 7, tzinfo=UTC)
