@@ -8,25 +8,13 @@ to Telegram or persisted in the database.
 from __future__ import annotations
 
 import json
-import os
-import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
 
-
-def _latency_log(event: str, started_at: float, **fields: Any) -> None:
-    """Emit bounded storage timing evidence without paths or credentials."""
-    if os.environ.get("AURIX_LATENCY_LOG", "0").lower() not in {
-        "1", "true", "yes", "on"
-    }:
-        return
-    duration_ms = (time.perf_counter() - started_at) * 1000
-    details = " ".join(f"{key}={value}" for key, value in fields.items())
-    suffix = f" {details}" if details else ""
-    print(f"latency event={event} duration_ms={duration_ms:.1f}{suffix}", file=sys.stderr)
+from observability import latency_log as _latency_log
 
 
 class ReceiptStorageError(RuntimeError):
@@ -116,9 +104,7 @@ class SupabaseReceiptStorage:
             # provider details that are not suitable for Telegram/user logs.
             if exc.code == 409:
                 return {"already_exists": True}
-            raise ReceiptStorageError(
-                f"Supabase Storage request failed (HTTP {exc.code})"
-            ) from exc
+            raise ReceiptStorageError(f"Supabase Storage request failed (HTTP {exc.code})") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise ReceiptStorageError("Supabase Storage request failed") from exc
         if not raw:

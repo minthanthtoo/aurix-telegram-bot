@@ -132,8 +132,31 @@ cannot be replayed after a restart.
 ## Test
 
 ```sh
-python3 -m unittest -v
+python3 -m pip install --requirement requirements-dev.txt
+ruff check app.py commerce.py commerce_models.py commerce_repositories.py commerce_service.py commerce_worker.py entitlements.py free_repository.py migrations.py observability.py outline_adapter.py persistence.py ports.py repositories.py receipt_llm.py runtime.py supabase_storage.py telegram_transport.py telegram_admin.py telegram_admin_panels.py telegram_callbacks.py telegram_commands.py telegram_maintenance.py deploy test_*.py
+PYTHONWARNINGS=error::ResourceWarning coverage run -m unittest discover
+coverage report
 ```
+
+The CI and refactor invariants, schema fingerprint, staging smoke checks, and
+backup/rollback gate are documented in
+[`docs/REFACTOR_PHASE0_BASELINE.md`](docs/REFACTOR_PHASE0_BASELINE.md).
+The shared SQLite connection lifecycle and Phase 1 dependency rules are in
+[`docs/REFACTOR_PHASE1.md`](docs/REFACTOR_PHASE1.md).
+The repository protocols and numbered migration contract are in
+[`docs/REFACTOR_PHASE2.md`](docs/REFACTOR_PHASE2.md).
+The free/trial entitlement and persistence boundaries are in
+[`docs/REFACTOR_PHASE3.md`](docs/REFACTOR_PHASE3.md).
+The paid-commerce model, repository, service, and facade boundaries are in
+[`docs/REFACTOR_PHASE4.md`](docs/REFACTOR_PHASE4.md).
+The external adapter ports and reliable-worker boundary are in
+[`docs/REFACTOR_PHASE5.md`](docs/REFACTOR_PHASE5.md).
+The Telegram presentation and administrator-operation boundary are in
+[`docs/REFACTOR_PHASE6.md`](docs/REFACTOR_PHASE6.md).
+The runtime composition and executable compatibility facade are in
+[`docs/REFACTOR_PHASE7.md`](docs/REFACTOR_PHASE7.md).
+The decomposed Telegram feature-module boundaries are in
+[`docs/REFACTOR_PHASE8.md`](docs/REFACTOR_PHASE8.md).
 
 ## Operational notes
 

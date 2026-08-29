@@ -1,4 +1,6 @@
-import sqlite3
+import hashlib
+import json
+import re
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -6,6 +8,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from app import Database
 from commerce import (
     CommerceDatabase,
     CommerceError,
@@ -14,6 +17,7 @@ from commerce import (
     PostgresCommerceDatabase,
     _PostgresConnection,
 )
+from persistence import open_sqlite_connection
 
 
 UTC = timezone.utc
@@ -93,7 +97,7 @@ class CommerceServiceTest(unittest.TestCase):
 
     def test_existing_database_adds_reference_column_before_index(self):
         legacy_path = Path(self.tmp.name) / "legacy.db"
-        with sqlite3.connect(legacy_path) as connection:
+        with open_sqlite_connection(legacy_path) as connection:
             connection.execute(
                 """CREATE TABLE payments (
                        id TEXT PRIMARY KEY,
@@ -107,7 +111,7 @@ class CommerceServiceTest(unittest.TestCase):
 
         CommerceDatabase(legacy_path).initialize()
 
-        with sqlite3.connect(legacy_path) as connection:
+        with open_sqlite_connection(legacy_path) as connection:
             normalized = connection.execute(
                 "SELECT normalized_reference FROM payments WHERE id = 'payment-1'"
             ).fetchone()[0]
@@ -121,14 +125,14 @@ class CommerceServiceTest(unittest.TestCase):
         legacy_path = Path(self.tmp.name) / "legacy-receipts.db"
         database = CommerceDatabase(legacy_path)
         database.initialize()
-        with sqlite3.connect(legacy_path) as connection:
+        with open_sqlite_connection(legacy_path) as connection:
             connection.execute(
                 "ALTER TABLE payment_evidence DROP COLUMN telegram_media_type"
             )
 
         database.initialize()
 
-        with sqlite3.connect(legacy_path) as connection:
+        with open_sqlite_connection(legacy_path) as connection:
             columns = {
                 row[1]
                 for row in connection.execute("PRAGMA table_info(payment_evidence)")
@@ -469,6 +473,16 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertNotIn("access_url", snapshot)
 
 
+class FakeRawPostgresCursor:
+    rowcount = 1
+
+    def fetchall(self):
+        return []
+
+    def fetchone(self):
+        return None
+
+
 class FakeRawPostgresConnection:
     def __init__(self):
         self.calls = []
@@ -481,7 +495,142 @@ class FakeRawPostgresConnection:
 
     def execute(self, query, params=None):
         self.calls.append((query, params))
-        return None
+        return FakeRawPostgresCursor()
+
+
+def postgres_schema_contract(statements):
+    tables = {}
+    indexes = set()
+    for statement in statements:
+        table_match = re.match(
+            r"CREATE TABLE IF NOT EXISTS\s+([a-z_]+)\s*\((.*)\)\s*$",
+            statement.strip(),
+            re.IGNORECASE | re.DOTALL,
+        )
+        if table_match:
+            table_name, body = table_match.groups()
+            columns = set()
+            for line in body.splitlines():
+                token = line.strip().split(None, 1)[0].rstrip(",") if line.strip() else ""
+                if token.upper() in {"CHECK", "CONSTRAINT", "FOREIGN", "PRIMARY", "UNIQUE"}:
+                    continue
+                if re.fullmatch(r"[a-z_][a-z0-9_]*", token, re.IGNORECASE):
+                    columns.add(token.lower())
+            tables[table_name.lower()] = columns
+            continue
+        alter_match = re.match(
+            r"ALTER TABLE\s+([a-z_]+)\s+ADD COLUMN IF NOT EXISTS\s+([a-z_]+)",
+            statement.strip(),
+            re.IGNORECASE,
+        )
+        if alter_match:
+            table_name, column_name = alter_match.groups()
+            tables.setdefault(table_name.lower(), set()).add(column_name.lower())
+            continue
+        index_match = re.match(
+            r"CREATE INDEX IF NOT EXISTS\s+([a-z_]+)",
+            statement.strip(),
+            re.IGNORECASE,
+        )
+        if index_match:
+            indexes.add(index_match.group(1).lower())
+    return {
+        "tables": {name: sorted(columns) for name, columns in sorted(tables.items())},
+        "indexes": sorted(indexes),
+    }
+
+
+def sqlite_schema_contract(path):
+    Database(path).initialize()
+    CommerceDatabase(path).initialize()
+    with open_sqlite_connection(path) as connection:
+        table_names = sorted(
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        )
+        tables = {
+            table_name: sorted(
+                row[1]
+                for row in connection.execute(f"PRAGMA table_info({table_name})")
+            )
+            for table_name in table_names
+        }
+        indexes = sorted(
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        )
+    return {"tables": tables, "indexes": indexes}
+
+
+def sqlite_schema_metadata(path):
+    with open_sqlite_connection(path) as connection:
+        table_names = sorted(
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        )
+        tables = {}
+        for table_name in table_names:
+            tables[table_name] = {
+                "columns": [
+                    {
+                        "name": row[1],
+                        "type": row[2],
+                        "not_null": bool(row[3]),
+                        "default": row[4],
+                        "primary_key": int(row[5]),
+                    }
+                    for row in connection.execute(f"PRAGMA table_info({table_name})")
+                ],
+                "foreign_keys": sorted(
+                    [
+                        {
+                            "table": row[2],
+                            "from": row[3],
+                            "to": row[4],
+                            "on_update": row[5],
+                            "on_delete": row[6],
+                            "match": row[7],
+                        }
+                        for row in connection.execute(
+                            f"PRAGMA foreign_key_list({table_name})"
+                        )
+                    ],
+                    key=lambda item: json.dumps(item, sort_keys=True),
+                ),
+            }
+        indexes = {}
+        for name, table_name, sql in connection.execute(
+            "SELECT name, tbl_name, sql FROM sqlite_master "
+            "WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ):
+            indexes[name] = {
+                "table": table_name,
+                "columns": [
+                    row[2] for row in connection.execute(f"PRAGMA index_info({name})")
+                ],
+                "sql": re.sub(r"\s+", " ", sql.strip()) if sql else None,
+            }
+    return {"tables": tables, "indexes": indexes}
+
+
+def schema_fingerprint(value):
+    serialized = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(serialized).hexdigest()
+
+
+def postgres_ddl_fingerprint(statements):
+    ddl = []
+    for statement in statements:
+        normalized = re.sub(r"\s+", " ", statement.strip()).lower()
+        if normalized.startswith(("create table", "create index", "alter table")):
+            ddl.append(normalized)
+    return schema_fingerprint(sorted(ddl))
 
 
 class FakePoolCheckout:
@@ -512,6 +661,34 @@ class FakePostgresPool:
 
 
 class PostgresAdapterTest(unittest.TestCase):
+    def test_sqlite_and_postgres_schema_contracts_match_frozen_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sqlite_path = Path(tmp) / "contract.db"
+            sqlite_contract = sqlite_schema_contract(sqlite_path)
+            sqlite_metadata = sqlite_schema_metadata(sqlite_path)
+
+        database = PostgresCommerceDatabase("postgresql://example.invalid/aurix")
+        raw = FakeRawPostgresConnection()
+        database.connect = lambda: _PostgresConnection(raw)
+        database.initialize()
+        postgres_contract = postgres_schema_contract(
+            [query for query, _params in raw.calls]
+        )
+
+        self.assertEqual(postgres_contract, sqlite_contract)
+        self.assertEqual(
+            schema_fingerprint(sqlite_contract),
+            "07283edb8b71c8461afdabacb3587e3234637bd4e2887ded792f3f1665135e59",
+        )
+        self.assertEqual(
+            schema_fingerprint(sqlite_metadata),
+            "599492f108e11730b1739ec648fa1b311c0273afecf47c9afa7dd292e371a645",
+        )
+        self.assertEqual(
+            postgres_ddl_fingerprint([query for query, _params in raw.calls]),
+            "e25ab782d327f9a9a10a54426e78d3629f2e66ccd2ad649f43ff2d6ba5ca6495",
+        )
+
     def test_qmark_adapter_translates_service_parameters(self):
         raw = FakeRawPostgresConnection()
         connection = _PostgresConnection(raw)

@@ -1,6 +1,5 @@
 import hashlib
 import json
-import sqlite3
 import tempfile
 import threading
 import time
@@ -18,6 +17,7 @@ from cryptography.x509.oid import NameOID
 
 from app import ClaimService, Database, OutlineClient, OutlineError, TelegramBot
 from commerce import CommerceDatabase, CommerceService
+from persistence import open_sqlite_connection
 
 
 UTC = timezone.utc
@@ -83,25 +83,15 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(result.access_url, "ss://secret")
         self.assertEqual(result.expires_at, self.now + timedelta(hours=24))
         self.assertEqual(self.outline.created[0][1], 300 * 1024 * 1024)
-        self.assertEqual(
-            self.outline.created[0][0], "123-FREE300MB-24hr-202608270307"
-        )
+        self.assertEqual(self.outline.created[0][0], "123-FREE300MB-24hr-202608270307")
 
     def test_claim_key_name_prefers_sanitized_telegram_username(self):
-        self.service.claim(
-            123, "Min", self.now, username="@min_user"
-        )
-        self.assertEqual(
-            self.outline.created[0][0], "min_user-FREE300MB-24hr-202608270307"
-        )
+        self.service.claim(123, "Min", self.now, username="@min_user")
+        self.assertEqual(self.outline.created[0][0], "min_user-FREE300MB-24hr-202608270307")
 
     def test_trial_key_name_uses_tier_duration_and_start_time(self):
-        self.service.claim_trial(
-            123, "Min", self.now, username="min_user"
-        )
-        self.assertEqual(
-            self.outline.created[0][0], "min_user-FREE3GB-30day-202608270307"
-        )
+        self.service.claim_trial(123, "Min", self.now, username="min_user")
+        self.assertEqual(self.outline.created[0][0], "min_user-FREE3GB-30day-202608270307")
 
     def test_second_claim_inside_24_hours_is_rejected(self):
         self.service.claim(123, "Min", self.now)
@@ -162,13 +152,17 @@ class ClaimServiceTest(unittest.TestCase):
         # Repeating the same observation does not send another message.
         self.assertEqual(self.service.enforce_quota(self.now + timedelta(hours=2)), 0)
         with self.db.connect() as connection:
-            self.assertEqual(connection.execute("SELECT COUNT(*) FROM notifications").fetchone()[0], 1)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM notifications").fetchone()[0], 1
+            )
 
         # A deeper crossing advances to the next threshold exactly once.
         self.outline.transfer = {"1": 276 * 1024 * 1024}
         self.assertEqual(self.service.enforce_quota(self.now + timedelta(hours=3)), 0)
         with self.db.connect() as connection:
-            self.assertEqual(connection.execute("SELECT COUNT(*) FROM notifications").fetchone()[0], 2)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM notifications").fetchone()[0], 2
+            )
 
     def test_failed_delete_is_retried_without_losing_enforcement_record(self):
         self.service.claim(123, "Min", self.now)
@@ -190,9 +184,7 @@ class ClaimServiceTest(unittest.TestCase):
         self.outline.delete_key = lambda _key_id: (_ for _ in ()).throw(OutlineError("down"))
 
         for minute in range(10):
-            self.service.revoke_expired(
-                self.now + timedelta(hours=24, minutes=minute)
-            )
+            self.service.revoke_expired(self.now + timedelta(hours=24, minutes=minute))
 
         event = self.service.termination_summary()[0]
         self.assertEqual(event["remote_state"], "escalated")
@@ -210,7 +202,7 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertTrue(usage[0]["usage_observed"])
 
     def test_database_enforces_one_claim_timestamp_per_user(self):
-        with sqlite3.connect(self.db.path) as connection:
+        with open_sqlite_connection(self.db.path) as connection:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(keys)")}
         self.assertIn("expires_at", columns)
         self.assertIn("status", columns)
@@ -235,29 +227,33 @@ class ClaimServiceTest(unittest.TestCase):
 
     def test_outline_key_id_conflict_rejected(self):
         # Verify UNIQUE constraint on outline_key_id exists in schema
-        with sqlite3.connect(self.db.path) as conn:
+        with open_sqlite_connection(self.db.path) as conn:
             info = conn.execute("PRAGMA table_info(keys)").fetchall()
+            indexes = conn.execute("PRAGMA index_list(keys)").fetchall()
         outline_key_id_col = next(c for c in info if c[1] == "outline_key_id")
         # Column info: (cid, name, type, notnull, dflt_value, pk)
         # UNIQUE constraint shows up in index_list, not table_info
-        indexes = conn.execute("PRAGMA index_list(keys)").fetchall()
         # Index info: (seq, name, unique, origin, partial)
-        unique_indexes = [idx for idx in indexes if idx[2] == 1 and idx[3] == 'u']
+        unique_indexes = [idx for idx in indexes if idx[2] == 1 and idx[3] == "u"]
         self.assertGreater(len(unique_indexes), 0)
 
     def test_outline_get_key_uses_encoded_key_id(self):
         client = OutlineClient.__new__(OutlineClient)
         calls = []
-        client._request = lambda method, path, **_kwargs: calls.append((method, path)) or {"id": "a/b"}
+        client._request = lambda method, path, **_kwargs: calls.append((method, path)) or {
+            "id": "a/b"
+        }
         self.assertEqual(client.get_key("a/b")["id"], "a/b")
         self.assertEqual(calls, [("GET", "/access-keys/a%2Fb")])
 
     def test_outline_get_key_treats_404_as_absent(self):
         client = OutlineClient.__new__(OutlineClient)
         calls = []
-        client._request = lambda method, path, body=None, accepted_statuses=(200, 201, 204): calls.append(
-            (method, path, accepted_statuses)
-        )
+        client._request = lambda method, path, body=None, accepted_statuses=(
+            200,
+            201,
+            204,
+        ): calls.append((method, path, accepted_statuses))
         self.assertIsNone(client.get_key("missing"))
         self.assertEqual(calls[0][2], (200, 404))
 
@@ -339,13 +335,11 @@ class OutlineClientTlsTest(unittest.TestCase):
         cert_der = cert.public_bytes(serialization.Encoding.DER)
         FakeHTTPSConnection.peer_certificate = cert_der
         FakeHTTPSConnection.instances = []
-        self.http_patch = patch("app.http.client.HTTPSConnection", FakeHTTPSConnection)
+        self.http_patch = patch("outline_adapter.http.client.HTTPSConnection", FakeHTTPSConnection)
         self.http_patch.start()
         self.addCleanup(self.http_patch.stop)
         fingerprint = hashlib.sha256(cert_der).hexdigest()
-        self.client = OutlineClient(
-            "https://outline.test:1234/secret", fingerprint
-        )
+        self.client = OutlineClient("https://outline.test:1234/secret", fingerprint)
 
     def test_pinned_outline_transport_and_404_delete(self):
         self.assertEqual(self.client.server_info()["version"], "tls-test")
@@ -355,7 +349,9 @@ class OutlineClientTlsTest(unittest.TestCase):
         self.client.delete_key("already-gone")
         connection = FakeHTTPSConnection.instances[1]
         self.assertEqual(connection.create_body["limit"]["bytes"], 123)
-        self.assertEqual(FakeHTTPSConnection.instances[2].path, "/secret/access-keys/a%2Fb/data-limit")
+        self.assertEqual(
+            FakeHTTPSConnection.instances[2].path, "/secret/access-keys/a%2Fb/data-limit"
+        )
 
     def test_wrong_certificate_pin_fails_closed_before_request(self):
         from app import OutlineClient
@@ -454,7 +450,9 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.db.initialize()
         self.outline = FakeOutline()
         self.commerce = CommerceService(
-            CommerceDatabase(self.db.path), self.outline, Fernet.generate_key(),
+            CommerceDatabase(self.db.path),
+            self.outline,
+            Fernet.generate_key(),
             allow_legacy_text_approval=True,
         )
         self.commerce.initialize()
@@ -476,6 +474,78 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "from": {"id": telegram_id, "first_name": "Min"},
             "text": text,
         }
+
+    def test_help_response_and_customer_keyboard_are_stable_contracts(self):
+        self.bot.handle(self.message(123, "/help"))
+
+        self.assertEqual(
+            self.bot.sent[-1],
+            (
+                123,
+                "AuriX VPN\n\n"
+                "Choose an action below. Everyone can claim 300 MB daily or "
+                "3 GB every 30 days, with 50 GB and 100 GB paid upgrades.\n\n"
+                "For payment, create an upgrade order and send only the receipt screenshot.",
+            ),
+        )
+        self.assertEqual(
+            self.bot.markups[-1],
+            {
+                "keyboard": [
+                    [{"text": "🎁 Daily 300MB"}, {"text": "🚀 Monthly 3GB"}],
+                    [{"text": "💎 Upgrade 50GB"}, {"text": "💠 Upgrade 100GB"}],
+                    [{"text": "🔐 My VPN"}],
+                    [{"text": "📊 Status"}, {"text": "📶 Usage"}],
+                    [{"text": "🧾 My Orders"}, {"text": "💰 Wallet"}],
+                    [{"text": "❓ Help"}],
+                ],
+                "resize_keyboard": True,
+                "is_persistent": True,
+                "input_field_placeholder": "Choose an AuriX action",
+            },
+        )
+        self.assertEqual(self.outline.created, [])
+
+    def test_admin_home_message_and_navigation_are_stable_contracts(self):
+        self.bot.handle(self.message(999, "/admin"))
+
+        self.assertEqual(
+            self.bot.sent[-1][1],
+            "AuriX Admin\n\n"
+            "Daily flow: Pending Orders → open receipt → verify the transaction "
+            "against your receiving account → Approve.\n"
+            "Use Failed Jobs to retry a reviewed Outline failure, open an order "
+            "to inspect its wallet ledger, and run Consistency before taking "
+            "payment decisions.\n\n"
+            "Queue: 0 receipt(s) pending · 0 upload(s) pending · "
+            "0 upload(s) failed · 0 failed job(s) · 0 stale review(s) · "
+            "0 dead notification(s)",
+        )
+        expected_markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "📥 Pending Orders", "callback_data": "a:n:orders"},
+                    {"text": "🧾 Receipt Review", "callback_data": "a:n:receipts"},
+                ],
+                [
+                    {"text": "📈 Capacity", "callback_data": "a:n:capacity"},
+                    {"text": "🔎 Consistency", "callback_data": "a:n:reconcile"},
+                ],
+                [
+                    {"text": "🔁 Failed Jobs", "callback_data": "a:n:failed"},
+                    {"text": "🚨 Enforcement", "callback_data": "a:n:enforcement"},
+                ],
+                [{"text": "🏠 Customer Menu", "callback_data": "n:menu"}],
+            ]
+        }
+        self.assertEqual(self.bot.markups[-1], expected_markup)
+        self.assertTrue(
+            all(
+                len(button["callback_data"].encode()) <= 64
+                for row in expected_markup["inline_keyboard"]
+                for button in row
+            )
+        )
 
     def test_customer_can_create_and_submit_a_paid_order(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
@@ -507,11 +577,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(self.bot.media, [])
         self.assertIn(f"Evidence: {receipt['id']}", self.bot.sent[-1][1])
         markup = self.bot.markups[-1]
-        labels = {
-            button["text"]
-            for row in markup["inline_keyboard"]
-            for button in row
-        }
+        labels = {button["text"] for row in markup["inline_keyboard"] for button in row}
         self.assertIn("Open Receipt", labels)
         self.assertIn("Open Order", labels)
 
@@ -533,9 +599,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             }
         )
 
-        receipt = self.commerce.get_receipt(
-            self.commerce.list_pending_receipts()[0]["id"]
-        )
+        receipt = self.commerce.get_receipt(self.commerce.list_pending_receipts()[0]["id"])
         self.assertEqual(receipt["telegram_media_type"], "document")
         self.assertEqual(self.bot.media, [])
 
@@ -547,8 +611,10 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.send_photo = lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("wrong file identifier")
         )
-        self.bot.send_document = lambda chat_id, file_id, caption="", reply_markup=None: calls.append(
-            (chat_id, file_id, caption, reply_markup)
+        self.bot.send_document = (
+            lambda chat_id, file_id, caption="", reply_markup=None: calls.append(
+                (chat_id, file_id, caption, reply_markup)
+            )
         )
         receipt = {
             "id": "evidence-1",
@@ -600,9 +666,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "/buy standard_100gb"))
         self.assertIn("open order", self.bot.sent[-1][1])
         labels = {
-            button["text"]
-            for row in self.bot.markups[-1]["inline_keyboard"]
-            for button in row
+            button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         }
         self.assertIn("Replace Open Order", labels)
 
@@ -621,9 +685,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         )
         self.assertEqual(calls[0][0], "answerCallbackQuery")
         labels = {
-            button["text"]
-            for row in self.bot.markups[-1]["inline_keyboard"]
-            for button in row
+            button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         }
         self.assertIn("📷 Send Receipt", labels)
         self.assertIn("💰 Pay Wallet", labels)
@@ -745,9 +807,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "awaiting_payment",
         )
         labels = {
-            button["text"]
-            for row in self.bot.markups[-1]["inline_keyboard"]
-            for button in row
+            button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         }
         self.assertIn("Confirm Reject", labels)
 
@@ -770,6 +830,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             def fail(*_args, **_kwargs):
                 calls.append(name)
                 raise AssertionError(f"privileged method called: {name}")
+
             return fail
 
         for name in (
@@ -808,11 +869,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         for command in commands:
             self.bot.handle(self.message(123, command))
             self.assertEqual(self.bot.sent[-1][1], self.bot.UNKNOWN_ACTION_TEXT)
-            labels = {
-                button["text"]
-                for row in self.bot.markups[-1]["keyboard"]
-                for button in row
-            }
+            labels = {button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row}
             self.assertNotIn("🛠 Admin Panel", labels)
 
         self.bot.request = lambda _method, _payload: True
@@ -861,11 +918,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             self.commerce.order_detail(order.order_id, 999, is_admin=True)["status"],
             "awaiting_payment",
         )
-        buttons = [
-            button
-            for row in self.bot.markups[-1]["inline_keyboard"]
-            for button in row
-        ]
+        buttons = [button for row in self.bot.markups[-1]["inline_keyboard"] for button in row]
         confirm = next(button for button in buttons if button["text"] == "Confirm Reject")
         self.bot.request = lambda _method, _payload: True
         callback = {
@@ -929,9 +982,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         )
         with self.db.connect() as connection:
             self.assertEqual(
-                connection.execute(
-                    "SELECT status FROM admin_action_challenges"
-                ).fetchone()[0],
+                connection.execute("SELECT status FROM admin_action_challenges").fetchone()[0],
                 "consumed",
             )
         self.assertEqual(
@@ -977,11 +1028,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
     def test_confirmation_cancel_marks_durable_challenge_unusable(self):
         order = self.commerce.create_order(123, "Min", "basic_50gb")
         self.bot.handle(self.message(999, f"/reject {order.order_id}"))
-        buttons = [
-            button
-            for row in self.bot.markups[-1]["inline_keyboard"]
-            for button in row
-        ]
+        buttons = [button for row in self.bot.markups[-1]["inline_keyboard"] for button in row]
         cancel = next(button for button in buttons if button["text"] == "Cancel")
         token = cancel["callback_data"].split(":", 2)[2]
         self.bot.request = lambda _method, _payload: True
@@ -995,9 +1042,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         )
         with self.db.connect() as connection:
             self.assertEqual(
-                connection.execute(
-                    "SELECT status FROM admin_action_challenges"
-                ).fetchone()[0],
+                connection.execute("SELECT status FROM admin_action_challenges").fetchone()[0],
                 "cancelled",
             )
         self.assertEqual(
@@ -1104,9 +1149,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         order = self.commerce.create_order(123, "Min", "basic_50gb")
         self.bot.handle(self.message(999, f"/order {order.order_id}"))
         labels = {
-            button["text"]
-            for row in self.bot.markups[-1]["inline_keyboard"]
-            for button in row
+            button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         }
         self.assertIn("💰 View Ledger", labels)
 
@@ -1115,9 +1158,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         help_text = self.bot.sent[-1][1]
         self.assertNotIn("/approve", help_text)
         customer_labels = {
-            button["text"]
-            for row in self.bot.markups[-1]["keyboard"]
-            for button in row
+            button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
         }
         self.assertIn("🎁 Daily 300MB", customer_labels)
         self.assertIn("💠 Upgrade 100GB", customer_labels)
@@ -1126,9 +1167,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(999, "/admin"))
         self.assertEqual(self.bot.markups[-1].keys(), {"inline_keyboard"})
         admin_labels = {
-            button["text"]
-            for row in self.bot.markups[-1]["inline_keyboard"]
-            for button in row
+            button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         }
         self.assertIn("📥 Pending Orders", admin_labels)
         self.assertIn("🧾 Receipt Review", admin_labels)
@@ -1150,9 +1189,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("Remaining: 150.00 MiB of 300.00 MiB", text)
         self.assertIn("50.0%", text)
         labels = {
-            button["text"]
-            for row in self.bot.markups[-1]["inline_keyboard"]
-            for button in row
+            button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         }
         self.assertIn("🔄 Refresh Usage", labels)
 
@@ -1180,9 +1217,23 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(admin["scope"], {"type": "chat", "chat_id": 999})
         self.assertEqual(
             {item["command"] for item in admin["commands"]},
-            {"start", "claim", "trial", "buy", "replace", "status", "usage",
-             "myvpn", "wallet", "myorders", "order", "cancelorder", "whoami",
-             "help", "admin"},
+            {
+                "start",
+                "claim",
+                "trial",
+                "buy",
+                "replace",
+                "status",
+                "usage",
+                "myvpn",
+                "wallet",
+                "myorders",
+                "order",
+                "cancelorder",
+                "whoami",
+                "help",
+                "admin",
+            },
         )
 
     def test_free_staging_claim_is_fail_closed_for_non_test_accounts(self):

@@ -4,6 +4,10 @@
 *.db-shm
 *.db-wal
 __pycache__/
+.coverage
+.pytest_cache/
+.ruff_cache/
+htmlcov/
 .DS_Store
 dist/
 .codex/config.toml

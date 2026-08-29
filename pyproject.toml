@@ -1,0 +1,45 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+# Phase 0 freezes correctness checks without mixing formatting churn into the
+# refactor baseline. Broader style rules can be enabled module-by-module.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.coverage.run]
+branch = true
+source = [
+    "app",
+    "commerce",
+    "commerce_models",
+    "commerce_repositories",
+    "commerce_service",
+    "commerce_worker",
+    "entitlements",
+    "free_repository",
+    "migrations",
+    "observability",
+    "outline_adapter",
+    "persistence",
+    "ports",
+    "repositories",
+    "receipt_llm",
+    "runtime",
+    "supabase_storage",
+    "telegram_transport",
+    "telegram_admin",
+    "telegram_admin_panels",
+    "telegram_callbacks",
+    "telegram_commands",
+    "telegram_maintenance",
+    "deploy",
+]
+
+[tool.coverage.report]
+fail_under = 60
+show_missing = true
+skip_covered = false
+exclude_also = [
+    "if __name__ == .__main__.:",
+]
