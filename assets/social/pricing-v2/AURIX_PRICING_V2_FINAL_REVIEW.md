@@ -3,6 +3,15 @@
 Campaign stamp: `20260829-165212`  
 Status: replaces the V1 glossy pricing-card direction
 
+## Outline compatibility refinement — R3
+
+The official Outline Client icon is now visible in both final directions so a first-time viewer can recognize which app receives the AuriX key.
+
+- Street Print: treated as a slightly rotated physical app sticker. It belongs to the pasted-poster material system and does not resemble a button.
+- Real Life: placed as a clean top-right editorial app mark, balancing the AuriX service logo at top-left.
+- Hierarchy: AuriX remains the primary seller/service identity; Outline Client is the secondary compatibility cue.
+- Caption guard: explicitly states that AuriX is not an official Outline Foundation partner and independently supplies Outline-compatible access keys.
+
 ## Direction 1 — Street Print
 
 | Round | Judgment | Decision |
@@ -49,4 +58,3 @@ Use as the follow-up for consideration/conversion. It helps customers identify w
 1. Street Print on Facebook for first exposure.
 2. Real Life, Two Rhythms 3–5 days later on Facebook and Telegram.
 3. Compare Telegram bot starts per 1,000 reached users and paid orders, not likes alone.
-

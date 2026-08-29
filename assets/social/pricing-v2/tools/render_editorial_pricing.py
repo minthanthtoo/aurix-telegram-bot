@@ -14,6 +14,7 @@ from xml.sax.saxutils import escape
 ROOT = Path(__file__).resolve().parents[4]
 BASE = ROOT / "assets/social/pricing-v2"
 BOT = "@aurix_outline_vpn_bot"
+OUTLINE = ROOT / "brand/outline/official/outline-client-icon-1024.png"
 
 
 def uri(path: Path) -> str:
@@ -47,11 +48,14 @@ AuriX Bot ကရတဲ့ key ကို Official Outline Client ထဲထည့�
 
 အခပေးအစီအစဉ်ကို ငွေလွှဲပြေစာ စစ်ဆေးအတည်ပြုပြီးမှ စတင်ပေးပါတယ်။ ရရှိနိုင်မှုအပေါ် မူတည်ပါတယ်။
 
+AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။ AuriX က Outline-compatible access key ကို သီးခြားဝန်ဆောင်မှုပေးပြီး Official Outline Client ဖြင့် အသုံးပြုရပါသည်။
+
 #AuriXVPN #OutlineVPN #VPNMyanmar"""
 
 
 def street(plate: Path, round_no: int) -> str:
     logo = uri(ROOT / "brand/v2/aurix-logo-horizontal-v2.svg")
+    outline = uri(OUTLINE)
     bg = uri(plate)
     rough = 0.0 if round_no == 0 else 0.8
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
@@ -60,6 +64,11 @@ def street(plate: Path, round_no: int) -> str:
     </defs>
     <image href="{bg}" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
     <image href="{logo}" x="62" y="52" width="250" height="82" preserveAspectRatio="xMinYMid meet"/>
+    <g transform="rotate(-4 952 122)">
+      <rect x="884" y="42" width="136" height="166" fill="#F3EBDD" stroke="#071421" stroke-width="3"/>
+      <image href="{outline}" x="900" y="56" width="104" height="104"/>
+      {t(952, 190, 'OUTLINE CLIENT', 15, 800, '#071421', 'middle', family='Inter, sans-serif')}
+    </g>
     <g filter="url(#ink)">
       {t(66, 198, 'VPN သုံးတာ', 50, 800, '#071421')}
       {t(66, 258, 'ဘယ်လောက်များလဲ။', 50, 800, '#071421')}
@@ -91,6 +100,7 @@ def street(plate: Path, round_no: int) -> str:
 
 def documentary(plate: Path, round_no: int) -> str:
     logo = uri(ROOT / "brand/v2/aurix-logo-horizontal-reverse-v2.svg")
+    outline = uri(OUTLINE)
     bg = uri(plate)
     split = 540
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
@@ -103,6 +113,8 @@ def documentary(plate: Path, round_no: int) -> str:
     <rect width="1080" height="440" fill="url(#top)"/>
     <rect y="690" width="1080" height="660" fill="url(#bottom)"/>
     <image href="{logo}" x="64" y="48" width="250" height="82" preserveAspectRatio="xMinYMid meet"/>
+    <image href="{outline}" x="910" y="52" width="104" height="104"/>
+    {t(962, 181, 'OUTLINE CLIENT', 15, 800, '#F7FAFC', 'middle', family='Inter, sans-serif')}
     <g filter="url(#shadow)">
       {t(64, 190, 'VPN သုံးတာ', 49, 800)}
       {t(64, 250, 'ဘယ်လောက်များလဲ။', 49, 800)}
@@ -132,7 +144,7 @@ def documentary(plate: Path, round_no: int) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--style", choices=["street", "real-life"], required=True)
-    parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3], required=True)
     parser.add_argument("--plate", type=Path, required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")

@@ -1,23 +1,24 @@
 {
   "campaign": "aurix-pricing-v2-editorial",
-  "stamp": "20260829-165212",
+  "stamp": "20260829-171851",
   "status": "recommended replacement for pricing V1",
   "format": "1080x1350 PNG plus UTF-8 Burmese TXT and editable SVG",
   "finals": [
     {
       "id": "street-print",
       "role": "launch and reach",
-      "image": "20260829-165212_pricing-street_r2.png",
-      "caption": "20260829-165212_pricing-street_r2.txt",
-      "source": "20260829-165212_pricing-street_r2.svg"
+      "image": "20260829-171851_pricing-street_r3.png",
+      "caption": "20260829-171851_pricing-street_r3.txt",
+      "source": "20260829-171851_pricing-street_r3.svg"
     },
     {
       "id": "real-life-two-rhythms",
       "role": "consideration and conversion follow-up",
-      "image": "20260829-165212_pricing-real-life_r2.png",
-      "caption": "20260829-165212_pricing-real-life_r2.txt",
-      "source": "20260829-165212_pricing-real-life_r2.svg"
+      "image": "20260829-171851_pricing-real-life_r3.png",
+      "caption": "20260829-171851_pricing-real-life_r3.txt",
+      "source": "20260829-171851_pricing-real-life_r3.svg"
     }
   ],
-  "preview": "20260829-165212_pricing-v2-final-preview.png"
+  "preview": "20260829-171851_pricing-outline-final-preview.png",
+  "compatibility_mark": "Official Outline Client icon shown as a secondary recognition anchor; AuriX remains the primary service brand."
 }
