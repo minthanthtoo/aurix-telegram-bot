@@ -1,0 +1,25 @@
+{
+  "campaign": "aurix-pricing-cards",
+  "stamp": "20260829-163611",
+  "format": "1080x1350 PNG plus UTF-8 Burmese TXT and editable SVG",
+  "recommended_order": [
+    "style-a-clear-choice",
+    "style-b-data-journey"
+  ],
+  "finals": [
+    {
+      "id": "style-a-clear-choice",
+      "image": "20260829-163611_pricing-style-a_r2.png",
+      "caption": "20260829-163611_pricing-style-a_r2.txt",
+      "source": "20260829-163611_pricing-style-a_r2.svg"
+    },
+    {
+      "id": "style-b-data-journey",
+      "image": "20260829-163611_pricing-style-b_r2.png",
+      "caption": "20260829-163611_pricing-style-b_r2.txt",
+      "source": "20260829-163611_pricing-style-b_r2.svg"
+    }
+  ],
+  "preview": "20260829-163611_pricing-final-preview.png",
+  "publication_gate": "Confirm live plan availability, receipt review staffing, quota enforcement, and provisioning before publishing."
+}
