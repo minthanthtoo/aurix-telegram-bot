@@ -15,11 +15,23 @@ ROOT = Path(__file__).resolve().parents[4]
 BASE = ROOT / "assets/social/plan-selector-v1"
 AURIX = ROOT / "brand/v2/aurix-logo-horizontal-reverse-v2.svg"
 OUTLINE = ROOT / "brand/outline/official/outline-client-icon-1024.png"
+PAYMENTS = [
+    ("KBZPay", ROOT / "brand/payments/official/kbzpay-app-icon.png"),
+    ("WavePay", ROOT / "brand/payments/official/wavepay-app-icon.png"),
+    ("AYA Pay", ROOT / "brand/payments/official/ayapay-app-icon.png"),
+    ("uabpay", ROOT / "brand/payments/official/uabpay-app-icon.jpg"),
+    ("CB Pay", ROOT / "brand/payments/official/cbpay-app-icon.jpg"),
+]
 GROUP = "https://t.me/+oA18TDWAD9NiNWU1"
 
 
 def uri(path: Path) -> str:
-    mime = "image/png" if path.suffix.lower() == ".png" else "image/svg+xml"
+    mime = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml",
+    }[path.suffix.lower()]
     return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
 
 
@@ -74,12 +86,48 @@ def telegram_mark(x: int, y: int, size: int) -> str:
     </g>"""
 
 
+def payment_rail(round_no: int) -> str:
+    icon_size = 66 if round_no == 0 else 76
+    panel_y = 1038
+    panel_height = 146 if round_no == 0 else 142
+    border_opacity = 0.55 if round_no == 0 else 0.8
+    separators = ""
+    if round_no == 0:
+        separators = "".join(
+            f'<line x1="{x}" y1="1062" x2="{x}" y2="1161" stroke="#35516B" opacity="0.6"/>'
+            for x in (258, 446, 634, 822)
+        )
+    elif round_no == 1:
+        separators = '<path d="M88 1170 H992" stroke="#35516B" stroke-dasharray="5 12" opacity="0.55"/>'
+    else:
+        separators = (
+            '<circle cx="70" cy="1110" r="9" fill="#071421"/>'
+            '<circle cx="1010" cy="1110" r="9" fill="#071421"/>'
+            '<path d="M92 1167 H988" stroke="#35516B" stroke-dasharray="4 14" opacity="0.38"/>'
+        )
+    icons = []
+    centers = (164, 352, 540, 728, 916)
+    for (label, path), center in zip(PAYMENTS, centers):
+        icons.append(
+            f'<image href="{uri(path)}" x="{center - icon_size / 2}" y="1054" width="{icon_size}" height="{icon_size}" '
+            f'preserveAspectRatio="xMidYMid slice"/>'
+            + text(center, 1160, label, 17, 700, '#DDE6ED', 'middle', 'Inter, sans-serif')
+        )
+    return f"""
+    {text(70, 1014, 'Wallet ၅ မျိုးနဲ့ ငွေလွှဲနိုင်ပါတယ်', 23, 700, '#FFC857')}
+    <path d="M70 {panel_y} H982 L1010 {panel_y + 28} V{panel_y + panel_height} H70 Z" fill="#0C1C2B" stroke="#35516B" stroke-width="2" opacity="0.98"/>
+    <path d="M982 {panel_y} L1010 {panel_y + 28} H982 Z" fill="#36E2FF" opacity="0.7"/>
+    {separators}
+    {''.join(icons)}
+    """
+
+
 def build(round_no: int, variant: str = "original") -> str:
     aurix = uri(AURIX)
     outline = uri(OUTLINE)
     relation_y = 390 if round_no == 0 else 405
-    cards_y = 458 if round_no == 0 else 448
-    if variant == "natural":
+    cards_y = 438 if variant == "payment" else (458 if round_no == 0 else 448)
+    if variant in {"natural", "payment"}:
         series = "OUTLINE VPN · တစ်လသုံး KEY များ"
         headline_1 = "စိတ်ကြိုက် Plan"
         headline_2 = "ရွေးယူနိုင်ပါပြီ။"
@@ -121,17 +169,25 @@ def build(round_no: int, variant: str = "original") -> str:
     {plan_pass(394, cards_y, '02', cue_2, '50 GB', '3,000 ကျပ်', '#36E2FF', 'ရက် 30 အသုံးပြုနိုင်', round_no, True)}
     {plan_pass(718, cards_y, '03', cue_3, '100 GB', '6,000 ကျပ်', '#9A8BFF', 'ရက် 30 အသုံးပြုနိုင်', round_no)}
 
-    <line x1="70" y1="1050" x2="1010" y2="1050" stroke="#35516B"/>
-    {telegram_mark(72, 1103, 82)}
-    {text(178, 1137, footer_action, 24, 700, '#F6F8FC')}
-    {text(178, 1185, footer_name, 21, 500, '#9DB1C3')}
-    {text(178, 1243, 't.me/+oA18TDWAD9NiNWU1', 31, 800, '#36E2FF', family='Inter, sans-serif')}
-    {text(1010, 1243, 'Clear access. Human help.', 19, 600, '#71889C', 'end', 'Inter, sans-serif')}
+    {payment_rail(round_no) if variant == 'payment' else ''}
+    <line x1="70" y1="{1208 if variant == 'payment' else 1050}" x2="1010" y2="{1208 if variant == 'payment' else 1050}" stroke="#35516B"/>
+    {telegram_mark(72, 1228 if variant == 'payment' else 1103, 58 if variant == 'payment' else 82)}
+    {text(150 if variant == 'payment' else 178, 1252 if variant == 'payment' else 1137, footer_action, 21 if variant == 'payment' else 24, 700, '#F6F8FC')}
+    {text(150 if variant == 'payment' else 178, 1297 if variant == 'payment' else 1185, 't.me/+oA18TDWAD9NiNWU1' if variant == 'payment' else footer_name, 27 if variant == 'payment' else 21, 800 if variant == 'payment' else 500, '#36E2FF' if variant == 'payment' else '#9DB1C3', family='Inter, sans-serif' if variant == 'payment' else 'Noto Sans Myanmar, Inter, sans-serif')}
+    {text(178, 1243, 't.me/+oA18TDWAD9NiNWU1', 31, 800, '#36E2FF', family='Inter, sans-serif') if variant != 'payment' else ''}
+    {text(1010, 1297 if variant == 'payment' else 1243, 'Clear access. Human help.', 17 if variant == 'payment' else 19, 600, '#71889C', 'end', 'Inter, sans-serif')}
     </svg>"""
 
 
 def caption(variant: str = "original") -> str:
-    if variant == "natural":
+    if variant in {"natural", "payment"}:
+        payment_copy = "" if variant == "natural" else """
+
+အောက်ပါ Wallet ၅ မျိုးနဲ့ ငွေလွှဲနိုင်ပါတယ်—
+KBZPay · WavePay · AYA Pay · uabpay · CB Pay
+
+ငွေလွှဲပြီးပါက ပြေစာကို AuriX Telegram Chat Group ထဲ ပို့ပေးပါ။ ဝန်ထမ်းက ပြေစာစစ်ဆေးအတည်ပြုပြီးမှ Key အသုံးပြုခွင့်ကို စတင်ပေးပါတယ်။ ဒီ Wallet များဟာ AuriX နဲ့ တရားဝင်ပူးပေါင်းထားတဲ့ payment partner များလို့ မဆိုလိုပါဘူး။
+"""
         return f"""Outline VPN တစ်လသုံး Key များကို စိတ်ကြိုက် Plan ရွေးယူနိုင်ပါပြီ။
 
 အစမ်းသုံး Free Plan
@@ -147,6 +203,7 @@ def caption(variant: str = "original") -> str:
 “အဝသုံး” Plan မှာလည်း VPN key အသုံးပြုခွင့်ပမာဏကို 100 GB သတ်မှတ်ထားပါတယ်။ Unlimited Plan မဟုတ်ပါဘူး။ ဖော်ပြထားတဲ့ GB ပမာဏတွေက ဖုန်း SIM ဒေတာမဟုတ်ဘဲ AuriX VPN key အတွက် အသုံးပြုခွင့်ပမာဏ ဖြစ်ပါတယ်။
 
 AuriX Bot ကရတဲ့ access key ကို Official Outline Client ထဲထည့်ပြီး အသုံးပြုရပါတယ်။
+{payment_copy}
 
 စုံစမ်းမေးမြန်းရန်နှင့် ဝယ်ယူရန်—
 AuriX Telegram Chat Group
@@ -185,13 +242,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
     parser.add_argument("--stamp", required=True)
-    parser.add_argument("--variant", choices=["original", "natural"], default="original")
+    parser.add_argument("--variant", choices=["original", "natural", "payment"], default="original")
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()
 
     out = BASE / ("exports" if args.final else "iterations")
     out.mkdir(parents=True, exist_ok=True)
-    suffix = "-natural-copy" if args.variant == "natural" else ""
+    suffix = {"original": "", "natural": "-natural-copy", "payment": "-payment-methods"}[args.variant]
     stem = f"{args.stamp}_aurix-three-plans{suffix}_r{args.round}"
     svg = out / f"{stem}.svg"
     png = out / f"{stem}.png"

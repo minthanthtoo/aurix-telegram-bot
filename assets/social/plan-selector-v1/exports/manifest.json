@@ -1,6 +1,6 @@
 {
   "campaign": "aurix-three-plan-reference-ad",
-  "stamp": "20260829-201328",
+  "stamp": "20260830-013406",
   "format": "1080x1350 PNG plus UTF-8 Burmese TXT and editable SVG",
   "reference": "../reference/supplied-outline-three-plan-reference.png",
   "finals": [
@@ -17,11 +17,19 @@
       "image": "20260829-201328_aurix-three-plans-natural-copy_r2.png",
       "caption": "20260829-201328_aurix-three-plans-natural-copy_r2.txt",
       "source": "20260829-201328_aurix-three-plans-natural-copy_r2.svg"
+    },
+    {
+      "id": "aurix-three-plans-payment-methods",
+      "role": "payment confidence and conversion",
+      "image": "20260830-013406_aurix-three-plans-payment-methods_r2.png",
+      "caption": "20260830-013406_aurix-three-plans-payment-methods_r2.txt",
+      "source": "20260830-013406_aurix-three-plans-payment-methods_r2.svg"
     }
   ],
-  "preview": "20260829-201328_aurix-three-plans-natural-copy_r2.png",
+  "preview": "20260830-013406_aurix-three-plans-payment-methods_r2.png",
   "publication_gates": [
     "Confirm free 3 GB production issuance and rolling-30-day enforcement",
-    "Confirm both paid plans, receipt review, quota enforcement, and Outline key provisioning"
+    "Confirm both paid plans, receipt review, quota enforcement, and Outline key provisioning",
+    "Confirm all five advertised wallet recipient accounts are operational and staff can verify their receipts"
   ]
 }
