@@ -1,0 +1,25 @@
+Outline VPN တစ်လသုံး Key များကို စိတ်ကြိုက် Plan ရွေးယူနိုင်ပါပြီ။
+
+အစမ်းသုံး Free Plan
+🎁 3 GB · ရက် 30 · အခမဲ့
+ရက် 30 တိုင်း တစ်ကြိမ် ရယူနိုင်ပါတယ်။
+
+ပုံမှန် တစ်လသုံး Plan
+💎 50 GB · ရက် 30 · 3,000 ကျပ်
+
+အဝသုံး တစ်လ Plan
+💠 100 GB · ရက် 30 · 6,000 ကျပ်
+
+“အဝသုံး” Plan မှာလည်း VPN key အသုံးပြုခွင့်ပမာဏကို 100 GB သတ်မှတ်ထားပါတယ်။ Unlimited Plan မဟုတ်ပါဘူး။ ဖော်ပြထားတဲ့ GB ပမာဏတွေက ဖုန်း SIM ဒေတာမဟုတ်ဘဲ AuriX VPN key အတွက် အသုံးပြုခွင့်ပမာဏ ဖြစ်ပါတယ်။
+
+AuriX Bot ကရတဲ့ access key ကို Official Outline Client ထဲထည့်ပြီး အသုံးပြုရပါတယ်။
+
+စုံစမ်းမေးမြန်းရန်နှင့် ဝယ်ယူရန်—
+AuriX Telegram Chat Group
+https://t.me/+oA18TDWAD9NiNWU1
+
+အခပေးအစီအစဉ်ကို ငွေလွှဲပြေစာ စစ်ဆေးအတည်ပြုပြီးမှ စတင်ပေးပါတယ်။ ရရှိနိုင်မှုအပေါ် မူတည်ပါတယ်။
+
+AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။ AuriX က Outline-compatible access key ကို သီးခြားဝန်ဆောင်မှုပေးပြီး Official Outline Client ဖြင့် အသုံးပြုရပါသည်။
+
+#AuriXVPN #OutlineVPN #VPNMyanmar

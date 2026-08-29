@@ -46,6 +46,7 @@ def plan_pass(x: int, y: int, number: str, cue: str, quota: str, price: str, acc
             f'<line x1="18" y1="274" x2="274" y2="274" stroke="#557086" stroke-dasharray="7 12" opacity="{0.25 if round_no >= 2 else 0.42}"/>'
         )
     price_size = 38 if len(price) < 9 else 34
+    cue_size = 22 if len(cue) > 14 else 25
     return f"""
     <g transform="translate({x} {y + lift}) rotate({angle} 146 274)" filter="url(#shadow)">
       <path d="M0 0 H236 L292 56 V548 H0 Z" fill="#0C1C2B" stroke="{accent}" stroke-width="{border}"/>
@@ -53,7 +54,7 @@ def plan_pass(x: int, y: int, number: str, cue: str, quota: str, price: str, acc
       <rect x="0" y="0" width="12" height="548" fill="{accent}"/>
       {notches}
       {text(26, 58, number, 70, 800, accent, family='Inter, sans-serif', opacity=0.33)}
-      {text(26, 112, cue, 25, 700, '#F6F8FC')}
+      {text(26, 112, cue, cue_size, 700, '#F6F8FC')}
       <line x1="26" y1="138" x2="260" y2="138" stroke="{accent}" stroke-width="2" opacity="0.65"/>
       {text(146, 252, quota, 72 if len(quota) <= 5 else 62, 900, '#FFFFFF', 'middle', 'Inter, sans-serif')}
       {text(146, 300, 'AuriX VPN key', 19, 600, '#9DB1C3', 'middle', 'Inter, sans-serif')}
@@ -73,11 +74,29 @@ def telegram_mark(x: int, y: int, size: int) -> str:
     </g>"""
 
 
-def build(round_no: int) -> str:
+def build(round_no: int, variant: str = "original") -> str:
     aurix = uri(AURIX)
     outline = uri(OUTLINE)
     relation_y = 390 if round_no == 0 else 405
     cards_y = 458 if round_no == 0 else 448
+    if variant == "natural":
+        series = "OUTLINE VPN · တစ်လသုံး KEY များ"
+        headline_1 = "စိတ်ကြိုက် Plan"
+        headline_2 = "ရွေးယူနိုင်ပါပြီ။"
+        cue_1 = "အစမ်းသုံး Free Plan"
+        cue_2 = "ပုံမှန် တစ်လသုံး"
+        cue_3 = "အဝသုံး တစ်လ Plan"
+        footer_action = "စုံစမ်းမေးမြန်းရန် · ဝယ်ယူရန်"
+        footer_name = "AuriX Telegram Chat Group"
+    else:
+        series = "AURIX VPN အစီအစဉ်များ"
+        headline_1 = "ကိုယ့်အသုံးနဲ့ ကိုက်တာ"
+        headline_2 = "ဘယ်တစ်ခုလဲ။"
+        cue_1 = "အရင်စမ်းမယ်"
+        cue_2 = "ပုံမှန်သုံးမယ်"
+        cue_3 = "ပိုသုံးမယ်"
+        footer_action = "မေးရန် · ရယူရန် · ဝယ်ယူရန်"
+        footer_name = "AuriX Telegram အကူအညီအဖွဲ့"
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
     <defs>
       <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#071421"/><stop offset="1" stop-color="#0D2235"/></linearGradient>
@@ -93,25 +112,51 @@ def build(round_no: int) -> str:
     <image href="{outline}" x="915" y="52" width="96" height="96"/>
     {text(963, 173, 'OUTLINE CLIENT', 14, 800, '#F6F8FC', 'middle', 'Inter, sans-serif')}
 
-    {text(70, 234, 'AURIX VPN အစီအစဉ်များ', 22, 800, '#36E2FF')}
-    {text(70, 302, 'ကိုယ့်အသုံးနဲ့ ကိုက်တာ', 47, 800)}
-    {text(70, 360, 'ဘယ်တစ်ခုလဲ။', 47, 800)}
+    {text(70, 234, series, 22, 800, '#36E2FF')}
+    {text(70, 302, headline_1, 47, 800)}
+    {text(70, 360, headline_2, 47, 800)}
     {text(70 if round_no >= 1 else 1010, relation_y, 'AuriX key · Outline Client ဖြင့် အသုံးပြုရန်', 20, 500, '#B9C8D5', 'start' if round_no >= 1 else 'end')}
 
-    {plan_pass(70, cards_y, '01', 'အရင်စမ်းမယ်', '3 GB', 'အခမဲ့', '#FFC857', 'ရက် 30 တိုင်း ရယူနိုင်', round_no)}
-    {plan_pass(394, cards_y, '02', 'ပုံမှန်သုံးမယ်', '50 GB', '3,000 ကျပ်', '#36E2FF', 'ရက် 30 အသုံးပြုနိုင်', round_no, True)}
-    {plan_pass(718, cards_y, '03', 'ပိုသုံးမယ်', '100 GB', '6,000 ကျပ်', '#9A8BFF', 'ရက် 30 အသုံးပြုနိုင်', round_no)}
+    {plan_pass(70, cards_y, '01', cue_1, '3 GB', 'အခမဲ့', '#FFC857', 'ရက် 30 တိုင်း ရယူနိုင်', round_no)}
+    {plan_pass(394, cards_y, '02', cue_2, '50 GB', '3,000 ကျပ်', '#36E2FF', 'ရက် 30 အသုံးပြုနိုင်', round_no, True)}
+    {plan_pass(718, cards_y, '03', cue_3, '100 GB', '6,000 ကျပ်', '#9A8BFF', 'ရက် 30 အသုံးပြုနိုင်', round_no)}
 
     <line x1="70" y1="1050" x2="1010" y2="1050" stroke="#35516B"/>
     {telegram_mark(72, 1103, 82)}
-    {text(178, 1137, 'မေးရန် · ရယူရန် · ဝယ်ယူရန်', 24, 700, '#F6F8FC')}
-    {text(178, 1185, 'AuriX Telegram အကူအညီအဖွဲ့', 21, 500, '#9DB1C3')}
+    {text(178, 1137, footer_action, 24, 700, '#F6F8FC')}
+    {text(178, 1185, footer_name, 21, 500, '#9DB1C3')}
     {text(178, 1243, 't.me/+oA18TDWAD9NiNWU1', 31, 800, '#36E2FF', family='Inter, sans-serif')}
     {text(1010, 1243, 'Clear access. Human help.', 19, 600, '#71889C', 'end', 'Inter, sans-serif')}
     </svg>"""
 
 
-def caption() -> str:
+def caption(variant: str = "original") -> str:
+    if variant == "natural":
+        return f"""Outline VPN တစ်လသုံး Key များကို စိတ်ကြိုက် Plan ရွေးယူနိုင်ပါပြီ။
+
+အစမ်းသုံး Free Plan
+🎁 3 GB · ရက် 30 · အခမဲ့
+ရက် 30 တိုင်း တစ်ကြိမ် ရယူနိုင်ပါတယ်။
+
+ပုံမှန် တစ်လသုံး Plan
+💎 50 GB · ရက် 30 · 3,000 ကျပ်
+
+အဝသုံး တစ်လ Plan
+💠 100 GB · ရက် 30 · 6,000 ကျပ်
+
+“အဝသုံး” Plan မှာလည်း VPN key အသုံးပြုခွင့်ပမာဏကို 100 GB သတ်မှတ်ထားပါတယ်။ Unlimited Plan မဟုတ်ပါဘူး။ ဖော်ပြထားတဲ့ GB ပမာဏတွေက ဖုန်း SIM ဒေတာမဟုတ်ဘဲ AuriX VPN key အတွက် အသုံးပြုခွင့်ပမာဏ ဖြစ်ပါတယ်။
+
+AuriX Bot ကရတဲ့ access key ကို Official Outline Client ထဲထည့်ပြီး အသုံးပြုရပါတယ်။
+
+စုံစမ်းမေးမြန်းရန်နှင့် ဝယ်ယူရန်—
+AuriX Telegram Chat Group
+{GROUP}
+
+အခပေးအစီအစဉ်ကို ငွေလွှဲပြေစာ စစ်ဆေးအတည်ပြုပြီးမှ စတင်ပေးပါတယ်။ ရရှိနိုင်မှုအပေါ် မူတည်ပါတယ်။
+
+AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။ AuriX က Outline-compatible access key ကို သီးခြားဝန်ဆောင်မှုပေးပြီး Official Outline Client ဖြင့် အသုံးပြုရပါသည်။
+
+#AuriXVPN #OutlineVPN #VPNMyanmar"""
     return f"""ကိုယ့်အသုံးနဲ့ ကိုက်တဲ့ AuriX VPN အစီအစဉ်ကို ရွေးနိုင်ပါတယ်။
 
 အရင်စမ်းချင်ရင်
@@ -140,17 +185,19 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
     parser.add_argument("--stamp", required=True)
+    parser.add_argument("--variant", choices=["original", "natural"], default="original")
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()
 
     out = BASE / ("exports" if args.final else "iterations")
     out.mkdir(parents=True, exist_ok=True)
-    stem = f"{args.stamp}_aurix-three-plans_r{args.round}"
+    suffix = "-natural-copy" if args.variant == "natural" else ""
+    stem = f"{args.stamp}_aurix-three-plans{suffix}_r{args.round}"
     svg = out / f"{stem}.svg"
     png = out / f"{stem}.png"
     txt = out / f"{stem}.txt"
-    svg.write_text(build(args.round), encoding="utf-8")
-    txt.write_text(caption() + "\n", encoding="utf-8")
+    svg.write_text(build(args.round, args.variant), encoding="utf-8")
+    txt.write_text(caption(args.variant) + "\n", encoding="utf-8")
     subprocess.run(["rsvg-convert", "-w", "1080", "-h", "1350", str(svg), "-o", str(png)], check=True)
     print(json.dumps({"round": args.round, "image": str(png), "caption": str(txt), "source": str(svg)}, ensure_ascii=False))
 
