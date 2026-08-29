@@ -40,6 +40,32 @@ Decision: reduce ticket punches and replace the repeated provider list with one 
 
 The final uses `Wallet ၅ မျိုးနဲ့ ငွေလွှဲနိုင်ပါတယ်` as a short scan label, then lets the five official icons and names carry recognition. Payment methods are clearly secondary to the offer, while Telegram remains the final purchase destination. The caption states that receipt approval is staff-assisted and that displaying wallet marks does not imply formal partnership.
 
+## User review and R3 redraw
+
+The user correctly identified that the R2 card borders, staggered sizes, payment-strip border, and narrow vertical gaps created an uneasy compressed lower half. This was a structural problem, not a decoration problem.
+
+R3 redraw changes:
+
+- equal 500 px card heights and equal 2 px borders;
+- no rotation, lift, ticket punches, or perforation competing with plan facts;
+- center-plan emphasis moved to a restrained background-tone shift;
+- 50 px breathing room between the cards and payment heading;
+- payment container removed in favor of an open five-logo recognition row;
+- three distinct zones: offer, payment methods, and Telegram destination.
+
+| Criterion | Score | Judgment |
+|---|---:|---|
+| First-frame clarity | 5 | Plans remain dominant and the five wallets scan as a separate secondary row. |
+| Product memory | 5 | AuriX, Outline Client, exact plans, and payment availability remain visible. |
+| Brand specificity | 5 | Clipped plan passes and AuriX palette remain intact without excessive ticket styling. |
+| Local relevance | 5 | Natural Burmese and familiar wallet marks fit the conversion audience. |
+| Visual distinction | 5 | The composition is editorial and physical rather than a webpage or fake interface. |
+| Copy hierarchy | 5 | Offer, payment recognition, and destination have clear spacing and rank. |
+| Claim safety | 5 | No automated-payment, partnership, speed, or unlimited claim is introduced. |
+| Render integrity | 5 | Equal geometry, safe margins, official marks, and typography render correctly. |
+
+Decision: R3 replaces R2 as the recommended payment-method final. R2 remains preserved as iteration evidence.
+
 ## Publication gate
 
 Before publication, confirm that all five recipient accounts are currently operational, staff can distinguish and verify receipts from each wallet, and the advertised paid plans are available.

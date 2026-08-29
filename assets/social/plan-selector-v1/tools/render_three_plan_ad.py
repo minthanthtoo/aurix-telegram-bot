@@ -77,6 +77,28 @@ def plan_pass(x: int, y: int, number: str, cue: str, quota: str, price: str, acc
     </g>"""
 
 
+def plan_pass_relaxed(x: int, y: int, number: str, cue: str, quota: str, price: str, accent: str, term: str, featured: bool = False) -> str:
+    """Calmer equal-height pass for the payment-inclusive composition."""
+    fill = "#10283A" if featured else "#0C1C2B"
+    cue_size = 21 if len(cue) > 14 else 24
+    price_size = 36 if len(price) < 9 else 33
+    return f"""
+    <g transform="translate({x} {y})" filter="url(#softShadow)">
+      <path d="M0 0 H244 L292 48 V500 H0 Z" fill="{fill}" stroke="{accent}" stroke-width="2"/>
+      <path d="M244 0 L292 48 H244 Z" fill="{accent}" opacity="0.9"/>
+      <rect x="0" y="0" width="9" height="500" fill="{accent}"/>
+      {text(25, 57, number, 62, 800, accent, family='Inter, sans-serif', opacity=0.28)}
+      {text(25, 104, cue, cue_size, 700, '#F6F8FC')}
+      <line x1="25" y1="131" x2="262" y2="131" stroke="{accent}" stroke-width="2" opacity="0.55"/>
+      {text(146, 230, quota, 68 if len(quota) <= 5 else 58, 900, '#FFFFFF', 'middle', 'Inter, sans-serif')}
+      {text(146, 270, 'AuriX VPN key', 18, 600, '#9DB1C3', 'middle', 'Inter, sans-serif')}
+      {text(146, 320, 'ရက် 30', 26, 700, '#D6E0E8', 'middle')}
+      <line x1="25" y1="349" x2="267" y2="349" stroke="#35516B"/>
+      {text(146, 414, price, price_size, 900, accent, 'middle')}
+      {text(146, 461, term, 19, 600, '#B9C8D5', 'middle')}
+    </g>"""
+
+
 def telegram_mark(x: int, y: int, size: int) -> str:
     # Simple official-color destination mark; drawn locally so it remains crisp in SVG.
     return f"""
@@ -87,6 +109,20 @@ def telegram_mark(x: int, y: int, size: int) -> str:
 
 
 def payment_rail(round_no: int) -> str:
+    if round_no >= 3:
+        icons = []
+        centers = (164, 352, 540, 728, 916)
+        for (label, path), center in zip(PAYMENTS, centers):
+            icons.append(
+                f'<image href="{uri(path)}" x="{center - 35}" y="1010" width="70" height="70" '
+                f'preserveAspectRatio="xMidYMid slice"/>'
+                + text(center, 1112, label, 17, 700, '#DDE6ED', 'middle', 'Inter, sans-serif')
+            )
+        return f"""
+        {text(70, 974, 'Wallet ၅ မျိုးနဲ့ ငွေလွှဲနိုင်ပါတယ်', 23, 700, '#FFC857')}
+        <line x1="70" y1="993" x2="1010" y2="993" stroke="#35516B" opacity="0.72"/>
+        {''.join(icons)}
+        """
     icon_size = 66 if round_no == 0 else 76
     panel_y = 1038
     panel_height = 146 if round_no == 0 else 142
@@ -126,7 +162,8 @@ def build(round_no: int, variant: str = "original") -> str:
     aurix = uri(AURIX)
     outline = uri(OUTLINE)
     relation_y = 390 if round_no == 0 else 405
-    cards_y = 438 if variant == "payment" else (458 if round_no == 0 else 448)
+    relaxed_payment = variant == "payment" and round_no >= 3
+    cards_y = 424 if relaxed_payment else (438 if variant == "payment" else (458 if round_no == 0 else 448))
     if variant in {"natural", "payment"}:
         series = "OUTLINE VPN · တစ်လသုံး KEY များ"
         headline_1 = "စိတ်ကြိုက် Plan"
@@ -145,11 +182,40 @@ def build(round_no: int, variant: str = "original") -> str:
         cue_3 = "ပိုသုံးမယ်"
         footer_action = "မေးရန် · ရယူရန် · ဝယ်ယူရန်"
         footer_name = "AuriX Telegram အကူအညီအဖွဲ့"
+    if relaxed_payment:
+        cards = "".join([
+            plan_pass_relaxed(70, cards_y, '01', cue_1, '3 GB', 'အခမဲ့', '#FFC857', 'ရက် 30 တိုင်း ရယူနိုင်'),
+            plan_pass_relaxed(394, cards_y, '02', cue_2, '50 GB', '3,000 ကျပ်', '#36E2FF', 'ရက် 30 အသုံးပြုနိုင်', True),
+            plan_pass_relaxed(718, cards_y, '03', cue_3, '100 GB', '6,000 ကျပ်', '#9A8BFF', 'ရက် 30 အသုံးပြုနိုင်'),
+        ])
+        footer = f"""
+        <line x1="70" y1="1150" x2="1010" y2="1150" stroke="#35516B"/>
+        {telegram_mark(72, 1184, 62)}
+        {text(155, 1210, footer_action, 21, 700, '#F6F8FC')}
+        {text(155, 1247, footer_name, 18, 500, '#9DB1C3')}
+        {text(155, 1294, 't.me/+oA18TDWAD9NiNWU1', 27, 800, '#36E2FF', family='Inter, sans-serif')}
+        {text(1010, 1294, 'Clear access. Human help.', 17, 600, '#71889C', 'end', 'Inter, sans-serif')}
+        """
+    else:
+        cards = "".join([
+            plan_pass(70, cards_y, '01', cue_1, '3 GB', 'အခမဲ့', '#FFC857', 'ရက် 30 တိုင်း ရယူနိုင်', round_no),
+            plan_pass(394, cards_y, '02', cue_2, '50 GB', '3,000 ကျပ်', '#36E2FF', 'ရက် 30 အသုံးပြုနိုင်', round_no, True),
+            plan_pass(718, cards_y, '03', cue_3, '100 GB', '6,000 ကျပ်', '#9A8BFF', 'ရက် 30 အသုံးပြုနိုင်', round_no),
+        ])
+        footer = f"""
+        <line x1="70" y1="{1208 if variant == 'payment' else 1050}" x2="1010" y2="{1208 if variant == 'payment' else 1050}" stroke="#35516B"/>
+        {telegram_mark(72, 1228 if variant == 'payment' else 1103, 58 if variant == 'payment' else 82)}
+        {text(150 if variant == 'payment' else 178, 1252 if variant == 'payment' else 1137, footer_action, 21 if variant == 'payment' else 24, 700, '#F6F8FC')}
+        {text(150 if variant == 'payment' else 178, 1297 if variant == 'payment' else 1185, 't.me/+oA18TDWAD9NiNWU1' if variant == 'payment' else footer_name, 27 if variant == 'payment' else 21, 800 if variant == 'payment' else 500, '#36E2FF' if variant == 'payment' else '#9DB1C3', family='Inter, sans-serif' if variant == 'payment' else 'Noto Sans Myanmar, Inter, sans-serif')}
+        {text(178, 1243, 't.me/+oA18TDWAD9NiNWU1', 31, 800, '#36E2FF', family='Inter, sans-serif') if variant != 'payment' else ''}
+        {text(1010, 1297 if variant == 'payment' else 1243, 'Clear access. Human help.', 17 if variant == 'payment' else 19, 600, '#71889C', 'end', 'Inter, sans-serif')}
+        """
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
     <defs>
       <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#071421"/><stop offset="1" stop-color="#0D2235"/></linearGradient>
       <linearGradient id="signal" x1="0" x2="1"><stop stop-color="#36E2FF"/><stop offset="0.55" stop-color="#5BA7FF"/><stop offset="1" stop-color="#7765FF"/></linearGradient>
       <filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000" flood-opacity="0.38"/></filter>
+      <filter id="softShadow"><feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity="0.24"/></filter>
     </defs>
     <rect width="1080" height="1350" fill="url(#bg)"/>
     <path d="M-80 1060 C190 840 175 390 540 310 C830 246 912 70 1160 122" fill="none" stroke="url(#signal)" stroke-width="3" opacity="0.18"/>
@@ -165,17 +231,10 @@ def build(round_no: int, variant: str = "original") -> str:
     {text(70, 360, headline_2, 47, 800)}
     {text(70 if round_no >= 1 else 1010, relation_y, 'AuriX key · Outline Client ဖြင့် အသုံးပြုရန်', 20, 500, '#B9C8D5', 'start' if round_no >= 1 else 'end')}
 
-    {plan_pass(70, cards_y, '01', cue_1, '3 GB', 'အခမဲ့', '#FFC857', 'ရက် 30 တိုင်း ရယူနိုင်', round_no)}
-    {plan_pass(394, cards_y, '02', cue_2, '50 GB', '3,000 ကျပ်', '#36E2FF', 'ရက် 30 အသုံးပြုနိုင်', round_no, True)}
-    {plan_pass(718, cards_y, '03', cue_3, '100 GB', '6,000 ကျပ်', '#9A8BFF', 'ရက် 30 အသုံးပြုနိုင်', round_no)}
+    {cards}
 
     {payment_rail(round_no) if variant == 'payment' else ''}
-    <line x1="70" y1="{1208 if variant == 'payment' else 1050}" x2="1010" y2="{1208 if variant == 'payment' else 1050}" stroke="#35516B"/>
-    {telegram_mark(72, 1228 if variant == 'payment' else 1103, 58 if variant == 'payment' else 82)}
-    {text(150 if variant == 'payment' else 178, 1252 if variant == 'payment' else 1137, footer_action, 21 if variant == 'payment' else 24, 700, '#F6F8FC')}
-    {text(150 if variant == 'payment' else 178, 1297 if variant == 'payment' else 1185, 't.me/+oA18TDWAD9NiNWU1' if variant == 'payment' else footer_name, 27 if variant == 'payment' else 21, 800 if variant == 'payment' else 500, '#36E2FF' if variant == 'payment' else '#9DB1C3', family='Inter, sans-serif' if variant == 'payment' else 'Noto Sans Myanmar, Inter, sans-serif')}
-    {text(178, 1243, 't.me/+oA18TDWAD9NiNWU1', 31, 800, '#36E2FF', family='Inter, sans-serif') if variant != 'payment' else ''}
-    {text(1010, 1297 if variant == 'payment' else 1243, 'Clear access. Human help.', 17 if variant == 'payment' else 19, 600, '#71889C', 'end', 'Inter, sans-serif')}
+    {footer}
     </svg>"""
 
 
@@ -240,7 +299,7 @@ AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက�
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--variant", choices=["original", "natural", "payment"], default="original")
     parser.add_argument("--final", action="store_true")
