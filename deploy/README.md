@@ -66,6 +66,12 @@ AURIX_ACCESS_URL_KEY=replace-with-a-persistent-fernet-key
 DATABASE_PATH=/var/lib/aurix-bot/bot.db
 # Optional: set a reachable PostgreSQL URL for hosted commercial state.
 COMMERCE_DATABASE_URL=
+# Required for hosted receipt evidence. Use the Supabase project URL and a
+# server-only service-role key; do not use an anon/publishable key.
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=replace-with-service-role-key
+SUPABASE_RECEIPTS_BUCKET=payment-receipts
+RECEIPT_STORAGE_REQUIRED=1
 # Optional OpenAI-compatible vision endpoint for receipt parsing.
 RECEIPT_LLM_BASE_URL=
 RECEIPT_LLM_MODEL=
@@ -80,6 +86,16 @@ the key makes old stored URLs unreadable and requires a controlled re-provision.
 The bot validates the Outline certificate fingerprint before sending each
 management request. The first live check should call pinned `GET /server` and
 record only the non-secret Outline version.
+
+Create a private Supabase Storage bucket named `payment-receipts` before the
+first hosted deploy. Keep Storage object policies closed to public reads; the
+bot uses the service-role key server-side and gives admins only short-lived
+signed URLs when rendering receipt evidence. The database stores the object
+path and checksum, never the image bytes. If an upload fails, the order remains
+open for retry and the evidence is hidden from `/receipts` until storage is
+confirmed. Configure a Supabase lifecycle/retention rule only after the
+business and payment-record retention policy is approved; the bot does not
+silently delete evidence.
 
 On this 1-GB staging Droplet, leave `COMMERCE_DATABASE_URL` empty unless a
 separate PostgreSQL service is already provisioned and its resource budget is

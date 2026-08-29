@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -25,6 +26,8 @@ def main() -> None:
         "OUTLINE_API_URL",
         "OUTLINE_CERT_SHA256",
         "AURIX_ACCESS_URL_KEY",
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
     )
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
@@ -53,6 +56,22 @@ def main() -> None:
         Fernet(os.environ["AURIX_ACCESS_URL_KEY"].encode())
     except (TypeError, ValueError):
         fail("AURIX_ACCESS_URL_KEY is not a valid Fernet key")
+
+    supabase_url = urlsplit(os.environ["SUPABASE_URL"].strip())
+    if (
+        supabase_url.scheme != "https"
+        or not supabase_url.netloc
+        or supabase_url.query
+        or supabase_url.fragment
+    ):
+        fail("SUPABASE_URL must be an https project URL without query parameters")
+    bucket = os.environ.get("SUPABASE_RECEIPTS_BUCKET", "payment-receipts").strip()
+    if not bucket or not re.fullmatch(r"[A-Za-z0-9_-]+", bucket):
+        fail("SUPABASE_RECEIPTS_BUCKET contains invalid characters")
+    if os.environ.get("RECEIPT_STORAGE_REQUIRED", "1").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        fail("RECEIPT_STORAGE_REQUIRED must be enabled for Render")
 
     if storage_mode == "disk":
         database_value = os.environ.get("DATABASE_PATH", "").strip()

@@ -12,6 +12,28 @@ from receipt_llm import ReceiptLLMUnavailable, OpenAICompatibleReceiptExtractor,
 UTC = timezone.utc
 
 
+class ReceiptStorage:
+    configured = True
+    bucket = "payment-receipts"
+
+    def __init__(self):
+        self.uploads = []
+        self.deleted = []
+        self.fail = False
+
+    def upload(self, path, data, mime_type):
+        if self.fail:
+            raise RuntimeError("storage unavailable")
+        self.uploads.append((path, bytes(data), mime_type))
+        return path
+
+    def signed_url(self, path, expires_in=300):
+        return f"https://storage.example/{path}?ttl={expires_in}"
+
+    def delete(self, path):
+        self.deleted.append(path)
+
+
 class Outline:
     def __init__(self):
         self.created = []
@@ -87,6 +109,75 @@ class MvpFeatureTest(unittest.TestCase):
                 connection.execute("SELECT COUNT(*) FROM payments WHERE order_id = ?", (order.order_id,)).fetchone()[0],
                 0,
             )
+
+    def test_receipt_storage_keeps_bytes_out_of_database_and_is_idempotent(self):
+        storage = ReceiptStorage()
+        service = CommerceService(
+            CommerceDatabase(self.path), self.outline, Fernet.generate_key(),
+            receipt_storage=storage, receipt_storage_required=True,
+        )
+        service.initialize()
+        order = service.create_order(101, "A", "basic_50gb", self.now)
+        first = service.submit_receipt(
+            101, order.order_id, "manual", "file-storage", "unique-storage",
+            b"receipt-bytes", "image/jpeg", None, self.now,
+        )
+        # Simulate a legacy/inconsistent row so an idempotent retry repairs the
+        # customer-facing order state along with the stored evidence.
+        with service.database.connect() as connection:
+            connection.execute(
+                "UPDATE orders SET status = 'awaiting_payment' WHERE id = ?",
+                (order.order_id,),
+            )
+        second = service.submit_receipt(
+            101, order.order_id, "manual", "file-storage", "unique-storage",
+            b"receipt-bytes", "image/jpeg", None, self.now,
+        )
+        self.assertEqual(first["storage_status"], "stored")
+        self.assertEqual(second["storage_status"], "stored")
+        self.assertEqual(len(storage.uploads), 1)
+        receipt = service.get_receipt(first["evidence_id"])
+        self.assertEqual(receipt["storage_bucket"], "payment-receipts")
+        self.assertTrue(receipt["storage_path"].startswith(f"orders/{order.order_id}/"))
+        self.assertEqual(receipt["storage_status"], "stored")
+        self.assertEqual(service.order_detail(order.order_id, 101)["status"], "payment_submitted")
+        with service.database.connect() as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(payment_evidence)")}
+            self.assertNotIn("image_bytes", columns)
+            self.assertEqual(connection.execute("SELECT byte_size FROM payment_evidence").fetchone()[0], len(b"receipt-bytes"))
+
+    def test_receipt_storage_failure_is_retryable_without_review_state(self):
+        storage = ReceiptStorage()
+        storage.fail = True
+        service = CommerceService(
+            CommerceDatabase(self.path), self.outline, Fernet.generate_key(),
+            receipt_storage=storage, receipt_storage_required=True,
+        )
+        service.initialize()
+        order = service.create_order(102, "A", "basic_50gb", self.now)
+        with self.assertRaises(CommerceError):
+            service.submit_receipt(
+                102, order.order_id, "manual", "file-fail", "unique-fail",
+                b"receipt-failure", "image/png", None, self.now,
+            )
+        self.assertEqual(service.order_detail(order.order_id, 102)["status"], "awaiting_payment")
+        with service.database.connect() as connection:
+            row = connection.execute(
+                "SELECT id, storage_status, storage_error FROM payment_evidence WHERE order_id = ?",
+                (order.order_id,),
+            ).fetchone()
+        self.assertEqual(row["storage_status"], "failed")
+        self.assertEqual(row["storage_error"], "RuntimeError")
+        with self.assertRaises(CommerceError):
+            service.verify_receipt(row["id"], 999, "TX-FAILED", 3000, "MMK", self.now)
+        storage.fail = False
+        retried = service.submit_receipt(
+            102, order.order_id, "manual", "file-fail", "unique-fail",
+            b"receipt-failure", "image/png", None, self.now,
+        )
+        self.assertEqual(retried["evidence_id"], row["id"])
+        self.assertEqual(retried["storage_status"], "stored")
+        self.assertEqual(service.order_detail(order.order_id, 102)["status"], "payment_submitted")
 
     def test_human_verified_transaction_id_is_normalized_across_orders(self):
         first = self.commerce.create_order(113, "First", "basic_50gb", self.now)
@@ -231,6 +322,26 @@ class MvpFeatureTest(unittest.TestCase):
         self.assertEqual(self.outline.deleted, ["1"])
         self.assertEqual(self.commerce.user_vpn(101)["access_url"], None)
         self.assertEqual(approval.order_id, order.order_id)
+
+    def test_paid_quota_warning_is_queued_before_hard_stop(self):
+        order = self.commerce.create_order(101, "A", "basic_50gb", self.now)
+        self.commerce.submit_payment(101, order.order_id, "manual", "TX-WARN", self.now)
+        self.commerce.approve_order(order.order_id, 999, self.now)
+        self.commerce.process_jobs(self.now)
+        self.outline.transfer["1"] = int(50 * 1024**3 * 0.8)
+
+        self.assertEqual(self.commerce.enforce_quotas(self.now), 0)
+        pending = self.commerce.pending_notifications(self.now)
+        warnings = [item for item in pending if item["kind"] == "quota_warning"]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn(":25", warnings[0]["dedupe_key"])
+        self.assertIn("trailing-30-day", warnings[0]["text"])
+
+        self.commerce.enforce_quotas(self.now)
+        self.assertEqual(
+            len([item for item in self.commerce.pending_notifications(self.now) if item["kind"] == "quota_warning"]),
+            1,
+        )
 
     def test_llm_requires_explicit_configuration_and_validates_shape(self):
         with self.assertRaises(ReceiptLLMUnavailable):

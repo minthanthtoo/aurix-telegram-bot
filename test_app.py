@@ -58,6 +58,14 @@ class FakeOutline:
         return {"bytesTransferredByUserId": self.transfer}
 
 
+class FakeReceiptStorage:
+    configured = True
+    bucket = "payment-receipts"
+
+    def signed_url(self, path, expires_in=300):
+        return f"https://storage.example/{path}?ttl={expires_in}"
+
+
 class ClaimServiceTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -137,6 +145,30 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(event["reason"], "quota")
         self.assertEqual(event["used_bytes"], 300 * 1024 * 1024)
         self.assertEqual(event["remote_state"], "deleted_verified")
+
+    def test_quota_warning_notifications_are_thresholded_and_deduplicated(self):
+        self.service.claim(123, "Min", self.now)
+        self.outline.transfer = {"1": 240 * 1024 * 1024}
+        self.assertEqual(self.service.enforce_quota(self.now + timedelta(hours=1)), 0)
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                "SELECT kind, dedupe_key, text FROM notifications ORDER BY created_at"
+            ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], "quota_warning")
+        self.assertIn(":25", rows[0]["dedupe_key"])
+        self.assertIn("20.0%", rows[0]["text"])
+
+        # Repeating the same observation does not send another message.
+        self.assertEqual(self.service.enforce_quota(self.now + timedelta(hours=2)), 0)
+        with self.db.connect() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM notifications").fetchone()[0], 1)
+
+        # A deeper crossing advances to the next threshold exactly once.
+        self.outline.transfer = {"1": 276 * 1024 * 1024}
+        self.assertEqual(self.service.enforce_quota(self.now + timedelta(hours=3)), 0)
+        with self.db.connect() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM notifications").fetchone()[0], 2)
 
     def test_failed_delete_is_retried_without_losing_enforcement_record(self):
         self.service.claim(123, "Min", self.now)
@@ -339,10 +371,17 @@ class RecordingTelegramBot(TelegramBot):
         super().__init__(*args, **kwargs)
         self.sent = []
         self.markups = []
+        self.media = []
 
     def send(self, chat_id, text, reply_markup=None):
         self.sent.append((chat_id, text))
         self.markups.append(reply_markup)
+
+    def send_photo(self, chat_id, file_id, caption="", reply_markup=None):
+        self.media.append(("photo", chat_id, file_id, caption, reply_markup))
+
+    def send_document(self, chat_id, file_id, caption="", reply_markup=None):
+        self.media.append(("document", chat_id, file_id, caption, reply_markup))
 
 
 class NonBlockingMaintenanceBot(TelegramBot):
@@ -441,6 +480,104 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(self.commerce.list_pending_orders()[0]["status"], "payment_submitted")
         self.assertTrue(any("Payment recorded" in text for _, text in self.bot.sent))
 
+    def test_uploaded_photo_is_sent_directly_to_admin_for_review(self):
+        self.bot.handle(self.message(123, "/buy basic_50gb"))
+        order_id = self.commerce.list_pending_orders()[0]["id"]
+        self.bot._download_telegram_file = lambda _file_id: (b"photo-receipt", "image/jpeg")
+
+        self.bot.handle(
+            {
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 123, "first_name": "Min"},
+                "caption": f"/paid {order_id}",
+                "photo": [
+                    {"file_id": "small-photo", "file_unique_id": "small"},
+                    {"file_id": "large-photo", "file_unique_id": "large"},
+                ],
+            }
+        )
+
+        receipt = self.commerce.list_pending_receipts()[0]
+        media_type, chat_id, file_id, caption, markup = self.bot.media[-1]
+        self.assertEqual((media_type, chat_id, file_id), ("photo", 999, "large-photo"))
+        self.assertIn(f"Evidence: {receipt['id']}", caption)
+        self.assertIn(f"/verify {receipt['id']}", caption)
+        labels = {
+            button["text"]
+            for row in markup["inline_keyboard"]
+            for button in row
+        }
+        self.assertIn("View Order", labels)
+        self.assertIn("🛑 Reject Receipt", labels)
+
+    def test_image_document_keeps_its_media_type_for_admin_review(self):
+        self.bot.handle(self.message(123, "/buy basic_50gb"))
+        order_id = self.commerce.list_pending_orders()[0]["id"]
+        self.bot._download_telegram_file = lambda _file_id: (b"document-receipt", "image/png")
+
+        self.bot.handle(
+            {
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 123, "first_name": "Min"},
+                "caption": f"/paid {order_id}",
+                "document": {
+                    "file_id": "receipt-document",
+                    "file_unique_id": "document-unique",
+                    "mime_type": "image/png",
+                },
+            }
+        )
+
+        receipt = self.commerce.get_receipt(
+            self.commerce.list_pending_receipts()[0]["id"]
+        )
+        self.assertEqual(receipt["telegram_media_type"], "document")
+        self.assertEqual(self.bot.media[-1][:3], ("document", 999, "receipt-document"))
+
+        self.bot.media.clear()
+        self.bot.handle(self.message(999, f"/receipt {receipt['id']}"))
+        self.assertEqual(self.bot.media[-1][:3], ("document", 999, "receipt-document"))
+
+    def test_receipt_review_retries_legacy_file_id_as_document(self):
+        calls = []
+        self.bot.send_photo = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("wrong file identifier")
+        )
+        self.bot.send_document = lambda chat_id, file_id, caption="", reply_markup=None: calls.append(
+            (chat_id, file_id, caption, reply_markup)
+        )
+        receipt = {
+            "id": "evidence-1",
+            "order_id": "order-1",
+            "telegram_id": 123,
+            "telegram_file_id": "legacy-document-id",
+            "amount_minor": 3000,
+            "currency": "MMK",
+            "extraction": {},
+            "telegram_media_type": "photo",
+        }
+
+        self.bot._send_receipt_review(999, receipt)
+
+        self.assertEqual(calls[0][0:2], (999, "legacy-document-id"))
+
+    def test_receipt_review_prefers_private_storage_signed_url(self):
+        self.commerce.receipt_storage = FakeReceiptStorage()
+        receipt = {
+            "id": "evidence-storage",
+            "order_id": "order-storage",
+            "telegram_id": 123,
+            "telegram_file_id": "legacy-file-id",
+            "storage_path": "orders/order-storage/evidence-storage.jpg",
+            "storage_status": "stored",
+            "amount_minor": 3000,
+            "currency": "MMK",
+            "extraction": {},
+            "telegram_media_type": "photo",
+        }
+        self.bot._send_receipt_review(999, receipt)
+        self.assertTrue(self.bot.media[-1][2].startswith("https://storage.example/"))
+
     def test_repeated_buy_returns_existing_order_and_myorders_tracks_it(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order_id = self.commerce.list_pending_orders()[0]["id"]
@@ -516,6 +653,24 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIs(commerce.metrics, outline.snapshot)
         self.assertEqual(claim.expiry_calls, 1)
         self.assertEqual(commerce.process_calls, 1)
+
+    def test_maintenance_delivers_free_quota_warning_through_telegram(self):
+        now = datetime(2026, 8, 27, 3, 7, tzinfo=UTC)
+        self.bot.service.claim(123, "Min", now)
+        self.outline.transfer = {"1": 240 * 1024 * 1024}
+
+        self.bot._run_maintenance()
+
+        warning_texts = [text for _chat_id, text in self.bot.sent if "Quota warning" in text]
+        self.assertEqual(len(warning_texts), 1)
+        self.assertIn("20.0%", warning_texts[0])
+        with self.db.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM notifications WHERE kind = 'quota_warning'"
+                ).fetchone()[0],
+                "sent",
+            )
 
     def test_admin_reject_button_requires_confirmation(self):
         order = self.commerce.create_order(123, "Min", "basic_50gb")

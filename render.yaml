@@ -33,6 +33,14 @@ services:
         sync: false
       - key: COMMERCE_DATABASE_URL
         value: ""
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_RECEIPTS_BUCKET
+        value: payment-receipts
+      - key: RECEIPT_STORAGE_REQUIRED
+        value: "1"
       - key: RECEIPT_LLM_BASE_URL
         value: ""
       - key: RECEIPT_LLM_MODEL

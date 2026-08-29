@@ -13,9 +13,9 @@ engineering estimates, not production traffic or revenue metrics.
 | Daily free entitlement | Implemented locally | 300 MiB Outline key, renewable once per rolling 24 hours; all private-chat users are tracked |
 | Monthly free entitlement | Implemented locally | 3 GiB key for 30 days, renewable every rolling 30 days, with expiry/revocation pass |
 | Plan catalog and commercial snapshots | Implemented locally | Public catalog exposes 50 GiB / 30 days at 3,000 MMK and 100 GiB / 30 days at 6,000 MMK; orders snapshot amount, name, quota, and duration |
-| Staff-assisted payment review | Implemented locally | Receipt photos/documents are hashed and linked to an order; optional vision LLM extracts candidate fields; `/receipts`, `/receipt`, `/verify`, and `/rejectreceipt` expose a review queue; staff verification remains authoritative and required before screenshot-paid approval |
+| Staff-assisted payment review | Implemented locally | Receipt photos/documents are uploaded to a private Supabase Storage bucket, while the database keeps only immutable object metadata/checksum and review state; optional vision LLM extracts candidate fields; `/receipts`, `/receipt`, `/verify`, and `/rejectreceipt` expose a review queue; staff verification remains authoritative and required before screenshot-paid approval |
 | Wallet ledger | Implemented locally | Immutable credit/reserve/capture/release ledger and balance projection; external receipts use credit→reserve→capture while wallet purchases use reserve→capture without double deduction |
-| Subscription lifecycle | Implemented locally | UTC start/expiry, active/pending/expired states, non-overlapping renewal order path; untouched orders expire after 24 hours |
+| Subscription lifecycle | Implemented locally | UTC start/expiry, active/pending/expired states, and independent paid entitlements (multiple simultaneous keys per customer); untouched orders expire after 24 hours |
 | Outline provisioning | Implemented locally | TLS pinning, GET/list/POST/optional deterministic PUT, quota set/delete, metrics, and 404-safe key deletion |
 | Durable external-effect state | Implemented for one process | SQLite jobs and notifications with retry, stale-running recovery, dedupe |
 | Expiry and revocation | Implemented locally | Expiry job, 404-safe known-key deletion, expiry notification; expired/pending subscriptions cannot disclose or later provision keys |
@@ -24,7 +24,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Auditability | Implemented locally | Order, payment, approval, rejection, provision, revoke events |
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
 | Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; hosted DB provisioning and live migration remain gates |
-| Independent worker / web control plane | Not yet | Current one-process long poll runs bounded jobs before polling |
+| Independent worker / web control plane | Partial | One process now keeps Telegram long polling responsive with a dedicated maintenance thread; separate Render worker/web services remain a later scale-out step |
 | Live Telegram and Outline smoke test | Blocked externally | Credentials and installed Outline output are not available; SSH to the supplied IP timed out |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
 | Referrals, affiliates, resellers, multi-node scale-out | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
@@ -33,8 +33,8 @@ engineering estimates, not production traffic or revenue metrics.
 
 - Core paid-concierge code: approximately **80%** of the scoped first pilot.
 - Local test/evidence coverage: **100%** for the current fake-Outline, TLS,
-  SQLite, PostgreSQL-adapter, receipt, trial, quota, order, and wallet suite
-  (57 tests passing).
+  SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
+  order, multi-key, quota-warning, Telegram delivery, and wallet suite (89 tests passing).
 - Live deployment readiness: approximately **35%**; the unit and runbook exist,
   but SSH, Outline installation/version, secrets, firewall, and live smoke checks
   are unverified.

@@ -119,8 +119,13 @@ A `100 MiB` key limit means `104857600` bytes of counted server egress during th
 - Usage cannot be reset on an existing key; the operator can raise the limit or create a new key.
 - A per-key limit overrides the server's default per-key limit.
 - The default server setting is not one aggregate quota shared by all keys.
-- Outline does not notify users when they approach or reach the limit.
-- The planned 24-hour expiry is an AuriX policy enforced by deleting the key. Outline's byte limit does not provide a 24-hour TTL.
+- Outline does not notify users when they approach or reach the limit; AuriX
+  now adds 25%, 10%, and 5% remaining-quota Telegram warnings.
+- The planned 24-hour expiry is an AuriX policy enforced by deleting the key.
+  Outline's byte limit does not provide a 24-hour TTL.
+- Outline's Management API has no documented per-key disconnect operation. AuriX
+  deletes the key and verifies it is absent, which blocks new authentication;
+  an already-established proxy connection may continue until it reconnects.
 
 Creating a fresh key for every claim also creates a fresh trailing-window allowance. Account, global issuance, and cost controls must therefore exist before any public test.
 

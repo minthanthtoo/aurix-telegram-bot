@@ -57,10 +57,13 @@ Optional:
 - `ADMIN_TELEGRAM_IDS` — comma-separated Telegram numeric IDs for staff commands
 - `TRIAL_TELEGRAM_IDS` — legacy allowlist; leave empty for public daily 300 MiB and monthly 3 GiB claims
 - `COMMERCE_DATABASE_URL` — PostgreSQL URL for hosted commercial state; empty uses staging SQLite
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — server-side credentials for the private receipt-evidence bucket. Never use the publishable/anon key here.
+- `SUPABASE_RECEIPTS_BUCKET` — private bucket name (default `payment-receipts`)
+- `RECEIPT_STORAGE_REQUIRED` — set to `1` in hosted deployments so a receipt cannot enter review until its object is stored
 - `RECEIPT_LLM_BASE_URL`, `RECEIPT_LLM_MODEL`, `RECEIPT_LLM_API_KEY` — optional OpenAI-compatible vision endpoint. If absent/unavailable, receipts stay in manual review.
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
-- `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Postgres, handler, and maintenance timings.
+- `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
 
 Do not expose `OUTLINE_API_URL`, bot token, DB, or generated access URLs. Firewall Outline Management API so only bot host can reach it.
 
@@ -107,7 +110,7 @@ Admin-only (shown through `/admin` only after allowlisting):
 
 To enable an administrator, send `/whoami` to the bot, place the returned numeric ID in `ADMIN_TELEGRAM_IDS` (comma-separated for multiple staff), and restart the bot. Telegram usernames are not accepted for authorization because they can change; only numeric IDs are used.
 
-Creating an order is idempotent while the customer already has an order in `awaiting_payment` or `payment_submitted`: repeated `/buy`, Upgrade-button, and renewal requests return that open order instead of inserting duplicates. Untouched orders expire after 24 hours and can be cancelled by the customer; orders with payment activity remain protected for staff review. Customers can inspect only their own orders; allowlisted admins can use `/order <order-id>` to inspect any order’s payment, receipt-review, wallet reservation, subscription, and provisioning trail.
+Creating an order is idempotent while the customer already has an order in `awaiting_payment` or `payment_submitted`: repeated `/buy`, Upgrade-button, and renewal requests return that open order instead of inserting duplicates. Once an order is approved, another `/buy` or `/renew` creates an independent entitlement, so a customer may hold multiple paid keys for separate devices or plans at the same time. `/myvpn` lists every active key and hides expired/revoked credentials. Untouched orders expire after 24 hours and can be cancelled by the customer; orders with payment activity remain protected for staff review. Customers can inspect only their own orders; allowlisted admins can use `/order <order-id>` to inspect any order’s payment, receipt-review, wallet reservation, subscription, and provisioning trail.
 
 The customer-facing order stage is derived consistently from the underlying records:
 `awaiting_payment`, `review_pending`, `payment_verified`, `wallet_reserved`,
@@ -126,7 +129,7 @@ python3 -m unittest -v
 
 ## Operational notes
 
-Outline byte limits use trailing 30-day transfer accounting. Fresh keys prevent old usage affecting a new entitlement. Time expiry belongs to this bot: expiry and quota passes run before every Telegram long poll. Outline has no documented pause endpoint, so AuriX marks access unavailable locally and queues `DELETE /access-keys/{id}`; a known-key 404 is converged state. Existing sessions must be acceptance-tested against the deployed Outline version before promising an immediate disconnect.
+Outline byte limits use trailing 30-day transfer accounting. Fresh keys prevent old usage affecting a new entitlement. Time expiry belongs to this bot: a bounded maintenance pass (60 seconds by default) checks expiry and quota independently. Outline has no documented pause endpoint, so AuriX marks access unavailable locally and queues `DELETE /access-keys/{id}`; a known-key 404 is converged state. The maintenance pass queues one Telegram warning at 25%, 10%, and 5% remaining quota per key, then removes the key at the observed limit. Warning delivery is retried durably and does not gate enforcement. Existing sessions must be acceptance-tested against the deployed Outline version before promising an immediate disconnect.
 
 Customers can use `/usage` or the **Usage** button to see each of their free,
 trial, and paid keys with Outline-reported bytes used, configured limit,
@@ -137,7 +140,14 @@ customer's key statistics.
 
 Outline key names are operator-readable and use UTC start time: `<username-or-telegram-id>-<tier>-<duration>-YYYYMMDDHHMM`, for example `min_user-FREE300MB-24hr-202608280520`. Telegram usernames are sanitized; accounts without a username fall back to their numeric Telegram ID. Renaming a key does not change its access URL.
 
-Receipt images are evidence, not proof. AuriX stores Telegram file metadata and a SHA-256 digest, not the raw image. The optional LLM output is untrusted and never approves a payment or credits a wallet. Staff must verify recipient, amount/currency, timestamp, and unique transaction ID against the receiving account, record that decision with `/verify`, and only then use `/approve`. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.
+Receipt images are evidence, not proof. AuriX stores each new raw image in a private Supabase Storage bucket and stores only its bucket/path, checksum, MIME type, size, extraction result, and review state in the database. Telegram file metadata remains as a compatibility fallback for older evidence. The upload is completed before the order enters `payment_submitted`; failed uploads remain retryable and are never shown in the admin review queue. The optional LLM output is untrusted and never approves a payment or credits a wallet. Staff must verify recipient, amount/currency, timestamp, and unique transaction ID against the receiving account, record that decision with `/verify`, and only then use `/approve`. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.
+Configure the bucket's lifecycle/retention rule separately after confirming the business and payment-record retention policy; the application does not silently delete evidence.
+
+When a customer submits a receipt, each configured admin receives the screenshot
+immediately with order/review controls. Telegram distinguishes photos from image
+documents, so AuriX preserves that media type and retries the alternate send method
+for evidence saved before this metadata was introduced. `/receipts` remains the
+durable recovery queue if an admin was offline or the immediate notification failed.
 
 Wallet events are immutable. An external verified receipt records `credit → reserve → capture`; a wallet purchase records `reserve → capture`; rejection releases a reservation exactly once. Capture does not deduct the balance a second time. `/wallet` shows the current projection and recent ledger events, while `/reconcile` reports balance mismatches and impossible order/job combinations.
 
@@ -205,8 +215,8 @@ correlation workflow in [`docs/MCP_DEBUGGING.md`](docs/MCP_DEBUGGING.md).
 
 ### Expiry and quota enforcement
 
-Time expiry and data quota are independent hard stops. Each polling cycle first
-checks Outline's rolling transfer metrics, then wall-clock expiry. When either
+Time expiry and data quota are independent hard stops. Each bounded maintenance
+pass first checks Outline's rolling transfer metrics, then wall-clock expiry. When either
 condition is observed, AuriX immediately hides the credential, writes a durable
 termination event, sends `DELETE /access-keys/{id}`, and verifies the key with a
 follow-up read. Failed deletes remain retryable; after ten failed cycles their

@@ -36,8 +36,8 @@ prompt/approval until the intended target and scope are confirmed.
 
 1. Start with the application latency log. Set `AURIX_LATENCY_LOG=1` in the
    Render service and reproduce one request. Capture `telegram_request`,
-   `outline_request`, `commerce_*`, and `postgres_*` timings, but never paste
-   tokens, SQL payloads, or customer data into a chat.
+   `outline_request`, `receipt_storage_*`, `commerce_*`, and `postgres_*`
+   timings, but never paste tokens, SQL payloads, or customer data into a chat.
 2. Use Render MCP to inspect the service deployment, instance state, recent
    deploys, and application logs around the request timestamp. Check for free
    tier spin-down/restarts, deploy churn, memory pressure, and region mismatch.

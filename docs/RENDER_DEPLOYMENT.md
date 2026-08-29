@@ -17,7 +17,11 @@ free instance, multiple instances, or ephemeral storage.
 - Paid 100 GiB / 30-day plan for 6,000 MMK.
 - Screenshot-only payment submission, optional LLM field extraction, and
   mandatory human verification against the receiving account.
+- Private Supabase Storage receipt objects with database-only metadata and
+  short-lived admin signed URLs; failed uploads remain retryable.
 - Customer order, wallet, VPN, and usage views with inline buttons.
+- Multiple independent paid entitlements per customer, each with its own key,
+  quota, expiry, and provisioning job.
 - Admin receipt review, approval/rejection, refund, retry, ledger, capacity,
   consistency, and quota/expiry enforcement views.
 - Per-key Outline quota application, usage lookup, expiry/quota deletion,
@@ -176,6 +180,10 @@ Required environment values:
 | `OUTLINE_CERT_SHA256` | 64 hexadecimal characters |
 | `AURIX_ACCESS_URL_KEY` | One persistent Fernet key |
 | `DATABASE_PATH` | Keep Blueprint value `/var/data/bot.db` |
+| `SUPABASE_URL` | HTTPS URL of the Singapore Supabase project |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only service-role secret; never publish it |
+| `SUPABASE_RECEIPTS_BUCKET` | Private bucket, normally `payment-receipts` |
+| `RECEIPT_STORAGE_REQUIRED` | `1` |
 
 Keep these Blueprint defaults:
 
@@ -183,6 +191,8 @@ Keep these Blueprint defaults:
 | --- | --- |
 | `TRIAL_TELEGRAM_IDS` | blank (public free/trial access) |
 | `COMMERCE_DATABASE_URL` | blank (single SQLite database) |
+| `SUPABASE_RECEIPTS_BUCKET` | `payment-receipts` (create it as private) |
+| `RECEIPT_STORAGE_REQUIRED` | `1` |
 | `ALLOW_TEXT_PAYMENT_REFERENCES` | `0` |
 | `RECEIPT_LLM_*` | all configured, or all blank |
 
@@ -196,7 +206,7 @@ every replacement/restart.
 A healthy startup contains these lines, without secret values:
 
 ```text
-Render preflight passed: persistent single-worker configuration is valid
+Render preflight passed: single-worker persistent disk configuration is valid
 Bot authorized: @your_bot_username
 Outline connected: version ...
 ```
@@ -350,12 +360,23 @@ Set:
 ```text
 AURIX_STORAGE_MODE=postgres
 COMMERCE_DATABASE_URL=<Supabase SSL PostgreSQL URL>
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<server-only service-role key>
+SUPABASE_RECEIPTS_BUCKET=payment-receipts
+RECEIPT_STORAGE_REQUIRED=1
 ```
 
 Do not set `/var/data/bot.db` in this profile; there is no persistent Render
 disk. Leave `TRIAL_TELEGRAM_IDS` blank and keep
 `ALLOW_TEXT_PAYMENT_REFERENCES=0`. The remaining Telegram, Outline, Fernet, and
 optional LLM variables are the same as the paid profile.
+
+Create `payment-receipts` as a private bucket before testing. New receipt
+objects are stored under `orders/{order-id}/{evidence-id}.{extension}`. Only
+the object path/checksum/metadata enter PostgreSQL; admins receive a short-lived
+signed URL. Failed uploads remain retryable and are excluded from `/receipts`.
+Configure object lifecycle/retention in Supabase only after the payment-record
+retention policy is approved; this release does not silently delete evidence.
 
 ### Latency workflow
 

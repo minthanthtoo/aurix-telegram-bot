@@ -15,6 +15,7 @@ import ssl
 import sys
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,6 +31,7 @@ from commerce import (
     PostgresCommerceDatabase,
 )
 from receipt_llm import OpenAICompatibleReceiptExtractor, ReceiptExtractionError, ReceiptLLMUnavailable
+from supabase_storage import NullReceiptStorage, SupabaseReceiptStorage
 
 UTC = timezone.utc
 LEGACY_LIMIT_BYTES = 100 * 1024 * 1024
@@ -39,6 +41,10 @@ TRIAL_LIMIT_BYTES = 3 * 1024**3
 CLAIM_PERIOD = timedelta(hours=24)
 TRIAL_PERIOD = timedelta(days=30)
 DEFAULT_MAINTENANCE_INTERVAL_SECONDS = 60.0
+# Warn once as the observed trailing-30-day allowance crosses these remaining
+# percentages. Outline itself enforces the hard limit; these messages make the
+# approaching cutoff visible before the key is removed.
+QUOTA_WARNING_THRESHOLDS = ((25, 0.25), (10, 0.10), (5, 0.05))
 
 
 def _latency_log(event: str, started_at: float, **fields: Any) -> None:
@@ -64,6 +70,18 @@ def _outline_key_name(
     identity = identity[:48] or str(telegram_id)
     timestamp = started_at.astimezone(UTC).strftime("%Y%m%d%H%M")
     return f"{identity}-{tier}-{duration}-{timestamp}"[:128]
+
+
+def _human_bytes(value: int) -> str:
+    amount = float(max(0, int(value)))
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if amount < 1024 or unit == "TiB":
+            return f"{int(amount)} {unit}" if unit == "B" else f"{amount:.2f} {unit}"
+        amount /= 1024
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex
 
 
 class OutlineError(RuntimeError):
@@ -115,7 +133,8 @@ class Database:
                     expires_at TEXT NOT NULL,
                     data_limit_bytes INTEGER NOT NULL,
                     status TEXT NOT NULL
-                        CHECK (status IN ('active', 'revoked', 'revoke_failed'))
+                        CHECK (status IN ('active', 'revoked', 'revoke_failed')),
+                    quota_warning_percent INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS keys_expiry
                     ON keys(status, expires_at);
@@ -143,6 +162,23 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS key_termination_pending
                     ON key_termination_events(remote_state, detected_at);
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id TEXT PRIMARY KEY,
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    telegram_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    access_url_ciphertext TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'sent', 'failed')),
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    sent_at TEXT,
+                    dead_lettered_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS notifications_due
+                    ON notifications(status, next_attempt_at);
                 """
             )
             user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
@@ -155,6 +191,8 @@ class Database:
                 connection.execute("ALTER TABLE keys ADD COLUMN last_usage_bytes INTEGER")
             if "quota_reason" not in key_columns:
                 connection.execute("ALTER TABLE keys ADD COLUMN quota_reason TEXT")
+            if "quota_warning_percent" not in key_columns:
+                connection.execute("ALTER TABLE keys ADD COLUMN quota_warning_percent INTEGER")
 
     def mark_update_seen(self, update_id: int) -> bool:
         """Durably dedupe Telegram updates across restarts."""
@@ -533,6 +571,11 @@ class ClaimService:
         if not isinstance(by_key, dict):
             return 0
         current = (now or datetime.now(UTC)).astimezone(UTC)
+        try:
+            self.queue_quota_warnings(current, metrics)
+        except Exception as exc:
+            # A notification outage must never delay the hard quota revoke.
+            print(f"quota warning error: {type(exc).__name__}", file=sys.stderr)
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT id, telegram_id, outline_key_id, data_limit_bytes, expires_at FROM keys
@@ -549,6 +592,97 @@ class ClaimService:
             if self._terminate_key(row, "quota", current, used):
                 revoked += 1
         return revoked
+
+    def queue_quota_warnings(
+        self,
+        now: datetime | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> int:
+        """Queue one Telegram warning as each remaining-quota threshold is crossed.
+
+        The warning level is persisted per key, so repeated maintenance passes
+        and temporary metric fluctuations cannot spam a customer. The final
+        hard stop remains ``enforce_quota`` and never depends on delivery.
+        """
+        if metrics is None:
+            try:
+                metrics = self.outline.transfer_metrics()
+            except Exception:
+                return 0
+        by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+        if not isinstance(by_key, dict):
+            return 0
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        queued = 0
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            rows = connection.execute(
+                """SELECT id, telegram_id, outline_key_id, data_limit_bytes,
+                          expires_at, quota_warning_percent
+                   FROM keys WHERE status = 'active'"""
+            ).fetchall()
+            for row in rows:
+                try:
+                    used = max(0, int(by_key.get(str(row["outline_key_id"]), 0) or 0))
+                    quota = int(row["data_limit_bytes"])
+                except (TypeError, ValueError):
+                    continue
+                if quota <= 0 or used >= quota:
+                    continue
+                remaining = quota - used
+                reached = next(
+                    (
+                        percent
+                        for percent, fraction in reversed(QUOTA_WARNING_THRESHOLDS)
+                        if remaining <= quota * fraction
+                    ),
+                    None,
+                )
+                if reached is None:
+                    continue
+                previous = row["quota_warning_percent"]
+                if previous is not None and int(previous) <= reached:
+                    continue
+                dedupe_key = f"quota-warning:free:{row['id']}:{reached}"
+                try:
+                    existing = connection.execute(
+                        "SELECT id FROM notifications WHERE dedupe_key = ?",
+                        (dedupe_key,),
+                    ).fetchone()
+                    if existing is None:
+                        if quota == TRIAL_LIMIT_BYTES:
+                            tier = "monthly 3 GiB"
+                        elif quota == PUBLIC_LIMIT_BYTES:
+                            tier = "daily 300 MiB"
+                        else:
+                            tier = "free"
+                        remaining_percent = remaining * 100 / quota
+                        text = (
+                            f"Quota warning: your AuriX {tier} key has "
+                            f"{_human_bytes(remaining)} remaining "
+                            f"({remaining_percent:.1f}% of {_human_bytes(quota)}).\n"
+                            "This is based on Outline's trailing-30-day usage. "
+                            "When no quota remains, the key will be blocked and deleted. "
+                            f"Expires: {row['expires_at']}"
+                        )
+                        connection.execute(
+                            """INSERT INTO notifications
+                               (id, dedupe_key, telegram_id, kind, text, status,
+                                next_attempt_at, created_at)
+                               VALUES (?, ?, ?, 'quota_warning', ?, 'pending', ?, ?)""",
+                            (_new_id(), dedupe_key, row["telegram_id"], text, now_text, now_text),
+                        )
+                        queued += 1
+                    connection.execute(
+                        "UPDATE keys SET quota_warning_percent = ? WHERE id = ?",
+                        (reached, row["id"]),
+                    )
+                except Exception as exc:
+                    if self.database.is_integrity_error(exc):
+                        continue
+                    raise
+        return queued
 
     def user_usage(
         self, telegram_id: int, usage_by_key: dict[str, Any]
@@ -821,6 +955,76 @@ class TelegramBot:
             payload["reply_markup"] = reply_markup
         self.request("sendPhoto", payload)
 
+    def send_document(
+        self,
+        chat_id: int,
+        file_id: str,
+        caption: str = "",
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "document": file_id,
+            "caption": caption[:1024],
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        self.request("sendDocument", payload)
+
+    @staticmethod
+    def _receipt_review_caption(receipt: dict[str, Any]) -> str:
+        extracted = receipt.get("extraction") or {}
+        evidence_id = str(receipt["id"])
+        return (
+            "Receipt awaiting review\n"
+            f"Evidence: {evidence_id}\n"
+            f"Order: {receipt['order_id']}\n"
+            f"Customer: {receipt['telegram_id']}\n"
+            f"Expected: {int(receipt['amount_minor']):,} {receipt['currency']}\n"
+            f"Extracted transaction: {extracted.get('transaction_id') or '-'}\n\n"
+            "Check the receiving account, then use:\n"
+            f"/verify {evidence_id} <transaction-id> <amount>"
+        )
+
+    def _send_receipt_review(self, chat_id: int, receipt: dict[str, Any]) -> None:
+        """Send stored evidence, preferring a private Storage signed URL."""
+        evidence_id = str(receipt["id"])
+        markup = self._inline_keyboard(
+            [
+                [("View Order", f"a:o:{receipt['order_id']}")],
+                [("🛑 Reject Receipt", f"a:q:{evidence_id}")],
+            ]
+        )
+        file_id = str(receipt["telegram_file_id"])
+        storage = getattr(self.commerce, "receipt_storage", None)
+        storage_path = receipt.get("storage_path")
+        if (
+            storage is not None
+            and storage_path
+            and receipt.get("storage_status") == "stored"
+        ):
+            try:
+                signed = storage.signed_url(str(storage_path), expires_in=300)
+                if signed:
+                    file_id = str(signed)
+            except Exception as exc:
+                # Telegram's original file ID remains a compatibility fallback
+                # for legacy rows or a temporary Storage outage.
+                print(
+                    f"receipt storage signed URL error: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
+        caption = self._receipt_review_caption(receipt)
+        media_type = receipt.get("telegram_media_type")
+        primary = self.send_document if media_type == "document" else self.send_photo
+        fallback = self.send_photo if media_type == "document" else self.send_document
+        try:
+            primary(chat_id, file_id, caption, markup)
+        except (RuntimeError, urllib.error.HTTPError):
+            # Older rows predate telegram_media_type, and Telegram file IDs can
+            # only be reused by the API method matching their original type.
+            fallback(chat_id, file_id, caption, markup)
+
     def _download_telegram_file(self, file_id: str) -> tuple[bytes, str]:
         info = self.request("getFile", {"file_id": file_id})
         file_path = info.get("file_path") if isinstance(info, dict) else None
@@ -853,6 +1057,7 @@ class TelegramBot:
         file_id = None
         unique_id = None
         mime = "image/jpeg"
+        media_type = "photo"
         if isinstance(photos, list) and photos:
             item = photos[-1]
             if isinstance(item, dict):
@@ -863,6 +1068,7 @@ class TelegramBot:
             file_id = document.get("file_id")
             unique_id = document.get("file_unique_id")
             mime = str(document.get("mime_type"))[:64]
+            media_type = "document"
         if not isinstance(file_id, str):
             return
         order_id = self._pending_order_id(telegram_id, str(message.get("caption") or ""))
@@ -891,6 +1097,7 @@ class TelegramBot:
                 image_bytes=image,
                 mime_type=mime,
                 extraction=extraction.as_dict() if hasattr(extraction, "as_dict") else extraction,
+                telegram_media_type=media_type,
             )
         except (CommerceError, RuntimeError, urllib.error.URLError) as exc:
             self.send(chat_id, str(exc) or "Receipt could not be recorded. Try again later.")
@@ -899,11 +1106,26 @@ class TelegramBot:
             self.send(chat_id, "Receipt received. Transaction ID extracted and queued for staff verification.")
         else:
             self.send(chat_id, "Receipt received for manual review. No payment is activated from the image alone.")
+        receipt = self.commerce.get_receipt(str(result["evidence_id"]))
         for admin_id in self.admin_ids:
             try:
-                self.send(admin_id, f"Receipt submitted for order {order_id} by Telegram user {telegram_id}; verify against the receiving account.")
+                if receipt is None:
+                    raise RuntimeError("stored receipt was unavailable")
+                self._send_receipt_review(admin_id, receipt)
             except Exception as exc:
                 print(f"admin receipt notification error: {type(exc).__name__}", file=sys.stderr)
+                try:
+                    self.send(
+                        admin_id,
+                        f"Receipt {result['evidence_id']} was submitted for order {order_id}, "
+                        "but Telegram could not reopen the image. Ask the customer to resubmit it, "
+                        "then use /receipts.",
+                    )
+                except Exception as fallback_exc:
+                    print(
+                        f"admin receipt fallback error: {type(fallback_exc).__name__}",
+                        file=sys.stderr,
+                    )
 
     def _is_admin(self, telegram_id: int) -> bool:
         return telegram_id in self.admin_ids
@@ -1193,22 +1415,37 @@ class TelegramBot:
         if self.commerce is None:
             self.send(chat_id, "Paid subscriptions are not configured in this staging process.")
             return
-        subscription = self.commerce.user_vpn(telegram_id)
-        if subscription is None:
+        if hasattr(self.commerce, "user_vpns"):
+            subscriptions = self.commerce.user_vpns(telegram_id)
+        else:
+            latest = self.commerce.user_vpn(telegram_id)
+            subscriptions = [latest] if latest else []
+        if not subscriptions:
             self.send(chat_id, "No subscription found. Use /plans to see available plans.")
             return
+        subscription = subscriptions[0]
         text = (
             f"Status: {subscription['status']}\n"
             f"Plan: {subscription['plan_code']}\n"
-            f"Expires: {subscription['expires_at']}"
+            f"Expires: {subscription['expires_at']}\n"
+            f"Paid keys: {sum(1 for item in subscriptions if item.get('key_status') == 'active')}"
         )
         if include_key:
-            if subscription.get("access_url") and subscription.get("key_status") == "active":
-                text += f"\n\nYour Outline key:\n{subscription['access_url']}"
-            elif subscription["status"] == "pending":
-                text += "\n\nProvisioning is pending. Please wait for the key delivery message."
-            else:
-                text += "\n\nNo active key is available."
+            key_blocks = []
+            for item in subscriptions:
+                if item.get("access_url") and item.get("key_status") == "active":
+                    key_blocks.append(
+                        f"{item['plan_code']} · expires {item['expires_at']}\n{item['access_url']}"
+                    )
+                elif item.get("status") == "pending":
+                    key_blocks.append(
+                        f"{item['plan_code']} · provisioning pending (expires {item['expires_at']})"
+                    )
+            text += (
+                "\n\nYour paid Outline keys:\n\n" + "\n\n".join(key_blocks)
+                if key_blocks
+                else "\n\nNo active paid key is available."
+            )
         actions = [[("📶 Usage", "n:usage"), ("🧾 My Orders", "n:myorders")]]
         if subscription.get("status") == "active":
             actions[0].append(("🔄 Renew", f"p:r:{subscription['plan_code']}"))
@@ -1459,6 +1696,8 @@ class TelegramBot:
                         report = self.commerce.consistency_report()
                         summary = (
                             f"\n\nQueue: {report.get('pending_receipts', 0)} receipt(s) pending · "
+                            f"{report.get('pending_receipt_uploads', 0)} upload(s) pending · "
+                            f"{report.get('failed_receipt_uploads', 0)} upload(s) failed · "
                             f"{report.get('failed_jobs', 0)} failed job(s) · "
                             f"{report.get('stale_receipts', 0)} stale review(s) · "
                             f"{report.get('dead_notifications', 0)} dead notification(s)"
@@ -1675,25 +1914,15 @@ class TelegramBot:
                 if receipt is None:
                     self.send(chat["id"], "Receipt evidence not found.")
                 else:
-                    extracted = receipt.get("extraction") or {}
-                    caption = (
-                        f"order:{receipt['order_id']} tg:{receipt['telegram_id']} "
-                        f"amount:{receipt['amount_minor']:,} {receipt['currency']} "
-                        f"tx:{extracted.get('transaction_id') or '-'}\n"
-                        "Verify against the receiving account, then use "
-                        f"/verify {args[0]} <transaction-id> <amount>."
-                    )
-                    self.send_photo(
-                        chat["id"],
-                        receipt["telegram_file_id"],
-                        caption,
-                        self._inline_keyboard(
-                            [
-                                [("View Order", f"a:o:{receipt['order_id']}")],
-                                [("🛑 Reject Receipt", f"a:q:{receipt['id']}")],
-                            ]
-                        ),
-                    )
+                    try:
+                        self._send_receipt_review(chat["id"], receipt)
+                    except Exception as exc:
+                        print(f"receipt review media error: {type(exc).__name__}", file=sys.stderr)
+                        self.send(
+                            chat["id"],
+                            "Receipt metadata exists, but Telegram no longer accepts its stored "
+                            "file ID. Ask the customer to submit the screenshot again.",
+                        )
         elif command == "/verify":
             if not self._is_admin(telegram_id):
                 self.send(chat["id"], "Admin access required.")
@@ -1811,6 +2040,8 @@ class TelegramBot:
                     "approved_missing_subscription",
                     "approved_missing_provision_job",
                     "stale_receipts",
+                    "pending_receipt_uploads",
+                    "failed_receipt_uploads",
                     "failed_jobs",
                     "dead_notifications",
                     "wallet_balance_mismatches",
@@ -2052,6 +2283,30 @@ def main() -> None:
     else:
         database = Database(Path(os.environ.get("DATABASE_PATH", "data/bot.db")))
         commerce_database = CommerceDatabase(database.path)
+    receipt_storage_required = os.environ.get(
+        "RECEIPT_STORAGE_REQUIRED", "0"
+    ).strip().lower() in ("1", "true", "yes", "on")
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    supabase_service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if bool(supabase_url) != bool(supabase_service_key):
+        raise SystemExit(
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured together"
+        )
+    if supabase_url and supabase_service_key:
+        try:
+            receipt_storage: Any = SupabaseReceiptStorage(
+                supabase_url,
+                supabase_service_key,
+                os.environ.get("SUPABASE_RECEIPTS_BUCKET", "payment-receipts"),
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+    else:
+        if receipt_storage_required:
+            raise SystemExit(
+                "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for receipt storage"
+            )
+        receipt_storage = NullReceiptStorage()
     database.initialize()
     outline = OutlineClient(api_url, fingerprint)
     allow_text_payment = os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").lower() in ("1", "true", "yes")
@@ -2060,6 +2315,8 @@ def main() -> None:
         outline,
         access_url_key,
         allow_legacy_text_approval=allow_text_payment,
+        receipt_storage=receipt_storage,
+        receipt_storage_required=receipt_storage_required,
     )
     commerce.initialize()
     order_reconciliation = commerce.reconcile_duplicate_open_orders()

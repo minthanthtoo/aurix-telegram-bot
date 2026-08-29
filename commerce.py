@@ -24,9 +24,12 @@ from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from supabase_storage import NullReceiptStorage
+
 UTC = timezone.utc
 JOB_RETRY_DELAY = timedelta(seconds=30)
 NOTIFICATION_RETRY_DELAY = timedelta(minutes=1)
+QUOTA_WARNING_THRESHOLDS = ((25, 0.25), (10, 0.10), (5, 0.05))
 
 
 def _latency_log(event: str, started_at: float, **fields: Any) -> None:
@@ -37,6 +40,14 @@ def _latency_log(event: str, started_at: float, **fields: Any) -> None:
     details = " ".join(f"{key}={value}" for key, value in fields.items())
     suffix = f" {details}" if details else ""
     print(f"latency event={event} duration_ms={duration_ms:.1f}{suffix}", file=sys.stderr)
+
+
+def _human_bytes(value: int) -> str:
+    amount = float(max(0, int(value)))
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if amount < 1024 or unit == "TiB":
+            return f"{int(amount)} {unit}" if unit == "B" else f"{amount:.2f} {unit}"
+        amount /= 1024
 
 
 def _paid_outline_key_name(subscription: Any) -> str:
@@ -51,7 +62,16 @@ def _paid_outline_key_name(subscription: Any) -> str:
         tier = str(subscription["plan_code"]).upper().replace("_", "-")
     duration = f"{int(subscription['duration_days'])}day"
     started = datetime.fromisoformat(subscription["starts_at"]).astimezone(UTC)
-    return f"{identity}-{tier}-{duration}-{started.strftime('%Y%m%d%H%M')}"[:128]
+    # The short subscription suffix keeps simultaneous purchases for the same
+    # user/plan/minute distinguishable on Outline versions without deterministic
+    # caller-selected IDs.
+    try:
+        subscription_id = subscription["id"]
+    except (KeyError, IndexError, TypeError):
+        subscription_id = None
+    suffix = str(subscription_id or "")[:8]
+    base = f"{identity}-{tier}-{duration}-{started.strftime('%Y%m%d%H%M')}"
+    return f"{base}-{suffix}"[:128] if suffix else base[:128]
 
 
 class CommerceError(RuntimeError):
@@ -201,6 +221,7 @@ class CommerceDatabase:
                     status TEXT NOT NULL CHECK (status IN (
                         'active', 'revoked', 'revoke_failed'
                     )),
+                    quota_warning_percent INTEGER,
                     created_at TEXT NOT NULL,
                     revoked_at TEXT
                 );
@@ -253,9 +274,16 @@ class CommerceDatabase:
                     provider TEXT NOT NULL,
                     telegram_file_id TEXT NOT NULL,
                     telegram_file_unique_id TEXT,
+                    telegram_media_type TEXT NOT NULL DEFAULT 'photo'
+                        CHECK (telegram_media_type IN ('photo', 'document')),
                     image_sha256 TEXT NOT NULL,
                     mime_type TEXT NOT NULL,
                     byte_size INTEGER NOT NULL,
+                    storage_bucket TEXT,
+                    storage_path TEXT,
+                    storage_status TEXT NOT NULL DEFAULT 'not_configured',
+                    storage_error TEXT,
+                    stored_at TEXT,
                     extraction_json TEXT,
                     extraction_status TEXT NOT NULL CHECK (extraction_status IN ('parsed', 'needs_review', 'invalid')),
                     submitted_at TEXT NOT NULL,
@@ -331,6 +359,12 @@ class CommerceDatabase:
                 ("verified_amount_minor", "INTEGER"),
                 ("verified_currency", "TEXT"),
                 ("reviewed_at", "TEXT"),
+                ("telegram_media_type", "TEXT NOT NULL DEFAULT 'photo'"),
+                ("storage_bucket", "TEXT"),
+                ("storage_path", "TEXT"),
+                ("storage_status", "TEXT NOT NULL DEFAULT 'not_configured'"),
+                ("storage_error", "TEXT"),
+                ("stored_at", "TEXT"),
             ):
                 if column not in evidence_columns:
                     connection.execute(
@@ -362,6 +396,7 @@ class CommerceDatabase:
                 ("last_usage_bytes", "INTEGER"),
                 ("last_usage_observed_at", "TEXT"),
                 ("quota_reason", "TEXT"),
+                ("quota_warning_percent", "INTEGER"),
             ):
                 if name not in key_columns:
                     connection.execute(f"ALTER TABLE paid_vpn_keys ADD COLUMN {name} {definition}")
@@ -562,7 +597,8 @@ class PostgresCommerceDatabase:
             data_limit_bytes BIGINT NOT NULL,
             status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'revoke_failed')),
             last_usage_bytes BIGINT,
-            quota_reason TEXT
+            quota_reason TEXT,
+            quota_warning_percent INTEGER
         );
         CREATE INDEX IF NOT EXISTS keys_expiry ON keys(status, expires_at);
         CREATE TABLE IF NOT EXISTS telegram_updates (
@@ -655,6 +691,7 @@ class PostgresCommerceDatabase:
             access_url TEXT NOT NULL,
             quota_bytes BIGINT,
             status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'revoke_failed')),
+            quota_warning_percent INTEGER,
             created_at TEXT NOT NULL,
             revoked_at TEXT
         );
@@ -703,9 +740,16 @@ class PostgresCommerceDatabase:
             provider TEXT NOT NULL,
             telegram_file_id TEXT NOT NULL,
             telegram_file_unique_id TEXT,
+            telegram_media_type TEXT NOT NULL DEFAULT 'photo'
+                CHECK (telegram_media_type IN ('photo', 'document')),
             image_sha256 TEXT NOT NULL,
             mime_type TEXT NOT NULL,
             byte_size BIGINT NOT NULL,
+            storage_bucket TEXT,
+            storage_path TEXT,
+            storage_status TEXT NOT NULL DEFAULT 'not_configured',
+            storage_error TEXT,
+            stored_at TEXT,
             extraction_json TEXT,
             extraction_status TEXT NOT NULL CHECK (extraction_status IN ('parsed', 'needs_review', 'invalid')),
             submitted_at TEXT NOT NULL,
@@ -767,6 +811,8 @@ class PostgresCommerceDatabase:
             connection.execute("ALTER TABLE paid_vpn_keys ADD COLUMN IF NOT EXISTS last_usage_bytes BIGINT")
             connection.execute("ALTER TABLE paid_vpn_keys ADD COLUMN IF NOT EXISTS last_usage_observed_at TEXT")
             connection.execute("ALTER TABLE paid_vpn_keys ADD COLUMN IF NOT EXISTS quota_reason TEXT")
+            connection.execute("ALTER TABLE paid_vpn_keys ADD COLUMN IF NOT EXISTS quota_warning_percent INTEGER")
+            connection.execute("ALTER TABLE keys ADD COLUMN IF NOT EXISTS quota_warning_percent INTEGER")
             connection.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS plan_name TEXT NOT NULL DEFAULT ''")
             connection.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS quota_bytes_snapshot BIGINT")
             connection.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS duration_days_snapshot INTEGER")
@@ -786,6 +832,12 @@ class PostgresCommerceDatabase:
             connection.execute("ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS verified_amount_minor BIGINT")
             connection.execute("ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS verified_currency TEXT")
             connection.execute("ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS reviewed_at TEXT")
+            connection.execute("ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS telegram_media_type TEXT NOT NULL DEFAULT 'photo'")
+            connection.execute("ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS storage_bucket TEXT")
+            connection.execute("ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS storage_path TEXT")
+            connection.execute("ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS storage_status TEXT NOT NULL DEFAULT 'not_configured'")
+            connection.execute("ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS storage_error TEXT")
+            connection.execute("ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS stored_at TEXT")
             CommerceDatabase._seed_plans(connection)
 
 
@@ -798,12 +850,16 @@ class CommerceService:
         outline: Any,
         access_url_key: bytes | str,
         allow_legacy_text_approval: bool = False,
+        receipt_storage: Any | None = None,
+        receipt_storage_required: bool = False,
     ):
         self.database = database
         self.outline = outline
         # Kept only for controlled migration tests. Public deployments must
         # require verified screenshot evidence or a wallet reservation.
         self.allow_legacy_text_approval = bool(allow_legacy_text_approval)
+        self.receipt_storage = receipt_storage or NullReceiptStorage()
+        self.receipt_storage_required = bool(receipt_storage_required)
         try:
             self.access_url_cipher = Fernet(access_url_key)
         except (TypeError, ValueError) as exc:
@@ -819,6 +875,32 @@ class CommerceService:
             return self.access_url_cipher.decrypt(encrypted.encode()).decode()
         except (InvalidToken, UnicodeDecodeError, ValueError):
             return None
+
+    @staticmethod
+    def _receipt_storage_extension(mime_type: str) -> str:
+        normalized = str(mime_type or "").lower().split(";", 1)[0].strip()
+        return {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+            "image/gif": "gif",
+        }.get(normalized, "bin")
+
+    @staticmethod
+    def _receipt_storage_path(order_id: str, evidence_id: str, mime_type: str) -> str:
+        # Order/evidence IDs are generated UUIDs. Keep this defensive because
+        # old/imported order IDs may contain unexpected characters.
+        safe_order = re.sub(r"[^A-Za-z0-9_-]+", "-", str(order_id)).strip("-_")[:96]
+        safe_evidence = re.sub(r"[^A-Za-z0-9_-]+", "-", str(evidence_id)).strip("-_")[:96]
+        extension = CommerceService._receipt_storage_extension(mime_type)
+        return f"orders/{safe_order or 'unknown'}/{safe_evidence or _new_id()}.{extension}"
+
+    def _storage_is_configured(self) -> bool:
+        return bool(getattr(self.receipt_storage, "configured", False))
+
+    def _storage_bucket(self) -> str | None:
+        bucket = getattr(self.receipt_storage, "bucket", None)
+        return str(bucket) if bucket else None
 
     def initialize(self) -> None:
         self.database.initialize()
@@ -1371,17 +1453,22 @@ class CommerceService:
         mime_type: str,
         extraction: dict[str, Any] | None = None,
         now: datetime | None = None,
+        telegram_media_type: str = "photo",
     ) -> dict[str, Any]:
-        """Persist receipt metadata and optional model extraction.
+        """Persist receipt metadata and upload the raw image out-of-band.
 
-        Raw image bytes are intentionally not stored.  Telegram's file id and a
-        digest provide idempotency/audit evidence while the image is discarded
-        after extraction according to the deployment retention policy.
+        The database transaction creates an upload-pending evidence row, then
+        the object is uploaded without holding a database connection open. A
+        second short transaction marks the object stored and moves the order to
+        payment review. This keeps network latency out of the database lock and
+        makes a lost response safely retryable using the same immutable path.
         """
         if not isinstance(file_id, str) or not file_id.strip():
             raise CommerceError("Receipt file id is missing")
         if not image_bytes or len(image_bytes) > 20 * 1024 * 1024:
             raise CommerceError("Receipt image is empty or too large")
+        if telegram_media_type not in ("photo", "document"):
+            raise CommerceError("Receipt media type is invalid")
         digest = hashlib.sha256(image_bytes).hexdigest()
         extraction = extraction if isinstance(extraction, dict) else None
         tx_id = extraction.get("transaction_id") if extraction else None
@@ -1389,6 +1476,14 @@ class CommerceService:
         tx_candidate = str(tx_id).strip()[:128] if tx_id else ""
         status = "parsed" if tx_id else "needs_review"
         submitted_at = _now_text(now)
+        storage_configured = self._storage_is_configured()
+        if self.receipt_storage_required and not storage_configured:
+            raise CommerceError("Receipt storage is not configured")
+        storage_status = "pending" if storage_configured else "not_configured"
+        storage_bucket = self._storage_bucket() if storage_configured else None
+        evidence_id: str
+        storage_path: str | None = None
+        is_new = False
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             order = connection.execute(
@@ -1401,7 +1496,10 @@ class CommerceService:
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
                 raise CommerceError("Order is not open for a receipt")
             existing = connection.execute(
-                "SELECT id, extraction_json, extraction_status, review_status FROM payment_evidence WHERE order_id = ? AND image_sha256 = ?",
+                """SELECT id, extraction_json, extraction_status, review_status,
+                          storage_bucket, storage_path, storage_status
+                   FROM payment_evidence
+                   WHERE order_id = ? AND image_sha256 = ?""",
                 (order_id, digest),
             ).fetchone()
             if existing is not None:
@@ -1410,82 +1508,205 @@ class CommerceService:
                 result["evidence_id"] = existing["id"]
                 result["extraction_status"] = existing["extraction_status"]
                 result["review_status"] = existing["review_status"]
-                return result
-            # Keep model output as evidence only.  Detect a repeated candidate
-            # across screenshots without creating an authoritative payment row.
-            if tx_candidate:
-                prior_evidence = connection.execute(
-                    "SELECT provider, extraction_json FROM payment_evidence WHERE order_id != ?",
-                    (order_id,),
-                ).fetchall()
-                for prior in prior_evidence:
-                    try:
-                        prior_extraction = json.loads(prior["extraction_json"] or "{}")
-                    except json.JSONDecodeError:
-                        prior_extraction = {}
-                    prior_tx = prior_extraction.get("transaction_id") if isinstance(prior_extraction, dict) else None
-                    if (
-                        _normalize_reference(str(prior["provider"])) == _normalize_reference(provider_name or "manual")
-                        and _normalize_reference(str(prior_tx or "")) == _normalize_reference(tx_candidate)
-                    ):
-                        status = "needs_review"
-                        flagged = dict(extraction or {})
-                        flagged["flags"] = sorted(
-                            set(flagged.get("flags") or []) | {"duplicate_transaction_candidate"}
+                result["image_sha256"] = digest
+                result["storage_status"] = existing["storage_status"] or "not_configured"
+                result["storage_path"] = existing["storage_path"]
+                storage_ready = (
+                    result["storage_status"] == "stored"
+                    if storage_configured
+                    else result["storage_status"] in ("stored", "not_configured")
+                )
+                if storage_ready:
+                    # A prior process may have committed the evidence row but
+                    # lost the response before moving the order state. Repair
+                    # that narrow inconsistency on an idempotent retry.
+                    if order["status"] == "awaiting_payment":
+                        connection.execute(
+                            "UPDATE orders SET status = 'payment_submitted' WHERE id = ?",
+                            (order_id,),
                         )
-                        extraction = flagged
-                        break
-            evidence_id = _new_id()
-            connection.execute(
-                """INSERT INTO payment_evidence
-                   (id, order_id, telegram_id, provider, telegram_file_id,
-                    telegram_file_unique_id, image_sha256, mime_type, byte_size,
-                    extraction_json, extraction_status, submitted_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    evidence_id,
-                    order_id,
-                    telegram_id,
-                    provider_name,
-                    file_id[:256],
-                    file_unique_id[:256] if file_unique_id else None,
-                    digest,
-                    mime_type[:64],
-                    len(image_bytes),
-                    json.dumps(extraction or {}, sort_keys=True),
-                    status,
-                    submitted_at,
-                ),
-            )
+                        self._audit(
+                            connection,
+                            "receipt_state_recovered",
+                            "order",
+                            order_id,
+                            "customer",
+                            str(telegram_id),
+                            {"evidence_id": existing["id"]},
+                        )
+                    return result
+                evidence_id = str(existing["id"])
+                storage_path = str(existing["storage_path"] or "") or self._receipt_storage_path(
+                    order_id, evidence_id, mime_type
+                )
+                connection.execute(
+                    """UPDATE payment_evidence
+                       SET storage_bucket = ?, storage_path = ?, storage_status = 'pending',
+                           storage_error = NULL
+                       WHERE id = ?""",
+                    (storage_bucket, storage_path, evidence_id),
+                )
+            else:
+                # Keep model output as evidence only. Detect a repeated
+                # candidate across screenshots without creating an
+                # authoritative payment row.
+                if tx_candidate:
+                    prior_evidence = connection.execute(
+                        "SELECT provider, extraction_json FROM payment_evidence WHERE order_id != ?",
+                        (order_id,),
+                    ).fetchall()
+                    for prior in prior_evidence:
+                        try:
+                            prior_extraction = json.loads(prior["extraction_json"] or "{}")
+                        except json.JSONDecodeError:
+                            prior_extraction = {}
+                        prior_tx = (
+                            prior_extraction.get("transaction_id")
+                            if isinstance(prior_extraction, dict)
+                            else None
+                        )
+                        if (
+                            _normalize_reference(str(prior["provider"]))
+                            == _normalize_reference(provider_name or "manual")
+                            and _normalize_reference(str(prior_tx or ""))
+                            == _normalize_reference(tx_candidate)
+                        ):
+                            status = "needs_review"
+                            flagged = dict(extraction or {})
+                            flagged["flags"] = sorted(
+                                set(flagged.get("flags") or [])
+                                | {"duplicate_transaction_candidate"}
+                            )
+                            extraction = flagged
+                            break
+                evidence_id = _new_id()
+                storage_path = (
+                    self._receipt_storage_path(order_id, evidence_id, mime_type)
+                    if storage_configured
+                    else None
+                )
+                connection.execute(
+                    """INSERT INTO payment_evidence
+                       (id, order_id, telegram_id, provider, telegram_file_id,
+                        telegram_file_unique_id, telegram_media_type, image_sha256,
+                        mime_type, byte_size, storage_bucket, storage_path,
+                        storage_status, extraction_json, extraction_status,
+                        submitted_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        evidence_id,
+                        order_id,
+                        telegram_id,
+                        provider_name,
+                        file_id[:256],
+                        file_unique_id[:256] if file_unique_id else None,
+                        telegram_media_type,
+                        digest,
+                        mime_type[:64],
+                        len(image_bytes),
+                        storage_bucket,
+                        storage_path,
+                        storage_status,
+                        json.dumps(extraction or {}, sort_keys=True),
+                        status,
+                        submitted_at,
+                    ),
+                )
+                is_new = True
+
+        if storage_configured:
+            assert storage_path is not None
+            try:
+                uploaded_path = self.receipt_storage.upload(
+                    storage_path, image_bytes, mime_type
+                )
+                uploaded_path = str(uploaded_path or "").strip()
+                if not uploaded_path:
+                    raise RuntimeError("Receipt storage returned an empty object path")
+            except Exception as exc:
+                # Preserve the row so a retry can reuse the same object path.
+                try:
+                    with self.database.connect() as connection:
+                        connection.execute(
+                            """UPDATE payment_evidence
+                               SET storage_status = 'failed', storage_error = ?
+                               WHERE id = ?""",
+                            (type(exc).__name__[:128], evidence_id),
+                        )
+                except Exception:
+                    pass
+                raise CommerceError(
+                    "Receipt image could not be saved. Please try again."
+                ) from exc
+            try:
+                storage_path = uploaded_path
+                with self.database.connect() as connection:
+                    self.database.begin_write(connection)
+                    connection.execute(
+                        """UPDATE payment_evidence
+                           SET storage_bucket = ?, storage_path = ?, storage_status = 'stored',
+                               storage_error = NULL, stored_at = ?
+                           WHERE id = ?""",
+                        (storage_bucket, str(uploaded_path), submitted_at, evidence_id),
+                    )
+                    connection.execute(
+                        "UPDATE orders SET status = 'payment_submitted' WHERE id = ?",
+                        (order_id,),
+                    )
+                    self._audit(
+                        connection,
+                        "receipt_submitted" if is_new else "receipt_storage_recovered",
+                        "order",
+                        order_id,
+                        "customer",
+                        str(telegram_id),
+                        {"evidence_id": evidence_id, "extraction_status": status},
+                    )
+            except Exception:
+                # Do not leave a billable orphan if the final metadata commit
+                # fails. Deletion is best-effort and the row remains retryable.
+                try:
+                    self.receipt_storage.delete(storage_path)
+                except Exception:
+                    pass
+                raise
+        else:
             # A receipt is a payment submission even when OCR/LLM extraction
             # failed. Approval still requires a human verification decision.
-            connection.execute(
-                "UPDATE orders SET status = 'payment_submitted' WHERE id = ?",
-                (order_id,),
-            )
-            self._audit(
-                connection,
-                "receipt_submitted",
-                "order",
-                order_id,
-                "customer",
-                str(telegram_id),
-                {"evidence_id": evidence_id, "extraction_status": status},
-            )
+            with self.database.connect() as connection:
+                self.database.begin_write(connection)
+                connection.execute(
+                    "UPDATE orders SET status = 'payment_submitted' WHERE id = ?",
+                    (order_id,),
+                )
+                if is_new:
+                    self._audit(
+                        connection,
+                        "receipt_submitted",
+                        "order",
+                        order_id,
+                        "customer",
+                        str(telegram_id),
+                        {"evidence_id": evidence_id, "extraction_status": status},
+                    )
         result = dict(extraction or {})
         result["evidence_id"] = evidence_id
         result["image_sha256"] = digest
         result["extraction_status"] = status
+        result["storage_status"] = "stored" if storage_configured else "not_configured"
+        result["storage_path"] = storage_path
         return result
 
     def list_pending_receipts(self, limit: int = 20) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT e.id, e.order_id, e.telegram_id, e.provider, e.image_sha256,
-                          e.byte_size, e.extraction_json, e.extraction_status, e.submitted_at,
+                          e.byte_size, e.storage_bucket, e.storage_path, e.storage_status,
+                          e.extraction_json, e.extraction_status, e.submitted_at,
                           o.plan_code, o.amount_minor, o.currency
                    FROM payment_evidence e JOIN orders o ON o.id = e.order_id
                    WHERE e.review_status = 'pending'
+                     AND e.storage_status IN ('stored', 'not_configured')
                    ORDER BY e.submitted_at LIMIT ?""",
                 (max(1, min(limit, 100)),),
             ).fetchall()
@@ -1554,6 +1775,11 @@ class CommerceService:
                 raise CommerceError("Receipt evidence not found")
             if evidence["order_status"] == "approved":
                 return evidence["order_id"]
+            if (
+                self.receipt_storage_required
+                and str(evidence["storage_status"] or "") != "stored"
+            ):
+                raise CommerceError("Receipt image must be stored before verification")
             if evidence["review_status"] == "verified":
                 if (
                     str(evidence["verified_provider_reference"] or "").strip().casefold()
@@ -1757,6 +1983,12 @@ class CommerceService:
                    WHERE review_status = 'pending' AND submitted_at <= ?""",
                 (review_cutoff,),
             ).fetchone()["n"]
+            pending_receipt_uploads = connection.execute(
+                "SELECT COUNT(*) AS n FROM payment_evidence WHERE storage_status = 'pending'"
+            ).fetchone()["n"]
+            failed_receipt_uploads = connection.execute(
+                "SELECT COUNT(*) AS n FROM payment_evidence WHERE storage_status = 'failed'"
+            ).fetchone()["n"]
             failed_jobs = connection.execute(
                 "SELECT COUNT(*) AS n FROM provisioning_jobs WHERE status = 'failed'"
             ).fetchone()["n"]
@@ -1782,6 +2014,8 @@ class CommerceService:
             "approved_missing_provision_job": int(approved_missing_job),
             "pending_receipts": int(pending_reviews),
             "stale_receipts": int(stale_reviews),
+            "pending_receipt_uploads": int(pending_receipt_uploads),
+            "failed_receipt_uploads": int(failed_receipt_uploads),
             "failed_jobs": int(failed_jobs),
             "dead_notifications": int(dead_notifications),
             "wallet_balance_mismatches": int(wallet_mismatches),
@@ -1918,7 +2152,8 @@ class CommerceService:
             if order["status"] != "payment_submitted":
                 raise CommerceError("Order has no submitted payment for review")
             evidence = connection.execute(
-                """SELECT review_status, verified_amount_minor, verified_currency
+                """SELECT review_status, verified_amount_minor, verified_currency,
+                          storage_status
                    FROM payment_evidence WHERE order_id = ?
                    ORDER BY submitted_at DESC LIMIT 1""",
                 (order_id,),
@@ -1931,6 +2166,12 @@ class CommerceService:
             if evidence is not None and evidence["review_status"] != "verified":
                 if wallet_reservation is None or wallet_reservation["status"] != "reserved":
                     raise CommerceError("Receipt must be verified against the receiving account first")
+            if (
+                evidence is not None
+                and self.receipt_storage_required
+                and str(evidence["storage_status"] or "") != "stored"
+            ):
+                raise CommerceError("Receipt image must be stored before approval")
             payment = connection.execute(
                 """SELECT id, provider, status FROM payments WHERE order_id = ?
                    AND status IN ('submitted', 'verified')
@@ -1961,20 +2202,11 @@ class CommerceService:
             duration_days = int(order["duration_days_snapshot"] or plan["duration_days"])
             plan_name = str(order["plan_name"] or plan["name"])
             quota_bytes = order["quota_bytes_snapshot"] if order["quota_bytes_snapshot"] is not None else plan["quota_bytes"]
-            existing_subscription = connection.execute(
-                """SELECT id, status, starts_at, expires_at FROM subscriptions
-                   WHERE telegram_id = ? AND status IN ('pending', 'active')
-                   ORDER BY expires_at DESC LIMIT 1""",
-                (order["telegram_id"],),
-            ).fetchone()
+            # Each approved paid order represents an independent entitlement
+            # and may provision its own key. A customer can therefore buy
+            # multiple plans/devices at once; renewal is not serialized behind
+            # an existing subscription.
             effective_start = datetime.fromisoformat(starts_at)
-            if existing_subscription is not None:
-                prior_expiry = datetime.fromisoformat(existing_subscription["expires_at"])
-                if prior_expiry > effective_start:
-                    # Queue a non-overlapping renewal.  The new key starts only
-                    # when the current entitlement ends, preserving one active
-                    # remote key/account at a time.
-                    effective_start = prior_expiry
             expires_at = (
                 effective_start + timedelta(days=duration_days)
             ).isoformat()
@@ -2448,12 +2680,6 @@ class CommerceService:
                 "SELECT * FROM paid_vpn_keys WHERE subscription_id = ?",
                 (job["subscription_id"],),
             ).fetchone()
-            predecessor = connection.execute(
-                """SELECT k.id FROM paid_vpn_keys k
-                   WHERE k.telegram_id = ? AND k.subscription_id <> ?
-                     AND k.status IN ('active', 'revoke_failed') LIMIT 1""",
-                (subscription["telegram_id"], job["subscription_id"]),
-            ).fetchone() if subscription is not None else None
         if subscription is None:
             self._job_done(job["id"])
             return
@@ -2500,15 +2726,6 @@ class CommerceService:
             return
         if existing is not None:
             self._job_done(job["id"])
-            return
-        if predecessor is not None:
-            with self.database.connect() as connection:
-                connection.execute(
-                    """UPDATE provisioning_jobs SET status = 'pending', next_attempt_at = ?, locked_at = NULL,
-                              last_error = 'waiting for predecessor revoke'
-                       WHERE id = ?""",
-                    (_now_text(now + JOB_RETRY_DELAY), job["id"]),
-                )
             return
         key_name = _paid_outline_key_name(subscription)
         key = None
@@ -2797,6 +3014,89 @@ class CommerceService:
         self._expire(current)
         return self.process_jobs(current)
 
+    def queue_quota_warnings(
+        self,
+        now: datetime | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> int:
+        """Queue one Telegram warning as each remaining-quota threshold is crossed."""
+        if metrics is None:
+            try:
+                metrics = self.outline.transfer_metrics()
+            except Exception:
+                return 0
+        by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+        if not isinstance(by_key, dict):
+            return 0
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = _now_text(current)
+        queued = 0
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            rows = connection.execute(
+                """SELECT k.id, k.subscription_id, k.telegram_id, k.outline_key_id,
+                          k.quota_bytes, k.status, k.quota_warning_percent,
+                          s.plan_code, s.expires_at
+                   FROM paid_vpn_keys k JOIN subscriptions s ON s.id = k.subscription_id
+                   WHERE k.status = 'active' AND s.status = 'active'
+                     AND k.quota_bytes IS NOT NULL"""
+            ).fetchall()
+            for row in rows:
+                try:
+                    used = max(0, int(by_key.get(str(row["outline_key_id"]), 0) or 0))
+                    quota = int(row["quota_bytes"])
+                except (TypeError, ValueError):
+                    continue
+                if quota <= 0 or used >= quota:
+                    continue
+                remaining = quota - used
+                reached = next(
+                    (
+                        percent
+                        for percent, fraction in reversed(QUOTA_WARNING_THRESHOLDS)
+                        if remaining <= quota * fraction
+                    ),
+                    None,
+                )
+                if reached is None:
+                    continue
+                previous = row["quota_warning_percent"]
+                if previous is not None and int(previous) <= reached:
+                    continue
+                dedupe_key = f"quota-warning:paid:{row['subscription_id']}:{reached}"
+                try:
+                    existing = connection.execute(
+                        "SELECT id FROM notifications WHERE dedupe_key = ?",
+                        (dedupe_key,),
+                    ).fetchone()
+                    if existing is None:
+                        remaining_percent = remaining * 100 / quota
+                        text = (
+                            f"Quota warning: your AuriX {row['plan_code']} key has "
+                            f"{_human_bytes(remaining)} remaining "
+                            f"({remaining_percent:.1f}% of {_human_bytes(quota)}).\n"
+                            "This is based on Outline's trailing-30-day usage. "
+                            "When no quota remains, the key will be blocked and deleted. "
+                            f"Expires: {row['expires_at']}"
+                        )
+                        connection.execute(
+                            """INSERT INTO notifications
+                               (id, dedupe_key, telegram_id, kind, text, status,
+                                next_attempt_at, created_at)
+                               VALUES (?, ?, ?, 'quota_warning', ?, 'pending', ?, ?)""",
+                            (_new_id(), dedupe_key, row["telegram_id"], text, now_text, now_text),
+                        )
+                        queued += 1
+                    connection.execute(
+                        "UPDATE paid_vpn_keys SET quota_warning_percent = ? WHERE id = ?",
+                        (reached, row["id"]),
+                    )
+                except Exception as exc:
+                    if self.database.is_integrity_error(exc):
+                        continue
+                    raise
+        return queued
+
     def enforce_quotas(
         self,
         now: datetime | None = None,
@@ -2818,6 +3118,11 @@ class CommerceService:
         by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
         if not isinstance(by_key, dict):
             return 0
+        try:
+            self.queue_quota_warnings(current, metrics)
+        except Exception as exc:
+            # A notification outage must never delay the hard quota revoke.
+            print(f"paid quota warning error: {type(exc).__name__}", file=sys.stderr)
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT k.id, k.subscription_id, k.outline_key_id, k.quota_bytes,
@@ -2958,24 +3263,40 @@ class CommerceService:
             )
         return result
 
-    def user_vpn(self, telegram_id: int) -> dict[str, Any] | None:
+    def user_vpns(self, telegram_id: int, limit: int = 20) -> list[dict[str, Any]]:
+        """Return all of a user's paid entitlements without exposing secrets.
+
+        A customer may own multiple active keys (for devices or parallel
+        plans). Access URLs are decrypted only for active, non-expired keys.
+        """
         with self.database.connect() as connection:
-            row = connection.execute(
+            rows = connection.execute(
                 """SELECT s.id AS subscription_id, s.plan_code, s.status, s.expires_at,
-                          k.access_url, k.quota_bytes, k.status AS key_status
+                          s.starts_at, k.access_url, k.quota_bytes, k.status AS key_status
                    FROM subscriptions s LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
                    WHERE s.telegram_id = ? AND s.status IN ('pending', 'active', 'expired', 'revoked')
                    ORDER BY CASE s.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
-                            s.starts_at DESC LIMIT 1""",
-                (telegram_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        result = dict(row)
-        result["access_url"] = self._decrypt_access_url(result.get("access_url"))
-        if result.get("status") != "active" or result.get("expires_at") <= _now_text():
-            result["access_url"] = None
-        return result
+                            s.starts_at DESC LIMIT ?""",
+                (telegram_id, max(1, min(int(limit), 100))),
+            ).fetchall()
+        now_text = _now_text()
+        results = []
+        for row in rows:
+            result = dict(row)
+            result["access_url"] = self._decrypt_access_url(result.get("access_url"))
+            if (
+                result.get("status") != "active"
+                or result.get("key_status") != "active"
+                or str(result.get("expires_at") or "") <= now_text
+            ):
+                result["access_url"] = None
+            results.append(result)
+        return results
+
+    def user_vpn(self, telegram_id: int) -> dict[str, Any] | None:
+        """Backward-compatible latest/most relevant paid entitlement view."""
+        subscriptions = self.user_vpns(telegram_id, limit=1)
+        return subscriptions[0] if subscriptions else None
 
     def pending_notifications(self, now: datetime | None = None, limit: int = 20) -> list[dict[str, Any]]:
         now_text = _now_text(now)

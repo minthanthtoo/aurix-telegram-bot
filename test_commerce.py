@@ -117,6 +117,29 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(normalized, "tx123")
         self.assertIn("payments_reference_lookup", indexes)
 
+    def test_existing_database_adds_receipt_media_type(self):
+        legacy_path = Path(self.tmp.name) / "legacy-receipts.db"
+        database = CommerceDatabase(legacy_path)
+        database.initialize()
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute(
+                "ALTER TABLE payment_evidence DROP COLUMN telegram_media_type"
+            )
+
+        database.initialize()
+
+        with sqlite3.connect(legacy_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(payment_evidence)")
+            }
+        self.assertIn("telegram_media_type", columns)
+        self.assertIn("storage_bucket", columns)
+        self.assertIn("storage_path", columns)
+        self.assertIn("storage_status", columns)
+        self.assertIn("storage_error", columns)
+        self.assertIn("stored_at", columns)
+
     def test_payment_is_required_and_approval_is_idempotent(self):
         order = self.service.create_order(123, "Min", "basic_50gb", self.now)
         with self.assertRaises(CommerceError):
@@ -335,8 +358,8 @@ class CommerceServiceTest(unittest.TestCase):
 
         self.assertEqual(self.service.process_jobs(self.now), 1)
         self.assertEqual(len(self.outline.created), 1)
-        self.assertEqual(
-            self.outline.created[0][0], "123-PAID50GB-30day-202608270307"
+        self.assertTrue(
+            self.outline.created[0][0].startswith("123-PAID50GB-30day-202608270307-")
         )
         subscription = self.service.user_vpn(123)
         self.assertEqual(subscription["status"], "active")
@@ -363,8 +386,28 @@ class CommerceServiceTest(unittest.TestCase):
         )
         self.service.approve_order(order.order_id, 999, self.now)
         self.service.process_jobs(self.now)
+        self.assertTrue(
+            self.outline.created[0][0].startswith(
+                "min_vpn-PAID50GB-30day-202608270307-"
+            )
+        )
+
+    def test_user_can_buy_multiple_paid_keys(self):
+        first = self._paid_order()
+        self.service.approve_order(first.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+
+        second = self.service.create_order(123, "Test User", "basic_50gb", self.now)
+        self.service.submit_payment(123, second.order_id, "manual", "second-ref", self.now)
+        self.service.approve_order(second.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+
+        self.assertEqual(len(self.outline.created), 2)
+        self.assertNotEqual(self.outline.created[0][0], self.outline.created[1][0])
+        subscriptions = self.service.user_vpns(123)
         self.assertEqual(
-            self.outline.created[0][0], "min_vpn-PAID50GB-30day-202608270307"
+            len([item for item in subscriptions if item["key_status"] == "active"]),
+            2,
         )
 
     def test_worker_reconciles_a_remote_key_after_a_lost_local_response(self):
