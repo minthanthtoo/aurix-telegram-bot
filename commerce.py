@@ -1035,6 +1035,17 @@ class CommerceService:
         bucket = getattr(self.receipt_storage, "bucket", None)
         return str(bucket) if bucket else None
 
+    @staticmethod
+    def _lock_order(connection: Any, order_id: str) -> None:
+        """Serialize aggregate mutations on PostgreSQL as well as SQLite.
+
+        SQLite already serializes writers. PostgreSQL needs an explicit row
+        lock because payment, receipt, approval and refund requests can arrive
+        concurrently from Telegram retries or two administrators.
+        """
+        if isinstance(connection, _PostgresConnection):
+            connection.execute("SELECT id FROM orders WHERE id = ? FOR UPDATE", (order_id,)).fetchone()
+
     def initialize(self) -> None:
         self.database.initialize()
 
@@ -1126,6 +1137,7 @@ class CommerceService:
                 """SELECT * FROM orders
                    WHERE telegram_id = ?
                      AND status IN ('awaiting_payment', 'payment_submitted')
+                     AND COALESCE(refund_status, 'none') != 'refunded'
                    ORDER BY created_at LIMIT 1""",
                 (telegram_id,),
             ).fetchone()
@@ -1183,6 +1195,7 @@ class CommerceService:
         plan_code: str,
         now: datetime | None = None,
         username: str | None = None,
+        expected_order_id: str | None = None,
     ) -> OrderResult:
         """Replace an untouched open order with a different plan."""
         plan = self.get_plan(plan_code)
@@ -1194,11 +1207,15 @@ class CommerceService:
             existing = connection.execute(
                 """SELECT * FROM orders
                    WHERE telegram_id = ? AND status IN ('awaiting_payment', 'payment_submitted')
+                     AND COALESCE(refund_status, 'none') != 'refunded'
                    ORDER BY created_at LIMIT 1""",
                 (telegram_id,),
             ).fetchone()
             if existing is None:
                 raise CommerceError("No open order is available to replace")
+            self._lock_order(connection, str(existing["id"]))
+            if expected_order_id and str(existing["id"]) != str(expected_order_id):
+                raise CommerceError("The open order changed; refresh and try again")
             if existing["plan_code"] == plan.code:
                 return OrderResult(str(existing["id"]), plan, str(existing["status"]), False)
             evidence_count = connection.execute(
@@ -1243,6 +1260,7 @@ class CommerceService:
         cancelled_at = _now_text(now)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            self._lock_order(connection, order_id)
             order = connection.execute(
                 "SELECT * FROM orders WHERE id = ? AND telegram_id = ?",
                 (order_id, telegram_id),
@@ -1375,7 +1393,15 @@ class CommerceService:
         reservation = str(order.get("wallet_reservation_status") or "")
         if str(order.get("refund_status") or "none") == "refunded" or payment == "refunded":
             return "refunded"
+        provision = str(order.get("provisioning_status") or "")
+        revoke = str(order.get("revocation_status") or "")
+        if revoke in ("pending", "running"):
+            return "revocation_pending"
+        if revoke == "failed":
+            return "revocation_failed"
         if status == "approved":
+            if provision == "failed":
+                return "activation_failed"
             if subscription == "active":
                 return "fulfilled"
             if subscription == "pending":
@@ -1406,6 +1432,12 @@ class CommerceService:
                            LIMIT 1) AS subscription_status,
                           (SELECT s.expires_at FROM subscriptions s WHERE s.order_id = o.id
                            LIMIT 1) AS expires_at,
+                          (SELECT j.status FROM provisioning_jobs j JOIN subscriptions s
+                           ON s.id = j.subscription_id WHERE s.order_id = o.id
+                           AND j.operation = 'provision' LIMIT 1) AS provisioning_status,
+                          (SELECT j.status FROM provisioning_jobs j JOIN subscriptions s
+                           ON s.id = j.subscription_id WHERE s.order_id = o.id
+                           AND j.operation = 'revoke' LIMIT 1) AS revocation_status,
                           (SELECT r.status FROM wallet_reservations r WHERE r.order_id = o.id
                            LIMIT 1) AS wallet_reservation_status
                    FROM orders o WHERE o.telegram_id = ?
@@ -1489,6 +1521,10 @@ class CommerceService:
                            ON s.id = j.subscription_id
                            WHERE s.order_id = o.id AND j.operation = 'provision'
                            LIMIT 1) AS provisioning_status,
+                          (SELECT j.status FROM provisioning_jobs j JOIN subscriptions s
+                           ON s.id = j.subscription_id
+                           WHERE s.order_id = o.id AND j.operation = 'revoke'
+                           LIMIT 1) AS revocation_status,
                           (SELECT r.status FROM wallet_reservations r WHERE r.order_id = o.id
                            LIMIT 1) AS wallet_reservation_status
                    FROM orders o WHERE o.id = ?""",
@@ -1517,6 +1553,7 @@ class CommerceService:
             raise CommerceError("Payment provider and reference are required")
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            self._lock_order(connection, order_id)
             order = connection.execute(
                 "SELECT * FROM orders WHERE id = ?", (order_id,)
             ).fetchone()
@@ -1570,6 +1607,7 @@ class CommerceService:
             row = connection.execute(
                 """SELECT * FROM orders
                    WHERE telegram_id = ? AND status IN ('awaiting_payment', 'payment_submitted')
+                     AND COALESCE(refund_status, 'none') != 'refunded'
                    ORDER BY created_at LIMIT 1""",
                 (telegram_id,),
             ).fetchone()
@@ -1619,6 +1657,7 @@ class CommerceService:
         is_new = False
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            self._lock_order(connection, order_id)
             order = connection.execute(
                 "SELECT * FROM orders WHERE id = ?", (order_id,)
             ).fetchone()
@@ -1680,6 +1719,21 @@ class CommerceService:
                     (storage_bucket, storage_path, evidence_id),
                 )
             else:
+                latest = connection.execute(
+                    """SELECT review_status FROM payment_evidence
+                       WHERE order_id = ? ORDER BY submitted_at DESC LIMIT 1""",
+                    (order_id,),
+                ).fetchone()
+                if latest is not None and str(latest["review_status"] or "pending") != "rejected":
+                    raise CommerceError("A receipt is already awaiting review; wait for staff feedback")
+                payment_rows = connection.execute(
+                    "SELECT provider, status FROM payments WHERE order_id = ?",
+                    (order_id,),
+                ).fetchall()
+                if any(str(item["provider"] or "").lower() == "wallet" for item in payment_rows):
+                    raise CommerceError("This order already uses wallet payment; receipt payment cannot be combined")
+                if any(str(item["status"] or "") in ("submitted", "verified", "refunded") for item in payment_rows):
+                    raise CommerceError("A payment is already attached to this order")
                 # Keep model output as evidence only. Detect a repeated
                 # candidate across screenshots without creating an
                 # authoritative payment row.
@@ -1906,6 +1960,7 @@ class CommerceService:
             ).fetchone()
             if evidence is None:
                 raise CommerceError("Receipt evidence not found")
+            self._lock_order(connection, str(evidence["order_id"]))
             if evidence["order_status"] == "approved":
                 return evidence["order_id"]
             if (
@@ -2027,6 +2082,7 @@ class CommerceService:
             ).fetchone()
             if evidence is None:
                 raise CommerceError("Receipt evidence not found")
+            self._lock_order(connection, str(evidence["order_id"]))
             if evidence["review_status"] == "verified":
                 raise CommerceError("Verified receipt cannot be rejected")
             if evidence["review_status"] == "rejected":
@@ -2125,6 +2181,15 @@ class CommerceService:
             failed_jobs = connection.execute(
                 "SELECT COUNT(*) AS n FROM provisioning_jobs WHERE status = 'failed'"
             ).fetchone()["n"]
+            pending_revocations = connection.execute(
+                "SELECT COUNT(*) AS n FROM provisioning_jobs WHERE operation = 'revoke' AND status IN ('pending', 'running')"
+            ).fetchone()["n"]
+            failed_revocations = connection.execute(
+                "SELECT COUNT(*) AS n FROM provisioning_jobs WHERE operation = 'revoke' AND status = 'failed'"
+            ).fetchone()["n"]
+            failed_activations = connection.execute(
+                "SELECT COUNT(*) AS n FROM provisioning_jobs WHERE operation = 'provision' AND status = 'failed'"
+            ).fetchone()["n"]
             dead_notifications = connection.execute(
                 "SELECT COUNT(*) AS n FROM notifications WHERE dead_lettered_at IS NOT NULL"
             ).fetchone()["n"]
@@ -2150,6 +2215,9 @@ class CommerceService:
             "pending_receipt_uploads": int(pending_receipt_uploads),
             "failed_receipt_uploads": int(failed_receipt_uploads),
             "failed_jobs": int(failed_jobs),
+            "pending_revocations": int(pending_revocations),
+            "failed_revocations": int(failed_revocations),
+            "failed_activations": int(failed_activations),
             "dead_notifications": int(dead_notifications),
             "wallet_balance_mismatches": int(wallet_mismatches),
         }
@@ -2189,6 +2257,7 @@ class CommerceService:
         now_text = _now_text(now)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            self._lock_order(connection, order_id)
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
@@ -2196,6 +2265,18 @@ class CommerceService:
                 return "already_approved"
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
                 raise CommerceError("Order is not open for wallet payment")
+            evidence = connection.execute(
+                "SELECT review_status FROM payment_evidence WHERE order_id = ? ORDER BY submitted_at DESC LIMIT 1",
+                (order_id,),
+            ).fetchone()
+            if evidence is not None and str(evidence["review_status"] or "pending") != "rejected":
+                raise CommerceError("This order already has a receipt; wallet payment cannot be combined")
+            payments = connection.execute(
+                "SELECT provider, status FROM payments WHERE order_id = ?",
+                (order_id,),
+            ).fetchall()
+            if any(str(item["provider"] or "").lower() != "wallet" and str(item["status"] or "") in ("submitted", "verified") for item in payments):
+                raise CommerceError("A receipt payment is already attached to this order")
             self._ensure_user(connection, telegram_id, "")
             connection.execute(
                 """INSERT INTO wallets (telegram_id, currency, balance_minor, created_at, updated_at)
@@ -2251,6 +2332,7 @@ class CommerceService:
                            LIMIT 1) AS wallet_reservation_status
                    FROM orders o
                    WHERE o.status IN ('awaiting_payment', 'payment_submitted')
+                     AND COALESCE(o.refund_status, 'none') != 'refunded'
                    ORDER BY o.created_at LIMIT ?""",
                 (max(1, min(limit, 100)),),
             ).fetchall()
@@ -2270,6 +2352,7 @@ class CommerceService:
         starts_at = _now_text(now)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            self._lock_order(connection, order_id)
             order = connection.execute(
                 "SELECT * FROM orders WHERE id = ?", (order_id,)
             ).fetchone()
@@ -2466,6 +2549,7 @@ class CommerceService:
         rejected_at = _now_text(now)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            self._lock_order(connection, order_id)
             order = connection.execute(
                 "SELECT status, telegram_id FROM orders WHERE id = ?", (order_id,)
             ).fetchone()
@@ -2475,6 +2559,16 @@ class CommerceService:
                 return "already_rejected"
             if order["status"] == "approved":
                 raise CommerceError("Approved order cannot be rejected here")
+            verified_payment = connection.execute(
+                "SELECT id FROM payments WHERE order_id = ? AND status = 'verified' LIMIT 1",
+                (order_id,),
+            ).fetchone()
+            verified_receipt = connection.execute(
+                "SELECT id FROM payment_evidence WHERE order_id = ? AND review_status = 'verified' LIMIT 1",
+                (order_id,),
+            ).fetchone()
+            if verified_payment is not None or verified_receipt is not None:
+                raise CommerceError("Verified payment must be refunded instead of rejected")
             connection.execute(
                 "UPDATE orders SET status = 'rejected', rejected_at = ? WHERE id = ?",
                 (rejected_at, order_id),
@@ -2547,6 +2641,7 @@ class CommerceService:
         refunded_at = _now_text(now)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            self._lock_order(connection, order_id)
             order = connection.execute(
                 "SELECT * FROM orders WHERE id = ?", (order_id,)
             ).fetchone()
@@ -2562,7 +2657,15 @@ class CommerceService:
             ).fetchone()
             if payment is None or payment["status"] != "verified":
                 raise CommerceError("Only a verified payment can be refunded")
+            verified_evidence = connection.execute(
+                """SELECT verified_amount_minor, verified_currency FROM payment_evidence
+                   WHERE order_id = ? AND review_status = 'verified'
+                   ORDER BY reviewed_at DESC LIMIT 1""",
+                (order_id,),
+            ).fetchone()
             amount = int(order["amount_minor"])
+            if str(payment["provider"] or "").lower() != "wallet" and verified_evidence is not None:
+                amount = max(amount, int(verified_evidence["verified_amount_minor"] or amount))
             currency = str(order["currency"]).upper()
             now_text = refunded_at
             connection.execute(
@@ -2600,9 +2703,12 @@ class CommerceService:
                 "UPDATE payments SET status = 'refunded' WHERE order_id = ? AND status IN ('verified', 'submitted')",
                 (order_id,),
             )
+            final_order_status = str(order["status"])
+            if final_order_status != "approved":
+                final_order_status = "rejected"
             connection.execute(
-                "UPDATE orders SET refund_status = 'refunded', rejected_at = COALESCE(rejected_at, ?) WHERE id = ?",
-                (now_text, order_id),
+                "UPDATE orders SET status = ?, refund_status = 'refunded', rejected_at = COALESCE(rejected_at, ?) WHERE id = ?",
+                (final_order_status, now_text, order_id),
             )
             subscription = connection.execute(
                 "SELECT id, status FROM subscriptions WHERE order_id = ?",
@@ -2626,17 +2732,13 @@ class CommerceService:
                        ON CONFLICT(subscription_id, operation) DO NOTHING""",
                     (_new_id(), subscription["id"], now_text, now_text),
                 )
-                connection.execute(
-                    "UPDATE paid_vpn_keys SET status = 'revoke_failed' WHERE subscription_id = ? AND status = 'active'",
-                    (subscription["id"],),
-                )
             connection.execute(
                 """INSERT INTO notifications
                    (id, dedupe_key, telegram_id, kind, text, status, next_attempt_at, created_at)
                    VALUES (?, ?, ?, 'payment_refunded', ?, 'pending', ?, ?)
                    ON CONFLICT(dedupe_key) DO NOTHING""",
                 (
-                    _new_id(), f"payment-refunded:{order_id}", order["telegram_id"],
+                    _new_id(), f"payment-refund-recorded:{order_id}", order["telegram_id"],
                     f"Your AuriX order was refunded with a {amount:,} {currency} wallet credit. Reason: {(reason or 'admin refund')[:300]}",
                     now_text, now_text,
                 ),
@@ -2701,26 +2803,55 @@ class CommerceService:
                 (next_attempt, safe_error, job_id),
             )
 
-    def failed_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Return terminal worker failures for the operator recovery queue."""
+    def failed_jobs(self, limit: int = 20, include_nonterminal: bool = False) -> list[dict[str, Any]]:
+        """Return worker operations needing attention.
+
+        The default remains terminal-only for API compatibility; operators can
+        request pending/running retries so a silent revoke failure is visible
+        before the eighth attempt.
+        """
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT j.id AS job_id, j.operation, j.attempts, j.last_error,
-                          j.next_attempt_at, s.order_id, s.telegram_id,
+                          j.next_attempt_at, j.status AS job_status, s.order_id, s.telegram_id,
                           s.plan_code, s.status AS subscription_status
                    FROM provisioning_jobs j
                    JOIN subscriptions s ON s.id = j.subscription_id
-                   WHERE j.status = 'failed'
+                   WHERE j.status = 'failed' OR (? AND j.status IN ('pending', 'running'))
                    ORDER BY j.created_at LIMIT ?""",
-                (max(1, min(limit, 100)),),
+                (1 if include_nonterminal else 0, max(1, min(limit, 100))),
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def retry_job(self, job_id: str, admin_id: int, now: datetime | None = None) -> str:
+        """Requeue one exact failed job (avoids ambiguous order-level retries)."""
+        current = _now_text(now)
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            row = connection.execute(
+                "SELECT id, operation, subscription_id FROM provisioning_jobs WHERE id = ? AND status = 'failed'",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise CommerceError("No terminal worker failure exists for that job")
+            connection.execute(
+                """UPDATE provisioning_jobs SET status = 'pending', attempts = 0,
+                          next_attempt_at = ?, locked_at = NULL, last_error = NULL
+                   WHERE id = ? AND status = 'failed'""",
+                (current, job_id),
+            )
+            self._audit(connection, "job_retried", "provisioning_job", job_id,
+                        "admin", str(admin_id), {"operation": row["operation"]})
+        return str(row["operation"])
+
     def retry_failed_job(
-        self, order_id: str, admin_id: int, now: datetime | None = None
+        self, order_id: str, admin_id: int, now: datetime | None = None,
+        operation: str | None = None,
     ) -> str:
         """Requeue one terminal job after an operator has reviewed its error."""
         current = _now_text(now)
+        if operation not in (None, "provision", "revoke"):
+            raise CommerceError("Unknown worker operation")
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             row = connection.execute(
@@ -2728,8 +2859,9 @@ class CommerceService:
                    FROM provisioning_jobs j JOIN subscriptions s
                      ON s.id = j.subscription_id
                    WHERE s.order_id = ? AND j.status = 'failed'
+                     AND (? IS NULL OR j.operation = ?)
                    ORDER BY j.created_at DESC LIMIT 1""",
-                (order_id,),
+                (order_id, operation, operation),
             ).fetchone()
             if row is None:
                 raise CommerceError("No terminal worker failure exists for this order")
@@ -2796,8 +2928,46 @@ class CommerceService:
             if is_new_free or is_legacy_free:
                 try:
                     self.outline.delete_key(str(item["id"]))
-                except Exception:
-                    pass
+                    with self.database.connect() as connection:
+                        self.database.begin_write(connection)
+                        local = connection.execute(
+                            "SELECT id, telegram_id, data_limit_bytes, expires_at FROM keys WHERE outline_key_id = ?",
+                            (str(item["id"]),),
+                        ).fetchone()
+                        if local is not None:
+                            connection.execute("UPDATE keys SET status = 'revoked' WHERE id = ?", (local["id"],))
+                            connection.execute(
+                                """INSERT INTO key_termination_events
+                                   (key_id, telegram_id, outline_key_id, reason, quota_bytes,
+                                    expires_at, detected_at, remote_state, delete_attempts,
+                                    deletion_verified_at)
+                                   VALUES (?, ?, ?, 'paid_upgrade_cleanup', ?, ?, ?, 'delete_accepted', 1, ?)
+                                   ON CONFLICT(key_id, reason) DO UPDATE SET
+                                      remote_state = excluded.remote_state,
+                                      delete_attempts = key_termination_events.delete_attempts + 1,
+                                      deletion_verified_at = excluded.deletion_verified_at""",
+                                (local["id"], local["telegram_id"], str(item["id"]), local["data_limit_bytes"],
+                                 local["expires_at"], _now_text(), _now_text()),
+                            )
+                except Exception as exc:
+                    with self.database.connect() as connection:
+                        self.database.begin_write(connection)
+                        local = connection.execute(
+                            "SELECT id, telegram_id, data_limit_bytes, expires_at FROM keys WHERE outline_key_id = ?",
+                            (str(item.get("id")),),
+                        ).fetchone()
+                        if local is not None:
+                            connection.execute(
+                                """INSERT INTO key_termination_events
+                                   (key_id, telegram_id, outline_key_id, reason, quota_bytes,
+                                    expires_at, detected_at, remote_state, delete_attempts, last_error)
+                                   VALUES (?, ?, ?, 'paid_upgrade_cleanup', ?, ?, ?, 'retrying', 1, ?)
+                                   ON CONFLICT(key_id, reason) DO UPDATE SET
+                                      remote_state = 'retrying', delete_attempts = key_termination_events.delete_attempts + 1,
+                                      last_error = excluded.last_error""",
+                                (local["id"], local["telegram_id"], str(item.get("id")), local["data_limit_bytes"],
+                                 local["expires_at"], _now_text(), type(exc).__name__[:128]),
+                            )
 
     def _provision(self, job: dict[str, Any], now: datetime) -> None:
         with self.database.connect() as connection:
@@ -3081,7 +3251,7 @@ class CommerceService:
                     (
                         _new_id(),
                         (
-                            f"payment-refunded:{key['order_id']}"
+                            f"access-revoked:{key['order_id']}"
                             if key["refund_status"] == "refunded"
                             else f"vpn-{notice_kind}:{job['subscription_id']}"
                         ),
@@ -3101,18 +3271,20 @@ class CommerceService:
                     None,
                     {
                         "outline_key_id": key["outline_key_id"],
-                        "reason": quota_reason or "expiry",
+                        "reason": (
+                            "refund" if key["refund_status"] == "refunded"
+                            else (quota_reason or "expiry")
+                        ),
                         "remote_state": remote_state,
                         "last_usage_bytes": key["last_usage_bytes"],
                         "quota_bytes": key["quota_bytes"],
                     },
                 )
         except Exception:
-            with self.database.connect() as connection:
-                connection.execute(
-                    "UPDATE paid_vpn_keys SET status = 'revoke_failed' WHERE id = ?",
-                    (key["id"],),
-                )
+            # Keep the entitlement marked active until the remote delete is
+            # actually confirmed. The job status/attempts are the retry state;
+            # exposing ``revoke_failed`` as an access state made customers and
+            # operators believe a credential had already been revoked.
             raise
 
     def process_jobs(self, now: datetime | None = None, max_jobs: int = 10) -> int:
@@ -3292,7 +3464,7 @@ class CommerceService:
                     )
                     scheduled += 1
                 connection.execute(
-                    """UPDATE paid_vpn_keys SET status = 'revoke_failed',
+                    """UPDATE paid_vpn_keys SET status = 'active',
                               last_usage_bytes = ?, last_usage_observed_at = ?, quota_reason = 'quota'
                        WHERE id = ? AND status = 'active'""",
                     (used, _now_text(current), row["id"]),
@@ -3359,9 +3531,11 @@ class CommerceService:
         """Return paid key usage belonging to one Telegram user."""
         with self.database.connect() as connection:
             rows = connection.execute(
-                """SELECT s.plan_code, s.plan_name, s.expires_at, s.starts_at,
+                """SELECT s.plan_code, s.plan_name, s.status AS subscription_status, s.expires_at, s.starts_at,
                           k.outline_key_id, k.quota_bytes, k.status,
-                          k.last_usage_bytes, k.quota_reason, k.created_at
+                          k.last_usage_bytes, k.quota_reason, k.created_at,
+                          (SELECT j.status FROM provisioning_jobs j WHERE j.subscription_id = s.id
+                           AND j.operation = 'revoke' LIMIT 1) AS revocation_status
                    FROM subscriptions s
                    JOIN paid_vpn_keys k ON k.subscription_id = s.id
                    WHERE s.telegram_id = ?
@@ -3390,7 +3564,7 @@ class CommerceService:
                     "remaining_bytes": max(0, quota - used),
                     "usage_observed": observed,
                     "expires_at": row["expires_at"],
-                    "status": "quota exhausted" if row["quota_reason"] == "quota" else row["status"],
+                    "status": "quota exhausted" if row["quota_reason"] == "quota" else ("revocation failed" if row["revocation_status"] == "failed" else ("revocation pending" if row["subscription_status"] != "active" and row["status"] == "active" else ("revocation pending" if row["status"] == "revoke_failed" else row["status"]))),
                     "created_at": row["created_at"],
                 }
             )

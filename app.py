@@ -107,6 +107,15 @@ class AdminOperations:
     reuse the same allowlist check instead of trusting a UI decision.
     """
 
+    COMMERCE_OPERATIONS = frozenset({
+        "list_pending_orders", "list_pending_receipts", "get_receipt", "order_detail",
+        "verify_receipt", "reject_receipt", "approve_order", "reject_order",
+        "refund_order", "retry_failed_job", "retry_job", "failed_jobs",
+        "consistency_report", "capacity_snapshot", "wallet_balance",
+        "wallet_history",
+    })
+    SERVICE_OPERATIONS = frozenset({"termination_summary", "pending_termination_notices"})
+
     def __init__(
         self,
         commerce: CommerceService | None,
@@ -125,6 +134,8 @@ class AdminOperations:
         self.require_admin(telegram_id)
         if self.commerce is None:
             raise CommerceError("Commerce is not configured.")
+        if operation not in self.COMMERCE_OPERATIONS:
+            raise CommerceError("That administrator operation is unavailable.")
         method = getattr(self.commerce, operation, None)
         if not callable(method):
             raise CommerceError("That administrator operation is unavailable.")
@@ -136,6 +147,8 @@ class AdminOperations:
         self.require_admin(telegram_id)
         if self.service is None:
             raise CommerceError("Service is not configured.")
+        if operation not in self.SERVICE_OPERATIONS:
+            raise CommerceError("That administrator operation is unavailable.")
         method = getattr(self.service, operation, None)
         if not callable(method):
             raise CommerceError("That administrator operation is unavailable.")
@@ -684,7 +697,7 @@ class ClaimService:
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             connection.execute(
-                """UPDATE keys SET status = 'revoke_failed', last_usage_bytes = COALESCE(?, last_usage_bytes),
+                """UPDATE keys SET status = 'active', last_usage_bytes = COALESCE(?, last_usage_bytes),
                           quota_reason = CASE WHEN ? = 'quota' THEN 'quota' ELSE quota_reason END
                    WHERE id = ? AND status != 'revoked'""",
                 (used_bytes, reason, row["id"]),
@@ -870,7 +883,9 @@ class ClaimService:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT outline_key_id, created_at, expires_at, data_limit_bytes,
-                          status, last_usage_bytes, quota_reason
+                          status, last_usage_bytes, quota_reason,
+                          (SELECT remote_state FROM key_termination_events e
+                           WHERE e.key_id = keys.id ORDER BY e.detected_at DESC LIMIT 1) AS termination_state
                    FROM keys
                    WHERE telegram_id = ?
                      AND (status IN ('active', 'revoke_failed') OR quota_reason = 'quota')
@@ -900,7 +915,7 @@ class ClaimService:
                     "remaining_bytes": max(0, quota - used),
                     "usage_observed": observed,
                     "expires_at": row["expires_at"],
-                    "status": "quota exhausted" if row["quota_reason"] == "quota" else row["status"],
+                    "status": "quota exhausted" if row["quota_reason"] == "quota" else ("revocation failed" if row["termination_state"] == "escalated" else ("revocation pending" if row["termination_state"] in ("retrying", "delete_accepted") or row["status"] == "revoke_failed" else row["status"])),
                     "created_at": row["created_at"],
                 }
             )
@@ -920,6 +935,24 @@ class ClaimService:
             if self._terminate_key(row, "expiry", current):
                 revoked += 1
         return revoked
+
+    def reconcile_terminations(self, now: datetime | None = None, limit: int = 20) -> int:
+        """Retry recorded remote deletions, including paid-upgrade cleanup."""
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT k.id, k.telegram_id, k.outline_key_id, k.data_limit_bytes,
+                          k.expires_at, e.reason, e.used_bytes
+                   FROM keys k JOIN key_termination_events e ON e.key_id = k.id
+                   WHERE e.remote_state IN ('retrying', 'escalated') AND k.status != 'revoked'
+                   ORDER BY e.detected_at LIMIT ?""",
+                (max(1, min(int(limit), 100)),),
+            ).fetchall()
+        completed = 0
+        for row in rows:
+            if self._terminate_key(row, str(row["reason"]), current, row["used_bytes"]):
+                completed += 1
+        return completed
 
     def pending_termination_notices(self, audience: str) -> list[dict[str, Any]]:
         column = "admin_notice_state" if audience == "admin" else "user_notice_state"
@@ -984,6 +1017,7 @@ class TelegramBot:
             "/enforcement",
             "/failed",
             "/retry",
+            "/retryjob",
             "/refund",
             "/ledger",
             "/receipt",
@@ -1373,6 +1407,10 @@ class TelegramBot:
     def _is_admin(self, telegram_id: int) -> bool:
         return telegram_id in self.admin_ids
 
+    def _trial_allowed(self, telegram_id: int) -> bool:
+        """Keep the optional trial allow-list consistent across every entrypoint."""
+        return not self.trial_ids or int(telegram_id) in self.trial_ids
+
     def _admin_call(
         self, telegram_id: int, operation: str, *args: Any, **kwargs: Any
     ) -> Any:
@@ -1413,7 +1451,16 @@ class TelegramBot:
             snapshot["state"] = "missing"
             return snapshot
         try:
-            if command in {"/verify", "/rejectreceipt"}:
+            if command == "/retryjob":
+                jobs = self._admin_call(telegram_id, "failed_jobs", limit=100, include_nonterminal=True)
+                job = next((item for item in jobs if str(item.get("job_id")) == target_id), None)
+                if job is None or job.get("job_status") != "failed":
+                    snapshot["state"] = "missing"
+                else:
+                    snapshot.update({"state": "present", "job_id": target_id,
+                                     "operation": job.get("operation"), "order_id": job.get("order_id"),
+                                     "attempts": job.get("attempts"), "last_error": job.get("last_error")})
+            elif command in {"/verify", "/rejectreceipt"}:
                 receipt = self._admin_call(telegram_id, "get_receipt", target_id)
                 if receipt is None:
                     snapshot["state"] = "missing"
@@ -1529,6 +1576,15 @@ class TelegramBot:
                 fallback_prompt
                 + "\n\nCurrent state could not be loaded; it will be rechecked before execution."
             )
+        if command == "/retryjob":
+            return "\n".join([
+                f"Worker job: {snapshot.get('job_id') or args[0]}",
+                f"Operation: {snapshot.get('operation') or '-'}",
+                f"Order: {snapshot.get('order_id') or '-'}",
+                f"Attempts: {snapshot.get('attempts') or 0}",
+                f"Failure: {snapshot.get('last_error') or '-'}",
+                "Result: requeue this exact failed worker job.",
+            ])
         if command in {"/verify", "/rejectreceipt"}:
             target = str(snapshot.get("evidence_id") or args[0])
             lines = [
@@ -1724,6 +1780,7 @@ class TelegramBot:
             f"Receipt review: {order.get('receipt_status') or 'not submitted'}",
             f"Subscription: {order.get('subscription_status') or 'not created'}",
             f"Provisioning: {order.get('provisioning_status') or 'not queued'}",
+            f"Revocation: {order.get('revocation_status') or 'not queued'}",
             f"Created: {order['created_at']}",
         ]
         if order.get("expires_at"):
@@ -1747,7 +1804,11 @@ class TelegramBot:
                         [("🛑 Reject Receipt", f"a:q:{order['evidence_id']}")]
                     )
             if order.get("status") == "approved" and order.get("provisioning_status") == "failed":
-                rows.append([("🔁 Retry Setup", f"a:p:{order_id}")])
+                rows.append([("🔁 Retry Setup", f"a:h:{order_id}")])
+            if order.get("revocation_status") in ("pending", "running"):
+                rows.append([("⏳ Revocation in progress", f"a:o:{order_id}")])
+            elif order.get("revocation_status") == "failed":
+                rows.append([("🔁 Retry Revocation", f"a:g:{order_id}")])
             if order.get("telegram_id"):
                 rows.append([("💰 View Ledger", f"a:l:{order['telegram_id']}")])
             if (
@@ -1763,8 +1824,11 @@ class TelegramBot:
                 )
             ):
                 rows.append([("✅ Approve", f"a:a:{order_id}")])
-            if order.get("status") in ("awaiting_payment", "payment_submitted"):
-                rows.append([("❌ Reject…", f"a:x:{order_id}")])
+            if order.get("status") in ("awaiting_payment", "payment_submitted") and order.get("refund_status") != "refunded":
+                if order.get("payment_status") == "verified" or order.get("receipt_status") == "verified":
+                    pass
+                else:
+                    rows.append([("❌ Reject…", f"a:x:{order_id}")])
             rows.append(
                 [
                     ("🔄 Refresh", f"a:o:{order_id}"),
@@ -1772,20 +1836,19 @@ class TelegramBot:
                 ]
             )
         else:
-            if order.get("status") == "awaiting_payment":
+            if order.get("status") == "awaiting_payment" and not order.get("payment_status") and not order.get("receipt_status"):
                 rows.append(
                     [
                         ("📷 Send Receipt", f"o:r:{order_id}"),
                         ("💰 Pay Wallet", f"o:w:{order_id}"),
                     ]
                 )
-                if not order.get("payment_status") and not order.get("receipt_status"):
-                    rows.append([("🗑 Cancel Order", f"o:c:{order_id}")])
-            elif order.get("stage") == "review_pending" or order.get("receipt_status") == "rejected":
+                rows.append([("🗑 Cancel Order", f"o:c:{order_id}")])
+            elif order.get("receipt_status") == "rejected":
                 rows.append(
                     [("📷 Send Replacement Receipt", f"o:r:{order_id}")]
                 )
-            if order.get("status") == "approved":
+            if order.get("stage") == "fulfilled":
                 rows.append([("🔐 My VPN", "n:myvpn")])
             rows.append(
                 [
@@ -1796,19 +1859,20 @@ class TelegramBot:
         return self._inline_keyboard(rows)
 
     def _send_order_detail(
-        self, chat_id: int, telegram_id: int, order_id: str
+        self, chat_id: int, telegram_id: int, order_id: str, admin_view: bool = False,
+        heading: str | None = None,
     ) -> None:
         if self.commerce is None:
             self.send(chat_id, "Order tracking is not configured.")
             return
-        is_admin = self._is_admin(telegram_id)
+        is_admin = bool(admin_view and self._is_admin(telegram_id))
         order = self.commerce.order_detail(order_id, telegram_id, is_admin=is_admin)
         if order is None:
             self.send(chat_id, "Order not found.")
             return
         self.send(
             chat_id,
-            self._order_detail_text(order),
+            ((heading + "\n\n") if heading else "") + self._order_detail_text(order),
             self._order_actions(order, is_admin),
         )
 
@@ -1908,9 +1972,13 @@ class TelegramBot:
             elif action == "t":
                 synthetic["text"] = "/trial"
             elif action == "r":
-                synthetic["text"] = "/renew"
+                synthetic["text"] = f"/renew {entity_id}" if entity_id else "/renew"
             elif action == "x":
-                synthetic["text"] = f"/replace {entity_id}"
+                if ":" in entity_id:
+                    source, target_plan = entity_id.split(":", 1)
+                    synthetic["text"] = f"/replace {target_plan} {source}"
+                else:
+                    synthetic["text"] = f"/replace {entity_id}"
             else:
                 self.send(chat_id, "This plan action is no longer valid.")
                 return
@@ -1976,14 +2044,32 @@ class TelegramBot:
                     synthetic["text"] = target
                     self.handle(synthetic)
             elif action == "o":
-                self._send_order_detail(chat_id, telegram_id, entity_id)
+                self._send_order_detail(chat_id, telegram_id, entity_id, admin_view=True)
             elif action == "p":
                 self._queue_admin_confirmation(
                     chat_id,
                     telegram_id,
-                    "/retry",
+                    "/retryjob",
                     [entity_id],
+                    f"Retry worker job {entity_id}?",
+                    "Confirm Retry",
+                )
+            elif action == "h":
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/retry",
+                    [entity_id, "provision"],
                     f"Retry the failed provisioning job for order {entity_id}?",
+                    "Confirm Retry",
+                )
+            elif action == "g":
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/retry",
+                    [entity_id, "revoke"],
+                    f"Retry the failed revocation job for order {entity_id}?",
                     "Confirm Retry",
                 )
             elif action == "l":
@@ -2125,7 +2211,7 @@ class TelegramBot:
                 else "\n\nNo active paid key is available."
             )
         actions = [[("📶 Usage", "n:usage"), ("🧾 My Orders", "n:myorders")]]
-        if subscription.get("status") == "active":
+        if subscription.get("status") in ("active", "expired", "revoked"):
             actions[0].append(("🔄 Renew", f"p:r:{subscription['plan_code']}"))
         self.send(chat_id, text, self._inline_keyboard(actions))
 
@@ -2280,6 +2366,9 @@ class TelegramBot:
         # over quota and past its wall-clock entitlement.
         self.service.enforce_quota(metrics=metrics)
         self.service.revoke_expired()
+        reconcile_terminations = getattr(self.service, "reconcile_terminations", None)
+        if callable(reconcile_terminations):
+            reconcile_terminations()
         self._send_termination_notices()
         if self.commerce is not None:
             self.commerce.enforce_quotas(metrics=metrics)
@@ -2354,7 +2443,9 @@ class TelegramBot:
         if command in self.ADMIN_CONFIRMATION_COMMANDS and not confirmed:
             # Validate syntax before presenting a challenge, but never mutate
             # commerce state from a directly typed administrative command.
-            if command in {"/approve", "/reject", "/retry"} and len(args) != 1:
+            if command in {"/approve", "/reject"} and len(args) != 1:
+                pass
+            elif command == "/retry" and len(args) not in (1, 2):
                 pass
             elif command == "/refund" and not args:
                 pass
@@ -2366,7 +2457,7 @@ class TelegramBot:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
                     "/reject": lambda: f"Reject order {args[0]} and notify the customer?",
-                    "/retry": lambda: f"Retry the failed provisioning job for order {args[0]}?",
+                    "/retry": lambda: f"Retry the failed worker job for order {args[0]}?",
                     "/refund": lambda: f"Refund order {args[0]} to the customer wallet and revoke paid access?",
                     "/verify": lambda: f"Verify receipt {args[0]} for transaction {args[1]} and amount {args[2]}?",
                     "/rejectreceipt": lambda: f"Reject receipt {args[0]} and request a replacement screenshot?",
@@ -2476,7 +2567,9 @@ class TelegramBot:
             if self.commerce is None or len(args) != 1:
                 self.send(chat["id"], "Usage: /order <order-id>")
             else:
-                self._send_order_detail(chat["id"], telegram_id, args[0])
+                self._send_order_detail(
+                    chat["id"], telegram_id, args[0], admin_view=self._is_admin(telegram_id)
+                )
         elif command == "/plans":
             self._send_plans(chat["id"])
         elif command in ("/buy", "/upgrade"):
@@ -2493,15 +2586,28 @@ class TelegramBot:
                     self.send(chat["id"], str(exc))
                 else:
                     if order.plan_conflict:
+                        detail = self.commerce.order_detail(order.order_id, telegram_id)
+                        untouched = bool(
+                            detail
+                            and detail.get("status") == "awaiting_payment"
+                            and not detail.get("payment_status")
+                            and not detail.get("receipt_status")
+                        )
+                        if not untouched:
+                            self._send_order_detail(chat["id"], telegram_id, order.order_id, heading="Existing open order")
+                            return
                         self.send(
                             chat["id"],
                             f"You already have an open order for {order.plan.name}. Choose whether to replace that untouched order with {args[0]}.",
                             self._inline_keyboard(
-                                [[("Replace Open Order", f"p:x:{args[0]}"), ("Keep Existing", f"o:v:{order.order_id}")]]
+                                [[("Replace Open Order", f"p:x:{order.order_id}:{args[0]}"), ("Keep Existing", f"o:v:{order.order_id}")]]
                             ),
                         )
                         return
-                    heading = "Order created" if order.created else "Existing open order"
+                    if not order.created:
+                        self._send_order_detail(chat["id"], telegram_id, order.order_id, heading="Existing open order")
+                        return
+                    heading = "Order created"
                     self.send(
                         chat["id"],
                         f"{heading}: {order.order_id}\n"
@@ -2550,7 +2656,12 @@ class TelegramBot:
             if self.commerce is None:
                 self.send(chat["id"], "Paid plans are not configured in this staging process.")
             else:
-                subscription = self.commerce.user_vpn(telegram_id)
+                requested_plan = args[0] if args else None
+                subscriptions = self.commerce.user_vpns(telegram_id) if hasattr(self.commerce, "user_vpns") else []
+                subscription = next((item for item in subscriptions if item.get("plan_code") == requested_plan), None) if requested_plan else self.commerce.user_vpn(telegram_id)
+                if subscription is None and requested_plan:
+                    self.send(chat["id"], "That plan is not one of your previous plans.")
+                    return
                 if subscription is None:
                     self.send(chat["id"], "No previous plan found. Use /plans and /buy first.")
                 else:
@@ -2558,7 +2669,7 @@ class TelegramBot:
                         order = self.commerce.create_order(
                             telegram_id,
                             first_name,
-                            subscription["plan_code"],
+                            requested_plan or subscription["plan_code"],
                             username=username,
                         )
                     except CommerceError as exc:
@@ -2567,6 +2678,9 @@ class TelegramBot:
                         heading = "Renewal order created" if order.created else "Existing open order"
                         self.send(chat["id"], f"{heading}: {order.order_id}\nSend /paid {order.order_id} then the receipt screenshot after payment.")
         elif command == "/trial":
+            if not self._trial_allowed(telegram_id):
+                self.send(chat["id"], "The monthly trial is currently invite-only. Use /claim or /plans instead.")
+                return
             if self.commerce is not None:
                 current_paid = self.commerce.user_vpn(telegram_id)
                 if current_paid and current_paid.get("status") in ("active", "pending"):
@@ -2616,12 +2730,13 @@ class TelegramBot:
                 else:
                     self.send(chat["id"], f"Wallet payment {result}; an admin will review and approve the order.")
         elif command == "/replace":
-            if self.commerce is None or len(args) != 1:
-                self.send(chat["id"], "Usage: /replace <plan-code>")
+            if self.commerce is None or len(args) not in (1, 2):
+                self.send(chat["id"], "Usage: /replace <plan-code> [expected-order-id]")
             else:
                 try:
                     order = self.commerce.replace_open_order(
-                        telegram_id, first_name, args[0], username=username
+                        telegram_id, first_name, args[0], username=username,
+                        expected_order_id=args[1] if len(args) == 2 else None,
                     )
                 except CommerceError as exc:
                     self.send(chat["id"], str(exc))
@@ -2786,6 +2901,9 @@ class TelegramBot:
                     "pending_receipt_uploads",
                     "failed_receipt_uploads",
                     "failed_jobs",
+                    "failed_activations",
+                    "failed_revocations",
+                    "pending_revocations",
                     "dead_notifications",
                     "wallet_balance_mismatches",
                 }
@@ -2814,31 +2932,34 @@ class TelegramBot:
             elif self.commerce is None:
                 self.send(chat["id"], "Commerce is not configured.")
             else:
-                jobs = self._admin_call(telegram_id, "failed_jobs")
+                jobs = self._admin_call(telegram_id, "failed_jobs", include_nonterminal=True)
                 if not jobs:
                     self.send(chat["id"], "No terminal worker failures.", self._admin_keyboard(telegram_id))
                 else:
-                    lines = ["Failed worker jobs"]
+                    lines = ["Worker operations needing attention"]
                     rows = []
                     for job in jobs:
                         lines.append(
-                            f"{job['operation']} | order:{job['order_id']} | tg:{job['telegram_id']} | "
+                            f"{job['operation']} | {job.get('job_status', 'failed')} | job:{job['job_id']} | order:{job['order_id']} | tg:{job['telegram_id']} | "
                             f"attempts:{job['attempts']} | {job['last_error'] or '-'}"
                         )
-                        rows.append([
-                            ("Open Order", f"a:o:{job['order_id']}"),
-                            ("Retry", f"a:p:{job['order_id']}"),
-                        ])
+                        retry_callback = f"a:p:{job['job_id']}"
+                        if job.get("job_status") == "failed":
+                            rows.append([
+                                ("Open Order", f"a:o:{job['order_id']}"),
+                                ("Retry", retry_callback),
+                            ])
                     self.send(chat["id"], "\n".join(lines), self._inline_keyboard(rows))
         elif command == "/retry":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
-            elif self.commerce is None or len(args) != 1:
-                self.send(chat["id"], "Usage: /retry <order-id>")
+            elif self.commerce is None or len(args) not in (1, 2):
+                self.send(chat["id"], "Usage: /retry <order-id> [provision|revoke]")
             else:
                 try:
                     operation = self._admin_call(
-                        telegram_id, "retry_failed_job", args[0], telegram_id
+                        telegram_id, "retry_failed_job", args[0], telegram_id,
+                        operation=args[1] if len(args) == 2 else None,
                     )
                 except CommerceError as exc:
                     self.send(chat["id"], str(exc))
@@ -2848,6 +2969,18 @@ class TelegramBot:
                         f"{operation.title()} job requeued for order {args[0]}.",
                         self._inline_keyboard([[ ("🔄 Refresh Order", f"a:o:{args[0]}") ]]),
                     )
+        elif command == "/retryjob":
+            if not self._is_admin(telegram_id):
+                self._send_customer_fallback(chat["id"], telegram_id)
+            elif self.commerce is None or len(args) != 1:
+                self.send(chat["id"], "Usage: /retryjob <job-id>")
+            else:
+                try:
+                    operation = self._admin_call(telegram_id, "retry_job", args[0], telegram_id)
+                except CommerceError as exc:
+                    self.send(chat["id"], str(exc))
+                else:
+                    self.send(chat["id"], f"{operation.title()} job {args[0]} requeued.", self._admin_keyboard(telegram_id))
         elif command == "/refund":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
