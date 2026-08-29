@@ -2817,7 +2817,7 @@ class CommerceService:
                           s.plan_code, s.status AS subscription_status
                    FROM provisioning_jobs j
                    JOIN subscriptions s ON s.id = j.subscription_id
-                   WHERE j.status = 'failed' OR (? AND j.status IN ('pending', 'running'))
+                   WHERE j.status = 'failed' OR (? = 1 AND j.status IN ('pending', 'running'))
                    ORDER BY j.created_at LIMIT ?""",
                 (1 if include_nonterminal else 0, max(1, min(limit, 100))),
             ).fetchall()
