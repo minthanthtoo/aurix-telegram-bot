@@ -58,6 +58,8 @@ Create `/etc/aurix-bot/aurix.env` with mode `0640` and owner `root:aurix`:
 ```dotenv
 TELEGRAM_BOT_TOKEN=replace-with-a-staging-bot-token
 ADMIN_TELEGRAM_IDS=replace-with-owner-telegram-id
+# Optional one-time cleanup list for Telegram command scopes of removed admins.
+ADMIN_SCOPE_CLEANUP_IDS=
 # Leave empty for public daily 300 MiB and monthly 3 GiB claims.
 TRIAL_TELEGRAM_IDS=
 OUTLINE_API_URL=replace-with-installer-output
@@ -96,6 +98,12 @@ open for retry and the evidence is hidden from `/receipts` until storage is
 confirmed. Configure a Supabase lifecycle/retention rule only after the
 business and payment-record retention policy is approved; the bot does not
 silently delete evidence.
+
+High-impact administrator actions use database-backed, single-use five-minute
+confirmations. The confirmation includes the current order/receipt state and
+is rejected if that state changes before the click. This remains safe across a
+Render restart; do not enable multiple workers until PostgreSQL is configured
+and the challenge/concurrency tests pass.
 
 On this 1-GB staging Droplet, leave `COMMERCE_DATABASE_URL` empty unless a
 separate PostgreSQL service is already provisioned and its resource budget is

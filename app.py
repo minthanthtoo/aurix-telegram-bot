@@ -9,6 +9,7 @@ import http.client
 import json
 import os
 import re
+import secrets
 import signal
 import sqlite3
 import ssl
@@ -41,6 +42,7 @@ TRIAL_LIMIT_BYTES = 3 * 1024**3
 CLAIM_PERIOD = timedelta(hours=24)
 TRIAL_PERIOD = timedelta(days=30)
 DEFAULT_MAINTENANCE_INTERVAL_SECONDS = 60.0
+ADMIN_CONFIRMATION_TTL = timedelta(minutes=5)
 # Warn once as the observed trailing-30-day allowance crosses these remaining
 # percentages. Outline itself enforces the hard limit; these messages make the
 # approaching cutoff visible before the key is removed.
@@ -95,6 +97,49 @@ class ClaimResult:
     access_url: str | None = None
     expires_at: datetime | None = None
     next_claim_at: datetime | None = None
+
+
+class AdminOperations:
+    """Authorization boundary for privileged commerce operations.
+
+    Telegram remains the presentation/transport layer; all admin commerce
+    calls made by it pass through this object so a future admin transport can
+    reuse the same allowlist check instead of trusting a UI decision.
+    """
+
+    def __init__(
+        self,
+        commerce: CommerceService | None,
+        admin_ids: set[int],
+        service: Any | None = None,
+    ):
+        self.commerce = commerce
+        self.admin_ids = admin_ids
+        self.service = service
+
+    def require_admin(self, telegram_id: int) -> None:
+        if int(telegram_id) not in self.admin_ids:
+            raise PermissionError("administrator access required")
+
+    def call(self, telegram_id: int, operation: str, *args: Any, **kwargs: Any) -> Any:
+        self.require_admin(telegram_id)
+        if self.commerce is None:
+            raise CommerceError("Commerce is not configured.")
+        method = getattr(self.commerce, operation, None)
+        if not callable(method):
+            raise CommerceError("That administrator operation is unavailable.")
+        return method(*args, **kwargs)
+
+    def call_service(
+        self, telegram_id: int, operation: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        self.require_admin(telegram_id)
+        if self.service is None:
+            raise CommerceError("Service is not configured.")
+        method = getattr(self.service, operation, None)
+        if not callable(method):
+            raise CommerceError("That administrator operation is unavailable.")
+        return method(*args, **kwargs)
 
 
 class Database:
@@ -179,6 +224,26 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS notifications_due
                     ON notifications(status, next_attempt_at);
+                CREATE TABLE IF NOT EXISTS telegram_command_scopes (
+                    chat_id INTEGER PRIMARY KEY,
+                    configured_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS admin_action_challenges (
+                    token_hash TEXT PRIMARY KEY,
+                    admin_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    command TEXT NOT NULL,
+                    args_json TEXT NOT NULL,
+                    state_fingerprint TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'consumed', 'cancelled')),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    consumed_at TEXT,
+                    cancelled_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS admin_action_challenges_expiry
+                    ON admin_action_challenges(status, expires_at);
                 """
             )
             user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
@@ -207,6 +272,120 @@ class Database:
                     return False
                 raise
         return True
+
+    def list_command_scope_ids(self) -> set[int]:
+        """Return chat-specific command scopes previously configured by this bot."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT chat_id FROM telegram_command_scopes"
+            ).fetchall()
+        return {int(row[0]) for row in rows}
+
+    def record_command_scope(self, chat_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO telegram_command_scopes (chat_id, configured_at)
+                   VALUES (?, ?)
+                   ON CONFLICT(chat_id) DO UPDATE SET configured_at = excluded.configured_at""",
+                (int(chat_id), datetime.now(UTC).isoformat()),
+            )
+
+    def remove_command_scope(self, chat_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM telegram_command_scopes WHERE chat_id = ?",
+                (int(chat_id),),
+            )
+
+    def create_admin_challenge(
+        self,
+        token_hash: str,
+        admin_id: int,
+        chat_id: int,
+        command: str,
+        args_json: str,
+        state_fingerprint: str,
+        created_at: str,
+        expires_at: str,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO admin_action_challenges
+                   (token_hash, admin_id, chat_id, command, args_json,
+                    state_fingerprint, status, created_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (
+                    token_hash,
+                    int(admin_id),
+                    int(chat_id),
+                    command,
+                    args_json,
+                    state_fingerprint,
+                    created_at,
+                    expires_at,
+                ),
+            )
+
+    def consume_admin_challenge(
+        self,
+        token_hash: str,
+        admin_id: int,
+        chat_id: int,
+        state_fingerprint: str,
+        now: str,
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            self.begin_write(connection)
+            row = connection.execute(
+                """SELECT command, args_json, state_fingerprint
+                   FROM admin_action_challenges
+                   WHERE token_hash = ? AND admin_id = ? AND chat_id = ?
+                     AND state_fingerprint = ? AND status = 'pending'
+                     AND expires_at > ?""",
+                (token_hash, int(admin_id), int(chat_id), state_fingerprint, now),
+            ).fetchone()
+            if row is None:
+                return None
+            updated = connection.execute(
+                """UPDATE admin_action_challenges
+                   SET status = 'consumed', consumed_at = ?
+                   WHERE token_hash = ? AND status = 'pending'""",
+                (now, token_hash),
+            )
+            if getattr(updated, "rowcount", 1) != 1:
+                return None
+            result = dict(row)
+        try:
+            result["args"] = json.loads(result.pop("args_json") or "[]")
+        except json.JSONDecodeError:
+            return None
+        return result
+
+    def cancel_admin_challenge(
+        self, token_hash: str, admin_id: int, chat_id: int, now: str
+    ) -> bool:
+        with self.connect() as connection:
+            updated = connection.execute(
+                """UPDATE admin_action_challenges
+                   SET status = 'cancelled', cancelled_at = ?
+                   WHERE token_hash = ? AND admin_id = ? AND chat_id = ?
+                     AND status = 'pending'""",
+                (now, token_hash, int(admin_id), int(chat_id)),
+            )
+        return getattr(updated, "rowcount", 1) == 1
+
+    def prune_admin_challenges(self, now: str, retention_days: int = 30) -> int:
+        cutoff = (
+            datetime.fromisoformat(now) - timedelta(days=max(1, int(retention_days)))
+        ).isoformat()
+        with self.connect() as connection:
+            deleted = connection.execute(
+                """DELETE FROM admin_action_challenges
+                   WHERE (status = 'pending' AND expires_at <= ?)
+                      OR (status <> 'pending' AND created_at < ?)""",
+                (now, cutoff),
+            )
+        return int(getattr(deleted, "rowcount", 0) or 0)
 
     @staticmethod
     def is_integrity_error(error: Exception) -> bool:
@@ -770,7 +949,7 @@ class ClaimService:
 
 
 class TelegramBot:
-    BUTTON_COMMANDS = {
+    CUSTOMER_BUTTON_COMMANDS = {
         "🎁 Daily 300MB": "/claim",
         "🚀 Monthly 3GB": "/trial",
         "💎 Upgrade 50GB": "/buy basic_50gb",
@@ -781,14 +960,43 @@ class TelegramBot:
         "💰 Wallet": "/wallet",
         "🧾 My Orders": "/myorders",
         "❓ Help": "/help",
+        "🏠 Customer Menu": "/help",
+    }
+    ADMIN_BUTTON_COMMANDS = {
         "🛠 Admin Panel": "/admin",
         "📥 Pending Orders": "/orders",
         "🧾 Receipt Review": "/receipts",
         "📈 Capacity": "/capacity",
         "🔎 Consistency": "/reconcile",
+        "🔁 Failed Jobs": "/failed",
         "🚨 Enforcement": "/enforcement",
-        "🏠 Customer Menu": "/start",
+        # Retain this mapping for old keyboards, but do not render a global
+        # ledger button: ledger access should be scoped to a specific order.
+        "💰 Wallet Ledger": "/ledger",
     }
+    ADMIN_ONLY_COMMANDS = frozenset(
+        {
+            "/admin",
+            "/orders",
+            "/receipts",
+            "/capacity",
+            "/reconcile",
+            "/enforcement",
+            "/failed",
+            "/retry",
+            "/refund",
+            "/ledger",
+            "/receipt",
+            "/rejectreceipt",
+            "/verify",
+            "/approve",
+            "/reject",
+        }
+    )
+    ADMIN_CONFIRMATION_COMMANDS = frozenset(
+        {"/retry", "/refund", "/verify", "/rejectreceipt", "/approve", "/reject"}
+    )
+    UNKNOWN_ACTION_TEXT = "Use the menu to choose an AuriX action."
 
     def __init__(
         self,
@@ -800,19 +1008,27 @@ class TelegramBot:
         receipt_extractor: Any | None = None,
         allow_text_payment: bool = True,
         maintenance_interval_seconds: float = DEFAULT_MAINTENANCE_INTERVAL_SECONDS,
+        command_scope_cleanup_ids: set[int] | None = None,
     ):
         self.api = f"https://api.telegram.org/bot{token}"
         self.service = service
         self.commerce = commerce
         self.admin_ids = admin_ids or set()
+        self.admin_operations = AdminOperations(self.commerce, self.admin_ids, self.service)
         self.trial_ids = trial_ids or set()
         self.receipt_extractor = receipt_extractor or OpenAICompatibleReceiptExtractor()
         self.allow_text_payment = bool(allow_text_payment)
         self.maintenance_interval_seconds = max(1.0, float(maintenance_interval_seconds))
+        self.command_scope_cleanup_ids = command_scope_cleanup_ids or set()
         self.offset = 0
         self.running = True
         self._maintenance_stop = threading.Event()
         self._maintenance_thread: threading.Thread | None = None
+        self._admin_confirmations: dict[str, dict[str, Any]] = {}
+        self._admin_confirmation_lock = threading.Lock()
+        self._command_menu_ready = False
+        self._command_menu_retry_enabled = hasattr(self.service, "database")
+        self._command_menu_configure_attempted = False
 
     def request(self, method: str, payload: dict[str, Any]) -> Any:
         started_at = time.perf_counter()
@@ -877,22 +1093,22 @@ class TelegramBot:
             ["🧾 My Orders", "💰 Wallet"],
             ["❓ Help"],
         ]
-        if self._is_admin(telegram_id):
-            rows[-1].append("🛠 Admin Panel")
         return self._reply_keyboard(rows)
 
-    def _admin_keyboard(self) -> dict[str, Any]:
-        return self._reply_keyboard(
+    def _admin_keyboard(self, telegram_id: int) -> dict[str, Any]:
+        if not self._is_admin(telegram_id):
+            raise PermissionError("admin keyboard requested by non-admin")
+        return self._inline_keyboard(
             [
-                ["📥 Pending Orders", "🧾 Receipt Review"],
-                ["📈 Capacity", "🔎 Consistency"],
-                ["🔁 Failed Jobs", "🚨 Enforcement"],
-                ["💰 Wallet Ledger"],
-                ["🏠 Customer Menu"],
+                [("📥 Pending Orders", "a:n:orders"), ("🧾 Receipt Review", "a:n:receipts")],
+                [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
+                [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
+                [("🏠 Customer Menu", "n:menu")],
             ]
         )
 
     def configure_commands(self) -> None:
+        self._command_menu_configure_attempted = True
         customer_commands = [
             {"command": "start", "description": "Open the AuriX menu"},
             {"command": "claim", "description": "Claim free 300 MB for 24 hours"},
@@ -909,35 +1125,64 @@ class TelegramBot:
             {"command": "whoami", "description": "Show your Telegram ID"},
             {"command": "help", "description": "Show customer help"},
         ]
-        self.request(
-            "setMyCommands",
-            {"commands": customer_commands, "scope": {"type": "default"}},
-        )
+        errors: list[str] = []
+
+        def set_and_verify(scope: dict[str, Any], commands: list[dict[str, str]], label: str) -> bool:
+            try:
+                self.request("setMyCommands", {"commands": commands, "scope": scope})
+                current = self.request("getMyCommands", {"scope": scope})
+                current_names = {
+                    str(item.get("command")) for item in current
+                } if isinstance(current, list) else set()
+                expected = {item["command"] for item in commands}
+                if current_names != expected:
+                    raise RuntimeError("Telegram returned an unexpected command list")
+                return True
+            except Exception as exc:
+                errors.append(f"{label}: {type(exc).__name__}")
+                return False
+
+        set_and_verify({"type": "default"}, customer_commands, "default command scope")
+
+        scope_store = getattr(self.service, "database", None)
+        try:
+            list_scopes = getattr(scope_store, "list_command_scope_ids", None)
+            known_scopes = set(list_scopes()) if callable(list_scopes) else set()
+        except Exception as exc:
+            known_scopes = set()
+            errors.append(f"load command scope state: {type(exc).__name__}")
+
+        stale_scopes = (known_scopes | self.command_scope_cleanup_ids) - self.admin_ids
+        for admin_id in sorted(stale_scopes):
+            try:
+                scope = {"type": "chat", "chat_id": admin_id}
+                self.request(
+                    "deleteMyCommands",
+                    {"scope": scope},
+                )
+                remaining = self.request("getMyCommands", {"scope": scope})
+                if not isinstance(remaining, list) or remaining:
+                    raise RuntimeError("Telegram retained commands for removed admin scope")
+                if scope_store and hasattr(scope_store, "remove_command_scope"):
+                    scope_store.remove_command_scope(admin_id)
+            except Exception as exc:
+                errors.append(f"remove admin command scope {admin_id}: {type(exc).__name__}")
+
         admin_commands = customer_commands + [
             {"command": "admin", "description": "Open the admin panel"},
-            {"command": "orders", "description": "List pending orders"},
-            {"command": "receipts", "description": "List receipts to review"},
-            {"command": "capacity", "description": "Show Outline capacity"},
-            {"command": "reconcile", "description": "Check commerce invariants"},
-            {"command": "enforcement", "description": "Review key terminations"},
-            {"command": "failed", "description": "Review failed worker jobs"},
-            {"command": "retry", "description": "Retry a failed worker job"},
-            {"command": "ledger", "description": "View a wallet ledger"},
-            {"command": "refund", "description": "Refund a verified order"},
-            {"command": "receipt", "description": "Open receipt evidence by ID"},
-            {"command": "rejectreceipt", "description": "Reject receipt evidence"},
-            {"command": "verify", "description": "Verify receipt transaction and amount"},
-            {"command": "approve", "description": "Approve a verified order"},
-            {"command": "reject", "description": "Reject an order"},
         ]
         for admin_id in self.admin_ids:
-            self.request(
-                "setMyCommands",
-                {
-                    "commands": admin_commands,
-                    "scope": {"type": "chat", "chat_id": admin_id},
-                },
-            )
+            scope = {"type": "chat", "chat_id": admin_id}
+            if set_and_verify(scope, admin_commands, f"admin command scope {admin_id}"):
+                if scope_store and hasattr(scope_store, "record_command_scope"):
+                    try:
+                        scope_store.record_command_scope(admin_id)
+                    except Exception as exc:
+                        errors.append(f"record admin command scope {admin_id}: {type(exc).__name__}")
+        if errors:
+            self._command_menu_ready = False
+            raise RuntimeError("Telegram command menu degraded: " + "; ".join(errors))
+        self._command_menu_ready = True
 
     def send_photo(
         self,
@@ -1106,29 +1351,352 @@ class TelegramBot:
             self.send(chat_id, "Receipt received. Transaction ID extracted and queued for staff verification.")
         else:
             self.send(chat_id, "Receipt received for manual review. No payment is activated from the image alone.")
-        receipt = self.commerce.get_receipt(str(result["evidence_id"]))
+        evidence_id = str(result["evidence_id"])
         for admin_id in self.admin_ids:
             try:
-                if receipt is None:
-                    raise RuntimeError("stored receipt was unavailable")
-                self._send_receipt_review(admin_id, receipt)
+                # Keep receipt images and customer metadata out of persistent
+                # Telegram history. Admins open evidence on demand through the
+                # authorized review route.
+                self.send(
+                    admin_id,
+                    f"New receipt submitted for order {order_id}. Evidence: {evidence_id}.",
+                    self._inline_keyboard(
+                        [[
+                            ("Open Receipt", f"a:r:{evidence_id}"),
+                            ("Open Order", f"a:o:{order_id}"),
+                        ]]
+                    ),
+                )
             except Exception as exc:
                 print(f"admin receipt notification error: {type(exc).__name__}", file=sys.stderr)
-                try:
-                    self.send(
-                        admin_id,
-                        f"Receipt {result['evidence_id']} was submitted for order {order_id}, "
-                        "but Telegram could not reopen the image. Ask the customer to resubmit it, "
-                        "then use /receipts.",
-                    )
-                except Exception as fallback_exc:
-                    print(
-                        f"admin receipt fallback error: {type(fallback_exc).__name__}",
-                        file=sys.stderr,
-                    )
 
     def _is_admin(self, telegram_id: int) -> bool:
         return telegram_id in self.admin_ids
+
+    def _admin_call(
+        self, telegram_id: int, operation: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Invoke a commerce operation through the admin authorization boundary."""
+        return self.admin_operations.call(telegram_id, operation, *args, **kwargs)
+
+    def _admin_service_call(
+        self, telegram_id: int, operation: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        return self.admin_operations.call_service(
+            telegram_id, operation, *args, **kwargs
+        )
+
+    def _send_customer_fallback(self, chat_id: int, telegram_id: int) -> None:
+        """Return a role-neutral response for unknown or unauthorized input."""
+        self.send(
+            chat_id,
+            self.UNKNOWN_ACTION_TEXT,
+            self._customer_keyboard(telegram_id),
+        )
+
+    def _admin_state_snapshot(
+        self, command: str, args: list[str], telegram_id: int
+    ) -> dict[str, Any]:
+        """Read the state an administrator is about to mutate.
+
+        This is deliberately a read-only snapshot. Domain methods still own
+        their invariants and transactions; the snapshot prevents a stale
+        confirmation from silently applying to a changed order or receipt.
+        """
+        target_id = str(args[0]) if args else ""
+        snapshot: dict[str, Any] = {
+            "command": command,
+            "target_id": target_id,
+            "state": "unavailable",
+        }
+        if self.commerce is None or not target_id:
+            snapshot["state"] = "missing"
+            return snapshot
+        try:
+            if command in {"/verify", "/rejectreceipt"}:
+                receipt = self._admin_call(telegram_id, "get_receipt", target_id)
+                if receipt is None:
+                    snapshot["state"] = "missing"
+                else:
+                    snapshot.update(
+                        {
+                            "state": "present",
+                            "evidence_id": receipt.get("id"),
+                            "order_id": receipt.get("order_id"),
+                            "telegram_id": receipt.get("telegram_id"),
+                            "review_status": receipt.get("review_status"),
+                            "storage_status": receipt.get("storage_status"),
+                            "amount_minor": receipt.get("amount_minor"),
+                            "currency": receipt.get("currency"),
+                            "verified_provider_reference": receipt.get(
+                                "verified_provider_reference"
+                            ),
+                            "verified_amount_minor": receipt.get(
+                                "verified_amount_minor"
+                            ),
+                            "verified_currency": receipt.get("verified_currency"),
+                        }
+                    )
+                    order_id = receipt.get("order_id")
+                    order = (
+                        self._admin_call(
+                            telegram_id,
+                            "order_detail",
+                            str(order_id),
+                            telegram_id,
+                            is_admin=True,
+                        )
+                        if order_id
+                        else None
+                    )
+                    if order:
+                        snapshot.update(
+                            {
+                                "order_status": order.get("status"),
+                                "payment_status": order.get("payment_status"),
+                                "order_amount_minor": order.get("amount_minor"),
+                            }
+                        )
+            else:
+                order = self._admin_call(
+                    telegram_id,
+                    "order_detail",
+                    target_id,
+                    telegram_id,
+                    is_admin=True,
+                )
+                if order is None:
+                    snapshot["state"] = "missing"
+                else:
+                    snapshot.update(
+                        {
+                            "state": "present",
+                            "order_id": order.get("id"),
+                            "telegram_id": order.get("telegram_id"),
+                            "plan_code": order.get("plan_code"),
+                            "plan_name": order.get("plan_name"),
+                            "amount_minor": order.get("amount_minor"),
+                            "currency": order.get("currency"),
+                            "order_status": order.get("status"),
+                            "refund_status": order.get("refund_status"),
+                            "payment_status": order.get("payment_status"),
+                            "receipt_status": order.get("receipt_status"),
+                            "subscription_status": order.get("subscription_status"),
+                            "provisioning_status": order.get("provisioning_status"),
+                            "wallet_reservation_status": order.get(
+                                "wallet_reservation_status"
+                            ),
+                            "evidence_id": order.get("evidence_id"),
+                        }
+                    )
+                if command == "/retry" and snapshot.get("state") == "present":
+                    jobs = self._admin_call(telegram_id, "failed_jobs", limit=100)
+                    matching = [
+                        job for job in jobs if str(job.get("order_id")) == target_id
+                    ]
+                    snapshot["failed_job"] = (
+                        {
+                            "operation": matching[0].get("operation"),
+                            "attempts": matching[0].get("attempts"),
+                            "last_error": matching[0].get("last_error"),
+                        }
+                        if matching
+                        else None
+                    )
+        except Exception as exc:
+            # A preview must fail closed rather than fabricate financial state.
+            snapshot = {
+                "command": command,
+                "target_id": target_id,
+                "state": "unavailable",
+                "error_type": type(exc).__name__,
+            }
+        return snapshot
+
+    def _admin_state_fingerprint(
+        self, command: str, args: list[str], telegram_id: int
+    ) -> tuple[str, dict[str, Any]]:
+        snapshot = self._admin_state_snapshot(command, args, telegram_id)
+        encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(encoded.encode()).hexdigest(), snapshot
+
+    @staticmethod
+    def _admin_preview_text(
+        command: str, args: list[str], fallback_prompt: str, snapshot: dict[str, Any]
+    ) -> str:
+        if snapshot.get("state") != "present":
+            return (
+                fallback_prompt
+                + "\n\nCurrent state could not be loaded; it will be rechecked before execution."
+            )
+        if command in {"/verify", "/rejectreceipt"}:
+            target = str(snapshot.get("evidence_id") or args[0])
+            lines = [
+                f"Evidence: {target}",
+                f"Order: {snapshot.get('order_id') or '-'}",
+                f"Customer: {snapshot.get('telegram_id') or '-'}",
+                f"Current receipt status: {snapshot.get('review_status') or '-'}",
+                f"Stored image: {snapshot.get('storage_status') or '-'}",
+            ]
+            if command == "/verify" and len(args) >= 3:
+                lines.extend(
+                    [
+                        f"Transaction to verify: {args[1]}",
+                        f"Amount to verify: {args[2]} {snapshot.get('currency') or ''}".strip(),
+                    ]
+                )
+                lines.append("Verify against the receiving account before confirming.")
+            else:
+                lines.append("The order remains open so the customer can submit a replacement.")
+            return "\n".join(lines)
+        target = str(snapshot.get("order_id") or args[0])
+        try:
+            amount_text = f"{int(snapshot.get('amount_minor') or 0):,}"
+        except (TypeError, ValueError):
+            amount_text = str(snapshot.get("amount_minor") or "0")
+        lines = [
+            f"Order: {target}",
+            f"Customer: {snapshot.get('telegram_id') or '-'}",
+            f"Plan: {snapshot.get('plan_name') or snapshot.get('plan_code') or '-'}",
+            f"Amount: {amount_text} {snapshot.get('currency') or ''}".strip(),
+            f"Order state: {snapshot.get('order_status') or '-'}",
+            f"Payment: {snapshot.get('payment_status') or '-'} · Receipt: {snapshot.get('receipt_status') or '-'}",
+        ]
+        impact = {
+            "/approve": "Result: approve payment and queue VPN provisioning.",
+            "/reject": "Result: close the order and notify the customer.",
+            "/refund": "Result: credit the wallet and revoke or cancel paid access.",
+            "/retry": "Result: requeue the reviewed failed provisioning job.",
+        }.get(command)
+        if impact:
+            lines.append(impact)
+        if command == "/retry":
+            failed_job = snapshot.get("failed_job") or {}
+            lines.append(
+                f"Failure: {failed_job.get('operation') or '-'} · attempts: {failed_job.get('attempts') or 0} · {failed_job.get('last_error') or '-'}"
+            )
+        return "\n".join(lines)
+
+    def _queue_admin_confirmation(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        command: str,
+        args: list[str],
+        prompt: str,
+        confirm_label: str = "✅ Confirm",
+        cancel_data: str = "a:n:orders",
+    ) -> None:
+        token = secrets.token_urlsafe(18)
+        expires_at = datetime.now(UTC) + ADMIN_CONFIRMATION_TTL
+        state_fingerprint, snapshot = self._admin_state_fingerprint(
+            command, args, telegram_id
+        )
+        prompt = self._admin_preview_text(command, args, prompt, snapshot)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        store = getattr(self.service, "database", None)
+        durable = all(
+            callable(getattr(store, method, None))
+            for method in ("create_admin_challenge", "consume_admin_challenge")
+        )
+        with self._admin_confirmation_lock:
+            now = datetime.now(UTC)
+            self._admin_confirmations = {
+                key: value
+                for key, value in self._admin_confirmations.items()
+                if value["expires_at"] > now
+            }
+            if not durable:
+                self._admin_confirmations[token] = {
+                    "chat_id": int(chat_id),
+                    "telegram_id": int(telegram_id),
+                    "command": command,
+                    "args": list(args),
+                    "expires_at": expires_at,
+                    "state_fingerprint": state_fingerprint,
+                }
+        if durable:
+            try:
+                store.create_admin_challenge(
+                    token_hash,
+                    int(telegram_id),
+                    int(chat_id),
+                    command,
+                    json.dumps(list(args), separators=(",", ":")),
+                    state_fingerprint,
+                    datetime.now(UTC).isoformat(),
+                    expires_at.isoformat(),
+                )
+            except Exception as exc:
+                print(f"admin confirmation persistence error: {type(exc).__name__}", file=sys.stderr)
+                self.send(chat_id, "Administrator confirmation is temporarily unavailable. Try again.", self._admin_keyboard(telegram_id))
+                return
+        self.send(
+            chat_id,
+            prompt + f"\n\nThis confirmation expires in {int(ADMIN_CONFIRMATION_TTL.total_seconds() // 60)} minutes.",
+            self._inline_keyboard(
+                [[(confirm_label, f"a:k:{token}"), ("Cancel", f"a:d:{token}")]]
+            ),
+        )
+
+    def _consume_admin_confirmation(
+        self, chat_id: int, telegram_id: int, token: str
+    ) -> dict[str, Any] | None:
+        store = getattr(self.service, "database", None)
+        if all(
+            callable(getattr(store, method, None))
+            for method in ("consume_admin_challenge", "create_admin_challenge")
+        ):
+            # The action is stored with the token, so first inspect the pending
+            # record through the store's actor-bound consume operation. The
+            # fallback below handles legacy in-memory tokens only.
+            try:
+                with store.connect() as connection:
+                    row = connection.execute(
+                        "SELECT command, args_json FROM admin_action_challenges WHERE token_hash = ?",
+                        (hashlib.sha256(token.encode()).hexdigest(),),
+                    ).fetchone()
+                if row is None:
+                    return None
+                command = str(row["command"] if isinstance(row, dict) else row[0])
+                raw_args = row["args_json"] if isinstance(row, dict) else row[1]
+                args = json.loads(raw_args or "[]")
+                if not isinstance(args, list):
+                    return None
+                current_fingerprint, current_snapshot = self._admin_state_fingerprint(
+                    command, [str(value) for value in args], telegram_id
+                )
+                if current_snapshot.get("state") != "present":
+                    return None
+                return store.consume_admin_challenge(
+                    hashlib.sha256(token.encode()).hexdigest(),
+                    int(telegram_id),
+                    int(chat_id),
+                    current_fingerprint,
+                    datetime.now(UTC).isoformat(),
+                )
+            except Exception as exc:
+                print(f"admin confirmation consume error: {type(exc).__name__}", file=sys.stderr)
+                return None
+        with self._admin_confirmation_lock:
+            challenge = self._admin_confirmations.get(token)
+            if challenge is None:
+                return None
+            if (
+                challenge["chat_id"] != int(chat_id)
+                or challenge["telegram_id"] != int(telegram_id)
+                or challenge["expires_at"] <= datetime.now(UTC)
+            ):
+                return None
+            del self._admin_confirmations[token]
+            current_fingerprint, current_snapshot = self._admin_state_fingerprint(
+                challenge["command"], challenge["args"], telegram_id
+            )
+            if current_snapshot.get("state") != "present":
+                return None
+            if current_fingerprint != challenge.get("state_fingerprint"):
+                return None
+            return challenge
 
     @staticmethod
     def _order_summary(order: dict[str, Any]) -> str:
@@ -1200,7 +1768,7 @@ class TelegramBot:
             rows.append(
                 [
                     ("🔄 Refresh", f"a:o:{order_id}"),
-                    ("📥 Orders", "n:adminorders"),
+                    ("📥 Orders", "a:n:orders"),
                 ]
             )
         else:
@@ -1256,6 +1824,7 @@ class TelegramBot:
             or not isinstance(user.get("id"), int)
             or not isinstance(chat.get("id"), int)
             or chat.get("type") != "private"
+            or int(chat.get("id")) != int(user.get("id"))
         ):
             return
         self.request("answerCallbackQuery", {"callback_query_id": query_id})
@@ -1271,14 +1840,27 @@ class TelegramBot:
                 "username": username,
             },
         }
+        if data.startswith("a:") and not self._is_admin(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
         navigation = {
             "n:myorders": "/myorders",
-            "n:adminorders": "/orders",
             "n:myvpn": "/myvpn",
             "n:plans": "/plans",
             "n:wallet": "/wallet",
             "n:usage": "/usage",
+            "n:menu": "/help",
         }
+        # Legacy admin navigation buttons may still exist in Telegram message
+        # history. Keep them safe and role-gated while no longer generating
+        # them for new messages.
+        if data == "n:adminorders":
+            if not self._is_admin(telegram_id):
+                self._send_customer_fallback(chat_id, telegram_id)
+            else:
+                synthetic["text"] = "/orders"
+                self.handle(synthetic)
+            return
         if data in navigation:
             synthetic["text"] = navigation[data]
             self.handle(synthetic)
@@ -1335,55 +1917,151 @@ class TelegramBot:
             self.handle(synthetic)
         elif scope == "a":
             if not self._is_admin(telegram_id):
-                self.send(chat_id, "Admin access required.")
+                self._send_customer_fallback(chat_id, telegram_id)
                 return
-            if action == "o":
+            if action == "k":
+                challenge = self._consume_admin_confirmation(chat_id, telegram_id, entity_id)
+                if challenge is None:
+                    self.send(
+                        chat_id,
+                        "This confirmation has expired or was already used. Open the admin panel again.",
+                        self._admin_keyboard(telegram_id),
+                    )
+                else:
+                    synthetic["text"] = " ".join(
+                        [challenge["command"], *challenge["args"]]
+                    )
+                    synthetic["_admin_confirmed"] = True
+                    self.handle(synthetic)
+            elif action == "d":
+                token_hash = hashlib.sha256(entity_id.encode()).hexdigest()
+                store = getattr(self.service, "database", None)
+                cancelled = False
+                if callable(getattr(store, "cancel_admin_challenge", None)):
+                    try:
+                        cancelled = bool(
+                            store.cancel_admin_challenge(
+                                token_hash,
+                                int(telegram_id),
+                                int(chat_id),
+                                datetime.now(UTC).isoformat(),
+                            )
+                        )
+                    except Exception as exc:
+                        print(f"admin confirmation cancel error: {type(exc).__name__}", file=sys.stderr)
+                else:
+                    with self._admin_confirmation_lock:
+                        challenge = self._admin_confirmations.get(entity_id)
+                        if challenge and challenge["chat_id"] == chat_id and challenge["telegram_id"] == telegram_id:
+                            del self._admin_confirmations[entity_id]
+                            cancelled = True
+                self.send(
+                    chat_id,
+                    "Confirmation cancelled." if cancelled else "This confirmation is no longer valid.",
+                    self._admin_keyboard(telegram_id),
+                )
+            elif action == "n":
+                admin_navigation = {
+                    "orders": "/orders",
+                    "receipts": "/receipts",
+                    "capacity": "/capacity",
+                    "reconcile": "/reconcile",
+                    "failed": "/failed",
+                    "enforcement": "/enforcement",
+                }
+                target = admin_navigation.get(entity_id)
+                if target is None:
+                    self.send(chat_id, "This admin action is no longer valid.")
+                else:
+                    synthetic["text"] = target
+                    self.handle(synthetic)
+            elif action == "o":
                 self._send_order_detail(chat_id, telegram_id, entity_id)
             elif action == "p":
-                synthetic["text"] = f"/retry {entity_id}"
-                self.handle(synthetic)
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/retry",
+                    [entity_id],
+                    f"Retry the failed provisioning job for order {entity_id}?",
+                    "Confirm Retry",
+                )
             elif action == "l":
                 synthetic["text"] = f"/ledger {entity_id}"
                 self.handle(synthetic)
             elif action == "f":
-                self.send(
+                self._queue_admin_confirmation(
                     chat_id,
+                    telegram_id,
+                    "/refund",
+                    [entity_id],
                     f"Refund order {entity_id}? This credits the customer wallet and revokes paid access.",
-                    self._inline_keyboard(
-                        [[("Confirm Refund", f"a:z:{entity_id}"), ("Keep Order", f"a:o:{entity_id}")]]
-                    ),
+                    "Confirm Refund",
+                    f"a:o:{entity_id}",
                 )
             elif action == "z":
-                synthetic["text"] = f"/refund {entity_id}"
-                self.handle(synthetic)
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/refund",
+                    [entity_id],
+                    f"Refund order {entity_id} to the customer wallet and revoke paid access?",
+                    "Confirm Refund",
+                    f"a:o:{entity_id}",
+                )
             elif action == "r":
                 synthetic["text"] = f"/receipt {entity_id}"
                 self.handle(synthetic)
             elif action == "a":
-                synthetic["text"] = f"/approve {entity_id}"
-                self.handle(synthetic)
-            elif action == "x":
-                self.send(
+                self._queue_admin_confirmation(
                     chat_id,
+                    telegram_id,
+                    "/approve",
+                    [entity_id],
+                    f"Approve order {entity_id} and queue VPN provisioning?",
+                    "Confirm Approve",
+                    f"a:o:{entity_id}",
+                )
+            elif action == "x":
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/reject",
+                    [entity_id],
                     f"Reject order {entity_id}? This closes the order and notifies the customer.",
-                    self._inline_keyboard(
-                        [[("Confirm Reject", f"a:c:{entity_id}"), ("Keep Order", f"a:o:{entity_id}")]]
-                    ),
+                    "Confirm Reject",
+                    f"a:o:{entity_id}",
                 )
             elif action == "q":
-                self.send(
+                self._queue_admin_confirmation(
                     chat_id,
+                    telegram_id,
+                    "/rejectreceipt",
+                    [entity_id],
                     f"Reject receipt {entity_id}? The order stays open for a replacement screenshot.",
-                    self._inline_keyboard(
-                        [[("Confirm Reject Receipt", f"a:y:{entity_id}"), ("Keep Receipt", f"a:r:{entity_id}")]]
-                    ),
+                    "Confirm Reject Receipt",
+                    f"a:r:{entity_id}",
                 )
             elif action == "y":
-                synthetic["text"] = f"/rejectreceipt {entity_id}"
-                self.handle(synthetic)
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/rejectreceipt",
+                    [entity_id],
+                    f"Reject receipt {entity_id} and request a replacement screenshot?",
+                    "Confirm Reject Receipt",
+                    f"a:r:{entity_id}",
+                )
             elif action == "c":
-                synthetic["text"] = f"/reject {entity_id}"
-                self.handle(synthetic)
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/reject",
+                    [entity_id],
+                    f"Reject order {entity_id} and notify the customer?",
+                    "Confirm Reject",
+                    f"a:o:{entity_id}",
+                )
             else:
                 self.send(chat_id, "This admin action is no longer valid.")
         else:
@@ -1575,6 +2253,18 @@ class TelegramBot:
     def _run_maintenance(self) -> None:
         """Run one bounded housekeeping pass outside the Telegram poll loop."""
         started_at = time.perf_counter()
+        if (
+            self._command_menu_retry_enabled
+            and self._command_menu_configure_attempted
+            and not self._command_menu_ready
+        ):
+            try:
+                self.configure_commands()
+            except Exception as exc:
+                print(
+                    f"Telegram command menu retry failed: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
         try:
             raw_metrics = self.service.outline.transfer_metrics()
             metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
@@ -1595,6 +2285,13 @@ class TelegramBot:
             self.commerce.enforce_quotas(metrics=metrics)
             self.commerce.expire_and_process()
             self._send_pending_notifications()
+        challenge_store = getattr(self.service, "database", None)
+        prune = getattr(challenge_store, "prune_admin_challenges", None)
+        if callable(prune):
+            try:
+                prune(datetime.now(UTC).isoformat())
+            except Exception as exc:
+                print(f"admin challenge cleanup error: {type(exc).__name__}", file=sys.stderr)
         _latency_log("maintenance", started_at)
 
     def _maintenance_loop(self) -> None:
@@ -1622,6 +2319,7 @@ class TelegramBot:
             or chat.get("type") != "private"
             or not isinstance(chat.get("id"), int)
             or not isinstance(user.get("id"), int)
+            or int(chat.get("id")) != int(user.get("id"))
         ):
             return
         telegram_id = user["id"]
@@ -1640,10 +2338,55 @@ class TelegramBot:
         text = message.get("text") or ""
         if not isinstance(text, str) or not text.strip():
             return
-        text = self.BUTTON_COMMANDS.get(text.strip(), text)
+        raw_text = text.strip()
+        text = self.CUSTOMER_BUTTON_COMMANDS.get(raw_text)
+        if text is None and self._is_admin(telegram_id):
+            text = self.ADMIN_BUTTON_COMMANDS.get(raw_text, raw_text)
+        if text is None:
+            text = raw_text
         parts = text.split()
         command = parts[0].split("@", 1)[0].lower()
         args = parts[1:]
+        confirmed = message.get("_admin_confirmed") is True
+        if command in self.ADMIN_ONLY_COMMANDS and not self._is_admin(telegram_id):
+            self._send_customer_fallback(chat["id"], telegram_id)
+            return
+        if command in self.ADMIN_CONFIRMATION_COMMANDS and not confirmed:
+            # Validate syntax before presenting a challenge, but never mutate
+            # commerce state from a directly typed administrative command.
+            if command in {"/approve", "/reject", "/retry"} and len(args) != 1:
+                pass
+            elif command == "/refund" and not args:
+                pass
+            elif command == "/verify" and len(args) != 3:
+                pass
+            elif command == "/rejectreceipt" and not args:
+                pass
+            else:
+                prompt = {
+                    "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
+                    "/reject": lambda: f"Reject order {args[0]} and notify the customer?",
+                    "/retry": lambda: f"Retry the failed provisioning job for order {args[0]}?",
+                    "/refund": lambda: f"Refund order {args[0]} to the customer wallet and revoke paid access?",
+                    "/verify": lambda: f"Verify receipt {args[0]} for transaction {args[1]} and amount {args[2]}?",
+                    "/rejectreceipt": lambda: f"Reject receipt {args[0]} and request a replacement screenshot?",
+                }[command]()
+                self._queue_admin_confirmation(
+                    chat["id"],
+                    telegram_id,
+                    command,
+                    args,
+                    prompt,
+                    confirm_label={
+                        "/approve": "Confirm Approve",
+                        "/reject": "Confirm Reject",
+                        "/retry": "🔁 Confirm Retry",
+                        "/refund": "💸 Confirm Refund",
+                        "/verify": "✅ Confirm Verify",
+                        "/rejectreceipt": "🛑 Confirm Receipt Rejection",
+                    }[command],
+                )
+                return
         if command in ("/start", "/help"):
             self.send(
                 chat["id"],
@@ -1675,25 +2418,20 @@ class TelegramBot:
                             f"Expires: {welcome_claim.expires_at.strftime('%Y-%m-%d %H:%M UTC')}",
                         )
         elif command == "/whoami":
-            access = "enabled" if self._is_admin(telegram_id) else "not enabled"
+            access = "\nAdmin access: enabled" if self._is_admin(telegram_id) else ""
             self.send(
                 chat["id"],
-                f"Your Telegram ID: {telegram_id}\nAdmin access: {access}",
+                f"Your Telegram ID: {telegram_id}{access}",
                 self._customer_keyboard(telegram_id),
             )
         elif command == "/admin":
             if not self._is_admin(telegram_id):
-                self.send(
-                    chat["id"],
-                    f"Admin access is not enabled for this account.\n\n"
-                    f"Your Telegram ID is {telegram_id}. Add it to ADMIN_TELEGRAM_IDS and restart the bot.",
-                    self._customer_keyboard(telegram_id),
-                )
+                self._send_customer_fallback(chat["id"], telegram_id)
             else:
                 summary = ""
                 if self.commerce is not None:
                     try:
-                        report = self.commerce.consistency_report()
+                        report = self._admin_call(telegram_id, "consistency_report")
                         summary = (
                             f"\n\nQueue: {report.get('pending_receipts', 0)} receipt(s) pending · "
                             f"{report.get('pending_receipt_uploads', 0)} upload(s) pending · "
@@ -1709,10 +2447,11 @@ class TelegramBot:
                     "AuriX Admin\n\n"
                     "Daily flow: Pending Orders → open receipt → verify the transaction "
                     "against your receiving account → Approve.\n"
-                    "Use Failed Jobs to retry a reviewed Outline failure, Wallet Ledger "
-                    "to inspect funds, and Consistency before taking payment decisions."
+                    "Use Failed Jobs to retry a reviewed Outline failure, open an order "
+                    "to inspect its wallet ledger, and run Consistency before taking "
+                    "payment decisions."
                     + summary,
-                    self._admin_keyboard(),
+                    self._admin_keyboard(telegram_id),
                 )
         elif command == "/myorders":
             if self.commerce is None:
@@ -1906,11 +2645,11 @@ class TelegramBot:
                     self.send(chat["id"], f"Order {args[0]} {result}.", self._customer_keyboard(telegram_id))
         elif command == "/receipt":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None or len(args) != 1:
                 self.send(chat["id"], "Usage: /receipt <evidence-id> (admin)")
             else:
-                receipt = self.commerce.get_receipt(args[0])
+                receipt = self._admin_call(telegram_id, "get_receipt", args[0])
                 if receipt is None:
                     self.send(chat["id"], "Receipt evidence not found.")
                 else:
@@ -1925,7 +2664,7 @@ class TelegramBot:
                         )
         elif command == "/verify":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None:
                 self.send(chat["id"], "Commerce is not configured.")
             elif len(args) != 3:
@@ -1933,8 +2672,8 @@ class TelegramBot:
             else:
                 try:
                     amount = int(args[2].replace(",", ""))
-                    order_id = self.commerce.verify_receipt(
-                        args[0], telegram_id, args[1], amount
+                    order_id = self._admin_call(
+                        telegram_id, "verify_receipt", args[0], telegram_id, args[1], amount
                     )
                 except (CommerceError, ValueError) as exc:
                     self.send(chat["id"], str(exc) or "Verified amount must be an integer.")
@@ -1945,13 +2684,17 @@ class TelegramBot:
                     )
         elif command == "/rejectreceipt":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None or not args:
                 self.send(chat["id"], "Usage: /rejectreceipt <evidence-id> [reason]")
             else:
                 try:
-                    order_id = self.commerce.reject_receipt(
-                        args[0], telegram_id, " ".join(args[1:]) or "Receipt rejected; please submit a clearer screenshot."
+                    order_id = self._admin_call(
+                        telegram_id,
+                        "reject_receipt",
+                        args[0],
+                        telegram_id,
+                        " ".join(args[1:]) or "Receipt rejected; please submit a clearer screenshot.",
                     )
                 except CommerceError as exc:
                     self.send(chat["id"], str(exc))
@@ -1959,16 +2702,16 @@ class TelegramBot:
                     self.send(
                         chat["id"],
                         f"Receipt rejected for order {order_id}; the customer can submit a replacement.",
-                        self._inline_keyboard([[("📥 Orders", "n:adminorders")]]),
+                        self._inline_keyboard([[("📥 Orders", "a:n:orders")]]),
                     )
         elif command in ("/orders", "/receipts"):
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None:
                 self.send(chat["id"], "Commerce is not configured.")
             else:
                 if command == "/receipts":
-                    receipts = self.commerce.list_pending_receipts()
+                    receipts = self._admin_call(telegram_id, "list_pending_receipts")
                     if not receipts:
                         self.send(chat["id"], "No unreviewed receipts.")
                     else:
@@ -1989,7 +2732,7 @@ class TelegramBot:
                             ),
                         )
                     return
-                orders = self.commerce.list_pending_orders()
+                orders = self._admin_call(telegram_id, "list_pending_orders")
                 if not orders:
                     self.send(chat["id"], "No pending orders.")
                 else:
@@ -2006,12 +2749,12 @@ class TelegramBot:
                     )
         elif command == "/capacity":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None:
                 self.send(chat["id"], "Commerce is not configured.")
             else:
                 try:
-                    snapshot = self.commerce.capacity_snapshot()
+                    snapshot = self._admin_call(telegram_id, "capacity_snapshot")
                 except Exception as exc:
                     self.send(chat["id"], "Outline capacity metrics are temporarily unavailable.")
                     print(f"capacity error: {type(exc).__name__}", file=sys.stderr)
@@ -2030,11 +2773,11 @@ class TelegramBot:
                     )
         elif command == "/reconcile":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None:
                 self.send(chat["id"], "Commerce is not configured.")
             else:
-                report = self.commerce.consistency_report()
+                report = self._admin_call(telegram_id, "consistency_report")
                 issue_keys = {
                     "duplicate_open_orders",
                     "approved_missing_subscription",
@@ -2049,14 +2792,14 @@ class TelegramBot:
                 healthy = all(report.get(key, 0) == 0 for key in issue_keys)
                 lines = ["AuriX consistency scan", "Status: " + ("OK" if healthy else "ACTION REQUIRED")]
                 lines.extend(f"{key.replace('_', ' ').title()}: {value}" for key, value in report.items())
-                self.send(chat["id"], "\n".join(lines), self._admin_keyboard())
+                self.send(chat["id"], "\n".join(lines), self._admin_keyboard(telegram_id))
         elif command == "/enforcement":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             else:
-                events = self.service.termination_summary()
+                events = self._admin_service_call(telegram_id, "termination_summary")
                 if not events:
-                    self.send(chat["id"], "No free/trial termination events recorded.", self._admin_keyboard())
+                    self.send(chat["id"], "No free/trial termination events recorded.", self._admin_keyboard(telegram_id))
                 else:
                     lines = ["Recent free/trial enforcement"]
                     lines.extend(
@@ -2064,16 +2807,16 @@ class TelegramBot:
                         f"{row['remote_state']} | attempts:{row['delete_attempts']} | {row['detected_at']}"
                         for row in events
                     )
-                    self.send(chat["id"], "\n".join(lines), self._admin_keyboard())
+                    self.send(chat["id"], "\n".join(lines), self._admin_keyboard(telegram_id))
         elif command == "/failed":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None:
                 self.send(chat["id"], "Commerce is not configured.")
             else:
-                jobs = self.commerce.failed_jobs()
+                jobs = self._admin_call(telegram_id, "failed_jobs")
                 if not jobs:
-                    self.send(chat["id"], "No terminal worker failures.", self._admin_keyboard())
+                    self.send(chat["id"], "No terminal worker failures.", self._admin_keyboard(telegram_id))
                 else:
                     lines = ["Failed worker jobs"]
                     rows = []
@@ -2089,12 +2832,14 @@ class TelegramBot:
                     self.send(chat["id"], "\n".join(lines), self._inline_keyboard(rows))
         elif command == "/retry":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None or len(args) != 1:
                 self.send(chat["id"], "Usage: /retry <order-id>")
             else:
                 try:
-                    operation = self.commerce.retry_failed_job(args[0], telegram_id)
+                    operation = self._admin_call(
+                        telegram_id, "retry_failed_job", args[0], telegram_id
+                    )
                 except CommerceError as exc:
                     self.send(chat["id"], str(exc))
                 else:
@@ -2105,13 +2850,17 @@ class TelegramBot:
                     )
         elif command == "/refund":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None or not args:
                 self.send(chat["id"], "Usage: /refund <order-id> [reason]")
             else:
                 try:
-                    result = self.commerce.refund_order(
-                        args[0], telegram_id, " ".join(args[1:]) or "refunded by admin"
+                    result = self._admin_call(
+                        telegram_id,
+                        "refund_order",
+                        args[0],
+                        telegram_id,
+                        " ".join(args[1:]) or "refunded by admin",
                     )
                 except CommerceError as exc:
                     self.send(chat["id"], str(exc))
@@ -2123,14 +2872,18 @@ class TelegramBot:
                     )
         elif command == "/ledger":
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None or len(args) != 1:
                 self.send(chat["id"], "Usage: /ledger <telegram-id>")
             else:
                 try:
                     customer_id = int(args[0])
-                    balance = self.commerce.wallet_balance(customer_id)
-                    history = self.commerce.wallet_history(customer_id, limit=20)
+                    balance = self._admin_call(
+                        telegram_id, "wallet_balance", customer_id
+                    )
+                    history = self._admin_call(
+                        telegram_id, "wallet_history", customer_id, limit=20
+                    )
                 except (ValueError, CommerceError) as exc:
                     self.send(chat["id"], str(exc) or "Telegram ID must be numeric.")
                 else:
@@ -2139,10 +2892,10 @@ class TelegramBot:
                         f"{item['created_at']} · {item['kind']} {int(item['amount_minor']):,} {item['currency']} · {item['reference_id']}"
                         for item in history
                     )
-                    self.send(chat["id"], "\n".join(lines), self._admin_keyboard())
+                    self.send(chat["id"], "\n".join(lines), self._admin_keyboard(telegram_id))
         elif command in ("/approve", "/reject"):
             if not self._is_admin(telegram_id):
-                self.send(chat["id"], "Admin access required.")
+                self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None:
                 self.send(chat["id"], "Commerce is not configured.")
             elif len(args) != 1:
@@ -2150,21 +2903,25 @@ class TelegramBot:
             else:
                 try:
                     if command == "/approve":
-                        result = self.commerce.approve_order(args[0], telegram_id)
+                        result = self._admin_call(
+                            telegram_id, "approve_order", args[0], telegram_id
+                        )
                         self.send(
                             chat["id"],
                             f"Order {result.order_id} approved; provisioning queued.",
                             self._inline_keyboard(
-                                [[("View Order", f"a:o:{result.order_id}"), ("📥 Orders", "n:adminorders")]]
+                                [[("View Order", f"a:o:{result.order_id}"), ("📥 Orders", "a:n:orders")]]
                             ),
                         )
                     else:
-                        result = self.commerce.reject_order(args[0], telegram_id)
+                        result = self._admin_call(
+                            telegram_id, "reject_order", args[0], telegram_id
+                        )
                         self.send(
                             chat["id"],
                             f"Order {args[0]} {result}.",
                             self._inline_keyboard(
-                                [[("📥 Pending Orders", "n:adminorders")]]
+                                [[("📥 Pending Orders", "a:n:orders")]]
                             ),
                         )
                 except CommerceError as exc:
@@ -2195,7 +2952,7 @@ class TelegramBot:
             else:
                 self.send(chat["id"], "Claims are unavailable for this account.")
         else:
-            self.send(chat["id"], "Use the menu for daily 300 MiB, monthly 3 GiB, or paid upgrades.")
+            self._send_customer_fallback(chat["id"], telegram_id)
 
     def run(self) -> None:
         self._maintenance_stop.clear()
@@ -2341,6 +3098,7 @@ def main() -> None:
             raise SystemExit(f"{name} must be comma-separated Telegram numeric IDs") from exc
 
     admin_ids = parse_ids("ADMIN_TELEGRAM_IDS")
+    command_scope_cleanup_ids = parse_ids("ADMIN_SCOPE_CLEANUP_IDS")
     trial_ids = parse_ids("TRIAL_TELEGRAM_IDS")
     try:
         maintenance_interval_seconds = float(
@@ -2380,6 +3138,7 @@ def main() -> None:
         trial_ids,
         allow_text_payment=allow_text_payment,
         maintenance_interval_seconds=maintenance_interval_seconds,
+        command_scope_cleanup_ids=command_scope_cleanup_ids,
     )
     # Long polling cannot coexist with a previously configured webhook. Keep
     # queued updates while explicitly converging the bot into polling mode.

@@ -176,6 +176,7 @@ Required environment values:
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | BotFather token |
 | `ADMIN_TELEGRAM_IDS` | At least one positive numeric Telegram ID |
+| `ADMIN_SCOPE_CLEANUP_IDS` | Optional one-time comma-separated IDs of removed admins whose old Telegram command scopes must be deleted |
 | `OUTLINE_API_URL` | Full secret HTTPS management URL |
 | `OUTLINE_CERT_SHA256` | 64 hexadecimal characters |
 | `AURIX_ACCESS_URL_KEY` | One persistent Fernet key |

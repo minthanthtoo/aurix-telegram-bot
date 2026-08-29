@@ -578,6 +578,119 @@ class PostgresCommerceDatabase:
                 raise
         return True
 
+    def list_command_scope_ids(self) -> set[int]:
+        """Return chat-specific command scopes previously configured by this bot."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT chat_id FROM telegram_command_scopes"
+            ).fetchall()
+        return {int(row["chat_id"]) for row in rows}
+
+    def record_command_scope(self, chat_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO telegram_command_scopes (chat_id, configured_at)
+                   VALUES (?, ?)
+                   ON CONFLICT(chat_id) DO UPDATE SET configured_at = EXCLUDED.configured_at""",
+                (int(chat_id), _now_text()),
+            )
+
+    def remove_command_scope(self, chat_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM telegram_command_scopes WHERE chat_id = ?",
+                (int(chat_id),),
+            )
+
+    def create_admin_challenge(
+        self,
+        token_hash: str,
+        admin_id: int,
+        chat_id: int,
+        command: str,
+        args_json: str,
+        state_fingerprint: str,
+        created_at: str,
+        expires_at: str,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO admin_action_challenges
+                   (token_hash, admin_id, chat_id, command, args_json,
+                    state_fingerprint, status, created_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (
+                    token_hash,
+                    int(admin_id),
+                    int(chat_id),
+                    command,
+                    args_json,
+                    state_fingerprint,
+                    created_at,
+                    expires_at,
+                ),
+            )
+
+    def consume_admin_challenge(
+        self,
+        token_hash: str,
+        admin_id: int,
+        chat_id: int,
+        state_fingerprint: str,
+        now: str,
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT command, args_json, state_fingerprint
+                   FROM admin_action_challenges
+                   WHERE token_hash = ? AND admin_id = ? AND chat_id = ?
+                     AND state_fingerprint = ? AND status = 'pending'
+                     AND expires_at > ?""",
+                (token_hash, int(admin_id), int(chat_id), state_fingerprint, now),
+            ).fetchone()
+            if row is None:
+                return None
+            updated = connection.execute(
+                """UPDATE admin_action_challenges
+                   SET status = 'consumed', consumed_at = ?
+                   WHERE token_hash = ? AND status = 'pending'""",
+                (now, token_hash),
+            )
+            if getattr(updated, "rowcount", 1) != 1:
+                return None
+            result = dict(row)
+        try:
+            result["args"] = json.loads(result.pop("args_json") or "[]")
+        except json.JSONDecodeError:
+            return None
+        return result
+
+    def cancel_admin_challenge(
+        self, token_hash: str, admin_id: int, chat_id: int, now: str
+    ) -> bool:
+        with self.connect() as connection:
+            updated = connection.execute(
+                """UPDATE admin_action_challenges
+                   SET status = 'cancelled', cancelled_at = ?
+                   WHERE token_hash = ? AND admin_id = ? AND chat_id = ?
+                     AND status = 'pending'""",
+                (now, token_hash, int(admin_id), int(chat_id)),
+            )
+        return getattr(updated, "rowcount", 1) == 1
+
+    def prune_admin_challenges(self, now: str, retention_days: int = 30) -> int:
+        cutoff = (
+            datetime.fromisoformat(now) - timedelta(days=max(1, int(retention_days)))
+        ).isoformat()
+        with self.connect() as connection:
+            deleted = connection.execute(
+                """DELETE FROM admin_action_challenges
+                   WHERE (status = 'pending' AND expires_at <= ?)
+                      OR (status <> 'pending' AND created_at < ?)""",
+                (now, cutoff),
+            )
+        return int(getattr(deleted, "rowcount", 0) or 0)
+
     def initialize(self) -> None:
         schema = """
         CREATE TABLE IF NOT EXISTS users (
@@ -723,6 +836,26 @@ class PostgresCommerceDatabase:
             dead_lettered_at TEXT
         );
         CREATE INDEX IF NOT EXISTS notifications_due ON notifications(status, next_attempt_at);
+        CREATE TABLE IF NOT EXISTS telegram_command_scopes (
+            chat_id BIGINT PRIMARY KEY,
+            configured_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS admin_action_challenges (
+            token_hash TEXT PRIMARY KEY,
+            admin_id BIGINT NOT NULL,
+            chat_id BIGINT NOT NULL,
+            command TEXT NOT NULL,
+            args_json TEXT NOT NULL,
+            state_fingerprint TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'consumed', 'cancelled')),
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT,
+            cancelled_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS admin_action_challenges_expiry
+            ON admin_action_challenges(status, expires_at);
         CREATE TABLE IF NOT EXISTS audit_events (
             id BIGSERIAL PRIMARY KEY,
             actor_type TEXT NOT NULL,

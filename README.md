@@ -54,7 +54,8 @@ Required variables:
 Optional:
 
 - `DATABASE_PATH` — default `data/bot.db`
-- `ADMIN_TELEGRAM_IDS` — comma-separated Telegram numeric IDs for staff commands
+- `ADMIN_TELEGRAM_IDS` — comma-separated Telegram numeric IDs for staff access
+- `ADMIN_SCOPE_CLEANUP_IDS` — optional one-time comma-separated IDs whose old Telegram admin command scopes must be deleted after an administrator is removed
 - `TRIAL_TELEGRAM_IDS` — legacy allowlist; leave empty for public daily 300 MiB and monthly 3 GiB claims
 - `COMMERCE_DATABASE_URL` — PostgreSQL URL for hosted commercial state; empty uses staging SQLite
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — server-side credentials for the private receipt-evidence bucket. Never use the publishable/anon key here.
@@ -91,7 +92,8 @@ Customer:
 - `/myvpn`
 - `/renew`
 
-Admin-only (shown through `/admin` only after allowlisting):
+Admin-only (available to allowlisted administrators through the `/admin`
+inline panel; only `/admin` is advertised in the administrator command menu):
 
 - `/admin`
 - `/orders` (admin)
@@ -108,7 +110,7 @@ Admin-only (shown through `/admin` only after allowlisting):
 - `/ledger <telegram-id>` (admin; inspect wallet balance and immutable events)
 - `/refund <order-id> [reason]` (admin; issue a wallet reversal and revoke access)
 
-To enable an administrator, send `/whoami` to the bot, place the returned numeric ID in `ADMIN_TELEGRAM_IDS` (comma-separated for multiple staff), and restart the bot. Telegram usernames are not accepted for authorization because they can change; only numeric IDs are used.
+To enable an administrator, send `/whoami` to the bot, place the returned numeric ID in `ADMIN_TELEGRAM_IDS` (comma-separated for multiple staff), and restart the bot. Telegram usernames are not accepted for authorization because they can change; only numeric IDs are used. The bot advertises only `/admin` to current administrators; all other staff operations are behind the inline admin panel.
 
 Creating an order is idempotent while the customer already has an order in `awaiting_payment` or `payment_submitted`: repeated `/buy`, Upgrade-button, and renewal requests return that open order instead of inserting duplicates. Once an order is approved, another `/buy` or `/renew` creates an independent entitlement, so a customer may hold multiple paid keys for separate devices or plans at the same time. `/myvpn` lists every active key and hides expired/revoked credentials. Untouched orders expire after 24 hours and can be cancelled by the customer; orders with payment activity remain protected for staff review. Customers can inspect only their own orders; allowlisted admins can use `/order <order-id>` to inspect any order’s payment, receipt-review, wallet reservation, subscription, and provisioning trail.
 
@@ -119,7 +121,13 @@ always enters `review_pending`, even when the vision model cannot extract a
 transaction ID. Staff can reject an individual receipt and keep the order open
 for a replacement; rejecting the order itself closes it.
 
-Order, plan, wallet, VPN, and receipt messages include contextual inline buttons. Customers can open an order, request receipt-upload guidance, pay from wallet, refresh status, or return to their order list without copying IDs. Admin queues link directly to order and receipt review; approval appears only after receipt verification, while rejection requires a separate confirmation click.
+Order, plan, wallet, VPN, and receipt messages include contextual inline buttons. Customers can open an order, request receipt-upload guidance, pay from wallet, refresh status, or return to their order list without copying IDs. Admin queues link directly to order and receipt review; every high-impact admin action requires a fresh, single-use confirmation click after the current state is displayed.
+
+Administrative confirmations are stored in the hosted database (with an
+in-memory fallback only for lightweight test doubles), bound to the requesting
+administrator and private chat, expired after five minutes, and rejected when
+the reviewed order or receipt state changes. Cancelled and consumed tokens
+cannot be replayed after a restart.
 
 ## Test
 

@@ -480,7 +480,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(self.commerce.list_pending_orders()[0]["status"], "payment_submitted")
         self.assertTrue(any("Payment recorded" in text for _, text in self.bot.sent))
 
-    def test_uploaded_photo_is_sent_directly_to_admin_for_review(self):
+    def test_uploaded_photo_notifies_admin_without_persisting_image_in_telegram(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order_id = self.commerce.list_pending_orders()[0]["id"]
         self.bot._download_telegram_file = lambda _file_id: (b"photo-receipt", "image/jpeg")
@@ -498,17 +498,16 @@ class TelegramBotCommerceTest(unittest.TestCase):
         )
 
         receipt = self.commerce.list_pending_receipts()[0]
-        media_type, chat_id, file_id, caption, markup = self.bot.media[-1]
-        self.assertEqual((media_type, chat_id, file_id), ("photo", 999, "large-photo"))
-        self.assertIn(f"Evidence: {receipt['id']}", caption)
-        self.assertIn(f"/verify {receipt['id']}", caption)
+        self.assertEqual(self.bot.media, [])
+        self.assertIn(f"Evidence: {receipt['id']}", self.bot.sent[-1][1])
+        markup = self.bot.markups[-1]
         labels = {
             button["text"]
             for row in markup["inline_keyboard"]
             for button in row
         }
-        self.assertIn("View Order", labels)
-        self.assertIn("🛑 Reject Receipt", labels)
+        self.assertIn("Open Receipt", labels)
+        self.assertIn("Open Order", labels)
 
     def test_image_document_keeps_its_media_type_for_admin_review(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
@@ -532,9 +531,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
             self.commerce.list_pending_receipts()[0]["id"]
         )
         self.assertEqual(receipt["telegram_media_type"], "document")
-        self.assertEqual(self.bot.media[-1][:3], ("document", 999, "receipt-document"))
+        self.assertEqual(self.bot.media, [])
 
-        self.bot.media.clear()
         self.bot.handle(self.message(999, f"/receipt {receipt['id']}"))
         self.assertEqual(self.bot.media[-1][:3], ("document", 999, "receipt-document"))
 
@@ -684,7 +682,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "data": f"a:x:{order.order_id}",
             }
         )
-        self.assertIn("Reject order", self.bot.sent[-1][1])
+        self.assertIn("Order:", self.bot.sent[-1][1])
+        self.assertIn("close the order", self.bot.sent[-1][1])
         self.assertEqual(
             self.commerce.order_detail(order.order_id, 999, is_admin=True)["status"],
             "awaiting_payment",
@@ -698,12 +697,347 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
     def test_admin_commands_are_allowlisted_and_malformed_updates_are_ignored(self):
         self.bot.handle(self.message(123, "/orders"))
-        self.assertEqual(self.bot.sent[-1][1], "Admin access required.")
+        self.assertEqual(
+            self.bot.sent[-1][1],
+            "Use the menu to choose an AuriX action.",
+        )
 
         self.bot.handle(self.message(999, "/orders"))
         self.assertEqual(self.bot.sent[-1][1], "No pending orders.")
         self.bot.handle({"chat": None, "from": None, "text": "/orders"})
         self.assertEqual(self.bot.sent[-1][1], "No pending orders.")
+
+    def test_all_admin_commands_and_callbacks_are_generic_for_customers(self):
+        calls = []
+
+        def bomb(name):
+            def fail(*_args, **_kwargs):
+                calls.append(name)
+                raise AssertionError(f"privileged method called: {name}")
+            return fail
+
+        for name in (
+            "list_pending_orders",
+            "list_pending_receipts",
+            "get_receipt",
+            "verify_receipt",
+            "reject_receipt",
+            "capacity_snapshot",
+            "consistency_report",
+            "failed_jobs",
+            "retry_failed_job",
+            "refund_order",
+            "approve_order",
+            "reject_order",
+        ):
+            setattr(self.commerce, name, bomb(name))
+        self.bot.service.termination_summary = bomb("termination_summary")
+        commands = (
+            "/admin",
+            "/orders",
+            "/receipts",
+            "/capacity",
+            "/reconcile",
+            "/enforcement",
+            "/failed",
+            "/retry order-id",
+            "/ledger 123",
+            "/refund order-id",
+            "/receipt evidence-id",
+            "/verify evidence-id tx-id 3000",
+            "/rejectreceipt evidence-id",
+            "/approve order-id",
+            "/reject order-id",
+        )
+        for command in commands:
+            self.bot.handle(self.message(123, command))
+            self.assertEqual(self.bot.sent[-1][1], self.bot.UNKNOWN_ACTION_TEXT)
+            labels = {
+                button["text"]
+                for row in self.bot.markups[-1]["keyboard"]
+                for button in row
+            }
+            self.assertNotIn("🛠 Admin Panel", labels)
+
+        self.bot.request = lambda _method, _payload: True
+        for data in (
+            "a:malformed",
+            "a:n:orders",
+            "a:o:order-id",
+            "a:k:expired-token",
+            "a:p:order-id",
+            "a:l:123",
+            "a:f:order-id",
+            "a:a:order-id",
+            "a:x:order-id",
+            "a:q:evidence-id",
+        ):
+            self.bot.handle_callback(
+                {
+                    "id": "callback-customer",
+                    "from": {"id": 123, "first_name": "Min"},
+                    "message": {"chat": {"id": 123, "type": "private"}},
+                    "data": data,
+                }
+            )
+            self.assertEqual(self.bot.sent[-1][1], self.bot.UNKNOWN_ACTION_TEXT)
+        self.assertEqual(calls, [])
+
+    def test_admin_button_labels_are_separate_and_customer_menu_is_side_effect_free(self):
+        self.bot.handle(self.message(123, "📥 Pending Orders"))
+        self.assertEqual(self.bot.sent[-1][1], self.bot.UNKNOWN_ACTION_TEXT)
+
+        self.bot.handle(self.message(999, "🔁 Failed Jobs"))
+        self.assertEqual(self.bot.sent[-1][1], "No terminal worker failures.")
+        self.assertEqual(self.bot.markups[-1].keys(), {"inline_keyboard"})
+
+        self.bot.handle(self.message(999, "💰 Wallet Ledger"))
+        self.assertIn("Usage: /ledger <telegram-id>", self.bot.sent[-1][1])
+
+        self.bot.handle(self.message(999, "🏠 Customer Menu"))
+        self.assertIn("Choose an action below", self.bot.sent[-1][1])
+        self.assertEqual(self.outline.created, [])
+
+    def test_admin_typed_mutation_requires_one_time_confirmation(self):
+        order = self.commerce.create_order(123, "Min", "basic_50gb")
+        self.bot.handle(self.message(999, f"/reject {order.order_id}"))
+        self.assertEqual(
+            self.commerce.order_detail(order.order_id, 999, is_admin=True)["status"],
+            "awaiting_payment",
+        )
+        buttons = [
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        ]
+        confirm = next(button for button in buttons if button["text"] == "Confirm Reject")
+        self.bot.request = lambda _method, _payload: True
+        callback = {
+            "id": "callback-confirm",
+            "from": {"id": 999, "first_name": "Admin"},
+            "message": {"chat": {"id": 999, "type": "private"}},
+            "data": confirm["callback_data"],
+        }
+        self.bot.handle_callback(callback)
+        self.assertEqual(
+            self.commerce.order_detail(order.order_id, 999, is_admin=True)["status"],
+            "rejected",
+        )
+        self.bot.handle_callback(callback)
+        self.assertIn("expired or was already used", self.bot.sent[-1][1])
+
+    def test_every_typed_admin_mutation_queues_confirmation(self):
+        for command in (
+            "/approve order-id",
+            "/reject order-id",
+            "/retry order-id",
+            "/refund order-id",
+            "/verify evidence-id tx-id 3000",
+            "/rejectreceipt evidence-id",
+        ):
+            self.bot.handle(self.message(999, command))
+            self.assertIn("expires in 5 minutes", self.bot.sent[-1][1])
+            self.assertTrue(
+                any(
+                    button["callback_data"].startswith("a:k:")
+                    for row in self.bot.markups[-1]["inline_keyboard"]
+                    for button in row
+                )
+            )
+
+    def test_confirmation_is_durable_single_use_and_state_bound(self):
+        order = self.commerce.create_order(123, "Min", "basic_50gb")
+        self.bot.handle(self.message(999, f"/reject {order.order_id}"))
+        confirm = next(
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["callback_data"].startswith("a:k:")
+        )
+        token = confirm["callback_data"].split(":", 2)[2]
+        with self.db.connect() as connection:
+            challenge = connection.execute(
+                "SELECT status, state_fingerprint FROM admin_action_challenges"
+            ).fetchone()
+        self.assertEqual(challenge["status"], "pending")
+        self.assertTrue(challenge["state_fingerprint"])
+
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "callback-confirm-durable",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": f"a:k:{token}",
+            }
+        )
+        with self.db.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM admin_action_challenges"
+                ).fetchone()[0],
+                "consumed",
+            )
+        self.assertEqual(
+            self.commerce.order_detail(order.order_id, 999, is_admin=True)["status"],
+            "rejected",
+        )
+
+        # A repeated Telegram callback cannot repeat the mutation.
+        self.bot.handle_callback(
+            {
+                "id": "callback-confirm-replay",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": f"a:k:{token}",
+            }
+        )
+        self.assertIn("expired or was already used", self.bot.sent[-1][1])
+
+        # A state change between preview and confirmation invalidates the token.
+        second = self.commerce.create_order(123, "Min", "basic_50gb")
+        self.bot.handle(self.message(999, f"/reject {second.order_id}"))
+        stale_token = next(
+            button["callback_data"].split(":", 2)[2]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["callback_data"].startswith("a:k:")
+        )
+        self.commerce.cancel_order(123, second.order_id)
+        self.bot.handle_callback(
+            {
+                "id": "callback-confirm-stale",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": f"a:k:{stale_token}",
+            }
+        )
+        self.assertIn("expired or was already used", self.bot.sent[-1][1])
+        self.assertEqual(
+            self.commerce.order_detail(second.order_id, 999, is_admin=True)["status"],
+            "cancelled",
+        )
+
+    def test_confirmation_cancel_marks_durable_challenge_unusable(self):
+        order = self.commerce.create_order(123, "Min", "basic_50gb")
+        self.bot.handle(self.message(999, f"/reject {order.order_id}"))
+        buttons = [
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        ]
+        cancel = next(button for button in buttons if button["text"] == "Cancel")
+        token = cancel["callback_data"].split(":", 2)[2]
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "callback-cancel",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": f"a:d:{token}",
+            }
+        )
+        with self.db.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM admin_action_challenges"
+                ).fetchone()[0],
+                "cancelled",
+            )
+        self.assertEqual(
+            self.commerce.order_detail(order.order_id, 999, is_admin=True)["status"],
+            "awaiting_payment",
+        )
+
+    def test_admin_operations_boundary_rejects_non_admin_before_service_call(self):
+        calls = []
+        self.commerce.list_pending_orders = lambda: calls.append("called")
+        with self.assertRaises(PermissionError):
+            self.bot.admin_operations.call(123, "list_pending_orders")
+        self.assertEqual(calls, [])
+
+    def test_private_chat_identity_mismatch_is_ignored(self):
+        before = len(self.bot.sent)
+        self.bot.handle(
+            {
+                "chat": {"id": 999, "type": "private"},
+                "from": {"id": 123, "first_name": "Min"},
+                "text": "/orders",
+            }
+        )
+        self.assertEqual(len(self.bot.sent), before)
+
+    def test_admin_inline_navigation_rechecks_role_and_uses_admin_namespace(self):
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "callback-admin-nav",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": "a:n:failed",
+            }
+        )
+        self.assertEqual(self.bot.sent[-1][1], "No terminal worker failures.")
+
+        self.bot.handle_callback(
+            {
+                "id": "callback-customer-legacy",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {"chat": {"id": 123, "type": "private"}},
+                "data": "n:adminorders",
+            }
+        )
+        self.assertEqual(self.bot.sent[-1][1], self.bot.UNKNOWN_ACTION_TEXT)
+
+    def test_command_scope_cleanup_removes_removed_admins(self):
+        self.bot.service.database.record_command_scope(998)
+        self.bot.command_scope_cleanup_ids = {998}
+        calls = []
+        expected = {}
+
+        def request(method, payload):
+            calls.append((method, payload))
+            scope_key = json.dumps(payload.get("scope", {}), sort_keys=True)
+            if method == "setMyCommands":
+                expected[scope_key] = payload["commands"]
+                return True
+            if method == "deleteMyCommands":
+                expected.pop(scope_key, None)
+                return True
+            if method == "getMyCommands":
+                return expected.get(scope_key, [])
+            return True
+
+        self.bot.request = request
+        self.bot.configure_commands()
+        self.assertIn(
+            ("deleteMyCommands", {"scope": {"type": "chat", "chat_id": 998}}),
+            calls,
+        )
+        self.assertNotIn(998, self.bot.service.database.list_command_scope_ids())
+
+    def test_command_scope_cleanup_keeps_state_when_telegram_retains_commands(self):
+        self.bot.service.database.record_command_scope(998)
+        self.bot.command_scope_cleanup_ids = {998}
+        expected = {}
+
+        def request(method, payload):
+            scope_key = json.dumps(payload.get("scope", {}), sort_keys=True)
+            if method == "setMyCommands":
+                expected[scope_key] = payload["commands"]
+                return True
+            if method == "deleteMyCommands":
+                return True
+            if method == "getMyCommands":
+                if payload.get("scope", {}).get("chat_id") == 998:
+                    return [{"command": "orders", "description": "stale"}]
+                return expected.get(scope_key, [])
+            return True
+
+        self.bot.request = request
+        with self.assertRaises(RuntimeError):
+            self.bot.configure_commands()
+        self.assertIn(998, self.bot.service.database.list_command_scope_ids())
 
     def test_admin_recovery_and_ledger_buttons_are_available(self):
         self.bot.handle(self.message(999, "/failed"))
@@ -734,9 +1068,10 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertNotIn("🛠 Admin Panel", customer_labels)
 
         self.bot.handle(self.message(999, "/admin"))
+        self.assertEqual(self.bot.markups[-1].keys(), {"inline_keyboard"})
         admin_labels = {
             button["text"]
-            for row in self.bot.markups[-1]["keyboard"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
             for button in row
         }
         self.assertIn("📥 Pending Orders", admin_labels)
@@ -747,7 +1082,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("No subscription found", self.bot.sent[-1][1])
         self.bot.handle(self.message(123, "/whoami"))
         self.assertIn("Your Telegram ID: 123", self.bot.sent[-1][1])
-        self.assertIn("not enabled", self.bot.sent[-1][1])
+        self.assertNotIn("Admin access", self.bot.sent[-1][1])
 
     def test_usage_button_shows_free_key_stats_and_refresh_action(self):
         self.bot.handle(self.message(123, "/claim"))
@@ -767,14 +1102,32 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
     def test_command_scopes_hide_admin_commands_from_customers(self):
         calls = []
-        self.bot.request = lambda method, payload: calls.append((method, payload)) or True
+        expected = {}
+
+        def request(method, payload):
+            calls.append((method, payload))
+            scope_key = json.dumps(payload["scope"], sort_keys=True)
+            if method == "setMyCommands":
+                expected[scope_key] = payload["commands"]
+                return True
+            if method == "getMyCommands":
+                return expected[scope_key]
+            return True
+
+        self.bot.request = request
         self.bot.configure_commands()
-        default = calls[0][1]
-        admin = calls[1][1]
+        sets = [payload for method, payload in calls if method == "setMyCommands"]
+        default = sets[0]
+        admin = sets[1]
         self.assertEqual(default["scope"], {"type": "default"})
         self.assertNotIn("approve", {item["command"] for item in default["commands"]})
         self.assertEqual(admin["scope"], {"type": "chat", "chat_id": 999})
-        self.assertIn("approve", {item["command"] for item in admin["commands"]})
+        self.assertEqual(
+            {item["command"] for item in admin["commands"]},
+            {"start", "claim", "trial", "buy", "replace", "status", "usage",
+             "myvpn", "wallet", "myorders", "order", "cancelorder", "whoami",
+             "help", "admin"},
+        )
 
     def test_free_staging_claim_is_fail_closed_for_non_test_accounts(self):
         self.bot.handle(self.message(456, "/claim"))
