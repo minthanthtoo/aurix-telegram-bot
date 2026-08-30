@@ -29,3 +29,11 @@ R3 replaces the abstract launch headline with a paid-intent situation: `အလ�
 ## R4 recommended final
 
 R4 corrects the remaining English-shaped `ရက် 30 VPN Key` to `VPN Key · ရက် 30` and tightens the caption's audience introduction. At full size and feed-thumbnail size, the reading path is work need → AuriX Telegram Bot → product → receipt-review proof → destination → payment methods. No fake UI, generic Telegram-only logo, or unsupported reliability promise remains.
+
+## R5 structural redesign
+
+R5 replaces the scattered content islands with three intentional regions: one top message block, an uninterrupted visual reveal, and one unified service footer. Its main remaining issues were a visible horizontal edge in the top shade, an overlong proof line, and the payment heading intruding into the first wallet mark.
+
+## R6 recommended final
+
+R6 adds a masked top fade, preserves the gateway as the dominant visual bridge, reduces and optically aligns the bot avatar, and gives proof, handle, divider, and payments a common baseline system. The payment heading is shortened to `ငွေပေးချေနိုင်ပါတယ်`, allowing all five marks equal spacing without a card or web-section appearance. Full-size and 324 × 405 thumbnail reviews confirm the reading path remains intact.

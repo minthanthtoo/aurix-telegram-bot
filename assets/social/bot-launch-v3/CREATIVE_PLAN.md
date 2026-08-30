@@ -31,3 +31,7 @@ The first language plan began with the customer's frustration. Review found that
 ## R4 customer-meaning correction
 
 User review found that the previous asset still did not explain who the product serves, what is bought, or which payments are supported. It also used the internal label `ပြေစာစစ်ဆေးချိန်` and an AuriX avatar that did not visibly read as a bot. R4 reframes the post for work-dependent VPN users, names the 30-day Outline-compatible Key, expresses receipt review as an action after submission, shows five official wallet marks, and uses a new AuriX avatar with an unmistakable robot badge.
+
+## R5–R6 layout redesign
+
+R4 divided attention among separate top, bot, speed, payment, and logo islands. The redesigned system uses one 72 px left grid, a single Outline product lockup, an uninterrupted gateway field, and one continuous footer. Bot identity, proof, handle, divider, and payments now share one alignment system. R5 established the structure; R6 removed the hard top-shade seam, split the speed proof into a deliberate two-line unit, reduced the bot avatar, and separated the payment label from the wallet icons.

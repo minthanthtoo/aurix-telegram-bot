@@ -36,6 +36,56 @@ def t(x: int, y: int, value: str, size: int, weight: int = 700, fill: str = "#F6
 
 
 def build(round_no: int) -> str:
+    if round_no >= 5:
+        r6 = round_no >= 6
+        payment_start = 550 if r6 else 460
+        payment_step = 98 if r6 else 108
+        payment_size = 68 if r6 else 72
+        payment_marks = []
+        for index, (name, path) in enumerate(PAYMENTS):
+            x = payment_start + index * payment_step
+            payment_marks.append(f'<image href="{uri(path)}" x="{x}" y="1200" width="{payment_size}" height="{payment_size}" preserveAspectRatio="xMidYMid slice" clip-path="url(#footerPaymentClip{index})"/>')
+            payment_marks.append(t(x + payment_size // 2, 1292, name, 16, 700, "#C7D2DC", "middle", "Inter, sans-serif"))
+        payment_clips = "".join(f'<clipPath id="footerPaymentClip{i}"><rect x="{payment_start + i * payment_step}" y="1200" width="{payment_size}" height="{payment_size}" rx="16"/></clipPath>' for i in range(5))
+        avatar_size = 174 if r6 else 194
+        avatar_x = 82 if r6 else 72
+        avatar_y = 928 if r6 else 908
+        content_x = 290 if r6 else 300
+        return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
+        <defs>
+          <linearGradient id="topField" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#071421" stop-opacity=".98"/><stop offset=".72" stop-color="#071421" stop-opacity=".76"/><stop offset="1" stop-color="#071421" stop-opacity="0"/></linearGradient>
+          <linearGradient id="topMaskGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFF"/><stop offset=".72" stop-color="#FFF"/><stop offset="1" stop-color="#000"/></linearGradient>
+          <linearGradient id="footerField" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#071421" stop-opacity="0"/><stop offset=".22" stop-color="#071421" stop-opacity=".8"/><stop offset="1" stop-color="#06111C" stop-opacity=".99"/></linearGradient>
+          <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#36E2FF" stop-opacity=".55"/><stop offset="1" stop-color="#7765FF" stop-opacity=".12"/></linearGradient>
+          <filter id="shadow"><feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity=".48"/></filter>
+          <mask id="topFadeMask"><rect x="0" y="0" width="820" height="700" fill="url(#topMaskGradient)"/></mask>
+          {payment_clips}
+        </defs>
+        <image href="{uri(PLATE)}" x="0" y="0" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
+        <rect x="0" y="0" width="820" height="700" fill="url(#topField)" mask="url(#topFadeMask)"/>
+        <rect x="0" y="820" width="1080" height="530" fill="url(#footerField)"/>
+        <image href="{uri(LOGO)}" x="70" y="42" width="292" height="92" preserveAspectRatio="xMinYMid meet"/>
+
+        {t(72, 213, 'အလုပ်အတွက် VPN လိုတဲ့အခါ', 43 if r6 else 45, 830)}
+        {t(72, 284, 'AuriX Telegram Bot', 56, 900, '#FFC857')}
+        {t(72, 347, 'ကနေ စလိုက်ပါ', 48, 900, '#FFC857')}
+
+        <image href="{uri(OUTLINE)}" x="72" y="400" width="70" height="70"/>
+        {t(165, 424, 'Official Outline Client နဲ့', 27, 730, '#D6E0E8')}
+        {t(165, 468, 'ချိတ်သုံးနိုင်တဲ့ VPN Key · ရက် 30', 29 if r6 else 30, 820, '#36E2FF')}
+
+        <image href="{uri(BOT)}" x="{avatar_x}" y="{avatar_y}" width="{avatar_size}" height="{avatar_size}" filter="url(#shadow)"/>
+        {t(content_x, 944, 'AURIX TELEGRAM BOT', 23, 850, '#36E2FF', family='Inter, sans-serif')}
+        {t(content_x, 988, 'ပြေစာပို့ပြီး ပုံမှန်ဆို' if r6 else 'ပြေစာပို့ပြီး', 27, 720, '#D6E0E8')}
+        {t(content_x, 1038 if r6 else 1045, '၁ မိနစ်မပြည့်ခင် စစ်ပေးပါတယ်*' if r6 else 'ပုံမှန် ၁ မိနစ်မပြည့်ခင် စစ်ပေးပါတယ်*', 34 if r6 else 35, 900, '#FFFFFF')}
+        {t(content_x, 1090 if r6 else 1098, '@aurix_outline_vpn_bot', 28, 850, '#36E2FF', family='Inter, sans-serif')}
+        {t(content_x, 1132 if r6 else 1140, '*အော်ဒါများတဲ့အချိန် အနည်းငယ်ပိုကြာနိုင်ပါတယ်။', 17, 550, '#AEBBC6')}
+
+        <rect x="{content_x}" y="1168" width="{1000-content_x}" height="2" fill="url(#rule)"/>
+        {t(content_x, 1220, 'ငွေပေးချေနိုင်ပါတယ်' if r6 else 'ငွေပေးချေနိုင်တဲ့ နည်းလမ်း ၅ မျိုး', 23, 740, '#F6F8FC')}
+        {''.join(payment_marks)}
+        </svg>"""
+
     if round_no >= 3:
         payment_marks = []
         for index, (name, path) in enumerate(PAYMENTS):
@@ -131,7 +181,7 @@ AuriX ဟာ Outline Foundation ရဲ့ တရားဝင်မိတ်ဖ�
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3, 4], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3, 4, 5, 6], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()
