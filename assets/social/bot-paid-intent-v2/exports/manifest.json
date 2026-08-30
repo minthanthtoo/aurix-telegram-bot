@@ -1,0 +1,21 @@
+{
+  "campaign": "aurix-bot-launch-v2",
+  "stamp": "20260830-173000",
+  "format": "1080x1350 PNG plus UTF-8 Burmese TXT and editable SVG",
+  "recommended_order": ["aurix-bot-launch-v2"],
+  "finals": [
+    {
+      "id": "aurix-bot-launch-v2",
+      "role": "paid conversion and Bot trust",
+      "image": "20260830-173000_aurix-bot-launch-v2_r1.png",
+      "caption": "20260830-173000_aurix-bot-launch-v2_r1.txt",
+      "source": "20260830-173000_aurix-bot-launch-v2_r1.svg"
+    }
+  ],
+  "preview": "20260830-173000_aurix-bot-launch-v2_r1.png",
+  "publication_gates": [
+    "Measure and confirm the usually-under-one-minute receipt review claim",
+    "Confirm both paid plans, all five wallet accounts, Bot provisioning, and support staffing live",
+    "Complete representative ISP and server checks before stronger performance language"
+  ]
+}
