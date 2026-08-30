@@ -52,16 +52,16 @@ def telegram_mark(x: int, y: int, size: int) -> str:
 
 def payment_row(round_no: int) -> str:
     centers = (140, 330, 520, 710, 900)
-    size = 58 if round_no == 0 else 64
+    size = 72 if round_no >= 3 else (58 if round_no == 0 else 64)
     marks = []
     for (label, path), center in zip(PAYMENTS, centers):
         marks.append(
             f'<image href="{uri(path)}" x="{center-size/2}" y="1014" width="{size}" height="{size}" preserveAspectRatio="xMidYMid slice"/>'
-            + t(center, 1105, label, 16, 700, '#DDE6ED', 'middle', 'Inter, sans-serif')
+            + ('' if round_no >= 3 else t(center, 1105, label, 16, 700, '#DDE6ED', 'middle', 'Inter, sans-serif'))
         )
     border = '<path d="M70 990 H1010" stroke="#35516B"/>' if round_no == 0 else ''
     return f"""
-    {t(70, 972, 'ငွေလွှဲနိုင်တဲ့ Wallet များ', 20, 700, '#9DB1C3')}
+    {'' if round_no >= 3 else t(70, 972, 'ငွေလွှဲနိုင်တဲ့ Wallet များ', 20, 700, '#9DB1C3')}
     {border}
     {''.join(marks)}
     """
@@ -80,6 +80,8 @@ def build(round_no: int) -> str:
     speed_x = 410 if round_no == 0 else 390
     free_fill = '#D6E0E8' if round_no < 2 else '#FFC857'
     process_y = 735 if round_no == 0 else 722
+    clean = round_no >= 3
+    headline_y = 240 if clean else 282
     header_outline = "" if round_no >= 2 else f"""
     <image href="{outline}" x="930" y="52" width="78" height="78"/>
     {t(969, 158, 'OUTLINE CLIENT', 13, 800, '#F6F8FC', 'middle', 'Inter, sans-serif')}
@@ -97,13 +99,13 @@ def build(round_no: int) -> str:
     <image href="{aurix}" x="70" y="45" width="285" height="92" preserveAspectRatio="xMinYMid meet"/>
     {header_outline}
 
-    {t(70, 215, 'AURIX BOT · OUTLINE KEY', 21, 800, '#36E2FF', family='Inter, sans-serif')}
-    {t(70, 282, 'အလုပ်အတွက် VPN လိုတဲ့အခါ', 44, 800)}
-    {t(70, 340, 'AuriX Bot ကနေ စလိုက်ပါ။', 44, 800)}
+    {'' if clean else t(70, 215, 'AURIX BOT · OUTLINE KEY', 21, 800, '#36E2FF', family='Inter, sans-serif')}
+    {t(70, headline_y, 'အလုပ်အတွက် VPN လိုတဲ့အခါ', 46 if clean else 44, 800)}
+    {t(70, headline_y+62, 'AuriX Bot ကနေ စလိုက်ပါ။', 46 if clean else 44, 800)}
 
     {panel}
     <image href="{bot}" x="88" y="438" width="240" height="240" filter="url(#shadow)"/>
-    {t(208, 706, '@aurix_outline_vpn_bot', 16, 700, '#9DB1C3', 'middle', 'Inter, sans-serif')}
+    {'' if clean else t(208, 706, '@aurix_outline_vpn_bot', 16, 700, '#9DB1C3', 'middle', 'Inter, sans-serif')}
 
     {t(speed_x, 470, 'ပုံမှန်ဆို', 24, 700, '#FFC857')}
     {t(speed_x, 590, '< 1 MIN*', speed_size, 900, '#FFFFFF', family='Inter, sans-serif')}
@@ -111,7 +113,7 @@ def build(round_no: int) -> str:
     <path d="M760 526 H846" stroke="url(#signal)" stroke-width="5" stroke-linecap="round"/>
     <path d="M838 515 L856 526 L838 537" fill="none" stroke="#36E2FF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
     <image href="{outline}" x="870" y="468" width="104" height="104"/>
-    {t(922, 610, 'Official Outline Client', 15, 700, '#9DB1C3', 'middle', 'Inter, sans-serif')}
+    {'' if clean else t(922, 610, 'Official Outline Client', 15, 700, '#9DB1C3', 'middle', 'Inter, sans-serif')}
 
     {t(150, process_y, 'PLAN ရွေး', 17, 800, '#FFC857', 'middle', 'Inter, sans-serif')}
     <path d="M230 {process_y-6} H370" stroke="#35516B" stroke-width="2"/>
@@ -119,7 +121,7 @@ def build(round_no: int) -> str:
     <path d="M530 {process_y-6} H670" stroke="#35516B" stroke-width="2"/>
     {t(760, process_y, 'KEY ရ', 17, 800, '#36E2FF', 'middle', 'Inter, sans-serif')}
 
-    {t(70, 800, 'အလုပ်သုံး Paid Plan', 20, 700, '#9DB1C3')}
+    {'' if clean else t(70, 800, 'အလုပ်သုံး Paid Plan', 20, 700, '#9DB1C3')}
     {t(70, 865, '50 GB', 50, 900, '#FFFFFF', family='Inter, sans-serif')}
     {t(285, 865, '3,000 ကျပ်', 32, 800, '#36E2FF')}
     <line x1="70" y1="894" x2="500" y2="894" stroke="#35516B"/>
@@ -130,13 +132,13 @@ def build(round_no: int) -> str:
     {payment_row(round_no)}
 
     <line x1="70" y1="1142" x2="1010" y2="1142" stroke="#35516B"/>
-    {t(70, 1185, 'အရင်စမ်းချင်ရင်', 19, 600, '#9DB1C3')}
+    {'' if clean else t(70, 1185, 'အရင်စမ်းချင်ရင်', 19, 600, '#9DB1C3')}
     {t(70, 1228, 'လူတိုင်းအတွက် · နေ့စဉ် 300 MB အခမဲ့', 25, 700, free_fill)}
     {telegram_mark(654, 1174, 54)}
-    {t(727, 1197, 'Bot မှာ စတင်ပါ', 20, 700, '#F6F8FC')}
+    {'' if clean else t(727, 1197, 'Bot မှာ စတင်ပါ', 20, 700, '#F6F8FC')}
     {t(727, 1232, '@aurix_outline_vpn_bot', 22, 800, '#36E2FF', family='Inter, sans-serif')}
     {t(70, 1300, '*အလုပ်များချိန် စစ်ဆေးချိန် ကွာနိုင်ပါတယ်။', 17, 500, '#71889C')}
-    {t(1010, 1300, 'Clear access. Human help.', 16, 600, '#71889C', 'end', 'Inter, sans-serif')}
+    {'' if clean else t(1010, 1300, 'Clear access. Human help.', 16, 600, '#71889C', 'end', 'Inter, sans-serif')}
     </svg>"""
 
 
@@ -168,7 +170,7 @@ https://t.me/+oA18TDWAD9NiNWU1
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()

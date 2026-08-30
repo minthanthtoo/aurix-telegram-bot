@@ -9,12 +9,12 @@
     {
       "id": "aurix-bot-paid-intent",
       "role": "paid conversion and Bot trust",
-      "image": "20260830-161700_aurix-bot-paid-intent_r2.png",
-      "caption": "20260830-161700_aurix-bot-paid-intent_r2.txt",
-      "source": "20260830-161700_aurix-bot-paid-intent_r2.svg"
+      "image": "20260830-161700_aurix-bot-paid-intent_r3.png",
+      "caption": "20260830-161700_aurix-bot-paid-intent_r3.txt",
+      "source": "20260830-161700_aurix-bot-paid-intent_r3.svg"
     }
   ],
-  "preview": "20260830-161700_aurix-bot-paid-intent_r2.png",
+  "preview": "20260830-161700_aurix-bot-paid-intent_r3.png",
   "publication_gates": [
     "Measure and confirm the user-provided usually-under-one-minute human verification claim",
     "Confirm both paid plans and all five wallet recipient accounts are operational",
