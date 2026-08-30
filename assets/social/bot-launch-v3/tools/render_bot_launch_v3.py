@@ -38,6 +38,7 @@ def t(x: int, y: int, value: str, size: int, weight: int = 700, fill: str = "#F6
 def build(round_no: int) -> str:
     if round_no >= 5:
         r6 = round_no >= 6
+        automated_receipt = round_no >= 7
         payment_start = 550 if r6 else 460
         payment_step = 98 if r6 else 108
         payment_size = 68 if r6 else 72
@@ -76,8 +77,8 @@ def build(round_no: int) -> str:
 
         <image href="{uri(BOT)}" x="{avatar_x}" y="{avatar_y}" width="{avatar_size}" height="{avatar_size}" filter="url(#shadow)"/>
         {t(content_x, 944, 'AURIX TELEGRAM BOT', 23, 850, '#36E2FF', family='Inter, sans-serif')}
-        {t(content_x, 988, 'ပြေစာပို့ပြီး ပုံမှန်ဆို' if r6 else 'ပြေစာပို့ပြီး', 27, 720, '#D6E0E8')}
-        {t(content_x, 1038 if r6 else 1045, '၁ မိနစ်မပြည့်ခင် စစ်ပေးပါတယ်*' if r6 else 'ပုံမှန် ၁ မိနစ်မပြည့်ခင် စစ်ပေးပါတယ်*', 34 if r6 else 35, 900, '#FFFFFF')}
+        {t(content_x, 988, 'Bot က ပြေစာကို စက္ကန့်ပိုင်းအတွင်း စစ်ပေးပြီး' if automated_receipt else ('ပြေစာပို့ပြီး ပုံမှန်ဆို' if r6 else 'ပြေစာပို့ပြီး'), 23 if automated_receipt else 27, 720, '#D6E0E8')}
+        {t(content_x, 1038 if r6 else 1045, 'ပုံမှန် ၁ မိနစ်မပြည့်ခင် Key ရပါတယ်*' if automated_receipt else ('၁ မိနစ်မပြည့်ခင် စစ်ပေးပါတယ်*' if r6 else 'ပုံမှန် ၁ မိနစ်မပြည့်ခင် စစ်ပေးပါတယ်*'), 31 if automated_receipt else (34 if r6 else 35), 900, '#FFFFFF')}
         {t(content_x, 1090 if r6 else 1098, '@aurix_outline_vpn_bot', 28, 850, '#36E2FF', family='Inter, sans-serif')}
         {t(content_x, 1132 if r6 else 1140, '*အော်ဒါများတဲ့အချိန် အနည်းငယ်ပိုကြာနိုင်ပါတယ်။', 17, 550, '#AEBBC6')}
 
@@ -166,7 +167,7 @@ Plan များ—
 
 KBZPay၊ WavePay၊ AYA Pay၊ uabpay၊ CB Pay တို့နဲ့ ငွေပေးချေနိုင်ပါတယ်။
 
-ဝယ်ယူပုံကလည်း ရိုးရိုးလေးပါ။ Bot မှာ Plan ရွေး၊ ငွေလွှဲပြီး ပြေစာပို့ပါ။ ပြေစာကို ဝန်ထမ်းက စစ်ပြီး အတည်ပြုပေးပါတယ်။ ပုံမှန်ဆို ၁ မိနစ်မပြည့်ခင် စစ်ပေးနိုင်ပြီး အော်ဒါများတဲ့အချိန်မှာတော့ အနည်းငယ်စောင့်ရနိုင်ပါတယ်။
+ဝယ်ယူပုံကလည်း ရိုးရိုးလေးပါ။ Bot မှာ Plan ရွေး၊ ငွေလွှဲပြီး ပြေစာပို့လိုက်ပါ။ Bot က ပြေစာအချက်အလက်ကို စက္ကန့်ပိုင်းအတွင်း စစ်ပေးတာကြောင့် အော်ဒါတင်ပြီး Outline VPN Key ရတဲ့အထိ ပုံမှန်ဆို ၁ မိနစ်မပြည့်ပါဘူး။ အော်ဒါများတဲ့အချိန်မှာတော့ အနည်းငယ်ပိုကြာနိုင်ပါတယ်။
 
 မဝယ်ခင် စမ်းကြည့်ချင်သေးရင် 24 နာရီတစ်ကြိမ် 300 MB အခမဲ့ Key ကို Bot မှာ ရယူနိုင်ပါတယ်။ 300 MB နဲ့ Plan တွေမှာပါတဲ့ GB ပမာဏက VPN Key အသုံးပြုခွင့်ပမာဏပါ။ ဖုန်း SIM/Mobile Data Package မဟုတ်ပါဘူး။
 
@@ -181,7 +182,7 @@ AuriX ဟာ Outline Foundation ရဲ့ တရားဝင်မိတ်ဖ�
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3, 4, 5, 6], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3, 4, 5, 6, 7], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()

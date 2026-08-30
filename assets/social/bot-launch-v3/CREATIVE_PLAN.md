@@ -35,3 +35,7 @@ User review found that the previous asset still did not explain who the product 
 ## R5–R6 layout redesign
 
 R4 divided attention among separate top, bot, speed, payment, and logo islands. The redesigned system uses one 72 px left grid, a single Outline product lockup, an uninterrupted gateway field, and one continuous footer. Bot identity, proof, handle, divider, and payments now share one alignment system. R5 established the structure; R6 removed the hard top-shade seam, split the speed proof into a deliberate two-line unit, reduced the bot avatar, and separated the payment label from the wallet icons.
+
+## R7 automated-receipt claim correction
+
+The earlier proof described staff receipt review. The user clarified the intended live flow: the Bot checks receipt data within seconds and the usual complete order-to-Key process takes under one minute; a later fraud audit is an internal control. R7 states the immediate customer outcome and omits the later audit. This claim differs from the repository snapshot, which still documents extraction followed by staff verification and approval, so deployed-flow confirmation remains a publication gate.

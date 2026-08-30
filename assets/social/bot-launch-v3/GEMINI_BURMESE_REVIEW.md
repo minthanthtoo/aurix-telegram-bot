@@ -13,3 +13,5 @@ For the R2 language re-audit, Gemini again confirmed that the prior copy was tra
 A final audit-only pass was given the locked R2 phrases, told to accept normal Myanmar code-switching, and allowed to flag only genuinely unnatural wording. It returned an empty issue list. Facts and links were then revalidated from the exported caption.
 
 R4 received two additional Gemini passes. The first supplied audience structure but used formal constructions such as `တွဲဖက်အသုံးပြုနိုင်သည့်` and `ဖြစ်ပါသည်`; those were rejected. The second was audit-only and returned `PASS` for the locked image copy and caption. It incorrectly questioned the existence of Outline Foundation; Outline's official site confirms that Outline is owned by the Outline Foundation, so the accurate non-affiliation disclaimer was retained.
+
+For R7, Gemini first proposed formal copy (`စစ်ဆေးပေးသည်`, `ရယူပါ`, `မကြာပါ`) that was rejected. A second audit-only pass reviewed the natural candidate and returned `PASS` with no issues. Its optional minimal change from `၁ မိနစ်အောက်နဲ့` to `၁ မိနစ်မပြည့်ခင်` was adopted for more natural Burmese.

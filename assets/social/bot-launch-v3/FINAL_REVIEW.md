@@ -37,3 +37,7 @@ R5 replaces the scattered content islands with three intentional regions: one to
 ## R6 recommended final
 
 R6 adds a masked top fade, preserves the gateway as the dominant visual bridge, reduces and optically aligns the bot avatar, and gives proof, handle, divider, and payments a common baseline system. The payment heading is shortened to `ငွေပေးချေနိုင်ပါတယ်`, allowing all five marks equal spacing without a card or web-section appearance. Full-size and 324 × 405 thumbnail reviews confirm the reading path remains intact.
+
+## R7 recommended final
+
+R7 replaces the inaccurate staff-review wording with the user-provided live behavior: `Bot က ပြေစာကို စက္ကန့်ပိုင်းအတွင်း စစ်ပေးပြီး / ပုံမှန် ၁ မိနစ်မပြည့်ခင် Key ရပါတယ်*`. The caption explains that this is the usual complete order-to-Key time, not merely receipt-reading time. The later fraud audit is omitted because it is an internal control and does not help the launch decision. Full-size and feed-thumbnail reviews pass; the under-one-minute claim must still be confirmed against the deployed Bot rather than this repository snapshot.
