@@ -19,5 +19,8 @@ Improvement: strengthen only the comment instruction and Outline recognition; do
 
 R1 enlarges the exact comment phrase and official Outline mark while preserving the generated composition. Reading order is prize → number of winners → product/duration → five-pass proof → entry action. URLs and rules remain in the caption.
 
-Publication gates: provision/test all five keys, replace the relative closing rule with an absolute scheduled timestamp when publishing, and confirm the draw/delivery owner.
+## R2 Outline-recognition correction
 
+User review identified that the official Outline mark remained too small relative to the center pass. R2 increases it from 92 px to 128 px and raises it slightly so it reads as the product recognition anchor at mobile-feed size. No other visual or copy element changed. R2 supersedes R1.
+
+Publication gates: provision/test all five keys, replace the relative closing rule with an absolute scheduled timestamp when publishing, and confirm the draw/delivery owner.

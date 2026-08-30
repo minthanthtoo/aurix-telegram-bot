@@ -30,7 +30,8 @@ def t(x: int, y: int, value: str, size: int, weight: int = 700, fill: str = "#F6
 def build(round_no: int) -> str:
     cta_y = 1110 if round_no == 0 else 1080
     hero_y = 248 if round_no == 0 else 238
-    outline_size = 78 if round_no == 0 else 92
+    outline_size = 78 if round_no == 0 else (92 if round_no == 1 else 128)
+    outline_y = 575 if round_no < 2 else 548
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
     <defs>
       <linearGradient id="topShade" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#071421" stop-opacity=".92"/><stop offset="1" stop-color="#071421" stop-opacity="0"/></linearGradient>
@@ -46,7 +47,7 @@ def build(round_no: int) -> str:
     {t(70, hero_y+72, '၅ ယောက်အတွက် အခမဲ့', 48 if round_no == 0 else 52, 850, '#FFC857')}
     {t(70, hero_y+126, 'Outline VPN Key · ရက် 30', 29, 700, '#D6E0E8')}
 
-    <image href="{uri(OUTLINE)}" x="{540-outline_size/2}" y="575" width="{outline_size}" height="{outline_size}" filter="url(#shadow)"/>
+    <image href="{uri(OUTLINE)}" x="{540-outline_size/2}" y="{outline_y}" width="{outline_size}" height="{outline_size}" filter="url(#shadow)"/>
 
     {t(540, cta_y, '“100GB စမ်းမယ်”', 54 if round_no == 0 else 60, 900, '#FFFFFF', 'middle')}
     {t(540, cta_y+64, 'လို့ Comment ရေးပါ', 36 if round_no == 0 else 42, 800, '#36E2FF', 'middle')}
@@ -73,7 +74,7 @@ Winner ကြေညာချက်နဲ့ သတင်းများ — http
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()

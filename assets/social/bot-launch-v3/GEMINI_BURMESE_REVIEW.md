@@ -1,0 +1,9 @@
+# Gemini Burmese Launch Review
+
+Route: local 9Router at `127.0.0.1:20128`
+Requested model: `ag/gemini-3.7-flash-high`
+Resolved model: `gemini-3.7-flash-tiered`
+
+The first Gemini draft correctly announced launch but sounded formal. A second freer pass became natural but hallucinated prices, handles, automatic delivery, and performance claims, so it was rejected completely.
+
+A third constrained pass received the exact factual candidate and was prohibited from changing facts. It returned the final image copy and caption unchanged. This version is used in the export.

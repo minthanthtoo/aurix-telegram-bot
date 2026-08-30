@@ -1,0 +1,21 @@
+{
+  "campaign": "aurix-public-launch-v3",
+  "stamp": "20260830-181000",
+  "format": "1080x1350 PNG plus UTF-8 Burmese TXT and editable SVG",
+  "recommended_order": ["aurix-public-launch-v3"],
+  "finals": [
+    {
+      "id": "aurix-public-launch-v3",
+      "role": "public launch and Bot conversion",
+      "image": "20260830-181000_aurix-public-launch-v3_r1.png",
+      "caption": "20260830-181000_aurix-public-launch-v3_r1.txt",
+      "source": "20260830-181000_aurix-public-launch-v3_r1.svg"
+    }
+  ],
+  "preview": "20260830-181000_aurix-public-launch-v3_r1.png",
+  "publication_gates": [
+    "Confirm public launch readiness across Bot, provisioning, payments, capacity, and support",
+    "Measure and confirm the usually-under-one-minute receipt review claim",
+    "Complete representative ISP and server checks before stronger performance language"
+  ]
+}
