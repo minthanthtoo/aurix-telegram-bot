@@ -53,19 +53,18 @@ The initial plan required Page follow, post sharing, friend tagging, and Telegra
 
 - One comment is the only entry action.
 - No purchase, share, friend tag, or follow is required.
-- The artwork contains only the hook, prize, quantity, duration, one comment instruction, and three functional Telegram destinations.
+- The artwork contains only the prize, product/duration clarification, winner count, and one comment instruction.
 - Full rules, closing time, selection method, SIM-data clarification, fraud warning, platform release, and affiliation note remain in the caption.
 - Telegram roles are distinct: Bot for trying/buying, Group for human help, Channel for winner announcement and service news.
 
 ## Locked image copy
 
-- `100 GB သုံးကြည့်မလား?`
-- `၅ ယောက်အတွက် အခမဲ့`
+- `100 GB`
 - `Outline VPN Key · ရက် 30`
-- `“100GB စမ်းမယ်” လို့ Comment ရေးပါ`
-- `t.me/aurix_outline_vpn_bot`
-- `t.me/+oA18TDWAD9NiNWU1`
-- `t.me/AurixDigitalStore`
+- `၅ ယောက်အတွက် အခမဲ့`
+- `“100GB စမ်းမယ်” / လို့ Comment ရေးပါ`
+
+The three Telegram links remain exact and clickable in the caption. They were removed from the image after the hierarchy re-review because equal-weight URLs fragmented the message and were not usable as links inside a static image.
 
 ## Publication gates
 
@@ -74,4 +73,3 @@ The initial plan required Page follow, post sharing, friend tagging, and Telegra
 - Confirm the relative closing rule and replace it with an absolute date/time in the Facebook caption if scheduling software cannot display it clearly.
 - Obtain local review of giveaway and VPN-service legality before publication.
 - Do not describe the prize as mobile/SIM data, unlimited, permanently reliable, secure, anonymous, or officially partnered with Outline.
-

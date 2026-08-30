@@ -32,20 +32,46 @@ Improvement: tighten the pass fan and raise the action line so the entry action 
 
 Improvement: raise the front pass, expose the official Outline Client icon fully, and enlarge only the three functional Telegram destinations.
 
-## R2 final judgment
+## R2 initial judgment — superseded after user critique
 
 | Criterion | Score | Judgment |
 |---|---:|---|
-| First-frame clarity | 5 | `100 GB`, `၅ ယောက်`, and `အခမဲ့` dominate. |
-| Product memory | 5 | AuriX and Outline-compatible key recognition are visible without implying partnership. |
+| First-frame clarity | 4 | The offer is visible, but four separate zones compete for the reading start. |
+| Product memory | 4 | AuriX and Outline are visible, but the URL inventory dilutes prize memory. |
 | Brand specificity | 5 | Five access passes emerging from an AuriX signal envelope encode the actual offer. |
 | Local relevance | 5 | One short Burmese question and one comment instruction feel natural. |
 | Visual distinction | 5 | The composition avoids website, dashboard, fake-button, and generic AI aesthetics. |
-| Copy hierarchy | 5 | No decorative eyebrow, numbered micro-labels, repeated platform names, or prize badges. |
+| Copy hierarchy | 2 | Three equal-weight URLs, separated labels, and an embedded instruction scatter attention. |
 | Claim safety | 5 | The artwork makes no performance, permanence, security, or SIM-data promise. |
 | Render integrity | 5 | Official marks, five passes, safe margins, and Burmese shaping are intact. |
 
-R2 is the recommended final. The exact Telegram URLs remain visible because they are functional destinations, not decorative micro-labels. Their roles are explained in the caption.
+R2 was initially recommended, but a later hierarchy review rejected it. The three equal-weight Telegram URLs, separated headline lines, and instruction embedded in the envelope created too many evenly weighted reading stops.
+
+## R3 hierarchy correction
+
+R3 removes every Telegram URL from the artwork and creates one vertical sequence: prize, product, winner count, five-pass visual, entry action. The links remain clickable in the caption. R3 succeeds strategically, but the envelope is still too tall, partly obscures the Outline mark, and behaves like an empty dark mass.
+
+## R4 recommended final
+
+R4 shortens the envelope, exposes the Outline mark, clips every pass correctly behind the envelope, and moves the entry instruction closer to the focal visual. The remaining small duration line was then merged into `Outline VPN Key · ရက် 30`, leaving only four meaningful reading stops:
+
+1. `100 GB`
+2. `Outline VPN Key · ရက် 30`
+3. `၅ ယောက်အတွက် အခမဲ့`
+4. `“100GB စမ်းမယ်” လို့ Comment ရေးပါ`
+
+R4 supersedes R2 as the recommended final.
+
+| Criterion | Score | Judgment |
+|---|---:|---|
+| First-frame clarity | 5 | The eye begins at `100 GB` and moves downward without a competing entry point. |
+| Product memory | 5 | Product, duration, winner count, and entry phrase form one chain. |
+| Brand specificity | 5 | Five AuriX signal passes and the official Outline mark encode the offer. |
+| Local relevance | 5 | The Burmese offer and comment phrase are direct and natural. |
+| Visual distinction | 5 | No website grid, fake control, generic giveaway badge, or AI scene. |
+| Copy hierarchy | 5 | Four reading stops; no decorative micro-labels or URL inventory. |
+| Claim safety | 5 | Exact prize facts only. |
+| Render integrity | 5 | Pass clipping, logo use, type shaping, and safe margins are correct. |
 
 ## Drift check
 
@@ -62,4 +88,3 @@ R2 is the recommended final. The exact Telegram URLs remain visible because they
 - Confirm the closing timestamp, random-draw record, winner announcement, and prize-delivery owner.
 - Confirm local legal requirements for a VPN-service giveaway.
 - Do not request money, OTP, payment PIN, password, or key screenshots from winners.
-

@@ -61,7 +61,57 @@ def passes(round_no: int, outline: str) -> str:
     return ''.join(pass_shape(*spec, outline) for spec in specs)
 
 
+def build_hierarchy(round_no: int) -> str:
+    aurix = uri(AURIX)
+    outline = uri(OUTLINE)
+    final = round_no >= 4
+    hero_y = 270 if final else 282
+    card_y = 500 if final else 520
+    envelope_top = 735 if final else 755
+    envelope_peak = envelope_top - (100 if final else 150)
+    envelope_bottom = 960 if final else 1015
+    action_y = 1060 if final else 1150
+    specs = [
+        (220, card_y + 78, -10, '#C98E34', False),
+        (318, card_y + 38, -5, '#2AAFC6', False),
+        (406, card_y - 12, 0, '#7765FF', True),
+        (494, card_y + 38, 5, '#2AAFC6', False),
+        (592, card_y + 78, 10, '#C98E34', False),
+    ]
+    pass_group = ''.join(pass_shape(*spec, outline) for spec in specs)
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#071421"/><stop offset="1" stop-color="#0D2235"/></linearGradient>
+      <linearGradient id="signal" x1="0" x2="1"><stop stop-color="#FFC857"/><stop offset=".45" stop-color="#36E2FF"/><stop offset="1" stop-color="#7765FF"/></linearGradient>
+      <filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity=".42"/></filter>
+      <radialGradient id="halo"><stop stop-color="#36E2FF" stop-opacity=".20"/><stop offset="1" stop-color="#36E2FF" stop-opacity="0"/></radialGradient>
+      <clipPath id="passesClip"><rect x="0" y="0" width="1080" height="{envelope_bottom}"/></clipPath>
+    </defs>
+    <rect width="1080" height="1350" fill="url(#bg)"/>
+    <circle cx="540" cy="690" r="470" fill="url(#halo)"/>
+    <path d="M-150 1010 C220 760 240 360 640 210 C830 140 1010 155 1180 42" fill="none" stroke="url(#signal)" stroke-width="3" opacity=".16"/>
+    <image href="{aurix}" x="72" y="46" width="270" height="86" preserveAspectRatio="xMinYMid meet"/>
+
+    {text(72, hero_y, '100 GB', 132 if final else 124, 900, '#FFFFFF', family='Inter, sans-serif')}
+    {text(72, hero_y+64, 'Outline VPN Key · ရက် 30', 34, 750, '#D6E0E8')}
+    {text(72, hero_y+136, '၅ ယောက်အတွက် အခမဲ့', 52 if final else 48, 850, '#FFC857')}
+
+    <g clip-path="url(#passesClip)">{pass_group}</g>
+    <g filter="url(#shadow)">
+      <path d="M120 {envelope_top} L540 {envelope_peak} L960 {envelope_top} V{envelope_bottom} H120 Z" fill="#102A40" stroke="#36536B" stroke-width="3"/>
+      <path d="M120 {envelope_top} L540 {envelope_top+182} L960 {envelope_top}" fill="#0A1A28" stroke="#35516B" stroke-width="3"/>
+      <path d="M120 {envelope_bottom} L430 811 Q540 747 650 811 L960 {envelope_bottom} Z" fill="#0D2235"/>
+      <path d="M150 {envelope_bottom-20} L467 789 Q540 745 613 789 L930 {envelope_bottom-20}" fill="none" stroke="url(#signal)" stroke-width="5" opacity=".85"/>
+    </g>
+
+    {text(540, action_y, '“100GB စမ်းမယ်”', 60 if final else 46, 900, '#FFFFFF', 'middle')}
+    {text(540, action_y+66, 'လို့ Comment ရေးပါ', 42 if final else 32, 750, '#36E2FF', 'middle')}
+    </svg>"""
+
+
 def build(round_no: int) -> str:
+    if round_no >= 3:
+        return build_hierarchy(round_no)
     aurix = uri(AURIX)
     outline = uri(OUTLINE)
     hero_y = 270 if round_no == 0 else 282
@@ -125,7 +175,7 @@ Winner ကြေညာချက်နဲ့ သတင်းများ — http
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3, 4], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()
