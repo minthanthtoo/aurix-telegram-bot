@@ -15,10 +15,13 @@ Telegram-first paid-concierge MVP with public free/trial access:
 - TLS certificate fingerprint pinning for the Outline Management API;
 - Small vetted `cryptography` and optional PostgreSQL-driver dependencies.
 
-The paid flow is designed for a single persistent staging Droplet. PostgreSQL,
-independent worker processes, automated payment-provider verification, referrals,
-affiliates, resellers, and multi-node allocation are intentionally not enabled
-until their deployment or evidence gates pass. See
+The bot is designed to run as one persistent process. The recommended Render
+topology is one paid Background Worker with persistent-disk SQLite; the
+controlled free profile stores all bot state in Supabase PostgreSQL instead.
+Neither profile is safe to scale beyond one instance. Independent worker
+processes, automated payment-provider verification, referrals, affiliates,
+resellers, and multi-node allocation are intentionally not enabled until their
+deployment or evidence gates pass. See
 [`docs/MVP_STATUS.md`](docs/MVP_STATUS.md) for the current comparison with the
 final architecture.
 
@@ -57,7 +60,7 @@ Optional:
 - `ADMIN_TELEGRAM_IDS` — comma-separated Telegram numeric IDs for staff access
 - `ADMIN_SCOPE_CLEANUP_IDS` — optional one-time comma-separated IDs whose old Telegram admin command scopes must be deleted after an administrator is removed
 - `TRIAL_TELEGRAM_IDS` — legacy allowlist; leave empty for public daily 300 MiB and monthly 3 GiB claims
-- `COMMERCE_DATABASE_URL` — PostgreSQL URL for hosted commercial state; empty uses staging SQLite
+- `COMMERCE_DATABASE_URL` — PostgreSQL URL for all bot state when using the hosted PostgreSQL profile; empty uses SQLite
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — server-side credentials for the private receipt-evidence bucket. Never use the publishable/anon key here.
 - `SUPABASE_RECEIPTS_BUCKET` — private bucket name (default `payment-receipts`)
 - `RECEIPT_STORAGE_REQUIRED` — set to `1` in hosted deployments so a receipt cannot enter review until its object is stored
@@ -67,6 +70,213 @@ Optional:
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
 
 Do not expose `OUTLINE_API_URL`, bot token, DB, or generated access URLs. Firewall Outline Management API so only bot host can reach it.
+
+## Deploy on Render
+
+AuriX has two Render profiles. Pick one; do not combine their storage settings.
+
+| Profile | Render file | Service | State | Use it for |
+| --- | --- | --- | --- | --- |
+| Durable MVP (recommended) | [`render.yaml`](render.yaml) | One paid Background Worker (`starter` / `0.5c-512mb`) | SQLite on a 1 GB persistent disk | Real users and payments |
+| Free pilot | [`render-free.yaml`](render-free.yaml) | One Free Web Service | Supabase PostgreSQL; Render filesystem is disposable | Controlled testing only |
+
+The paid worker does not have a public URL because Telegram long polling only
+needs outbound network access. The free profile wraps the same bot in a small
+HTTP server so Render can check `/healthz`. Render Free can sleep, restart, and
+has no persistent disk; PostgreSQL is therefore mandatory for that profile.
+See Render's official [Free service limitations](https://render.com/docs/free)
+and [persistent disk documentation](https://render.com/docs/disks).
+
+### 1. Prepare the external services
+
+Before opening Render:
+
+1. Push the repository to GitHub, GitLab, or Bitbucket.
+2. Create a Supabase project in or near Singapore.
+3. In Supabase Storage, create a **private** bucket named
+   `payment-receipts`. Both profiles use it for receipt screenshots.
+4. Send `/whoami` to the bot and save the returned numeric Telegram ID for
+   `ADMIN_TELEGRAM_IDS`.
+5. Stop every other process using this bot token. Only one long-polling
+   `getUpdates` consumer may run reliably.
+6. Collect the complete secret Outline Management API URL and its certificate
+   fingerprint. The API URL must include the secret path, not just the IP and
+   port.
+7. Generate the access-URL encryption key once and keep it permanently:
+
+   ```sh
+   python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+   ```
+
+To calculate the Outline certificate fingerprint, replace only the host and
+management port:
+
+```sh
+openssl s_client -connect OUTLINE_HOST:OUTLINE_PORT </dev/null 2>/dev/null \
+  | openssl x509 -outform DER \
+  | openssl dgst -sha256
+```
+
+### 2. Add the common environment variables
+
+Render Blueprints prompt for variables marked `sync: false`. Paste values
+without surrounding quotes.
+
+| Variable | Value |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Token from BotFather |
+| `ADMIN_TELEGRAM_IDS` | Your numeric ID; use comma-separated IDs for multiple admins |
+| `OUTLINE_API_URL` | Complete secret HTTPS management URL, including its path |
+| `OUTLINE_CERT_SHA256` | The 64-character SHA-256 certificate digest |
+| `AURIX_ACCESS_URL_KEY` | The Fernet key generated above; never regenerate it after keys are stored |
+| `SUPABASE_URL` | Project URL such as `https://PROJECT_REF.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-side service-role secret, never the anon/publishable key |
+| `SUPABASE_RECEIPTS_BUCKET` | `payment-receipts` |
+| `RECEIPT_STORAGE_REQUIRED` | `1` |
+| `ALLOW_TEXT_PAYMENT_REFERENCES` | `0` |
+| `TRIAL_TELEGRAM_IDS` | Leave blank for public free and trial claims |
+
+`RECEIPT_LLM_BASE_URL`, `RECEIPT_LLM_MODEL`, and `RECEIPT_LLM_API_KEY` are
+optional, but must be either all configured or all blank. Without them, receipt
+screenshots still enter manual review. LLM extraction never verifies a payment.
+
+### 3A. Recommended: paid Background Worker with persistent disk
+
+1. In Render, select **New → Blueprint** and connect this repository.
+2. Use the default Blueprint path `render.yaml`.
+3. Confirm Render proposes exactly one service with these settings:
+
+   ```text
+   Type: Background Worker
+   Region: Singapore
+   Plan: starter / 0.5c-512mb
+   Instances: 1
+   Disk: 1 GB mounted at /var/data
+   Build Command: pip install -r requirements.txt
+   Start Command: python deploy/render_preflight.py && python -u app.py
+   ```
+
+4. Enter the common secrets above. Keep these Blueprint values unchanged:
+
+   ```text
+   AURIX_STORAGE_MODE=disk
+   DATABASE_PATH=/var/data/bot.db
+   COMMERCE_DATABASE_URL=
+   ```
+
+5. Apply the Blueprint and watch the first deploy. Do not add `PORT`; a
+   Background Worker does not serve HTTP.
+
+This is the recommended MVP topology. The disk preserves claims, orders,
+wallets, encrypted keys, Telegram update deduplication, jobs, and audit events
+across restarts. Keep exactly one instance because this release is a
+single-poller, single-worker application.
+
+### 3B. Optional: $0 Web Service with Supabase PostgreSQL
+
+Use this only for a controlled pilot. Render Free has an ephemeral filesystem,
+can restart at any time, and normally spins down after 15 minutes without
+inbound traffic. A sleeping bot cannot receive Telegram long-poll updates until
+an HTTP request wakes the service.
+
+Create it from `render-free.yaml` as a Blueprint, or enter these exact fields
+when creating a Web Service manually:
+
+```text
+Runtime: Python
+Region: Singapore
+Plan: Free
+Instances: 1
+Build Command: pip install -r requirements.txt
+Start Command: python deploy/render_preflight.py && python -u deploy/render_web.py
+Health Check Path: /healthz
+```
+
+Set the common variables, plus:
+
+```text
+AURIX_STORAGE_MODE=postgres
+COMMERCE_DATABASE_URL=<Supabase session-pooler PostgreSQL URL>
+```
+
+Do not set `DATABASE_PATH` and do not use SQLite on the Free profile.
+
+In Supabase, click **Connect → Session pooler** and copy the complete URI. A
+persistent Render process should use the IPv4-compatible session pooler rather
+than the direct IPv6-only database endpoint on a Free Supabase project. Keep
+`sslmode=require`. The shape is:
+
+```text
+postgresql://postgres.PROJECT_REF:URL_ENCODED_PASSWORD@aws-REGION.pooler.supabase.com:5432/postgres?sslmode=require
+```
+
+Do not type that example literally: copy the project-specific value from
+Supabase. The username belongs before the first `:` and the hostname must not
+contain `@`. If the database password contains `@`, `/`, `:`, `#`, `%`, or other
+URL-reserved characters, use the percent-encoded password supplied by the
+dashboard or URL-encode it. A malformed value such as a hostname beginning
+with `sup@aws-...` causes `failed to resolve host` during startup. See the
+official [Supabase connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres).
+
+After deployment, open:
+
+```text
+https://YOUR-SERVICE.onrender.com/healthz
+```
+
+A healthy response has HTTP 200 and `"status": "ok"`. An external uptime
+monitor can check this endpoint, but it does not turn the Free profile into a
+durable or production-grade service.
+
+### 4. Verify the first deployment
+
+A healthy log contains:
+
+```text
+Render preflight passed: single-worker persistent disk configuration is valid
+Bot authorized: @your_bot_username
+Outline connected: version ...
+```
+
+The free profile reports `hosted PostgreSQL configuration is valid` instead.
+This warning is expected when receipt vision is intentionally disabled:
+
+```text
+WARNING: receipt vision extraction is disabled; screenshots require manual transaction entry.
+```
+
+Then test, in order:
+
+1. `/start` and `/whoami`.
+2. `/admin` from the allowlisted account.
+3. `/claim`, then `/usage`.
+4. `/trial` and confirm a second monthly trial is refused.
+5. Create one paid test order, submit a synthetic receipt screenshot, review
+   it from `/admin`, and verify that approval provisions exactly one key.
+6. Check `/myorders`, `/wallet`, `/myvpn`, `/capacity`, `/reconcile`, and
+   `/enforcement`.
+
+Do not accept real payments until this sequence passes.
+
+### 5. Common Render failures
+
+| Log or symptom | Cause and fix |
+| --- | --- |
+| Render asks for **Start Command** | Paid worker: `python deploy/render_preflight.py && python -u app.py`. Free Web Service: `python deploy/render_preflight.py && python -u deploy/render_web.py`. |
+| `failed to resolve host 'sup@aws-...'` | The Supabase URI was assembled incorrectly. Copy **Connect → Session pooler**, preserve the username/host boundary, and URL-encode the password. |
+| Cannot resolve `db.PROJECT_REF.supabase.co` | The direct endpoint is IPv6 by default. Use the Supabase session-pooler URI on port `5432`. |
+| `Render preflight failed` | Fix the named variable; the preflight deliberately exits before starting with unsafe storage, key, or payment settings. |
+| `Telegram getMe failed` | Replace the invalid BotFather token or fix outbound network access. |
+| Repeated Telegram `Conflict` / `getUpdates` | Another VPS, local terminal, or Render service is using the same bot token. Stop it. |
+| Outline certificate/readiness failure | Recheck the complete management URL, TLS fingerprint, API reachability, and Outline firewall. |
+| Receipt upload failure | Confirm the bucket is private and exists, and that `SUPABASE_SERVICE_ROLE_KEY` is the server-side service-role secret. |
+| Slow first request on Free | The Web Service probably cold-started after sleeping. Paid services do not have the Free idle-spin-down behavior. |
+| SQLite data disappears | SQLite was used without the paid `/var/data` disk. Restore from backup and use the paid profile, or switch the whole app to the PostgreSQL profile. |
+
+The deployment preflight never prints secret values. Do not paste Render or
+Supabase secrets into issues, screenshots, Git commits, or support messages.
+For backup, rollback, and the full acceptance runbook, see
+[`docs/RENDER_DEPLOYMENT.md`](docs/RENDER_DEPLOYMENT.md).
 
 ## Commands
 
@@ -190,59 +400,12 @@ does not guess a transaction ID.
 
 SQLite fits one-process MVP on persistent local storage. Do not deploy DB onto an ephemeral filesystem. Run one bot process only; Telegram long polling and this SQLite workflow are not designed for replicas.
 
-Setting `COMMERCE_DATABASE_URL` adds PostgreSQL durability for commercial state,
-but does not by itself make Telegram long polling or notification delivery
-replica-safe; keep one bot process until the independent worker/webhook gate is
-completed.
+Setting `COMMERCE_DATABASE_URL` stores free/trial claims, Telegram update
+deduplication, commerce, jobs, notifications, and audit state in PostgreSQL. It
+does not make Telegram long polling or notification delivery replica-safe; keep
+one bot process until the independent worker/webhook gate is completed.
 
 **Production DB path:** Mount a persistent volume (e.g., `/var/lib/aurix-bot/`) and set `DATABASE_PATH=/var/lib/aurix-bot/bot.db`. Do not use `/tmp`, container layers, or Render free-tier disk — data is lost on restart.
-
-### Deploy on Render
-
-[`render.yaml`](render.yaml) defines AuriX as a single Singapore background
-worker with a 1 GB persistent disk mounted at `/var/data`. A worker is required
-because Telegram long polling is a continuous outbound process and does not
-serve an HTTP port. Render does not offer free background workers or free
-persistent disks, so use at least the Starter plan. The disk also intentionally
-prevents multiple instances and overlapping SQLite writers.
-
-1. Push this repository to GitHub, GitLab, or Bitbucket, then choose **New →
-   Blueprint** in Render and connect the repository.
-2. Supply every environment variable marked `sync: false`. Generate
-   `AURIX_ACCESS_URL_KEY` once with the command in `.env.example`; never replace
-   it after keys have been stored, or existing encrypted access URLs become
-   unreadable. `ADMIN_TELEGRAM_IDS` must contain your numeric Telegram ID.
-3. Leave `TRIAL_TELEGRAM_IDS` empty for public 300 MiB daily and 3 GiB monthly
-   claims. Leave `ALLOW_TEXT_PAYMENT_REFERENCES=0` for screenshot-only payment
-   review. The three `RECEIPT_LLM_*` values may be blank together; screenshots
-   then remain available for manual verification.
-4. Deploy exactly one instance. Stop any local/VPS copy using the same bot token
-   before starting Render, because two `getUpdates` consumers conflict.
-5. Verify the deploy log contains `Bot authorized` and `Outline connected`, then
-   test `/whoami`, `/claim`, `/usage`, and the admin `/enforcement` screen.
-
-The worker first runs `deploy/render_preflight.py`. It fails the deploy without
-printing secrets if the admin allowlist, Outline URL/pin, encryption key,
-persistent database path, or screenshot-only payment policy is unsafe.
-
-The persistent disk preserves the SQLite claim, order, wallet, audit, quota,
-and termination records across restarts. Render disk snapshots are useful for
-recovery, but deployment remains a single-process topology; moving all state to
-PostgreSQL plus webhook/outbox workers is still the production scaling gate.
-
-An experimental `render-free.yaml` profile is also included for a $0 Web
-Service pilot using Supabase PostgreSQL and the `/healthz` wrapper monitored by
-UptimeRobot. It is intentionally separate from `render.yaml`: Free Render has
-no persistent disk and can sleep/restart, so use that profile only for
-controlled testing.
-
-For the complete offline-to-dashboard handoff, environment-variable table,
-failure diagnosis, acceptance test, backup, and rollback procedure, use
-[`docs/RENDER_DEPLOYMENT.md`](docs/RENDER_DEPLOYMENT.md).
-
-For repeatable production diagnosis with Codex, use the Supabase and Render
-MCP setup in [`codex-mcp.toml.example`](codex-mcp.toml.example) and follow the
-correlation workflow in [`docs/MCP_DEBUGGING.md`](docs/MCP_DEBUGGING.md).
 
 ### Expiry and quota enforcement
 
