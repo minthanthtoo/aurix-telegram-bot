@@ -24,3 +24,7 @@ R1 enlarges the exact comment phrase and official Outline mark while preserving 
 User review identified that the official Outline mark remained too small relative to the center pass. R2 increases it from 92 px to 128 px and raises it slightly so it reads as the product recognition anchor at mobile-feed size. No other visual or copy element changed. R2 supersedes R1.
 
 Publication gates: provision/test all five keys, replace the relative closing rule with an absolute scheduled timestamp when publishing, and confirm the draw/delivery owner.
+
+## R3 Burmese-language correction
+
+R2's visible copy was understandable but `၅ ယောက်အတွက် အခမဲ့` did not explicitly identify the recipients as winners, while `လို့ Comment ရေးပါ` sounded like an instruction fragment. R3 changes these to `ကံထူးရှင် ၅ ယောက်` and `Comment ရေးပြီး ပါဝင်ပါ`. The caption now uses shorter spoken clauses, explains the one-comment rule naturally, and separates VPN-key allowance from SIM/Mobile Data Package without legal language dominating the opening.

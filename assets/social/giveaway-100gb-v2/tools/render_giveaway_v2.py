@@ -44,37 +44,37 @@ def build(round_no: int) -> str:
     <image href="{uri(LOGO)}" x="68" y="42" width="264" height="86" preserveAspectRatio="xMinYMid meet"/>
 
     {t(70, hero_y, '100 GB', 124 if round_no == 0 else 132, 900, '#FFFFFF', family='Inter, sans-serif')}
-    {t(70, hero_y+72, '၅ ယောက်အတွက် အခမဲ့', 48 if round_no == 0 else 52, 850, '#FFC857')}
+    {t(70, hero_y+72, 'ကံထူးရှင် ၅ ယောက်', 48 if round_no == 0 else 52, 850, '#FFC857')}
     {t(70, hero_y+126, 'Outline VPN Key · ရက် 30', 29, 700, '#D6E0E8')}
 
     <image href="{uri(OUTLINE)}" x="{540-outline_size/2}" y="{outline_y}" width="{outline_size}" height="{outline_size}" filter="url(#shadow)"/>
 
     {t(540, cta_y, '“100GB စမ်းမယ်”', 54 if round_no == 0 else 60, 900, '#FFFFFF', 'middle')}
-    {t(540, cta_y+64, 'လို့ Comment ရေးပါ', 36 if round_no == 0 else 42, 800, '#36E2FF', 'middle')}
+    {t(540, cta_y+64, 'Comment ရေးပြီး ပါဝင်ပါ', 36 if round_no == 0 else 42, 800, '#36E2FF', 'middle')}
     </svg>"""
 
 
 def caption() -> str:
-    return """AuriX Giveaway မှာ ကံထူးရှင် ၅ ယောက်ကို ရက် 30 အသုံးပြုနိုင်တဲ့ 100 GB Outline-compatible VPN Key တစ်ခုစီ ပေးပါမယ်။
+    return """AuriX Giveaway မှာ ကံထူးရှင် ၅ ယောက်ကို ရက် 30 သုံးနိုင်တဲ့ 100 GB Outline VPN Key တစ်ခုစီ မဲဖောက်ပေးမယ်။
 
-ပါဝင်ဖို့ ဘာမှဝယ်စရာ မလိုပါဘူး။ ဒီ Post အောက်မှာ “100GB စမ်းမယ်” လို့ Comment တစ်ကြိမ်ပဲ ရေးပေးပါ။ Facebook account တစ်ခုကို entry တစ်ခုသာ ထည့်တွက်ပါမယ်။ Share လုပ်ဖို့၊ သူငယ်ချင်း Tag တွဲဖို့၊ Page Follow လုပ်ထားဖို့ မလိုပါဘူး။
+ပါဝင်ချင်ရင် ဒီ Post အောက်မှာ “100GB စမ်းမယ်” လို့ Comment တစ်ကြိမ်ပဲ ရေးပေးရုံပါပဲ။ ဝယ်စရာမလိုပါဘူး။ Share လုပ်တာ၊ သူငယ်ချင်း Tag တွဲတာ၊ Page Follow လုပ်တာလည်း မလိုပါဘူး။ Facebook account တစ်ခုကို Comment တစ်ခုသာ ထည့်တွက်ပါမယ်။
 
-ဒီ Post တင်ပြီး ၇ ရက်အကြာ မြန်မာစံတော်ချိန် ည ၈ နာရီမှာ စာရင်းပိတ်ပါမယ်။ သတ်မှတ်ချက်နဲ့ကိုက်ညီတဲ့ Comment တွေထဲက ၅ ယောက်ကို ကျပန်းရွေးပြီး AuriX Facebook Page နဲ့ Telegram Channel မှာ ကြေညာပေးပါမယ်။
+Post တင်တဲ့နေ့ကနေ ၇ ရက်ပြည့်တဲ့နေ့ ည ၈ နာရီ (မြန်မာစံတော်ချိန်) မှာ Comment ပိတ်ပါမယ်။ စည်းကမ်းနဲ့ကိုက်ညီတဲ့ Comment တွေထဲက ၅ ယောက်ကို ကျပန်းရွေးပြီး AuriX Facebook Page နဲ့ Telegram Channel မှာ ကြေညာပါမယ်။
 
-100 GB ဆိုတာ VPN Key အသုံးပြုခွင့်ပမာဏဖြစ်ပြီး ဖုန်း SIM/Mobile Data မဟုတ်ပါဘူး။ AuriX က ကံထူးရှင်တွေဆီက ငွေ၊ OTP ဒါမှမဟုတ် Payment PIN ကို ဘယ်တော့မှ မတောင်းပါဘူး။
+ဒီ 100 GB က Outline VPN Key အသုံးပြုခွင့်ပမာဏပါ။ ဖုန်း SIM/Mobile Data Package မဟုတ်ပါဘူး။ ကံထူးရှင်ဆီက ငွေ၊ OTP ဒါမှမဟုတ် Payment PIN ကို AuriX က ဘယ်တော့မှ မတောင်းပါဘူး။
 
 Bot — https://t.me/aurix_outline_vpn_bot
 Admin နဲ့ Group Chat — https://t.me/+oA18TDWAD9NiNWU1
-Winner ကြေညာချက်နဲ့ သတင်းများ — https://t.me/AurixDigitalStore
+ကံထူးရှင်ကြေညာချက်နဲ့ သတင်းများ — https://t.me/AurixDigitalStore
 
-ဒီ Giveaway ကို AuriX က စီစဉ်တာဖြစ်ပြီး Facebook က sponsor၊ ထောက်ခံသူ ဒါမှမဟုတ် စီမံသူ မဟုတ်ပါဘူး။ ပါဝင်သူတွေက ဒီအစီအစဉ်နဲ့သက်ဆိုင်တဲ့ တာဝန်ကနေ Facebook ကို ကင်းလွတ်ခွင့်ပေးပါတယ်။ AuriX ဟာ Outline Foundation ရဲ့ တရားဝင်မိတ်ဖက် မဟုတ်ပါဘူး။
+ဒီ Giveaway ကို AuriX က စီစဉ်တာပါ။ Facebook က ကမကထလုပ်သူ၊ ထောက်ခံသူ ဒါမှမဟုတ် စီမံခန့်ခွဲသူ မဟုတ်ပါဘူး။ ဒီ Giveaway နဲ့ပတ်သက်ပြီး Facebook မှာ တာဝန်မရှိပါဘူး။ AuriX ဟာ Outline Foundation ရဲ့ တရားဝင်မိတ်ဖက် မဟုတ်ပါဘူး။
 
 #AuriX #OutlineVPN #GiveawayMyanmar"""
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()

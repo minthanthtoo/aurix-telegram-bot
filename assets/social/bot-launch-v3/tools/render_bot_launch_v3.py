@@ -29,7 +29,7 @@ def t(x: int, y: int, value: str, size: int, weight: int = 700, fill: str = "#F6
 
 
 def build(round_no: int) -> str:
-    final = round_no == 1
+    final = round_no >= 1
     headline = 52 if final else 48
     supporting = 31 if final else 29
     bot_size = 118 if final else 108
@@ -44,24 +44,26 @@ def build(round_no: int) -> str:
     <rect x="0" y="980" width="1080" height="370" fill="url(#bottomShade)"/>
     <image href="{uri(LOGO)}" x="68" y="44" width="300" height="96" preserveAspectRatio="xMinYMid meet"/>
 
-    {t(70, 245, 'AuriX VPN ကို အခုပဲ', headline, 850)}
-    {t(70, 315, 'စတင်အသုံးပြုနိုင်ပါပြီ', headline+2, 900, '#FFC857')}
-    {t(70, 397, 'Outline VPN Key ကို', supporting, 750, '#D6E0E8')}
-    {t(70, 446, 'AuriX Bot ကနေ တိုက်ရိုက်ရယူနိုင်ပါတယ်', supporting, 750, '#D6E0E8')}
+    {t(70, 245, 'AuriX Outline VPN Key များ', 48 if round_no >= 2 else headline, 850)}
+    {t(70, 315, 'ယနေ့ စတင်ရယူနိုင်ပါပြီ', headline+2, 900, '#FFC857')}
+    {t(70, 397, 'Official Outline Client နဲ့', supporting, 750, '#D6E0E8')}
+    {t(70, 446, 'ချိတ်သုံးနိုင်တဲ့ VPN Key', supporting, 750, '#D6E0E8')}
 
     <image href="{uri(BOT)}" x="70" y="1010" width="{bot_size}" height="{bot_size}" filter="url(#shadow)"/>
-    {t(222, 1048, 'ပုံမှန်ဆို ပြေစာစစ်ချိန်', 27, 700, '#D6E0E8')}
-    {t(222, 1124, '၁ မိနစ်အောက်*', 61 if final else 56, 900, '#FFFFFF')}
+    {t(222, 1048, 'ပြေစာစစ်ဆေးချိန်', 27, 700, '#D6E0E8')}
+    {t(222, 1124, 'ပုံမှန် ၁ မိနစ်အောက်*', 52 if round_no >= 2 else (61 if final else 56), 900, '#FFFFFF')}
     {t(222, 1190, '@aurix_outline_vpn_bot', 32 if final else 29, 850, '#36E2FF', family='Inter, sans-serif')}
-    {t(222, 1240, '*အလုပ်များချိန် စစ်ဆေးချိန် ကွာနိုင်ပါတယ်။', 18, 550, '#B2C0CC')}
+    {t(222, 1240, '*အော်ဒါများတဲ့အချိန် အနည်းငယ်ပိုကြာနိုင်ပါတယ်။', 18, 550, '#B2C0CC')}
     <image href="{uri(OUTLINE)}" x="850" y="1030" width="130" height="130"/>
     </svg>"""
 
 
 def caption() -> str:
-    return """AuriX VPN ကို ဒီနေ့ကစပြီး လူတိုင်း စတင်အသုံးပြုနိုင်ပါပြီ။
+    return """မြန်မာနိုင်ငံမှာ VPN လိုအပ်နေသူတွေအတွက် AuriX Outline VPN Key များကို ဒီနေ့ စတင်မိတ်ဆက်လိုက်ပါပြီ။
 
-AuriX Telegram Bot ကနေ Plan ရွေး၊ ငွေလွှဲပြီး ပြေစာပို့ပါ။ ဝန်ထမ်းက စစ်ဆေးအတည်ပြုပြီးနောက် Official Outline Client နဲ့ တွဲသုံးနိုင်တဲ့ VPN Key ကို ရယူနိုင်ပါတယ်။ ပုံမှန်ဆို ပြေစာကို ၁ မိနစ်မပြည့်ခင် စစ်ဆေးပေးပါတယ်။ ဝယ်ယူသူများတဲ့အချိန်မှာတော့ စစ်ဆေးချိန် အနည်းငယ်ပိုကြာနိုင်ပါတယ်။
+Official Outline Client နဲ့ ချိတ်သုံးနိုင်တဲ့ VPN Key ကို AuriX Telegram Bot ကနေ ရယူနိုင်ပါတယ်။
+
+Plan ရွေးပါ → သတ်မှတ်ထားတဲ့ ငွေလက်ခံအကောင့်ကို ငွေလွှဲပါ → ပြေစာပို့ပါ။ ပြေစာကို ဝန်ထမ်းက စစ်ပြီး အတည်ပြုပေးပါမယ်။ ပုံမှန်ဆို ၁ မိနစ်မပြည့်ခင် စစ်ပေးနိုင်ပြီး အော်ဒါများတဲ့အချိန်မှာတော့ အနည်းငယ်စောင့်ရနိုင်ပါတယ်။
 
 Plan များ—
 • 50 GB · ရက် 30 · 3,000 ကျပ်
@@ -69,7 +71,7 @@ Plan များ—
 
 KBZPay၊ WavePay၊ AYA Pay၊ uabpay နဲ့ CB Pay တို့နဲ့ ငွေပေးချေနိုင်ပါတယ်။
 
-အရင်စမ်းချင်သူတိုင်းအတွက် 24 နာရီတစ်ကြိမ် 300 MB အခမဲ့ Key ရယူနိုင်ပါတယ်။ ဒီ 300 MB ဟာ VPN Key အသုံးပြုခွင့်ပမာဏဖြစ်ပြီး ဖုန်း SIM/Mobile Data မဟုတ်ပါဘူး။
+မဝယ်ခင် စမ်းသုံးချင်ရင် 24 နာရီတစ်ကြိမ် 300 MB အခမဲ့ Key ကို Bot မှာ ရယူနိုင်ပါတယ်။ ဒီ 300 MB က VPN Key အသုံးပြုခွင့်ပမာဏပါ။ ဖုန်း SIM/Mobile Data Package မဟုတ်ပါဘူး။
 
 Bot — https://t.me/aurix_outline_vpn_bot
 Admin နဲ့ Group Chat — https://t.me/+oA18TDWAD9NiNWU1
@@ -82,7 +84,7 @@ AuriX ဟာ Outline Foundation ရဲ့ တရားဝင်မိတ်ဖ�
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()
