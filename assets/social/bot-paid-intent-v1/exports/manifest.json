@@ -1,0 +1,23 @@
+{
+  "campaign": "aurix-bot-paid-intent-introduction",
+  "stamp": "20260830-161700",
+  "format": "1080x1350 PNG plus UTF-8 Burmese TXT and editable SVG",
+  "recommended_order": [
+    "aurix-bot-paid-intent"
+  ],
+  "finals": [
+    {
+      "id": "aurix-bot-paid-intent",
+      "role": "paid conversion and Bot trust",
+      "image": "20260830-161700_aurix-bot-paid-intent_r2.png",
+      "caption": "20260830-161700_aurix-bot-paid-intent_r2.txt",
+      "source": "20260830-161700_aurix-bot-paid-intent_r2.svg"
+    }
+  ],
+  "preview": "20260830-161700_aurix-bot-paid-intent_r2.png",
+  "publication_gates": [
+    "Measure and confirm the user-provided usually-under-one-minute human verification claim",
+    "Confirm both paid plans and all five wallet recipient accounts are operational",
+    "Complete live Bot, receipt review, Outline provisioning, representative ISP, and support tests"
+  ]
+}
