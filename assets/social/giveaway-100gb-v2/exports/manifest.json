@@ -1,18 +1,18 @@
 {
   "campaign": "aurix-100gb-giveaway-v2",
-  "stamp": "20260830-190000",
+  "stamp": "20260830-220230",
   "format": "1080x1350 PNG plus UTF-8 Burmese TXT and editable SVG",
   "recommended_order": ["aurix-100gb-giveaway-v2"],
   "finals": [
     {
       "id": "aurix-100gb-giveaway-v2",
       "role": "reach and product trial",
-      "image": "20260830-190000_aurix-100gb-giveaway-v2_r3.png",
-      "caption": "20260830-190000_aurix-100gb-giveaway-v2_r3.txt",
-      "source": "20260830-190000_aurix-100gb-giveaway-v2_r3.svg"
+      "image": "20260830-220230_aurix-100gb-giveaway-v2_r4.png",
+      "caption": "20260830-220230_aurix-100gb-giveaway-v2_r4.txt",
+      "source": "20260830-220230_aurix-100gb-giveaway-v2_r4.svg"
     }
   ],
-  "preview": "20260830-190000_aurix-100gb-giveaway-v2_r3.png",
+  "preview": "20260830-220230_aurix-100gb-giveaway-v2_r4.png",
   "publication_gates": [
     "Provision and live-test five 100 GB keys with 30-day expiry",
     "Set an absolute closing timestamp and confirm draw, announcement, and delivery ownership",

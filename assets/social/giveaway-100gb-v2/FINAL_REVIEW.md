@@ -28,3 +28,7 @@ Publication gates: provision/test all five keys, replace the relative closing ru
 ## R3 Burmese-language correction
 
 R2's visible copy was understandable but `၅ ယောက်အတွက် အခမဲ့` did not explicitly identify the recipients as winners, while `လို့ Comment ရေးပါ` sounded like an instruction fragment. R3 changes these to `ကံထူးရှင် ၅ ယောက်` and `Comment ရေးပြီး ပါဝင်ပါ`. The caption now uses shorter spoken clauses, explains the one-comment rule naturally, and separates VPN-key allowance from SIM/Mobile Data Package without legal language dominating the opening.
+
+## R4 Myanmar typography and CTA correction
+
+R4 replaces the longer `100GB စမ်းမယ်` entry phrase with `100GB ယူမယ်`, the highest-ranked option in the final Gemini council because it is shorter, action-led, easy to type, and keeps the 100 GB value in memory. It standardizes the duration to `ရက် ၃၀`, replaces the translated-sounding `ကျပန်းရွေးပြီး` with `မဲနှိုက်ရွေးချယ်ပြီး`, and increases baseline separation around every Burmese block. Full-size and 324 × 405 reviews confirm that upper and lower combining marks remain clear.

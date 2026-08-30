@@ -1,18 +1,18 @@
 {
   "campaign": "aurix-public-launch-v3",
-  "stamp": "20260831-001500",
+  "stamp": "20260830-220230",
   "format": "1080x1350 PNG plus UTF-8 Burmese TXT and editable SVG",
   "recommended_order": ["aurix-public-launch-v3"],
   "finals": [
     {
       "id": "aurix-public-launch-v3",
       "role": "public launch and Bot conversion",
-      "image": "20260831-001500_aurix-public-launch-v3_r7.png",
-      "caption": "20260831-001500_aurix-public-launch-v3_r7.txt",
-      "source": "20260831-001500_aurix-public-launch-v3_r7.svg"
+      "image": "20260830-220230_aurix-public-launch-v3_r8.png",
+      "caption": "20260830-220230_aurix-public-launch-v3_r8.txt",
+      "source": "20260830-220230_aurix-public-launch-v3_r8.svg"
     }
   ],
-  "preview": "20260831-001500_aurix-public-launch-v3_r7.png",
+  "preview": "20260830-220230_aurix-public-launch-v3_r8.png",
   "publication_gates": [
     "Confirm public launch readiness across Bot, provisioning, payments, capacity, and support",
     "Confirm the deployed Bot—not this repository snapshot—automatically checks receipt data and usually completes order-to-Key delivery in under one minute",

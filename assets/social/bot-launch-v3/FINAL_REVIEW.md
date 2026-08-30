@@ -41,3 +41,7 @@ R6 adds a masked top fade, preserves the gateway as the dominant visual bridge, 
 ## R7 recommended final
 
 R7 replaces the inaccurate staff-review wording with the user-provided live behavior: `Bot က ပြေစာကို စက္ကန့်ပိုင်းအတွင်း စစ်ပေးပြီး / ပုံမှန် ၁ မိနစ်မပြည့်ခင် Key ရပါတယ်*`. The caption explains that this is the usual complete order-to-Key time, not merely receipt-reading time. The later fraud audit is omitted because it is an internal control and does not help the launch decision. Full-size and feed-thumbnail reviews pass; the under-one-minute claim must still be confirmed against the deployed Bot rather than this repository snapshot.
+
+## R8 Myanmar typography and launch-copy correction
+
+R8 applies script-aware Noto Myanmar rendering, `mark`/`mkmk` positioning, and larger baseline clearance to the headline, product lockup, proof, caveat, and payment heading. The weak `ကနေ စလိုက်ပါ` is replaced by `မှာ / အခုပဲ ဝယ်ယူနိုင်ပါပြီ`; the receipt line now names the Bot's automatic seconds-level check, while the next line preserves the qualified usual order-to-Key time. `ငွေပေးချေမှုနည်းလမ်းများ` gives the five wallet marks a clear semantic heading. Full-size and 324 × 405 reviews pass.
