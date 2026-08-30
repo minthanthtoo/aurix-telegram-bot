@@ -8,12 +8,14 @@ Job: announce that AuriX is publicly available and make the product/destination 
 
 ## Message hierarchy
 
-1. `AuriX VPN ကို အခုပဲ စတင်အသုံးပြုနိုင်ပါပြီ`
-2. `Outline VPN Key ကို AuriX Bot ကနေ တိုက်ရိုက်ရယူနိုင်ပါတယ်`
-3. `ပုံမှန်ဆို ပြေစာစစ်ချိန် ၁ မိနစ်အောက်*`
-4. `@aurix_outline_vpn_bot`
+1. `အလုပ်အတွက် VPN လိုတဲ့အခါ`
+2. `AuriX Telegram Bot ကနေ စလိုက်ပါ`
+3. `Official Outline Client နဲ့ ချိတ်သုံးနိုင်တဲ့ VPN Key · ရက် 30`
+4. `ပြေစာပို့ပြီး ပုံမှန် ၁ မိနစ်မပြည့်ခင် စစ်ပေးပါတယ်*`
+5. `KBZPay · WavePay · AYA Pay · uabpay · CB Pay`
+6. `@aurix_outline_vpn_bot`
 
-Plans, wallets, free allowance, support links, and caveats remain in the caption.
+Plan prices, free allowance, support links, and full caveats remain in the caption.
 
 ## Creative exploration
 
@@ -25,3 +27,7 @@ Plans, wallets, free allowance, support links, and caveats remain in the caption
 ## Plan council improvement
 
 The first language plan began with the customer's frustration. Review found that it buried the launch. The revised plan starts with availability, explains the product in one sentence, gives one operational reason to act, and ends at the Bot. The image communicates confidence through scale rather than unverifiable adjectives.
+
+## R4 customer-meaning correction
+
+User review found that the previous asset still did not explain who the product serves, what is bought, or which payments are supported. It also used the internal label `ပြေစာစစ်ဆေးချိန်` and an AuriX avatar that did not visibly read as a bot. R4 reframes the post for work-dependent VPN users, names the 30-day Outline-compatible Key, expresses receipt review as an action after submission, shows five official wallet marks, and uses a new AuriX avatar with an unmistakable robot badge.

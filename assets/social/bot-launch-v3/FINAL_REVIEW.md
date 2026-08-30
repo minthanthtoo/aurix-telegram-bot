@@ -21,3 +21,11 @@ Publication gates: confirm public launch readiness, live plans/wallets/provision
 ## R2 Burmese-language correction
 
 R1's `AuriX VPN ကို အခုပဲ စတင်အသုံးပြုနိုင်ပါပြီ` was broad and translation-shaped, and its product explanation was too procedural. R2 leads with the exact product and launch moment: `AuriX Outline VPN Key များ / ယနေ့ စတင်ရယူနိုင်ပါပြီ`. `ချိတ်သုံးနိုင်တဲ့` replaces the stiffer `တွဲသုံးနိုင်တဲ့`; receipt review becomes a compact qualified proof point. The caption now follows a natural purchase sequence and removes bureaucratic constructions without implying automatic delivery.
+
+## R3 message correction
+
+R3 replaces the abstract launch headline with a paid-intent situation: `အလုပ်အတွက် VPN လိုတဲ့အခါ`. A new bot-specific AuriX avatar adds a visible robot badge rather than relying on a generic Telegram symbol. The product is identified as a 30-day Key for Official Outline Client, and all five official payment marks are visible. `ပြေစာစစ်ဆေးချိန်` is removed in favor of the customer action `ပြေစာပို့ပြီး ... စစ်ပေးပါတယ်`.
+
+## R4 recommended final
+
+R4 corrects the remaining English-shaped `ရက် 30 VPN Key` to `VPN Key · ရက် 30` and tightens the caption's audience introduction. At full size and feed-thumbnail size, the reading path is work need → AuriX Telegram Bot → product → receipt-review proof → destination → payment methods. No fake UI, generic Telegram-only logo, or unsupported reliability promise remains.

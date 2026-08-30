@@ -1,18 +1,18 @@
 {
   "campaign": "aurix-public-launch-v3",
-  "stamp": "20260830-190000",
+  "stamp": "20260830-210000",
   "format": "1080x1350 PNG plus UTF-8 Burmese TXT and editable SVG",
   "recommended_order": ["aurix-public-launch-v3"],
   "finals": [
     {
       "id": "aurix-public-launch-v3",
       "role": "public launch and Bot conversion",
-      "image": "20260830-190000_aurix-public-launch-v3_r2.png",
-      "caption": "20260830-190000_aurix-public-launch-v3_r2.txt",
-      "source": "20260830-190000_aurix-public-launch-v3_r2.svg"
+      "image": "20260830-210000_aurix-public-launch-v3_r4.png",
+      "caption": "20260830-210000_aurix-public-launch-v3_r4.txt",
+      "source": "20260830-210000_aurix-public-launch-v3_r4.svg"
     }
   ],
-  "preview": "20260830-190000_aurix-public-launch-v3_r2.png",
+  "preview": "20260830-210000_aurix-public-launch-v3_r4.png",
   "publication_gates": [
     "Confirm public launch readiness across Bot, provisioning, payments, capacity, and support",
     "Measure and confirm the usually-under-one-minute receipt review claim",
