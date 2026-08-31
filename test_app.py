@@ -1788,9 +1788,53 @@ class TelegramBotCommerceTest(unittest.TestCase):
         buttons = [
             button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         ]
-        self.assertTrue(any(button.get("copy_text") == {"text": "ss://secret"} for button in buttons))
-        self.assertTrue(any(button["text"].startswith("🔄 Renew") for button in buttons))
+        self.assertFalse(any(button.get("copy_text") == {"text": "ss://secret"} for button in buttons))
+        self.assertTrue(any(button["text"].startswith("🔑 Paid Keys") for button in buttons))
+        self.assertTrue(any(button["text"] == "➕ Buy Another Key" for button in buttons))
         self.assertFalse(any(button.get("callback_data") == "n:claim" for button in buttons))
+
+    def test_many_paid_keys_use_paginated_browser_and_focused_copy_view(self):
+        for index in range(7):
+            order = self.commerce.create_order(123, "Min", "basic_50gb")
+            self.commerce.submit_payment(
+                123, order.order_id, "manual", f"multi-key-{index}"
+            )
+            self.commerce.approve_order(order.order_id, 999)
+            self.assertEqual(self.commerce.process_jobs(), 1)
+
+        self.bot.handle(self.message(123, "/myvpn"))
+        dashboard_buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        self.assertTrue(
+            any(button["text"] == "🔑 Paid Keys · 7 active / 7 total" for button in dashboard_buttons)
+        )
+        # The summary avoids seven repetitive paid-key copy rows.
+        self.assertEqual(
+            sum(1 for button in dashboard_buttons if button.get("copy_text")),
+            0,
+        )
+
+        self.bot._send_paid_key_list(123, 123)
+        self.assertIn("7 active · 7 total · Page 1/2", self.bot.sent[-1][1])
+        page_one = self.bot.markups[-1]["inline_keyboard"]
+        key_rows = [row for row in page_one if row[0].get("callback_data", "").startswith("k:v:")]
+        self.assertEqual(len(key_rows), 5)
+        self.assertTrue(any(button.get("callback_data") == "k:l:1" for row in page_one for button in row))
+
+        subscription_id = key_rows[0][0]["callback_data"].split(":", 2)[2]
+        self.bot._send_paid_key_detail(123, 123, subscription_id)
+        self.assertIn("Key reference:", self.bot.sent[-1][1])
+        detail_buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        self.assertEqual(
+            next(button for button in detail_buttons if button["text"] == "📋 Copy Outline Key")[
+                "copy_text"
+            ],
+            {"text": "ss://secret"},
+        )
+        self.assertTrue(any(button["text"].startswith("➕ Buy Another") for button in detail_buttons))
 
     def test_copy_button_falls_back_safely_above_telegram_limit(self):
         markup = self.bot._key_delivery_keyboard("s" * 257)

@@ -88,6 +88,26 @@ class TelegramCallbackMixin:
         if scope == "g" and action == "c":
             synthetic["text"] = f"/claimpromo {entity_id.upper()}"
             self.handle(synthetic)
+        elif scope == "k" and action == "l":
+            try:
+                page = max(0, int(entity_id))
+            except ValueError:
+                page = 0
+            message_id = message.get("message_id")
+            self._send_paid_key_list(
+                chat_id,
+                telegram_id,
+                page,
+                message_id=message_id if isinstance(message_id, int) else None,
+            )
+        elif scope == "k" and action == "v":
+            message_id = message.get("message_id")
+            self._send_paid_key_detail(
+                chat_id,
+                telegram_id,
+                entity_id,
+                message_id=message_id if isinstance(message_id, int) else None,
+            )
         elif scope == "o" and action == "v":
             self._send_order_detail(chat_id, telegram_id, entity_id)
         elif scope == "o" and action == "p":

@@ -2206,6 +2206,33 @@ class CommerceService(CommerceWorkerMixin):
         subscriptions = self.user_vpns(telegram_id, limit=1)
         return subscriptions[0] if subscriptions else None
 
+    def user_vpn_detail(
+        self, telegram_id: int, subscription_id: str
+    ) -> dict[str, Any] | None:
+        """Return one customer-owned paid entitlement for a focused key view."""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
+                          s.expires_at, s.starts_at, k.outline_key_id, k.access_url,
+                          COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
+                          k.status AS key_status, k.created_at, k.quota_reason,
+                          k.last_usage_bytes, k.last_usage_observed_at
+                   FROM subscriptions s LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
+                   WHERE s.telegram_id = ? AND s.id = ?""",
+                (telegram_id, subscription_id),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["access_url"] = self._decrypt_access_url(result.get("access_url"))
+        if (
+            result.get("status") != "active"
+            or result.get("key_status") != "active"
+            or str(result.get("expires_at") or "") <= _now_text()
+        ):
+            result["access_url"] = None
+        return result
+
     def receipt_policy(self) -> dict[str, Any]:
         with self.database.connect() as connection:
             row = connection.execute(

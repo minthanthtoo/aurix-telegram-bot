@@ -413,6 +413,12 @@ class CommerceServiceTest(unittest.TestCase):
             len([item for item in subscriptions if item["key_status"] == "active"]),
             2,
         )
+        subscription_id = subscriptions[0]["subscription_id"]
+        self.assertEqual(
+            self.service.user_vpn_detail(123, subscription_id)["subscription_id"],
+            subscription_id,
+        )
+        self.assertIsNone(self.service.user_vpn_detail(999, subscription_id))
 
     def test_worker_reconciles_a_remote_key_after_a_lost_local_response(self):
         order = self._paid_order()

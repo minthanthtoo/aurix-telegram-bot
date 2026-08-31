@@ -1079,7 +1079,10 @@ class TelegramBot(
             lines.append(
                 f"{plan.code} — {plan.price_minor:,} {plan.currency} — {quota} / {plan.duration_days} days"
             )
-        lines.append("\nBuy with: /buy <plan-code>")
+        lines.append(
+            "\nEach paid purchase creates its own Outline key. Buy again after the current "
+            "order is completed if you need keys for more people or devices."
+        )
         markup = self._inline_keyboard(
             [
                 [
@@ -1130,7 +1133,7 @@ class TelegramBot(
             self.send(chat_id, giveaway_text, self._customer_keyboard(telegram_id))
             return
         if hasattr(self.commerce, "user_vpns"):
-            subscriptions = self.commerce.user_vpns(telegram_id)
+            subscriptions = self.commerce.user_vpns(telegram_id, limit=100)
         else:
             latest = self.commerce.user_vpn(telegram_id)
             subscriptions = [latest] if latest else []
@@ -1201,6 +1204,145 @@ class TelegramBot(
             amount /= 1000
         return f"{int(amount)} B" if unit == "B" else f"{amount:.2f} {unit}"
 
+    def _send_paid_key_list(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        page: int = 0,
+        *,
+        message_id: int | None = None,
+    ) -> None:
+        if self.commerce is None:
+            self.send(chat_id, "Paid keys are not configured.")
+            return
+        keys = self.commerce.user_vpns(telegram_id, limit=100)
+        page_size = 5
+        page_count = max(1, (len(keys) + page_size - 1) // page_size)
+        page = min(max(0, int(page)), page_count - 1)
+        visible = keys[page * page_size : (page + 1) * page_size]
+        active = sum(
+            1
+            for item in keys
+            if item.get("status") == "active" and item.get("key_status") == "active"
+        )
+        text = (
+            "🔑 Your Paid Keys\n\n"
+            f"{active} active · {len(keys)} total · Page {page + 1}/{page_count}\n\n"
+            "Open one key to see its quota, expiry and one-tap copy control. "
+            "Each completed purchase creates a separate Outline key."
+        )
+        rows: list[list[dict[str, Any]]] = []
+        for offset, item in enumerate(visible, start=page * page_size + 1):
+            status = str(item.get("key_status") or item.get("status") or "pending")
+            icon = "🟢" if status == "active" else "🟡" if "pending" in status else "⚫"
+            name = str(item.get("plan_name") or item.get("plan_code") or "Paid key")
+            short_id = str(item.get("subscription_id") or "")[-6:]
+            rows.append(
+                [
+                    {
+                        "text": f"{icon} {offset}. {name[:22]} · {short_id}",
+                        "callback_data": f"k:v:{item['subscription_id']}"[:64],
+                    }
+                ]
+            )
+        nav: list[dict[str, Any]] = []
+        if page > 0:
+            nav.append({"text": "◀ Previous", "callback_data": f"k:l:{page - 1}"})
+        if page + 1 < page_count:
+            nav.append({"text": "Next ▶", "callback_data": f"k:l:{page + 1}"})
+        if nav:
+            rows.append(nav)
+        rows.extend(
+            [
+                [{"text": "➕ Buy Another Key", "callback_data": "n:plans"}],
+                [{"text": "🔐 My VPN", "callback_data": "n:myvpn"}],
+            ]
+        )
+        markup = {"inline_keyboard": rows}
+        if isinstance(message_id, int):
+            self.edit_message(chat_id, message_id, text, markup)
+        else:
+            self.send(chat_id, text, markup)
+
+    def _send_paid_key_detail(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        subscription_id: str,
+        *,
+        message_id: int | None = None,
+    ) -> None:
+        if self.commerce is None:
+            self.send(chat_id, "Paid keys are not configured.")
+            return
+        item = self.commerce.user_vpn_detail(telegram_id, subscription_id)
+        if item is None:
+            self.send(chat_id, "That paid key was not found.")
+            return
+        key_id = str(item.get("outline_key_id") or "")
+        used = int(item.get("last_usage_bytes") or 0)
+        observed = False
+        try:
+            metrics = self.service.outline.transfer_metrics()
+            usage = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+            if isinstance(usage, dict) and key_id in usage:
+                used = max(0, int(usage[key_id] or 0))
+                observed = True
+        except Exception as exc:
+            print(f"paid key detail usage error: {type(exc).__name__}", file=sys.stderr)
+        quota = int(item.get("quota_bytes") or 0)
+        remaining = max(0, quota - used)
+        status = str(item.get("key_status") or item.get("status") or "pending")
+        name = str(item.get("plan_name") or item.get("plan_code") or "Paid key")
+        lines = [
+            f"🔑 {name}",
+            "",
+            f"Status: {status}",
+            f"Key reference: {subscription_id[-6:]}",
+            f"Expires: {item.get('expires_at') or 'pending'}",
+        ]
+        if quota:
+            percent = min(100.0, used * 100 / quota)
+            filled = min(10, max(0, int(percent / 10)))
+            lines.extend(
+                [
+                    f"Usage: {'█' * filled}{'░' * (10 - filled)} {percent:.1f}%",
+                    f"Used {self._format_bytes(used)} · Remaining "
+                    f"{self._format_bytes(remaining)} / {self._format_bytes(quota)}",
+                ]
+            )
+        if not observed:
+            lines.append("Usage snapshot may be delayed; refresh for the latest Outline total.")
+        access_url = item.get("access_url")
+        rows: list[list[dict[str, Any]]] = []
+        if isinstance(access_url, str) and access_url:
+            copy = self._copy_text_button("📋 Copy Outline Key", access_url)
+            if copy is not None:
+                rows.append([copy])
+            else:
+                lines.append("The key is too long for Telegram's copy button. Use Show Keys as Text.")
+        elif status == "active":
+            lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
+        elif "pending" in status:
+            lines.append("The Outline key will appear here after activation.")
+        plan_code = str(item.get("plan_code") or "")
+        if plan_code:
+            rows.append(
+                [{"text": f"➕ Buy Another {name[:20]}", "callback_data": f"p:b:{plan_code}"[:64]}]
+            )
+        rows.append(
+            [
+                {"text": "◀ All Paid Keys", "callback_data": "k:l:0"},
+                {"text": "🔄 Refresh", "callback_data": f"k:v:{subscription_id}"[:64]},
+            ]
+        )
+        markup = {"inline_keyboard": rows}
+        text = "\n".join(lines)
+        if isinstance(message_id, int):
+            self.edit_message(chat_id, message_id, text, markup)
+        else:
+            self.send(chat_id, text, markup)
+
     def _send_my_vpn(
         self, chat_id: int, telegram_id: int, *, show_key_text: bool = False
     ) -> None:
@@ -1245,7 +1387,7 @@ class TelegramBot(
                 for item in self.commerce.user_usage(telegram_id, usage_by_key)
                 if item.get("outline_key_id")
             }
-            subscriptions = self.commerce.user_vpns(telegram_id)
+            subscriptions = self.commerce.user_vpns(telegram_id, limit=100)
             relevant = [
                 item
                 for item in subscriptions
@@ -1296,13 +1438,9 @@ class TelegramBot(
             "expired": 4,
             "revoked": 5,
         }
-        entries.sort(
-            key=lambda item: (
-                priority.get(str(item.get("status")), 6),
-                str(item.get("created_at") or ""),
-            )
-        )
-        displayed = entries[:6]
+        entries.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        entries.sort(key=lambda item: priority.get(str(item.get("status")), 6))
+        displayed = entries[:4]
         blocks = ["🔐 My VPN\nKeys • status • usage • next action"]
         copy_rows: list[list[dict[str, Any]]] = []
         for index, entry in enumerate(displayed, start=1):
@@ -1336,13 +1474,14 @@ class TelegramBot(
             if isinstance(access_url, str) and access_url:
                 if show_key_text:
                     lines.append(f"Outline key (press and hold to copy):\n{access_url}")
-                copy_button = self._copy_text_button(
-                    f"📋 {str(entry['tier'])[:24]} · copy key", access_url
-                )
-                if copy_button is not None:
-                    copy_rows.append([copy_button])
-                else:
-                    lines.append("Open Show Keys as Text, then press and hold the key to copy it.")
+                if entry.get("key_type") != "paid":
+                    copy_button = self._copy_text_button(
+                        f"📋 {str(entry['tier'])[:24]} · copy key", access_url
+                    )
+                    if copy_button is not None:
+                        copy_rows.append([copy_button])
+                    else:
+                        lines.append("Open Show Keys as Text, then press and hold the key to copy it.")
             elif status == "active" and entry.get("key_type") != "paid" and not access_available:
                 lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
             elif status == "activation pending":
@@ -1352,7 +1491,10 @@ class TelegramBot(
         if not displayed:
             blocks.append("No VPN key yet. Choose a free entitlement or view current plans below.")
         elif len(entries) > len(displayed):
-            blocks.append(f"{len(entries) - len(displayed)} older entitlement(s) hidden.")
+            blocks.append(
+                f"{len(entries) - len(displayed)} more entitlement(s) are kept out of this summary. "
+                "Use the paid-key browser for the complete paid list."
+            )
         if open_order is not None:
             blocks.append(
                 f"🧾 Open order {str(open_order['id'])[:8]} · "
@@ -1385,6 +1527,20 @@ class TelegramBot(
             action_rows.append(
                 [{"text": "👁 Show Keys as Text", "callback_data": "n:keytext"}]
             )
+        if subscriptions:
+            active_paid_count = sum(
+                1
+                for item in subscriptions
+                if item.get("status") == "active" and item.get("key_status") == "active"
+            )
+            action_rows.append(
+                [
+                    {
+                        "text": f"🔑 Paid Keys · {active_paid_count} active / {len(subscriptions)} total",
+                        "callback_data": "k:l:0",
+                    }
+                ]
+            )
         action_rows.append(
             [
                 {"text": "🔄 Refresh", "callback_data": "n:myvpn"},
@@ -1414,22 +1570,19 @@ class TelegramBot(
                 item.get("status") == "active" and item.get("key_status") == "active"
                 for item in subscriptions
             )
-            if active_paid:
-                plan_codes = []
-                for item in subscriptions:
-                    code = item.get("plan_code")
-                    if item.get("status") == "active" and code and code not in plan_codes:
-                        plan_codes.append(str(code))
-                for code in plan_codes[:2]:
-                    action_rows.append(
-                        [{"text": f"🔄 Renew {code}", "callback_data": f"p:r:{code}"[:64]}]
-                    )
-            else:
+            if not active_paid:
                 free_row = [{"text": "🎁 Daily 300MB", "callback_data": "n:claim"}]
                 if self._trial_allowed(telegram_id):
                     free_row.append({"text": "🚀 Monthly 3GB", "callback_data": "n:trial"})
                 action_rows.append(free_row)
-            action_rows.append([{"text": "💎 Plans & Upgrade", "callback_data": "n:plans"}])
+            action_rows.append(
+                [
+                    {
+                        "text": "➕ Buy Another Key" if active_paid else "💎 Plans & Upgrade",
+                        "callback_data": "n:plans",
+                    }
+                ]
+            )
         text = "\n\n".join(blocks)
         self.send(chat_id, text[:4096], {"inline_keyboard": action_rows})
 
