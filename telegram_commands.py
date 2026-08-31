@@ -90,14 +90,46 @@ class TelegramCommandMixin:
                 )
                 return
         if command in ("/start", "/help"):
+            if command == "/start":
+                giveaway = self.service.giveaway_status(telegram_id)
+                remaining = int(giveaway["remaining_slots"])
+                availability = (
+                    f"🔥 အခု နေရာ {remaining} နေရာ ကျန်ပါတယ်။"
+                    if remaining > 0
+                    else "ပြည့်သွားပါပြီ — Launch Promo ၅ နေရာလုံး ရယူပြီးပါပြီ။"
+                )
+                welcome_text = (
+                    "🎉 AuriX VPN မှ ကြိုဆိုပါတယ်!\n\n"
+                    "🎁 Launch Promo\n"
+                    "အရည်အချင်းပြည့်မီပြီး အရင်ဆုံးရောက်လာတဲ့ ၅ ယောက်အတွက်\n"
+                    "100 GB Outline VPN Key • 30 ရက် • အခမဲ့\n"
+                    f"{availability}\n\n"
+                    "👇 ရယူဖို့ ဒီကုဒ်တစ်ကြောင်းပဲ ပို့ပါ\n"
+                    "100GBFREE\n\n"
+                    "ငွေလွှဲ/ပြေစာ မလိုပါ။ မဲနှိုက်တာ မဟုတ်ပါ — နေရာကျန်သရွေ့ "
+                    "အရင်ရောက် ၅ ယောက် ရပါမယ်။\n\n"
+                    "⚠️ လက်ရှိ Paid Order/Subscription ရှိသူ မပါဝင်နိုင်ပါ။ ရပြီးနောက် "
+                    "အခြား AuriX Free/Paid Plan, Renewal နဲ့ Replacement မရတော့ပါ။ "
+                    "Account တစ်ခုလျှင် Key တစ်ခုသာ။\n\n"
+                    "ℹ️ 100 GB သည် Outline VPN အသုံးပြုခွင့်ဖြစ်ပြီး SIM Data မဟုတ်ပါ။ "
+                    "အမြန်နှုန်းနှင့် ချိတ်ဆက်မှုသည် Network, ISP နှင့် Server အခြေအနေအပေါ် "
+                    "မူတည်နိုင်ပါတယ်။\n\n"
+                    "အကူအညီ — https://t.me/+oA18TDWAD9NiNWU1\n"
+                    "သတင်း — https://t.me/AurixDigitalStore\n\n"
+                    "AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။"
+                )
+            else:
+                welcome_text = (
+                    "AuriX VPN\n\n"
+                    "Choose an action below. Everyone can claim 300 MB daily or "
+                    "3 GB every 30 days, with 50 GB and 100 GB paid upgrades. "
+                    "The first five eligible users to type 100GBFREE receive 100 GiB for 30 days.\n\n"
+                    "No key is issued until you choose an action. For payment, create an upgrade "
+                    "order and send only the receipt screenshot."
+                )
             self.send(
                 chat["id"],
-                "AuriX VPN\n\n"
-                "Choose an action below. Everyone can claim 300 MB daily or "
-                "3 GB every 30 days, with 50 GB and 100 GB paid upgrades. "
-                "The first five eligible users to type 100GBFREE receive 100 GiB for 30 days.\n\n"
-                "No key is issued until you choose an action. For payment, create an upgrade "
-                "order and send only the receipt screenshot.",
+                welcome_text,
                 self._customer_keyboard(telegram_id),
             )
         elif command == "/whoami":

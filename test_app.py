@@ -633,7 +633,12 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "/start"))
 
         self.assertEqual(len(self.bot.sent), 1)
-        self.assertIn("No key is issued until you choose an action", self.bot.sent[0][1])
+        self.assertIn("🎉 AuriX VPN မှ ကြိုဆိုပါတယ်!", self.bot.sent[0][1])
+        self.assertIn("100 GB Outline VPN Key • 30 ရက် • အခမဲ့", self.bot.sent[0][1])
+        self.assertIn("🔥 အခု နေရာ 5 နေရာ ကျန်ပါတယ်။", self.bot.sent[0][1])
+        self.assertIn("100GBFREE", self.bot.sent[0][1])
+        self.assertIn("ငွေလွှဲ/ပြေစာ မလိုပါ", self.bot.sent[0][1])
+        self.assertIn("SIM Data မဟုတ်ပါ", self.bot.sent[0][1])
         self.assertEqual(self.outline.created, [])
         with self.db.connect() as connection:
             self.assertEqual(
