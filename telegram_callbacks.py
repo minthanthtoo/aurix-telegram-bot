@@ -60,6 +60,7 @@ class TelegramCallbackMixin:
             "n:usage": "/myvpn",
             "n:claim": "/claim",
             "n:trial": "/trial",
+            "n:start": "/start",
             "n:menu": "/help",
         }
         # Legacy admin navigation buttons may still exist in Telegram message

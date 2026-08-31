@@ -678,35 +678,33 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "text": text,
         }
 
-    def test_help_response_and_customer_keyboard_are_stable_contracts(self):
+    def test_help_is_a_complete_outline_setup_flow_with_official_downloads(self):
         self.bot.handle(self.message(123, "/help"))
 
+        text = self.bot.sent[-1][1]
+        self.assertIn("🧭 Connect with Outline · quick setup", text)
+        self.assertIn("An Outline key starts with ss://", text)
+        self.assertIn("paste the complete key", text)
+        self.assertIn("Check My IP", text)
+        self.assertIn("Keep the ss:// key private", text)
+        buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        by_label = {button["text"]: button for button in buttons}
         self.assertEqual(
-            self.bot.sent[-1],
-            (
-                123,
-                "AuriX VPN\n\n"
-                "Choose an action below. Everyone can claim 300 MB daily or "
-                "3 GB every 30 days, with 50 GB and 100 GB paid upgrades.\n"
-                "Active promo: 100GBFREE · 100 GB / 30 days.\n\n"
-                "No key is issued until you choose an action. For payment, create an upgrade "
-                "order and send only the receipt screenshot.",
-            ),
+            by_label["📱 iPhone / iPad"]["url"],
+            "https://apps.apple.com/app/outline-app/id1356177741",
         )
         self.assertEqual(
-            self.bot.markups[-1],
-            {
-                "keyboard": [
-                    [{"text": "🔐 My VPN"}],
-                    [{"text": "🎁 Daily 300MB"}, {"text": "🚀 Monthly 3GB"}],
-                    [{"text": "💎 Plans & Upgrade"}, {"text": "🧾 My Orders"}],
-                    [{"text": "💰 Wallet"}, {"text": "❓ Help"}],
-                ],
-                "resize_keyboard": True,
-                "is_persistent": True,
-                "input_field_placeholder": "Choose an AuriX action",
-            },
+            by_label["🤖 Android"]["url"],
+            "https://play.google.com/store/apps/details?id=org.outline.android.client",
         )
+        self.assertIn("🍎 macOS", by_label)
+        self.assertIn("🪟 Windows", by_label)
+        self.assertIn("🐧 Linux Guide", by_label)
+        self.assertIn("📦 Android APK", by_label)
+        self.assertEqual(by_label["🔐 Get / Copy My Key"]["callback_data"], "n:myvpn")
+        self.assertEqual(by_label["🏠 Main Menu"]["callback_data"], "n:start")
         self.assertEqual(self.outline.created, [])
 
     def test_start_only_opens_menu_and_never_provisions_a_key(self):
@@ -777,7 +775,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                     {"text": "🚨 Enforcement", "callback_data": "a:n:enforcement"},
                 ],
                 [{"text": "🎁 Promo Settings", "callback_data": "a:n:promo"}],
-                [{"text": "🏠 Customer Menu", "callback_data": "n:menu"}],
+                [{"text": "🏠 Customer Menu", "callback_data": "n:start"}],
             ]
         }
         self.assertEqual(self.bot.markups[-1], expected_markup)
@@ -1181,7 +1179,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("Usage: /ledger <telegram-id>", self.bot.sent[-1][1])
 
         self.bot.handle(self.message(999, "🏠 Customer Menu"))
-        self.assertIn("Choose an action below", self.bot.sent[-1][1])
+        self.assertIn("AuriX VPN", self.bot.sent[-1][1])
         self.assertEqual(self.outline.created, [])
 
     def test_admin_typed_mutation_requires_one_time_confirmation(self):
@@ -1430,6 +1428,15 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "/help"))
         help_text = self.bot.sent[-1][1]
         self.assertNotIn("/approve", help_text)
+        self.assertEqual(self.bot.markups[-1].keys(), {"inline_keyboard"})
+        help_labels = {
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        }
+        self.assertNotIn("🛠 Admin Panel", help_labels)
+
+        self.bot.handle(self.message(123, "/whoami"))
         customer_labels = {
             button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
         }
@@ -1546,7 +1553,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
     def test_customer_actions_return_after_promo_season_is_stopped(self):
         self.bot.handle(self.message(123, "100GBFREE"))
-        self.bot.handle(self.message(123, "/help"))
+        self.bot.handle(self.message(123, "/whoami"))
         locked_labels = {
             button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
         }
@@ -1554,7 +1561,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertNotIn("💎 Plans & Upgrade", locked_labels)
 
         self.bot.service.set_giveaway_active("100GBFREE", False)
-        self.bot.handle(self.message(123, "/help"))
+        self.bot.handle(self.message(123, "/whoami"))
         restored_labels = {
             button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
         }

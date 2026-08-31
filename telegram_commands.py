@@ -182,33 +182,31 @@ class TelegramCommandMixin:
                         "daily 300 MB, monthly 3 GB, and paid 50/100 GB plans."
                     )
             else:
-                giveaway = self.service.giveaway_status(telegram_id)
-                promo_line = (
-                    f"Active promo: {giveaway['code']} · "
-                    f"{self._promo_quota_label(giveaway['quota_bytes'])} / "
-                    f"{giveaway['duration_days']} days.\n"
-                    if giveaway["exists"] and giveaway["active"]
-                    else "No promo season is active now.\n"
-                )
                 welcome_text = (
-                    "AuriX VPN\n\n"
-                    "Choose an action below. Everyone can claim 300 MB daily or "
-                    "3 GB every 30 days, with 50 GB and 100 GB paid upgrades.\n"
-                    + promo_line
-                    + "\n"
-                    "No key is issued until you choose an action. For payment, create an upgrade "
-                    "order and send only the receipt screenshot."
+                    "🧭 Connect with Outline · quick setup\n\n"
+                    "1️⃣ Install the official Outline app\n"
+                    "Choose your device below. Android users can use Google Play or the direct "
+                    "APK when Play Store is unavailable.\n\n"
+                    "2️⃣ Copy your AuriX key\n"
+                    "Tap Get / Copy My Key. An Outline key starts with ss://. Use the Copy button "
+                    "beside your active key.\n\n"
+                    "3️⃣ Connect\n"
+                    "Open Outline. If it detects the copied key, accept it and tap Connect. "
+                    "Otherwise tap +, paste the complete key, add the server, then Connect.\n\n"
+                    "4️⃣ Confirm it works\n"
+                    "Tap Check My IP after connecting. Your public IP should change from your "
+                    "normal mobile/Wi-Fi address.\n\n"
+                    "🛡 Keep the ss:// key private—anyone who has it can use its quota. "
+                    "If connection fails, copy the key again without spaces, switch between "
+                    "Wi-Fi/mobile data, then ask AuriX Support."
                 )
-            self.send(
-                chat["id"],
-                welcome_text,
-                self._launch_promo_keyboard(str(giveaway["code"]))
-                if command == "/start"
-                and giveaway["active"]
-                and remaining > 0
-                and not giveaway["winner"]
-                else self._customer_keyboard(telegram_id),
-            )
+            if command == "/help":
+                reply_markup = self._outline_help_keyboard()
+            elif giveaway["active"] and remaining > 0 and not giveaway["winner"]:
+                reply_markup = self._launch_promo_keyboard(str(giveaway["code"]))
+            else:
+                reply_markup = self._customer_keyboard(telegram_id)
+            self.send(chat["id"], welcome_text, reply_markup)
         elif command == "/whoami":
             access = "\nAdmin access: enabled" if self._is_admin(telegram_id) else ""
             self.send(

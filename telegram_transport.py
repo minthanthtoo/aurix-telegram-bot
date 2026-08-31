@@ -56,7 +56,7 @@ class TelegramBot(
         "💰 Wallet": "/wallet",
         "🧾 My Orders": "/myorders",
         "❓ Help": "/help",
-        "🏠 Customer Menu": "/help",
+        "🏠 Customer Menu": "/start",
     }
     ADMIN_BUTTON_COMMANDS = {
         "🛠 Admin Panel": "/admin",
@@ -321,6 +321,60 @@ class TelegramBot(
             ]
         )
         return {"inline_keyboard": rows}
+
+    def _outline_help_keyboard(self) -> dict[str, Any]:
+        """Official client downloads plus the shortest path from key to connection."""
+        return {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "📱 iPhone / iPad",
+                        "url": "https://apps.apple.com/app/outline-app/id1356177741",
+                    },
+                    {
+                        "text": "🤖 Android",
+                        "url": "https://play.google.com/store/apps/details?id=org.outline.android.client",
+                    },
+                ],
+                [
+                    {
+                        "text": "🍎 macOS",
+                        "url": "https://apps.apple.com/app/outline-secure-internet-access/id1356178125",
+                    },
+                    {
+                        "text": "🪟 Windows",
+                        "url": "https://s3.amazonaws.com/outline-releases/client/windows/stable/Outline-Client.exe",
+                    },
+                ],
+                [
+                    {
+                        "text": "🐧 Linux Guide",
+                        "url": "https://support.getoutline.org/client/getting-started/install-linux/",
+                    },
+                    {
+                        "text": "📦 Android APK",
+                        "url": "https://s3.amazonaws.com/outline-releases/client/android/stable/Outline-Client.apk",
+                    },
+                ],
+                [
+                    {"text": "🔐 Get / Copy My Key", "callback_data": "n:myvpn"},
+                    {
+                        "text": "🌐 Check My IP",
+                        "url": "https://www.google.com/search?q=what+is+my+ip",
+                    },
+                ],
+                [
+                    {
+                        "text": "🆘 Ask AuriX Support",
+                        "url": "https://t.me/+oA18TDWAD9NiNWU1",
+                    },
+                    {"text": "🏠 Main Menu", "callback_data": "n:start"},
+                ],
+                [
+                    {"text": "ℹ️ About Outline", "url": "https://getoutline.org/"},
+                ],
+            ]
+        }
 
     def _handle_panel_callback(
         self, query: dict[str, Any], token: str, action: str, arg: str | None

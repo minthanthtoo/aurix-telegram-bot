@@ -159,7 +159,7 @@ class TelegramAdminMixin:
                 [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
                 [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
                 [("🎁 Promo Settings", "a:n:promo")],
-                [("🏠 Customer Menu", "n:menu")],
+                [("🏠 Customer Menu", "n:start")],
             ]
         )
 
