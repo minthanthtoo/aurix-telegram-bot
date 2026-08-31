@@ -34,5 +34,6 @@ The image remains focused. The caption carries the fuller proof stack: anytime M
 - Preserve the successful seller packing-desk plate.
 - AuriX is visibly larger and higher-priority than Outline.
 - The Bot avatar uses one circular boundary only.
+- R4 adds a Telegram-blue platform badge as an attached modifier to the approved V4 Bot avatar. The badge is subordinate to the AuriX geometry, uses a white separator for crop safety, and forms one action path with the nearby bot handle.
 - Replace the generic product card in R2 with a parcel-label form tied to the scene.
 - Use an amber curved underline as a semantic emphasis device, not a button.

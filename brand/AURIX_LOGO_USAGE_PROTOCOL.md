@@ -34,6 +34,7 @@ Outline, Telegram and payment marks must not appear visually stronger than AuriX
 - Keep clear space equal to the width of the X signal.
 - Do not add a second decorative tile around an icon that already has a container.
 - Use only one external boundary around Telegram avatars.
+- When a feed ad must make the Telegram channel unmistakable, attach one Telegram-blue platform badge to the approved Bot avatar at roughly 32–42% of the avatar diameter. Use a white separation ring, keep the badge subordinate to the AuriX geometry, and pair it with the real bot handle. Do not add a second `Telegram Bot` label merely to explain the badge.
 
 ## Required validation
 

@@ -25,6 +25,13 @@
 - Preserved the qualifying context that the Key was bought through AuriX Bot.
 - Kept the same proven visual hierarchy and parcel-label treatment; no extra feature labels were added.
 
+## R4 — selected
+
+- Added a Telegram platform badge to the approved V4 AuriX Bot avatar instead of introducing another text label.
+- Sized the badge to remain recognizable at feed-thumbnail scale while keeping the AuriX avatar dominant.
+- Used one white separation ring and restrained shadow so the modifier reads as an attached platform cue, not a competing logo tile.
+- Preserved the existing message, parcel-label proof, and payment hierarchy.
+
 ## Gates
 
 - Message comprehension: pass.

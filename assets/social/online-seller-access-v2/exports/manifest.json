@@ -1,26 +1,27 @@
 {
   "campaign": "aurix-online-seller-access-v2",
-  "version": "r3",
-  "stamp": "20260901-140000",
+  "version": "r4",
+  "stamp": "20260901-143000",
   "canvas": {"width": 1080, "height": 1350, "aspect_ratio": "4:5"},
   "finals": [
     {
-      "id": "online-seller-access-v2-r3",
-      "image": "20260901-140000_aurix-online-seller-access-v2_r3.png",
-      "caption": "20260901-140000_aurix-online-seller-access-v2_r3.txt",
-      "source": "20260901-140000_aurix-online-seller-access-v2_r3.svg",
+      "id": "online-seller-access-v2-r4",
+      "image": "20260901-143000_aurix-online-seller-access-v2_r4.png",
+      "caption": "20260901-143000_aurix-online-seller-access-v2_r4.txt",
+      "source": "20260901-143000_aurix-online-seller-access-v2_r4.svg",
       "sha256": {
-        "image": "0e129eecf3f1c72c94fc166bbdcfa4532fac625dd4392aa9b3be0895977290ce",
+        "image": "d5d7d9bfe2d545e84ee44328910dfb6d4a0cbf4a1c7503910f50a6e0943940d8",
         "caption": "f796c0116590b9a2b70d7e6330bdf52cb5a01ca32d3b01f67775351672a440a1",
-        "source": "53217ac8f79d009c0fd2ccca88cc8dcb8ed9c23eda793307977ad3f8efb3dc8d"
+        "source": "18bcea2efd1550a50b80a48b5eb1e429f1c725e9356b5d4075d7564b8dbc7197"
       }
     }
   ],
-  "preview": "previews/20260901-140000_aurix-online-seller-access-v2_r3_324x405.png",
+  "preview": "previews/20260901-143000_aurix-online-seller-access-v2_r4_324x405.png",
   "canonical_brand_assets": [
     "brand/v2/aurix-logo-mark-v2.svg",
     "brand/v4/exports/aurix-telegram-bot-avatar-v4-1024.png",
     "brand/outline/official/outline-client-icon-1024.png"
   ],
-  "language_council": {"model_route": "ag/gemini-3.7-flash-high", "decision": "question-led structure selected"}
+  "language_council": {"model_route": "ag/gemini-3.7-flash-high", "decision": "question-led structure selected"},
+  "platform_cue": {"type": "attached Telegram badge", "role": "secondary modifier on approved V4 Bot avatar"}
 }

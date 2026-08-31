@@ -61,7 +61,7 @@ def text(
 
 
 def payment_row(round_no: int) -> str:
-    icon = (42, 46, 48, 48)[round_no]
+    icon = (42, 46, 48, 48, 48)[round_no]
     cell = icon + 16
     start = 600
     gap = 84
@@ -82,11 +82,11 @@ def payment_row(round_no: int) -> str:
 
 
 def build(round_no: int) -> str:
-    hook_size = (48, 51, 53, 53)[round_no]
-    bot_size = (164, 174, 180, 180)[round_no]
+    hook_size = (48, 51, 53, 53, 53)[round_no]
+    bot_size = (164, 174, 180, 180, 180)[round_no]
     bot_x = 82
     bot_y = 1084 - (bot_size - 164) // 2
-    product_y = (838, 828, 818, 818)[round_no]
+    product_y = (838, 828, 818, 818, 818)[round_no]
     product_panel = (
         '<path d="M0 0H450L500 50V218H0Z" fill="#FFFFFF" fill-opacity=".93" stroke="#B8E3E8" stroke-width="2"/>'
         '<path d="M450 0V50H500" fill="#DDF8FA" stroke="#B8E3E8" stroke-width="2"/>'
@@ -101,6 +101,7 @@ def build(round_no: int) -> str:
     <linearGradient id="signal" x1="70" y1="0" x2="890" y2="0" gradientUnits="userSpaceOnUse"><stop stop-color="#36E2FF"/><stop offset="1" stop-color="#7765FF"/></linearGradient>
     <linearGradient id="wordX" x1="251" y1="58" x2="292" y2="110" gradientUnits="userSpaceOnUse"><stop stop-color="#36E2FF"/><stop offset="1" stop-color="#7765FF"/></linearGradient>
     <filter id="softShadow"><feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#16344A" flood-opacity=".20"/></filter>
+    <filter id="badgeShadow"><feDropShadow dx="0" dy="7" stdDeviation="8" flood-color="#16344A" flood-opacity=".24"/></filter>
     <filter id="typeShadow"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0B5278" flood-opacity=".14"/></filter>
   </defs>
   <image href="{uri(PLATE)}" width="1080" height="1350" preserveAspectRatio="xMidYMid slice"/>
@@ -137,6 +138,11 @@ def build(round_no: int) -> str:
     <circle cx="{bot_x + bot_size // 2}" cy="{bot_y + bot_size // 2}" r="{bot_size // 2 + 5}" fill="#FFFFFF" fill-opacity=".94" stroke="#50D7EA" stroke-width="3"/>
     <clipPath id="botClip"><circle cx="{bot_x + bot_size // 2}" cy="{bot_y + bot_size // 2}" r="{bot_size // 2}"/></clipPath>
     <image href="{uri(BOT)}" x="{bot_x}" y="{bot_y}" width="{bot_size}" height="{bot_size}" preserveAspectRatio="xMidYMid slice" clip-path="url(#botClip)"/>
+  </g>
+  <g aria-label="Telegram platform badge" filter="url(#badgeShadow)" transform="translate(240 1088)">
+    <circle r="43" fill="#FFFFFF"/>
+    <circle r="35" fill="#229ED9"/>
+    <path d="M-22-2 21-19C25-20 28-17 27-13L19 22C18 26 14 27 11 25L-1 16-7 22C-9 24-12 23-12 19L-11 11 12-10-16 7C-20 9-24 6-25 2-25 0-24-1-22-2Z" fill="#FFFFFF"/>
   </g>
 
   <path d="M378 1204H1008" stroke="#9EDAE2" stroke-width="2"/>
@@ -175,7 +181,7 @@ Connection speed နဲ့ latency က အသုံးပြုနေတဲ့ N
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3, 4], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()
