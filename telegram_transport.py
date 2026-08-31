@@ -7,9 +7,10 @@ import sys
 import threading
 import time
 import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+import urllib3
 
 from commerce import CommerceError, CommerceService
 from entitlements import ClaimService
@@ -29,6 +30,10 @@ from receipt_llm import (
 UTC = timezone.utc
 DEFAULT_MAINTENANCE_INTERVAL_SECONDS = 60.0
 ADMIN_CONFIRMATION_TTL = timedelta(minutes=5)
+
+
+class TelegramAPIError(RuntimeError):
+    """A bounded, payload-free Telegram Bot API failure."""
 
 
 class TelegramBot(
@@ -100,6 +105,17 @@ class TelegramBot(
         command_scope_cleanup_ids: set[int] | None = None,
     ):
         self.api = f"https://api.telegram.org/bot{token}"
+        # urllib.request establishes a fresh TLS connection for every Bot API
+        # call. On the Singapore host, a small fraction of those handshakes
+        # stall for roughly 30 seconds. A bounded thread-safe pool keeps one
+        # healthy connection hot while still allowing polling, maintenance,
+        # and command-menu work to overlap.
+        self._http = urllib3.PoolManager(
+            num_pools=2,
+            maxsize=4,
+            block=True,
+            retries=False,
+        )
         self.service = service
         self.commerce = commerce
         self.admin_ids = admin_ids or set()
@@ -132,14 +148,37 @@ class TelegramBot(
 
     def request(self, method: str, payload: dict[str, Any]) -> Any:
         started_at = time.perf_counter()
-        request = urllib.request.Request(
-            f"{self.api}/{method}",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                result = json.load(response)
+            response = self._http.request(
+                "POST",
+                f"{self.api}/{method}",
+                body=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                timeout=urllib3.Timeout(
+                    connect=5.0,
+                    read=25.0 if method == "getUpdates" else 30.0,
+                ),
+                retries=False,
+            )
+            try:
+                result = json.loads(response.data.decode("utf-8"))
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                raise TelegramAPIError(
+                    f"{method} returned an invalid JSON response"
+                ) from exc
+            if response.status >= 400:
+                description = "request rejected"
+                candidate = result.get("description") if isinstance(result, dict) else None
+                if isinstance(candidate, str) and candidate.strip():
+                    description = " ".join(candidate.split())[:240]
+                raise TelegramAPIError(
+                    f"{method} failed status={response.status}: {description}"
+                )
+        except urllib3.exceptions.HTTPError as exc:
+            description = "request rejected"
+            raise TelegramAPIError(
+                f"{method} transport failed: {description}"
+            ) from exc
         finally:
             _latency_log("telegram_request", started_at, method=method)
         if not result.get("ok"):
@@ -447,13 +486,50 @@ class TelegramBot(
         if not isinstance(file_path, str) or not file_path:
             raise RuntimeError("Telegram file path was unavailable")
         token = self.api.rsplit("/bot", 1)[-1]
-        request = urllib.request.Request(f"https://api.telegram.org/file/bot{token}/{file_path}")
-        with urllib.request.urlopen(request, timeout=30) as response:
-            data = response.read(20 * 1024 * 1024 + 1)
+        started_at = time.perf_counter()
+        try:
+            response = self._http.request(
+                "GET",
+                f"https://api.telegram.org/file/bot{token}/{file_path}",
+                timeout=urllib3.Timeout(connect=5.0, read=30.0),
+                retries=False,
+            )
+            if response.status >= 400:
+                raise TelegramAPIError(
+                    f"getFile download failed status={response.status}"
+                )
+            data = response.data
+        except urllib3.exceptions.HTTPError as exc:
+            raise TelegramAPIError("getFile download transport failed") from exc
+        finally:
+            _latency_log("telegram_file_download", started_at)
         if len(data) > 20 * 1024 * 1024:
             raise RuntimeError("Receipt image exceeds Telegram download limit")
         mime = "image/jpeg" if file_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
         return data, mime
+
+    def _latency_action(self, update: dict[str, Any]) -> str:
+        """Return a bounded operation label without logging user text or IDs."""
+        message = update.get("message")
+        if isinstance(message, dict):
+            if message.get("photo") or message.get("document"):
+                return "receipt"
+            text = message.get("text")
+            if not isinstance(text, str):
+                return "message"
+            normalized = self.CUSTOMER_BUTTON_COMMANDS.get(text.strip(), text.strip())
+            if normalized == text.strip():
+                normalized = self.ADMIN_BUTTON_COMMANDS.get(text.strip(), text.strip())
+            command = normalized.split(maxsplit=1)[0].split("@", 1)[0].lower()
+            return command[:48] if command.startswith("/") else "text"
+        query = update.get("callback_query")
+        data = query.get("data") if isinstance(query, dict) else None
+        if not isinstance(data, str):
+            return "callback"
+        parts = data.split(":", 2)[:2]
+        if all(part.replace("_", "").isalnum() for part in parts):
+            return ("callback:" + ":".join(parts))[:48]
+        return "callback"
 
     def _pending_order_id(self, telegram_id: int, caption: str = "") -> str | None:
         candidate = caption.split()
@@ -739,26 +815,45 @@ class TelegramBot(
                             "allowed_updates": ["message", "callback_query"],
                         },
                     )
-                    for update in updates:
-                        self.offset = update["update_id"] + 1
-                        if not self.service.database.mark_update_seen(update["update_id"]):
-                            continue
-                        started_at = time.perf_counter()
+                except KeyboardInterrupt:
+                    break
+                except Exception as exc:
+                    print(f"bot poll error: {type(exc).__name__}: {exc}", file=sys.stderr)
+                    self._maintenance_stop.wait(5)
+                    continue
+                for update in updates:
+                    self.offset = update["update_id"] + 1
+                    if not self.service.database.mark_update_seen(update["update_id"]):
+                        continue
+                    started_at = time.perf_counter()
+                    action = self._latency_action(update)
+                    try:
                         if "message" in update:
                             self.handle(update["message"])
                         elif "callback_query" in update:
                             self.handle_callback(update["callback_query"])
+                    except Exception as exc:
+                        print(
+                            f"update handler error: {type(exc).__name__}: {exc}",
+                            file=sys.stderr,
+                        )
                         _latency_log(
                             "update_handler",
                             started_at,
                             update_id=update["update_id"],
                             kind="message" if "message" in update else "callback",
+                            action=action,
+                            status="error",
                         )
-                except KeyboardInterrupt:
-                    break
-                except Exception as exc:
-                    print(f"bot loop error: {type(exc).__name__}: {exc}", file=sys.stderr)
-                    self._maintenance_stop.wait(5)
+                        continue
+                    _latency_log(
+                        "update_handler",
+                        started_at,
+                        update_id=update["update_id"],
+                        kind="message" if "message" in update else "callback",
+                        action=action,
+                        status="ok",
+                    )
         finally:
             self.stop()
             maintenance_thread.join(timeout=5)

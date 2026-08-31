@@ -1,5 +1,5 @@
 [Unit]
-Description=AuriX Telegram paid-concierge bot
+Description=AuriX Telegram VPN bot
 After=network-online.target
 Wants=network-online.target
 
@@ -9,16 +9,23 @@ User=aurix
 Group=aurix
 WorkingDirectory=/opt/aurix-bot
 EnvironmentFile=/etc/aurix-bot/aurix.env
-ExecStart=/opt/aurix-venv/bin/python /opt/aurix-bot/app.py
+ExecStart=/opt/aurix-venv/bin/python -u /opt/aurix-bot/app.py
 Restart=always
 RestartSec=5
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
 ReadWritePaths=/var/lib/aurix-bot
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+MemoryHigh=256M
+MemoryMax=384M
 
 [Install]
 WantedBy=multi-user.target

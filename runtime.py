@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -171,17 +172,28 @@ def main() -> None:
         bot.request("deleteWebhook", {"drop_pending_updates": False})
     except Exception as exc:
         raise SystemExit(f"Telegram webhook cleanup failed: {type(exc).__name__}") from exc
-    try:
-        bot.configure_commands()
-    except Exception as exc:
-        print(
-            f"WARNING: Telegram command menu configuration failed: {type(exc).__name__}",
-            file=sys.stderr,
-        )
+    def configure_command_menu() -> None:
+        try:
+            bot.configure_commands()
+        except Exception as exc:
+            print(
+                f"WARNING: Telegram command menu configuration failed: {type(exc).__name__}",
+                file=sys.stderr,
+            )
+
+    # Command-scope synchronization takes several Telegram round trips. It is
+    # administrative metadata and must not delay long polling after a restart.
+    command_menu_thread = threading.Thread(
+        target=configure_command_menu,
+        name="aurix-command-menu",
+        daemon=True,
+    )
+    command_menu_thread.start()
     signal.signal(signal.SIGTERM, lambda *_: bot.stop())
     try:
         bot.run()
     finally:
+        command_menu_thread.join(timeout=1)
         close_database = getattr(commerce_database, "close", None)
         if callable(close_database):
             close_database()

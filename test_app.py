@@ -18,6 +18,7 @@ from cryptography.x509.oid import NameOID
 from app import ClaimService, Database, OutlineClient, OutlineError, TelegramBot
 from commerce import CommerceDatabase, CommerceService
 from persistence import open_sqlite_connection
+from telegram_transport import TelegramAPIError
 
 
 UTC = timezone.utc
@@ -380,6 +381,24 @@ class RecordingTelegramBot(TelegramBot):
         self.media.append(("document", chat_id, file_id, caption, reply_markup))
 
 
+class _TelegramPoolResponse:
+    def __init__(self, status=200, payload=None):
+        self.status = status
+        self.data = json.dumps(payload or {"ok": True, "result": True}).encode()
+
+
+class _RecordingTelegramPool:
+    def __init__(self, responses=None):
+        self.responses = list(responses or [])
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        if self.responses:
+            return self.responses.pop(0)
+        return _TelegramPoolResponse()
+
+
 class NonBlockingMaintenanceBot(TelegramBot):
     def __init__(self):
         super().__init__("test-token", object(), maintenance_interval_seconds=60)
@@ -396,6 +415,42 @@ class NonBlockingMaintenanceBot(TelegramBot):
     def _run_maintenance(self):
         self.maintenance_started.set()
         self.release_maintenance.wait(2)
+
+
+class _AlwaysNewUpdateDatabase:
+    def mark_update_seen(self, _update_id):
+        return True
+
+
+class _PollingService:
+    database = _AlwaysNewUpdateDatabase()
+
+
+class HandlerFailureIsolationBot(TelegramBot):
+    def __init__(self):
+        super().__init__("test-token", _PollingService())
+        self.poll_calls = 0
+        self.handled = []
+        self.backoffs = []
+        self._maintenance_stop.wait = lambda timeout=None: self.backoffs.append(timeout) or False
+
+    def request(self, method, payload):
+        self.poll_calls += 1
+        if self.poll_calls == 1:
+            return [
+                {"update_id": 1, "message": {"text": "fail"}},
+                {"update_id": 2, "message": {"text": "continue"}},
+            ]
+        self.running = False
+        return []
+
+    def handle(self, message):
+        if message["text"] == "fail":
+            raise RuntimeError("simulated Telegram send failure")
+        self.handled.append(message["text"])
+
+    def _maintenance_loop(self):
+        return None
 
 
 class MaintenanceOutline:
@@ -703,6 +758,37 @@ class TelegramBotCommerceTest(unittest.TestCase):
             bot.stop()
             thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
+
+    def test_one_failed_update_does_not_backoff_or_block_the_next_update(self):
+        bot = HandlerFailureIsolationBot()
+
+        bot.run()
+
+        self.assertEqual(bot.handled, ["continue"])
+        self.assertEqual(bot.poll_calls, 2)
+        self.assertNotIn(5, bot.backoffs)
+
+    def test_telegram_requests_reuse_the_bounded_connection_pool(self):
+        pool = _RecordingTelegramPool()
+        self.bot._http = pool
+
+        self.assertTrue(self.bot.request("sendMessage", {"chat_id": 123, "text": "one"}))
+        self.assertTrue(self.bot.request("sendMessage", {"chat_id": 123, "text": "two"}))
+
+        self.assertEqual(len(pool.calls), 2)
+        for method, _url, kwargs in pool.calls:
+            self.assertEqual(method, "POST")
+            self.assertFalse(kwargs["retries"])
+            self.assertEqual(kwargs["timeout"].connect_timeout, 5.0)
+            self.assertEqual(kwargs["timeout"].read_timeout, 30.0)
+
+    def test_telegram_error_description_is_bounded_and_payload_free(self):
+        self.bot._http = _RecordingTelegramPool(
+            [_TelegramPoolResponse(400, {"ok": False, "description": "Bad Request: query is too old"})]
+        )
+
+        with self.assertRaisesRegex(TelegramAPIError, "query is too old"):
+            self.bot.request("answerCallbackQuery", {"callback_query_id": "secret-id"})
 
     def test_maintenance_reuses_one_outline_metrics_snapshot(self):
         outline = MaintenanceOutline()
