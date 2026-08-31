@@ -1,0 +1,28 @@
+{
+  "campaign": "aurix-online-seller-access-v1",
+  "version": "r2",
+  "stamp": "20260901-110000",
+  "canvas": {
+    "width": 1080,
+    "height": 1350,
+    "aspect_ratio": "4:5"
+  },
+  "finals": [
+    {
+      "id": "online-seller-access-r2",
+      "image": "20260901-110000_aurix-online-seller-access-v1_r2.png",
+      "caption": "20260901-110000_aurix-online-seller-access-v1_r2.txt",
+      "source": "20260901-110000_aurix-online-seller-access-v1_r2.svg",
+      "sha256": {
+        "image": "708445d5be944b2a2e33569f309d62b55cbe16a89a6cdc62853b12368bfe6844",
+        "caption": "70fb362642ca9d296911aa87f597c0ce6d59c77186992626faf41553bf65026d",
+        "source": "836e88a0b7ce4c81f36d95bdcfcbef67d25f79abf8344793d99033e52a30d575"
+      }
+    }
+  ],
+  "preview": "previews/20260901-110000_aurix-online-seller-access-v1_r2_324x405.png",
+  "council": {
+    "model_route": "ag/gemini-3.7-flash-high",
+    "draft_score": 8.5
+  }
+}
