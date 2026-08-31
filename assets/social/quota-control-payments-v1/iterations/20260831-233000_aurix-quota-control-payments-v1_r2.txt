@@ -1,0 +1,21 @@
+Outline VPN Key သုံးရင်း Quota ဘယ်လောက်ကျန်သေးလဲ မှန်းနေစရာမလိုတော့ပါဘူး။
+
+AuriX က ထုတ်ပေးထားတဲ့ Outline VPN Key ကို Telegram Bot ရဲ့ My VPN မှာ —
+• သုံးထားတဲ့ပမာဏ
+• ကျန်တဲ့ပမာဏနဲ့ ရာခိုင်နှုန်း
+• သက်တမ်းနဲ့ Key အခြေအနေ
+ကို အချိန်မရွေး စစ်ကြည့်နိုင်ပါတယ်။
+
+Quota လက်ကျန် 25%၊ 10% နဲ့ 5% အဆင့်တွေကို ရောက်တဲ့အခါ Telegram ကနေ ကြိုတင်သတိပေးပါတယ်။ Quota ပြည့်သွားတာကို Bot က စစ်တွေ့ရင် Key ရပ်သွားကြောင်း သီးခြားအသိပေးပါတယ်။
+
+ငွေလွှဲနိုင်တဲ့ Wallet — KBZPay၊ WavePay၊ AYA Pay၊ uabpay နဲ့ CB Pay။ Wallet အမှတ်တံဆိပ်တွေကို လက်ခံနိုင်တဲ့ ငွေလွှဲနည်း သိသာစေဖို့သာ ဖော်ပြထားတာဖြစ်ပြီး မိတ်ဖက်ဖြစ်ကြောင်း မဆိုလိုပါဘူး။
+
+Bot — https://t.me/aurix_outline_vpn_bot
+Admin နဲ့ Group Chat — https://t.me/+oA18TDWAD9NiNWU1
+Channel — https://t.me/AurixDigitalStore
+
+Usage စာရင်းက Outline ရဲ့ နောက်ဆုံးရရှိထားတဲ့ 30-day rolling transfer metrics ကို အခြေခံတာပါ။ Live speed meter မဟုတ်သလို လဆန်း ၁ ရက်နေ့မှာ reset ဖြစ်တဲ့ Usage စာရင်းလည်း မဟုတ်ပါဘူး။
+
+AuriX ဟာ Outline Foundation နဲ့ ငွေလွှဲဝန်ဆောင်မှုပေးသူတွေရဲ့ တရားဝင်မိတ်ဖက် မဟုတ်ပါဘူး။
+
+#AuriXVPN #OutlineVPN #VPNUsage #VPNMyanmar

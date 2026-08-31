@@ -1,0 +1,21 @@
+{
+  "campaign": "aurix-quota-control-payments-v1",
+  "stamp": "20260831-235000",
+  "format": "1080x1350 PNG plus UTF-8 TXT and editable SVG",
+  "recommended_order": ["quota-control-payments-r2"],
+  "finals": [
+    {
+      "id": "quota-control-payments-r2",
+      "role": "conversion",
+      "image": "20260831-235000_aurix-quota-control-payments-v1_r2.png",
+      "caption": "20260831-235000_aurix-quota-control-payments-v1_r2.txt",
+      "source": "20260831-235000_aurix-quota-control-payments-v1_r2.svg"
+    }
+  ],
+  "preview": "20260831-235000_aurix-quota-control-payments-v1_preview.png",
+  "publication_gates": [
+    "Run production acceptance for usage refresh and warning delivery",
+    "Confirm KBZPay, WavePay, AYA Pay, uabpay, and CB Pay recipient accounts are operational",
+    "Do not advertise 50%, 10%, 0% unless implementation and tests change"
+  ]
+}
