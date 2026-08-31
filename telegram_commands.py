@@ -1207,7 +1207,7 @@ class TelegramCommandMixin:
             ) or str(shared.get("title") or "").strip()
             self.staff_access.bind_control_group(group_id, telegram_id, title=title)
             self.control_group_id = group_id
-            staff = self.staff_access.bootstrap(
+            self.staff_access.bootstrap(
                 owner_id=None,
                 admin_ids=(),
                 group_owner=group_owner,
@@ -1221,14 +1221,19 @@ class TelegramCommandMixin:
                 {"remove_keyboard": True},
             )
             return
-        active_admins = max(0, len(staff["admin_ids"]) - 1)
+        active_admins = sum(
+            1
+            for item in self.staff_access.list_staff()
+            if item.get("role") == "admin"
+        )
         self.send(
             chat_id,
             "✅ AuriX control group connected\n\n"
             f"Group: {title or group_id}\n"
-            f"Members: {int(member_count)}\n"
-            "Creator verified: yes\n"
-            f"Human administrators active: {active_admins}\n\n"
+            f"Telegram members: {int(member_count)} (includes the AuriX bot)\n"
+            "Human owner: 1 verified — you\n"
+            f"Additional human administrators: {active_admins}\n"
+            "Bot accounts imported as staff: 0\n\n"
             "Telegram does not expose a full ordinary-member list to bots. "
             "AuriX can read the member count, creator/admins, and verify a specific member when needed.",
             {"remove_keyboard": True},

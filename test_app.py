@@ -783,6 +783,9 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(bot.control_group_id, -100123)
         self.assertEqual(access.control_group()["control_group_id"], -100123)
         self.assertIn("control group connected", bot.sent[-1][1])
+        self.assertIn("Human owner: 1 verified — you", bot.sent[-1][1])
+        self.assertIn("Additional human administrators: 0", bot.sent[-1][1])
+        self.assertIn("Bot accounts imported as staff: 0", bot.sent[-1][1])
         self.assertEqual(bot.markups[-1], {"remove_keyboard": True})
 
     def test_admin_home_message_and_navigation_are_stable_contracts(self):
