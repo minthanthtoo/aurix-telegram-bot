@@ -42,11 +42,6 @@ class TelegramBot(
     TelegramMaintenanceMixin,
     TelegramCommandMixin,
 ):
-    # Keep promo presentation and routing in one registry. New campaigns get
-    # the same native copy/redeem controls by adding their code here.
-    PROMO_CODE_COMMANDS = {
-        "100GBFREE": "/giveaway100gb",
-    }
     CUSTOMER_BUTTON_COMMANDS = {
         "🎁 Daily 300MB": "/claim",
         "🚀 Monthly 3GB": "/trial",
@@ -71,6 +66,7 @@ class TelegramBot(
         "🔎 Consistency": "/reconcile",
         "🔁 Failed Jobs": "/failed",
         "🚨 Enforcement": "/enforcement",
+        "🎁 Promo Settings": "/promo",
         # Retain this mapping for old keyboards, but do not render a global
         # ledger button: ledger access should be scoped to a specific order.
         "💰 Wallet Ledger": "/ledger",
@@ -83,6 +79,10 @@ class TelegramBot(
             "/capacity",
             "/reconcile",
             "/enforcement",
+            "/promo",
+            "/setpromo",
+            "/stoppromo",
+            "/resumepromo",
             "/failed",
             "/retry",
             "/retryjob",
@@ -96,7 +96,17 @@ class TelegramBot(
         }
     )
     ADMIN_CONFIRMATION_COMMANDS = frozenset(
-        {"/retry", "/refund", "/verify", "/rejectreceipt", "/approve", "/reject"}
+        {
+            "/retry",
+            "/refund",
+            "/verify",
+            "/rejectreceipt",
+            "/approve",
+            "/reject",
+            "/setpromo",
+            "/stoppromo",
+            "/resumepromo",
+        }
     )
     UNKNOWN_ACTION_TEXT = "Use the menu to choose an AuriX action."
 
@@ -266,7 +276,7 @@ class TelegramBot(
     def _promo_code_buttons(self, promo_code: str) -> list[dict[str, Any]]:
         """Build reusable one-tap redeem and clipboard controls for a promo."""
         normalized = str(promo_code).strip().upper()
-        if normalized not in self.PROMO_CODE_COMMANDS:
+        if not normalized or len(normalized.encode("utf-8")) > 60:
             return []
         buttons = [
             {
@@ -278,6 +288,23 @@ class TelegramBot(
         if copy_button is not None:
             buttons.append(copy_button)
         return buttons
+
+    @staticmethod
+    def _promo_quota_label(quota_bytes: int) -> str:
+        amount = int(quota_bytes)
+        if amount % 1_000_000_000 == 0:
+            return f"{amount // 1_000_000_000} GB"
+        if amount % 1_000_000 == 0:
+            return f"{amount // 1_000_000} MB"
+        return f"{amount:,} bytes"
+
+    @staticmethod
+    def _promo_frequency_label(frequency: str) -> str:
+        return {
+            "hourly": "each UTC hour",
+            "daily": "each UTC day",
+            "campaign": "for the whole campaign",
+        }.get(str(frequency), str(frequency))
 
     def _launch_promo_keyboard(self, promo_code: str) -> dict[str, Any]:
         rows: list[list[dict[str, Any]]] = []
@@ -361,14 +388,16 @@ class TelegramBot(
 
     def _customer_keyboard(self, telegram_id: int) -> dict[str, Any]:
         try:
-            giveaway_winner = bool(self.service.giveaway_status(telegram_id)["winner"])
+            promo_locked = bool(
+                self.service.giveaway_status(telegram_id)["access_lock_active"]
+            )
         except Exception:
-            giveaway_winner = False
+            promo_locked = False
         rows = [["🔐 My VPN"]]
         paid_active = self._free_claim_blocked_by_paid(telegram_id)
-        if not giveaway_winner and not paid_active:
+        if not promo_locked and not paid_active:
             rows.append(["🎁 Daily 300MB", "🚀 Monthly 3GB"])
-        if not giveaway_winner:
+        if not promo_locked:
             rows.append(["💎 Plans & Upgrade", "🧾 My Orders"])
         else:
             rows.append(["🧾 My Orders"])
@@ -437,6 +466,7 @@ class TelegramBot(
 
         admin_commands = customer_commands + [
             {"command": "admin", "description": "Open the admin panel"},
+            {"command": "promo", "description": "View and configure promo campaign"},
         ]
         for admin_id in self.admin_ids:
             scope = {"type": "chat", "chat_id": admin_id}
@@ -725,12 +755,12 @@ class TelegramBot(
 
     def _send_plans(self, chat_id: int, telegram_id: int | None = None) -> None:
         giveaway = self.service.giveaway_status(telegram_id or chat_id)
-        if giveaway["winner"]:
+        if giveaway["access_lock_active"]:
             self.send(
                 chat_id,
-                f"Giveaway winner #{giveaway['winner_number']}\n\n"
-                "Your 100 GiB giveaway is your final AuriX entitlement. Additional free, "
-                "paid, renewal, and replacement plans are disabled for this account.",
+                f"Promo gift #{giveaway['winner_number']} · {giveaway['code']}\n\n"
+                "Normal plans are paused while both your gift and its promo season are active. "
+                "They return automatically when either one ends.",
                 self._customer_keyboard(telegram_id or chat_id),
             )
             return
@@ -738,10 +768,14 @@ class TelegramBot(
             self.send(chat_id, "Paid plans are not configured in this staging process.")
             return
         lines = ["AuriX plans:"]
-        lines.append(
-            f"100GBFREE giveaway — 100 GiB / 30 days — "
-            f"{giveaway['remaining_slots']} of {giveaway['winner_limit']} slot(s) remain"
-        )
+        if giveaway["exists"]:
+            quota = self._promo_quota_label(giveaway["quota_bytes"])
+            state = giveaway["campaign_state"]
+            lines.append(
+                f"{giveaway['code']} promo — {quota} / {giveaway['duration_days']} days — "
+                f"{state}; {giveaway['remaining_slots']} of {giveaway['winner_limit']} "
+                f"slot(s) remain {self._promo_frequency_label(giveaway['frequency'])}"
+            )
         lines.append("free_3gb — free every 30 days — 3 GiB / 30 days (use /trial)")
         plans = self.commerce.plans()
         for plan in plans:
@@ -763,7 +797,12 @@ class TelegramBot(
             + [[("🚀 Free Monthly 3GB", "p:t:trial")]]
         )
         promo_buttons = self._promo_code_buttons(str(giveaway["code"]))
-        if giveaway["active"] and giveaway["remaining_slots"] > 0 and promo_buttons:
+        if (
+            giveaway["active"]
+            and giveaway["remaining_slots"] > 0
+            and not giveaway["winner"]
+            and promo_buttons
+        ):
             markup["inline_keyboard"].insert(0, promo_buttons)
         self.send(chat_id, "\n".join(lines), markup)
 
@@ -776,16 +815,21 @@ class TelegramBot(
             )
             giveaway_text = (
                 f"🎉 Giveaway: winner #{giveaway['winner_number']} of {giveaway['winner_limit']}\n"
-                f"Plan: 100 GiB / 30 days\n"
+                f"Plan: {self._promo_quota_label(giveaway['quota_bytes'])} / "
+                f"{giveaway['duration_days']} days\n"
                 f"Key status: {giveaway_key_status}\n"
                 f"Expires: {giveaway['expires_at']}\n"
-                "Eligibility: final entitlement — all further free and paid plans disabled"
+                "Regular plans: "
+                + ("paused until gift or season ends" if giveaway["access_lock_active"] else "available")
             )
-        else:
+        elif giveaway["exists"]:
             giveaway_text = (
-                f"100GBFREE giveaway: {giveaway['remaining_slots']} of "
+                f"{giveaway['code']} promo ({giveaway['campaign_state']}): "
+                f"{giveaway['remaining_slots']} of "
                 f"{giveaway['winner_limit']} slot(s) remain"
             )
+        else:
+            giveaway_text = "No promo campaign is configured."
         if self.commerce is None:
             self.send(chat_id, giveaway_text, self._customer_keyboard(telegram_id))
             return
@@ -829,7 +873,11 @@ class TelegramBot(
                 else "\n\nNo active paid key is available."
             )
         actions = [[("📶 Usage", "n:usage"), ("🧾 My Orders", "n:myorders")]]
-        if not giveaway["winner"] and subscription.get("status") in ("active", "expired", "revoked"):
+        if not giveaway["access_lock_active"] and subscription.get("status") in (
+            "active",
+            "expired",
+            "revoked",
+        ):
             actions[0].append(("🔄 Renew", f"p:r:{subscription['plan_code']}"))
         self.send(chat_id, text, self._inline_keyboard(actions))
 
@@ -845,6 +893,17 @@ class TelegramBot(
         if unit == "B":
             return f"{int(amount)} {unit}"
         return f"{amount:.2f} {unit}"
+
+    @staticmethod
+    def _format_decimal_bytes(value: int) -> str:
+        amount = float(max(0, int(value)))
+        units = ("B", "KB", "MB", "GB", "TB")
+        unit = units[0]
+        for unit in units:
+            if amount < 1000 or unit == units[-1]:
+                break
+            amount /= 1000
+        return f"{int(amount)} B" if unit == "B" else f"{amount:.2f} {unit}"
 
     def _send_my_vpn(self, chat_id: int, telegram_id: int) -> None:
         """Render keys, lifecycle state, usage, and next actions in one dashboard."""
@@ -959,6 +1018,11 @@ class TelegramBot(
                 f"{icon} {status} · Expires: {entry.get('expires_at') or 'pending'}",
             ]
             if quota > 0:
+                formatter = (
+                    self._format_decimal_bytes
+                    if entry.get("decimal_quota")
+                    else self._format_bytes
+                )
                 percent = min(100.0, used * 100 / quota)
                 filled = min(10, max(0, int(percent / 10)))
                 bar = "█" * filled + "░" * (10 - filled)
@@ -966,8 +1030,8 @@ class TelegramBot(
                 lines.extend(
                     [
                         f"{bar} {percent:.1f}%{observed_note}",
-                        f"Used {self._format_bytes(used)} · Remaining "
-                        f"{self._format_bytes(remaining)} / {self._format_bytes(quota)}",
+                        f"Used {formatter(used)} · Remaining "
+                        f"{formatter(remaining)} / {formatter(quota)}",
                     ]
                 )
             access_url = entry.get("access_url")
@@ -998,12 +1062,18 @@ class TelegramBot(
             )
         if giveaway["winner"]:
             blocks.append(
-                f"🎉 Giveaway winner #{giveaway['winner_number']} · this is your final entitlement."
+                f"🎉 Promo gift #{giveaway['winner_number']} · {giveaway['code']} · "
+                + (
+                    "regular plans paused until gift or season ends."
+                    if giveaway["access_lock_active"]
+                    else "regular plans are available again."
+                )
             )
-        elif not displayed:
+        elif giveaway["exists"] and giveaway["active"] and not displayed:
             blocks.append(
-                f"🎁 100GBFREE launch promo: {giveaway['remaining_slots']} / "
-                f"{giveaway['winner_limit']} slots remain."
+                f"🎁 {giveaway['code']} promo: {giveaway['remaining_slots']} / "
+                f"{giveaway['winner_limit']} slots remain "
+                f"{self._promo_frequency_label(giveaway['frequency'])}."
             )
         if not usage_available:
             blocks.append("Usage is temporarily unavailable; keys and lifecycle status are still shown.")
@@ -1027,7 +1097,16 @@ class TelegramBot(
                     }
                 ]
             )
-        if not giveaway["winner"]:
+        if not giveaway["access_lock_active"]:
+            if (
+                giveaway["exists"]
+                and giveaway["active"]
+                and not giveaway["winner"]
+                and giveaway["remaining_slots"] > 0
+            ):
+                promo_buttons = self._promo_code_buttons(str(giveaway["code"]))
+                if promo_buttons:
+                    action_rows.append(promo_buttons)
             active_paid = any(
                 item.get("status") == "active" and item.get("key_status") == "active"
                 for item in subscriptions

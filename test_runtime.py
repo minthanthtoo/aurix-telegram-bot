@@ -61,6 +61,16 @@ class _Commerce:
         return {"cancelled": 0, "manual_conflicts": 0}
 
 
+class _ClaimService:
+    def __init__(self, database, outline, limit_bytes):
+        self.database = database
+        self.outline = outline
+        self.limit_bytes = limit_bytes
+
+    def reconcile_giveaway_limits(self):
+        return 1
+
+
 class _Bot:
     instances = []
 
@@ -118,6 +128,7 @@ class RuntimeCompositionTest(unittest.TestCase):
             patch("runtime.CommerceDatabase", _CommerceDatabase),
             patch("runtime.OutlineClient", _Outline),
             patch("runtime.CommerceService", _Commerce),
+            patch("runtime.ClaimService", _ClaimService),
             patch("runtime.TelegramBot", _Bot),
             patch("runtime.signal.signal"),
             contextlib.redirect_stdout(output),
@@ -134,6 +145,7 @@ class RuntimeCompositionTest(unittest.TestCase):
         self.assertEqual(bot.kwargs["maintenance_interval_seconds"], 90.0)
         self.assertIn("Bot authorized: @aurix_test_bot", output.getvalue())
         self.assertIn("Outline connected: version test-outline", output.getvalue())
+        self.assertIn("Promo quotas reconciled: 1 active key(s)", output.getvalue())
 
 
 if __name__ == "__main__":

@@ -35,7 +35,15 @@ class AdminOperations:
             "wallet_history",
         }
     )
-    SERVICE_OPERATIONS = frozenset({"termination_summary", "pending_termination_notices"})
+    SERVICE_OPERATIONS = frozenset(
+        {
+            "termination_summary",
+            "pending_termination_notices",
+            "giveaway_status",
+            "configure_giveaway",
+            "set_giveaway_active",
+        }
+    )
 
     def __init__(
         self,

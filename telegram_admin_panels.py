@@ -158,6 +158,7 @@ class TelegramAdminMixin:
                 [("📥 Pending Orders", "a:n:orders"), ("🧾 Receipt Review", "a:n:receipts")],
                 [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
                 [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
+                [("🎁 Promo Settings", "a:n:promo")],
                 [("🏠 Customer Menu", "n:menu")],
             ]
         )
@@ -194,6 +195,18 @@ class TelegramAdminMixin:
             "target_id": target_id,
             "state": "unavailable",
         }
+        if command in {"/setpromo", "/stoppromo", "/resumepromo"}:
+            try:
+                promo = self._admin_service_call(
+                    telegram_id,
+                    "giveaway_status",
+                    telegram_id,
+                    target_id or None,
+                )
+                snapshot.update({"state": "present", "promo": promo})
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
         if self.commerce is None or not target_id:
             snapshot["state"] = "missing"
             return snapshot
@@ -326,6 +339,26 @@ class TelegramAdminMixin:
                 fallback_prompt
                 + "\n\nCurrent state could not be loaded; it will be rechecked before execution."
             )
+        if command in {"/setpromo", "/stoppromo", "/resumepromo"}:
+            promo = snapshot.get("promo") or {}
+            lines = [
+                f"Promo: {args[0] if args else promo.get('code') or '-'}",
+                f"Current state: {promo.get('campaign_state') or 'not configured'}",
+            ]
+            if command == "/setpromo" and len(args) == 7:
+                lines.extend(
+                    [
+                        f"New quota: {args[1]} GB · gift duration: {args[2]} day(s)",
+                        f"Giveaway count: {args[3]} · frequency: {args[4]}",
+                        f"Season: {args[5]} → {args[6]}",
+                        "Result: activate this campaign and pause every other promo.",
+                    ]
+                )
+            elif command == "/stoppromo":
+                lines.append("Result: stop the season; normal plans return immediately.")
+            else:
+                lines.append("Result: resume the saved season if it is within its dates.")
+            return "\n".join(lines)
         if command == "/retryjob":
             return "\n".join(
                 [

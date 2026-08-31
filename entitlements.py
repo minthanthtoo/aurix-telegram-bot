@@ -36,7 +36,7 @@ TRIAL_PERIOD = timedelta(days=30)
 GIVEAWAY_CODE = "100GBFREE"
 
 
-GIVEAWAY_LIMIT_BYTES = 100 * 1024**3
+GIVEAWAY_LIMIT_BYTES = 100_000_000_000
 
 
 GIVEAWAY_PERIOD = timedelta(days=30)
@@ -71,6 +71,14 @@ def _human_bytes(value: int) -> str:
         amount /= 1024
 
 
+def _human_decimal_bytes(value: int) -> str:
+    amount = float(max(0, int(value)))
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if amount < 1000 or unit == "TB":
+            return f"{int(amount)} {unit}" if unit == "B" else f"{amount:.2f} {unit}"
+        amount /= 1000
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex
 
@@ -92,6 +100,9 @@ class ClaimResult:
 @dataclass(frozen=True)
 class GiveawayResult:
     outcome: str
+    code: str | None = None
+    quota_bytes: int | None = None
+    duration_days: int | None = None
     access_url: str | None = None
     expires_at: datetime | None = None
     winner_number: int | None = None
@@ -121,14 +132,50 @@ class ClaimService:
             ).fetchone()
 
     @staticmethod
-    def _is_giveaway_winner(connection: Any, telegram_id: int) -> bool:
+    def _has_active_promo_gift(
+        connection: Any, telegram_id: int, now: datetime
+    ) -> bool:
+        """Return whether a live campaign and usable gift currently pause other plans."""
+        now_text = now.astimezone(UTC).isoformat()
         return (
             connection.execute(
-                "SELECT 1 FROM giveaway_claims WHERE telegram_id = ? LIMIT 1",
-                (telegram_id,),
+                """SELECT 1
+                   FROM giveaway_claims g
+                   JOIN giveaway_campaigns c ON c.code = g.campaign_code
+                   JOIN keys k ON k.id = g.key_id
+                   WHERE g.telegram_id = ?
+                     AND c.active = 1
+                     AND (c.starts_at IS NULL OR c.starts_at <= ?)
+                     AND (c.ends_at IS NULL OR c.ends_at > ?)
+                     AND k.status IN ('active', 'revoke_failed')
+                     AND k.expires_at > ?
+                     AND k.quota_reason IS NULL
+                   LIMIT 1""",
+                (telegram_id, now_text, now_text, now_text),
             ).fetchone()
             is not None
         )
+
+    @staticmethod
+    def _campaign_window_start(campaign: Any, now: datetime) -> str:
+        frequency = str(campaign["frequency"] or "campaign").lower()
+        if frequency == "hourly":
+            return now.replace(minute=0, second=0, microsecond=0).isoformat()
+        if frequency == "daily":
+            return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        return str(campaign["starts_at"] or campaign["created_at"])
+
+    @staticmethod
+    def _campaign_state(campaign: Any, now: datetime) -> str:
+        if not bool(campaign["active"]):
+            return "paused"
+        starts_at = campaign["starts_at"]
+        ends_at = campaign["ends_at"]
+        if starts_at and now < datetime.fromisoformat(str(starts_at)).astimezone(UTC):
+            return "scheduled"
+        if ends_at and now >= datetime.fromisoformat(str(ends_at)).astimezone(UTC):
+            return "ended"
+        return "active"
 
     @staticmethod
     def _commerce_tables_exist(connection: Any) -> bool:
@@ -142,32 +189,258 @@ class ClaimService:
         ).fetchone()
         return row is not None
 
-    def giveaway_status(self, telegram_id: int) -> dict[str, Any]:
-        """Return public campaign capacity and this user's durable winner state."""
+    def giveaway_status(
+        self,
+        telegram_id: int,
+        code: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Return campaign schedule/capacity and this user's durable gift state."""
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        normalized = str(code or "").strip().upper()
         with self.database.connect() as connection:
-            campaign = connection.execute(
-                "SELECT * FROM giveaway_campaigns WHERE code = ?", (GIVEAWAY_CODE,)
-            ).fetchone()
+            if normalized:
+                campaign = connection.execute(
+                    "SELECT * FROM giveaway_campaigns WHERE UPPER(code) = ?", (normalized,)
+                ).fetchone()
+            else:
+                campaign = connection.execute(
+                    """SELECT * FROM giveaway_campaigns
+                       ORDER BY active DESC, COALESCE(updated_at, created_at) DESC
+                       LIMIT 1"""
+                ).fetchone()
+            if campaign is None:
+                return {
+                    "exists": False,
+                    "code": normalized or GIVEAWAY_CODE,
+                    "active": False,
+                    "campaign_state": "unavailable",
+                    "winner": False,
+                    "gift_active": False,
+                    "access_lock_active": False,
+                    "claimed_count": 0,
+                    "window_claimed_count": 0,
+                    "winner_limit": 0,
+                    "remaining_slots": 0,
+                }
             claim = connection.execute(
                 """SELECT g.winner_number, g.claimed_at, k.expires_at, k.status,
-                          k.quota_reason
+                          k.quota_reason, k.data_limit_bytes
                    FROM giveaway_claims g JOIN keys k ON k.id = g.key_id
                    WHERE g.campaign_code = ? AND g.telegram_id = ?""",
-                (GIVEAWAY_CODE, telegram_id),
+                (campaign["code"], telegram_id),
             ).fetchone()
-        claimed = int(campaign["claimed_count"]) if campaign else 0
-        winner_limit = int(campaign["winner_limit"]) if campaign else GIVEAWAY_WINNER_LIMIT
+            total_claimed = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
+                    (campaign["code"],),
+                ).fetchone()["n"]
+            )
+            window_start = self._campaign_window_start(campaign, current)
+            window = connection.execute(
+                """SELECT claimed_count FROM giveaway_windows
+                   WHERE campaign_code = ? AND window_start = ?""",
+                (campaign["code"], window_start),
+            ).fetchone()
+        frequency = str(campaign["frequency"] or "campaign")
+        window_claimed = (
+            int(window["claimed_count"])
+            if window is not None
+            else (total_claimed if frequency == "campaign" else 0)
+        )
+        winner_limit = int(campaign["winner_limit"])
+        state = self._campaign_state(campaign, current)
+        gift_active = bool(
+            claim is not None
+            and claim["status"] in ("active", "revoke_failed")
+            and not claim["quota_reason"]
+            and datetime.fromisoformat(str(claim["expires_at"])).astimezone(UTC) > current
+        )
         result: dict[str, Any] = {
-            "code": GIVEAWAY_CODE,
-            "claimed_count": claimed,
+            "exists": True,
+            "code": str(campaign["code"]),
+            "quota_bytes": int(campaign["quota_bytes"]),
+            "duration_days": int(campaign["duration_days"]),
+            "frequency": frequency,
+            "starts_at": campaign["starts_at"],
+            "ends_at": campaign["ends_at"],
+            "campaign_state": state,
+            "claimed_count": total_claimed,
+            "window_claimed_count": window_claimed,
             "winner_limit": winner_limit,
-            "remaining_slots": max(0, winner_limit - claimed),
-            "active": bool(campaign["active"]) if campaign else True,
+            "remaining_slots": max(0, winner_limit - window_claimed),
+            "active": state == "active",
             "winner": claim is not None,
+            "gift_active": gift_active,
+            "access_lock_active": state == "active" and gift_active,
         }
         if claim is not None:
             result.update(dict(claim))
         return result
+
+    def configure_giveaway(
+        self,
+        *,
+        code: str,
+        quota_bytes: int,
+        duration_days: int,
+        winner_limit: int,
+        frequency: str,
+        starts_at: datetime,
+        ends_at: datetime,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Create or update the single owner-selected promo season."""
+        normalized = str(code).strip().upper()
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9_-]{2,31}", normalized):
+            raise ValueError("Promo code must be 3-32 letters, numbers, underscores, or hyphens")
+        quota_bytes = int(quota_bytes)
+        duration_days = int(duration_days)
+        winner_limit = int(winner_limit)
+        frequency = str(frequency).strip().lower()
+        if not 1_000_000 <= quota_bytes <= 10_000_000_000_000:
+            raise ValueError("Promo quota must be between 0.001 GB and 10,000 GB")
+        if not 1 <= duration_days <= 365:
+            raise ValueError("Promo duration must be between 1 and 365 days")
+        if not 1 <= winner_limit <= 100_000:
+            raise ValueError("Giveaway count must be between 1 and 100,000")
+        if frequency not in {"campaign", "daily", "hourly"}:
+            raise ValueError("Frequency must be campaign, daily, or hourly")
+        starts_at = starts_at.astimezone(UTC)
+        ends_at = ends_at.astimezone(UTC)
+        if starts_at >= ends_at:
+            raise ValueError("Promo end must be after its start")
+        now_text = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            existing = connection.execute(
+                "SELECT * FROM giveaway_campaigns WHERE code = ?", (normalized,)
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    """INSERT INTO giveaway_campaigns
+                       (code, quota_bytes, duration_days, winner_limit, claimed_count,
+                        active, created_at, starts_at, ends_at, frequency, updated_at)
+                       VALUES (?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?)""",
+                    (
+                        normalized,
+                        quota_bytes,
+                        duration_days,
+                        winner_limit,
+                        now_text,
+                        starts_at.isoformat(),
+                        ends_at.isoformat(),
+                        frequency,
+                        now_text,
+                    ),
+                )
+            else:
+                claim_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
+                        (normalized,),
+                    ).fetchone()["n"]
+                )
+                max_window = int(
+                    connection.execute(
+                        """SELECT COALESCE(MAX(claimed_count), 0) AS n
+                           FROM giveaway_windows WHERE campaign_code = ?""",
+                        (normalized,),
+                    ).fetchone()["n"]
+                )
+                if claim_count:
+                    immutable_changed = any(
+                        (
+                            int(existing["quota_bytes"]) != quota_bytes,
+                            int(existing["duration_days"]) != duration_days,
+                            str(existing["frequency"] or "campaign") != frequency,
+                            str(existing["starts_at"] or "") != starts_at.isoformat(),
+                        )
+                    )
+                    if immutable_changed:
+                        raise ValueError(
+                            "A claimed promo's quota, duration, frequency, and start are immutable; "
+                            "create a new promo code for a new season"
+                        )
+                if winner_limit < max_window:
+                    raise ValueError(
+                        f"Giveaway count cannot be below {max_window} claims already made in a window"
+                    )
+                connection.execute(
+                    """UPDATE giveaway_campaigns
+                       SET quota_bytes = ?, duration_days = ?, winner_limit = ?, active = 1,
+                           starts_at = ?, ends_at = ?, frequency = ?, updated_at = ?
+                       WHERE code = ?""",
+                    (
+                        quota_bytes,
+                        duration_days,
+                        winner_limit,
+                        starts_at.isoformat(),
+                        ends_at.isoformat(),
+                        frequency,
+                        now_text,
+                        normalized,
+                    ),
+                )
+            connection.execute(
+                "UPDATE giveaway_campaigns SET active = 0, updated_at = ? WHERE code != ? AND active = 1",
+                (now_text, normalized),
+            )
+        return self.giveaway_status(0, normalized, now=now)
+
+    def set_giveaway_active(
+        self, code: str, active: bool, now: datetime | None = None
+    ) -> dict[str, Any]:
+        normalized = str(code).strip().upper()
+        now_text = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            row = connection.execute(
+                "SELECT code FROM giveaway_campaigns WHERE UPPER(code) = ?", (normalized,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Promo campaign not found")
+            if active:
+                connection.execute(
+                    "UPDATE giveaway_campaigns SET active = 0, updated_at = ? WHERE code != ?",
+                    (now_text, row["code"]),
+                )
+            connection.execute(
+                "UPDATE giveaway_campaigns SET active = ?, updated_at = ? WHERE code = ?",
+                (1 if active else 0, now_text, row["code"]),
+            )
+        return self.giveaway_status(0, str(row["code"]), now=now)
+
+    def reconcile_giveaway_limits(self) -> int:
+        """Converge already-issued remote promo keys to their stored exact quota."""
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT k.outline_key_id, c.quota_bytes
+                   FROM giveaway_claims g
+                   JOIN giveaway_campaigns c ON c.code = g.campaign_code
+                   JOIN keys k ON k.id = g.key_id
+                   WHERE k.status IN ('active', 'revoke_failed')
+                     AND k.quota_reason IS NULL"""
+            ).fetchall()
+        if not rows:
+            return 0
+        remote = self.outline.list_keys()
+        items = remote.get("accessKeys", []) if isinstance(remote, dict) else []
+        if not isinstance(items, list):
+            raise OutlineError("Outline returned invalid access key data")
+        existing_ids = {
+            str(item.get("id"))
+            for item in items
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+        updated = 0
+        for row in rows:
+            key_id = str(row["outline_key_id"])
+            if key_id not in existing_ids:
+                continue
+            self.outline.set_data_limit(key_id, int(row["quota_bytes"]))
+            updated += 1
+        return updated
 
     def claim_giveaway(
         self,
@@ -175,10 +448,12 @@ class ClaimService:
         first_name: str,
         now: datetime | None = None,
         username: str | None = None,
+        code: str | None = None,
     ) -> GiveawayResult:
-        """Atomically issue one of five 100 GiB promotional entitlements."""
+        """Atomically issue one configured promotional entitlement."""
         now = (now or datetime.now(UTC)).astimezone(UTC)
         now_text = now.isoformat()
+        normalized = str(code or GIVEAWAY_CODE).strip().upper()
         key: dict[str, Any] | None = None
         with self.database.connect() as connection:
             self.database.begin_write(connection)
@@ -191,34 +466,82 @@ class ClaimService:
                 (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
             )
             self._lock_user(connection, telegram_id)
-            connection.execute(
-                """INSERT INTO giveaway_campaigns
-                   (code, quota_bytes, duration_days, winner_limit, claimed_count, active, created_at)
-                   VALUES (?, ?, 30, ?, 0, 1, ?)
-                   ON CONFLICT(code) DO NOTHING""",
-                (GIVEAWAY_CODE, GIVEAWAY_LIMIT_BYTES, GIVEAWAY_WINNER_LIMIT, now_text),
-            )
+            if normalized == GIVEAWAY_CODE:
+                connection.execute(
+                    """INSERT INTO giveaway_campaigns
+                       (code, quota_bytes, duration_days, winner_limit, claimed_count, active,
+                        created_at, frequency, updated_at)
+                       VALUES (?, ?, 30, ?, 0, 1, ?, 'campaign', ?)
+                       ON CONFLICT(code) DO NOTHING""",
+                    (
+                        GIVEAWAY_CODE,
+                        GIVEAWAY_LIMIT_BYTES,
+                        GIVEAWAY_WINNER_LIMIT,
+                        now_text,
+                        now_text,
+                    ),
+                )
             suffix = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
             campaign = connection.execute(
-                "SELECT * FROM giveaway_campaigns WHERE code = ?" + suffix,
-                (GIVEAWAY_CODE,),
+                "SELECT * FROM giveaway_campaigns WHERE UPPER(code) = ?" + suffix,
+                (normalized,),
             ).fetchone()
+            if campaign is None:
+                return GiveawayResult("unavailable", reason="Promo code is invalid or unavailable.")
             existing = connection.execute(
                 """SELECT g.winner_number, k.expires_at
                    FROM giveaway_claims g JOIN keys k ON k.id = g.key_id
                    WHERE g.campaign_code = ? AND g.telegram_id = ?""",
-                (GIVEAWAY_CODE, telegram_id),
+                (campaign["code"], telegram_id),
             ).fetchone()
-            remaining = max(0, int(campaign["winner_limit"]) - int(campaign["claimed_count"]))
+            window_start = self._campaign_window_start(campaign, now)
+            window = connection.execute(
+                """SELECT claimed_count FROM giveaway_windows
+                   WHERE campaign_code = ? AND window_start = ?""",
+                (campaign["code"], window_start),
+            ).fetchone()
+            if window is None:
+                initial_count = (
+                    int(campaign["claimed_count"])
+                    if str(campaign["frequency"] or "campaign") == "campaign"
+                    else 0
+                )
+                connection.execute(
+                    """INSERT INTO giveaway_windows
+                       (campaign_code, window_start, claimed_count) VALUES (?, ?, ?)""",
+                    (campaign["code"], window_start, initial_count),
+                )
+                window_claimed = initial_count
+            else:
+                window_claimed = int(window["claimed_count"])
+            remaining = max(0, int(campaign["winner_limit"]) - window_claimed)
             if existing is not None:
                 return GiveawayResult(
                     "already_won",
+                    code=str(campaign["code"]),
+                    quota_bytes=int(campaign["quota_bytes"]),
+                    duration_days=int(campaign["duration_days"]),
                     expires_at=datetime.fromisoformat(existing["expires_at"]),
                     winner_number=int(existing["winner_number"]),
                     remaining_slots=remaining,
                 )
-            if not bool(campaign["active"]) or remaining <= 0:
-                return GiveawayResult("full", remaining_slots=0)
+            state = self._campaign_state(campaign, now)
+            if state != "active":
+                return GiveawayResult(
+                    state,
+                    code=str(campaign["code"]),
+                    quota_bytes=int(campaign["quota_bytes"]),
+                    duration_days=int(campaign["duration_days"]),
+                    remaining_slots=remaining,
+                )
+            if remaining <= 0:
+                return GiveawayResult(
+                    "full",
+                    code=str(campaign["code"]),
+                    quota_bytes=int(campaign["quota_bytes"]),
+                    duration_days=int(campaign["duration_days"]),
+                    remaining_slots=0,
+                )
             if self._commerce_tables_exist(connection):
                 conflict = connection.execute(
                     """SELECT 1 FROM orders
@@ -238,11 +561,23 @@ class ClaimService:
                         reason="An open or completed paid order already belongs to this account.",
                     )
             key = self.outline.create_key(
-                _outline_key_name(telegram_id, username, "GIVEAWAY100GB", "30day", now),
-                GIVEAWAY_LIMIT_BYTES,
+                _outline_key_name(
+                    telegram_id,
+                    username,
+                    f"PROMO-{campaign['code']}",
+                    f"{int(campaign['duration_days'])}day",
+                    now,
+                ),
+                int(campaign["quota_bytes"]),
             )
-            expires_at = now + GIVEAWAY_PERIOD
-            winner_number = int(campaign["claimed_count"]) + 1
+            expires_at = now + timedelta(days=int(campaign["duration_days"]))
+            total_claimed = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
+                    (campaign["code"],),
+                ).fetchone()["n"]
+            )
+            winner_number = total_claimed + 1
             try:
                 connection.execute(
                     """INSERT INTO keys
@@ -254,7 +589,7 @@ class ClaimService:
                         str(key["id"]),
                         now_text,
                         expires_at.isoformat(),
-                        GIVEAWAY_LIMIT_BYTES,
+                        int(campaign["quota_bytes"]),
                     ),
                 )
                 key_row = connection.execute(
@@ -264,12 +599,23 @@ class ClaimService:
                     """INSERT INTO giveaway_claims
                        (campaign_code, telegram_id, key_id, winner_number, claimed_at)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (GIVEAWAY_CODE, telegram_id, key_row["id"], winner_number, now_text),
+                    (campaign["code"], telegram_id, key_row["id"], winner_number, now_text),
                 )
                 connection.execute(
-                    """UPDATE giveaway_campaigns SET claimed_count = claimed_count + 1
-                       WHERE code = ? AND claimed_count < winner_limit""",
-                    (GIVEAWAY_CODE,),
+                    """UPDATE giveaway_windows SET claimed_count = claimed_count + 1
+                       WHERE campaign_code = ? AND window_start = ?
+                         AND claimed_count < ?""",
+                    (campaign["code"], window_start, int(campaign["winner_limit"])),
+                )
+                connection.execute(
+                    """UPDATE giveaway_campaigns
+                       SET claimed_count = CASE
+                               WHEN claimed_count < winner_limit THEN claimed_count + 1
+                               ELSE claimed_count
+                           END,
+                           updated_at = ?
+                       WHERE code = ?""",
+                    (now_text, campaign["code"]),
                 )
             except Exception:
                 try:
@@ -278,6 +624,9 @@ class ClaimService:
                     raise
         return GiveawayResult(
             "won",
+            code=str(campaign["code"]),
+            quota_bytes=int(campaign["quota_bytes"]),
+            duration_days=int(campaign["duration_days"]),
             access_url=str(key["accessUrl"]),
             expires_at=expires_at,
             winner_number=winner_number,
@@ -325,8 +674,8 @@ class ClaimService:
             user = connection.execute(
                 "SELECT last_claim_at FROM users WHERE telegram_id = ?", (telegram_id,)
             ).fetchone()
-            if self._is_giveaway_winner(connection, telegram_id):
-                return ClaimResult(denied_reason="giveaway_winner")
+            if self._has_active_promo_gift(connection, telegram_id, now):
+                return ClaimResult(denied_reason="active_promo")
             if user["last_claim_at"]:
                 next_claim = datetime.fromisoformat(user["last_claim_at"]) + CLAIM_PERIOD
                 if now < next_claim:
@@ -387,8 +736,8 @@ class ClaimService:
             user = connection.execute(
                 "SELECT trial_claimed_at FROM users WHERE telegram_id = ?", (telegram_id,)
             ).fetchone()
-            if self._is_giveaway_winner(connection, telegram_id):
-                return ClaimResult(denied_reason="giveaway_winner")
+            if self._has_active_promo_gift(connection, telegram_id, now):
+                return ClaimResult(denied_reason="active_promo")
             if user["trial_claimed_at"]:
                 next_claim = datetime.fromisoformat(user["trial_claimed_at"]) + TRIAL_PERIOD
                 if now < next_claim:
@@ -551,9 +900,12 @@ class ClaimService:
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             rows = connection.execute(
-                """SELECT id, telegram_id, outline_key_id, data_limit_bytes,
-                          expires_at, quota_warning_percent
-                   FROM keys WHERE status = 'active'"""
+                """SELECT keys.id, keys.telegram_id, keys.outline_key_id,
+                          keys.data_limit_bytes, keys.expires_at,
+                          keys.quota_warning_percent, g.campaign_code
+                   FROM keys
+                   LEFT JOIN giveaway_claims g ON g.key_id = keys.id
+                   WHERE keys.status = 'active'"""
             ).fetchall()
             for row in rows:
                 try:
@@ -584,8 +936,8 @@ class ClaimService:
                         (dedupe_key,),
                     ).fetchone()
                     if existing is None:
-                        if quota == GIVEAWAY_LIMIT_BYTES:
-                            tier = "100 GiB giveaway"
+                        if row["campaign_code"]:
+                            tier = f"promo {row['campaign_code']}"
                         elif quota == TRIAL_LIMIT_BYTES:
                             tier = "monthly 3 GiB"
                         elif quota == PUBLIC_LIMIT_BYTES:
@@ -593,10 +945,11 @@ class ClaimService:
                         else:
                             tier = "free"
                         remaining_percent = remaining * 100 / quota
+                        formatter = _human_decimal_bytes if row["campaign_code"] else _human_bytes
                         text = (
                             f"Quota warning: your AuriX {tier} key has "
-                            f"{_human_bytes(remaining)} remaining "
-                            f"({remaining_percent:.1f}% of {_human_bytes(quota)}).\n"
+                            f"{formatter(remaining)} remaining "
+                            f"({remaining_percent:.1f}% of {formatter(quota)}).\n"
                             "This is based on Outline's trailing-30-day usage. "
                             "When no quota remains, the key will be blocked and deleted. "
                             f"Expires: {row['expires_at']}"
@@ -630,20 +983,22 @@ class ClaimService:
         now = datetime.now(UTC)
         with self.database.connect() as connection:
             rows = connection.execute(
-                """SELECT outline_key_id, key_type, created_at, expires_at, data_limit_bytes,
-                          status, last_usage_bytes, quota_reason,
+                """SELECT keys.outline_key_id, keys.key_type, keys.created_at,
+                          keys.expires_at, keys.data_limit_bytes, keys.status,
+                          keys.last_usage_bytes, keys.quota_reason,
+                          g.campaign_code,
                           (SELECT remote_state FROM key_termination_events e
                            WHERE e.key_id = keys.id ORDER BY e.detected_at DESC LIMIT 1) AS termination_state
                    FROM keys
-                   WHERE telegram_id = ?
-                     AND (status IN ('active', 'revoke_failed') OR quota_reason = 'quota')
-                   ORDER BY created_at DESC LIMIT 10""",
+                   LEFT JOIN giveaway_claims g ON g.key_id = keys.id
+                   WHERE keys.telegram_id = ?
+                     AND (keys.status IN ('active', 'revoke_failed') OR keys.quota_reason = 'quota')
+                   ORDER BY keys.created_at DESC LIMIT 10""",
                 (telegram_id,),
             ).fetchall()
         tiers = {
             300 * 1024**2: "Daily Free 300 MiB",
             3 * 1024**3: "Monthly Free 3 GiB",
-            GIVEAWAY_LIMIT_BYTES: "100 GiB Giveaway",
         }
         result = []
         for row in rows:
@@ -678,7 +1033,12 @@ class ClaimService:
                 {
                     "outline_key_id": key_id,
                     "key_type": row["key_type"],
-                    "tier": tiers.get(quota, "Free access"),
+                    "tier": (
+                        f"{quota / 1_000_000_000:g} GB Promo · {row['campaign_code']}"
+                        if row["campaign_code"]
+                        else tiers.get(quota, "Free access")
+                    ),
+                    "decimal_quota": bool(row["campaign_code"]),
                     "used_bytes": used,
                     "quota_bytes": quota,
                     "remaining_bytes": max(0, quota - used),

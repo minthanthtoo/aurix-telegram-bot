@@ -79,6 +79,52 @@ FREE_ACCESS_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS giveaway_claims_user ON giveaway_claims(telegram_id)",
         ),
     ),
+    Migration(
+        3,
+        "configurable_promo_campaigns",
+        sqlite_statements=(
+            "ALTER TABLE giveaway_campaigns ADD COLUMN starts_at TEXT",
+            "ALTER TABLE giveaway_campaigns ADD COLUMN ends_at TEXT",
+            "ALTER TABLE giveaway_campaigns ADD COLUMN frequency TEXT NOT NULL DEFAULT 'campaign'",
+            "ALTER TABLE giveaway_campaigns ADD COLUMN updated_at TEXT",
+            """CREATE TABLE IF NOT EXISTS giveaway_windows (
+                   campaign_code TEXT NOT NULL REFERENCES giveaway_campaigns(code),
+                   window_start TEXT NOT NULL,
+                   claimed_count INTEGER NOT NULL DEFAULT 0 CHECK (claimed_count >= 0),
+                   PRIMARY KEY (campaign_code, window_start)
+               )""",
+            """INSERT INTO giveaway_campaigns
+               (code, quota_bytes, duration_days, winner_limit, claimed_count, active,
+                created_at, frequency, updated_at)
+               VALUES ('100GBFREE', 100000000000, 30, 5, 0, 1,
+                       '2026-08-27T00:00:00+00:00', 'campaign', '2026-08-27T00:00:00+00:00')
+               ON CONFLICT(code) DO NOTHING""",
+            "UPDATE giveaway_campaigns SET quota_bytes = 100000000000 WHERE code = '100GBFREE'",
+            """UPDATE keys SET data_limit_bytes = 100000000000
+               WHERE id IN (SELECT key_id FROM giveaway_claims WHERE campaign_code = '100GBFREE')""",
+        ),
+        postgres_statements=(
+            "ALTER TABLE giveaway_campaigns ADD COLUMN IF NOT EXISTS starts_at TEXT",
+            "ALTER TABLE giveaway_campaigns ADD COLUMN IF NOT EXISTS ends_at TEXT",
+            "ALTER TABLE giveaway_campaigns ADD COLUMN IF NOT EXISTS frequency TEXT NOT NULL DEFAULT 'campaign'",
+            "ALTER TABLE giveaway_campaigns ADD COLUMN IF NOT EXISTS updated_at TEXT",
+            """CREATE TABLE IF NOT EXISTS giveaway_windows (
+                   campaign_code TEXT NOT NULL REFERENCES giveaway_campaigns(code),
+                   window_start TEXT NOT NULL,
+                   claimed_count INTEGER NOT NULL DEFAULT 0 CHECK (claimed_count >= 0),
+                   PRIMARY KEY (campaign_code, window_start)
+               )""",
+            """INSERT INTO giveaway_campaigns
+               (code, quota_bytes, duration_days, winner_limit, claimed_count, active,
+                created_at, frequency, updated_at)
+               VALUES ('100GBFREE', 100000000000, 30, 5, 0, 1,
+                       '2026-08-27T00:00:00+00:00', 'campaign', '2026-08-27T00:00:00+00:00')
+               ON CONFLICT(code) DO NOTHING""",
+            "UPDATE giveaway_campaigns SET quota_bytes = 100000000000 WHERE code = '100GBFREE'",
+            """UPDATE keys SET data_limit_bytes = 100000000000
+               WHERE id IN (SELECT key_id FROM giveaway_claims WHERE campaign_code = '100GBFREE')""",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (

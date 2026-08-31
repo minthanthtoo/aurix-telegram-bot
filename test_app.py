@@ -33,6 +33,7 @@ class FakeOutline:
         self.create_lock = threading.Lock()
         self.create_delay = 0.0
         self.transfer = {}
+        self.data_limits = []
 
     def create_key(self, name, limit_bytes):
         if self.create_delay:
@@ -47,8 +48,8 @@ class FakeOutline:
     def delete_key(self, key_id):
         self.deleted.append(key_id)
 
-    def set_data_limit(self, _key_id, _limit_bytes):
-        return None
+    def set_data_limit(self, key_id, limit_bytes):
+        self.data_limits.append((str(key_id), int(limit_bytes)))
 
     def get_key(self, key_id):
         if str(key_id) in self.deleted:
@@ -236,7 +237,7 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(len(successes), 1)
         self.assertEqual(len(self.outline.created), 1)
 
-    def test_giveaway_issues_exactly_five_unique_100_gib_winners(self):
+    def test_giveaway_issues_exactly_five_unique_100_gb_winners(self):
         results = [
             self.service.claim_giveaway(user_id, f"User {user_id}", self.now)
             for user_id in range(1, 7)
@@ -246,9 +247,9 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual([item.winner_number for item in results[:5]], [1, 2, 3, 4, 5])
         self.assertTrue(all(item.remaining_slots == 0 for item in results[4:]))
         self.assertEqual(len(self.outline.created), 5)
-        self.assertTrue(all(item[1] == 100 * 1024**3 for item in self.outline.created))
+        self.assertTrue(all(item[1] == 100_000_000_000 for item in self.outline.created))
         self.assertEqual(
-            self.outline.created[0][0], "1-GIVEAWAY100GB-30day-202608270307"
+            self.outline.created[0][0], "1-PROMO-100GBFREE-30day-202608270307"
         )
 
     def test_concurrent_giveaway_claims_cannot_oversubscribe_five_slots(self):
@@ -272,7 +273,7 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(sorted(item.winner_number for item in winners), [1, 2, 3, 4, 5])
         self.assertEqual(len(self.outline.created), 5)
 
-    def test_giveaway_retry_is_idempotent_and_win_is_terminal(self):
+    def test_giveaway_retry_is_idempotent_while_normal_plans_are_temporarily_paused(self):
         won = self.service.claim_giveaway(123, "Min", self.now, username="min")
         retried = self.service.claim_giveaway(123, "Min", self.now + timedelta(minutes=1))
 
@@ -280,10 +281,10 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(retried.outcome, "already_won")
         self.assertEqual(retried.winner_number, 1)
         self.assertEqual(len(self.outline.created), 1)
-        self.assertEqual(self.service.claim(123, "Min", self.now).denied_reason, "giveaway_winner")
+        self.assertEqual(self.service.claim(123, "Min", self.now).denied_reason, "active_promo")
         self.assertEqual(
             self.service.claim_trial(123, "Min", self.now).denied_reason,
-            "giveaway_winner",
+            "active_promo",
         )
 
     def test_failed_giveaway_provisioning_does_not_consume_slot(self):
@@ -298,9 +299,80 @@ class ClaimServiceTest(unittest.TestCase):
 
     def test_giveaway_usage_is_labeled_separately_from_paid_plan(self):
         self.service.claim_giveaway(123, "Min", self.now)
-        usage = self.service.user_usage(123, {"1": 25 * 1024**3})
-        self.assertEqual(usage[0]["tier"], "100 GiB Giveaway")
-        self.assertEqual(usage[0]["remaining_bytes"], 75 * 1024**3)
+        usage = self.service.user_usage(123, {"1": 25_000_000_000})
+        self.assertEqual(usage[0]["tier"], "100 GB Promo · 100GBFREE")
+        self.assertEqual(usage[0]["remaining_bytes"], 75_000_000_000)
+        self.assertTrue(usage[0]["decimal_quota"])
+
+    def test_custom_hourly_promo_resets_capacity_but_each_account_claims_once(self):
+        campaign = self.service.configure_giveaway(
+            code="HOUR12",
+            quota_bytes=12_500_000_000,
+            duration_days=7,
+            winner_limit=2,
+            frequency="hourly",
+            starts_at=self.now - timedelta(hours=1),
+            ends_at=self.now + timedelta(days=2),
+            now=self.now,
+        )
+        self.assertEqual(campaign["quota_bytes"], 12_500_000_000)
+        self.assertEqual(campaign["campaign_state"], "active")
+
+        first = self.service.claim_giveaway(1, "One", self.now, code="hour12")
+        second = self.service.claim_giveaway(2, "Two", self.now, code="HOUR12")
+        full = self.service.claim_giveaway(3, "Three", self.now, code="HOUR12")
+        next_window = self.service.claim_giveaway(
+            3, "Three", self.now + timedelta(hours=1), code="HOUR12"
+        )
+        repeated = self.service.claim_giveaway(
+            1, "One", self.now + timedelta(hours=1), code="HOUR12"
+        )
+
+        self.assertEqual([first.outcome, second.outcome, full.outcome], ["won", "won", "full"])
+        self.assertEqual(next_window.outcome, "won")
+        self.assertEqual(repeated.outcome, "already_won")
+        status = self.service.giveaway_status(4, "HOUR12", self.now + timedelta(hours=1))
+        self.assertEqual(status["window_claimed_count"], 1)
+        self.assertEqual(status["remaining_slots"], 1)
+
+    def test_normal_free_plans_restore_when_gift_or_campaign_ends(self):
+        self.service.claim_giveaway(123, "Min", self.now)
+        self.assertEqual(
+            self.service.claim(123, "Min", self.now).denied_reason,
+            "active_promo",
+        )
+
+        self.service.set_giveaway_active("100GBFREE", False, now=self.now)
+        daily = self.service.claim(123, "Min", self.now)
+        monthly = self.service.claim_trial(123, "Min", self.now)
+        self.assertIsNotNone(daily.access_url)
+        self.assertIsNotNone(monthly.access_url)
+
+        self.service.set_giveaway_active("100GBFREE", True, now=self.now)
+        other = self.service.claim_giveaway(456, "Other", self.now)
+        self.assertEqual(other.outcome, "won")
+        after_expiry = self.service.claim(456, "Other", self.now + timedelta(days=31))
+        self.assertIsNotNone(after_expiry.access_url)
+
+    def test_quota_exhaustion_restores_regular_free_plans(self):
+        gift = self.service.claim_giveaway(123, "Min", self.now)
+        self.assertEqual(gift.quota_bytes, 100_000_000_000)
+
+        self.service.enforce_quota(
+            self.now,
+            {"bytesTransferredByUserId": {"1": 100_000_000_000}},
+        )
+
+        self.assertIsNotNone(self.service.claim(123, "Min", self.now).access_url)
+
+    def test_startup_reconciles_existing_remote_promo_to_exact_decimal_quota(self):
+        self.service.claim_giveaway(123, "Min", self.now)
+        self.outline.data_limits.clear()
+
+        reconciled = self.service.reconcile_giveaway_limits()
+
+        self.assertEqual(reconciled, 1)
+        self.assertEqual(self.outline.data_limits, [("1", 100_000_000_000)])
 
     def test_outline_key_id_conflict_rejected(self):
         # Verify UNIQUE constraint on outline_key_id exists in schema
@@ -615,8 +687,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 123,
                 "AuriX VPN\n\n"
                 "Choose an action below. Everyone can claim 300 MB daily or "
-                "3 GB every 30 days, with 50 GB and 100 GB paid upgrades. "
-                "The first five eligible users to type 100GBFREE receive 100 GiB for 30 days.\n\n"
+                "3 GB every 30 days, with 50 GB and 100 GB paid upgrades.\n"
+                "Active promo: 100GBFREE · 100 GB / 30 days.\n\n"
                 "No key is issued until you choose an action. For payment, create an upgrade "
                 "order and send only the receipt screenshot.",
             ),
@@ -642,11 +714,12 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
         self.assertEqual(len(self.bot.sent), 1)
         self.assertIn("🎉 AuriX VPN မှ ကြိုဆိုပါတယ်!", self.bot.sent[0][1])
-        self.assertIn("100 GB Outline VPN Key • 30 ရက် • အခမဲ့", self.bot.sent[0][1])
-        self.assertIn("🔥 အခု နေရာ 5 နေရာ ကျန်ပါတယ်။", self.bot.sent[0][1])
+        self.assertIn("100 GB Outline VPN • 30 days • Free", self.bot.sent[0][1])
+        self.assertIn("🔥 5/5 gifts available for the whole campaign", self.bot.sent[0][1])
         self.assertIn("100GBFREE", self.bot.sent[0][1])
-        self.assertIn("ငွေလွှဲ/ပြေစာ မလိုပါ", self.bot.sent[0][1])
-        self.assertIn("SIM Data မဟုတ်ပါ", self.bot.sent[0][1])
+        self.assertIn("No payment or receipt", self.bot.sent[0][1])
+        self.assertIn("not SIM/mobile data", self.bot.sent[0][1])
+        self.assertIn("return automatically", self.bot.sent[0][1])
         promo_buttons = self.bot.markups[-1]["inline_keyboard"][0]
         self.assertEqual(
             next(button for button in promo_buttons if button["text"] == "📋 Copy Promo Code")[
@@ -703,6 +776,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                     {"text": "🔁 Failed Jobs", "callback_data": "a:n:failed"},
                     {"text": "🚨 Enforcement", "callback_data": "a:n:enforcement"},
                 ],
+                [{"text": "🎁 Promo Settings", "callback_data": "a:n:promo"}],
                 [{"text": "🏠 Customer Menu", "callback_data": "n:menu"}],
             ]
         }
@@ -1382,8 +1456,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
     def test_giveaway_keyword_updates_status_hides_acquisition_and_blocks_orders(self):
         self.bot.handle(self.message(123, "100gbfree"))
-        self.assertIn("giveaway winner #1 of 5", self.bot.sent[-1][1])
-        self.assertIn("100 GiB / 30-day Outline key", self.bot.sent[-1][1])
+        self.assertIn("Promo gift #1: 100GBFREE", self.bot.sent[-1][1])
+        self.assertIn("100 GB / 30-day Outline key", self.bot.sent[-1][1])
         buttons = [
             button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         ]
@@ -1391,8 +1465,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(copy_button["copy_text"], {"text": "ss://secret"})
 
         self.bot.handle(self.message(123, "/status"))
-        self.assertIn("100 GiB Giveaway", self.bot.sent[-1][1])
-        self.assertIn("Giveaway winner #1", self.bot.sent[-1][1])
+        self.assertIn("100 GB Promo · 100GBFREE", self.bot.sent[-1][1])
+        self.assertIn("Promo gift #1", self.bot.sent[-1][1])
         labels = {
             button["text"]
             for row in self.bot.markups[-1]["inline_keyboard"]
@@ -1401,7 +1475,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertNotIn("💎 Plans & Upgrade", labels)
 
         self.bot.handle(self.message(123, "/buy basic_50gb"))
-        self.assertIn("final AuriX entitlement", self.bot.sent[-1][1])
+        self.assertIn("promo VPN gift is currently active", self.bot.sent[-1][1])
         self.assertEqual(self.commerce.list_user_orders(123), [])
 
     def test_promo_redeem_button_claims_the_registered_campaign(self):
@@ -1415,7 +1489,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             }
         )
 
-        self.assertIn("giveaway winner #1 of 5", self.bot.sent[-1][1])
+        self.assertIn("Promo gift #1: 100GBFREE", self.bot.sent[-1][1])
         self.assertEqual(len(self.outline.created), 1)
 
     def test_plans_exposes_native_copy_for_active_registered_promo(self):
@@ -1430,6 +1504,66 @@ class TelegramBotCommerceTest(unittest.TestCase):
             ],
             {"text": "100GBFREE"},
         )
+
+    def test_admin_can_configure_and_stop_a_custom_promo_with_confirmation(self):
+        command = (
+            "/setpromo QUICK10 10 7 3 daily "
+            "2026-08-01T00:00Z 2026-09-30T00:00Z"
+        )
+        self.bot.handle(self.message(999, command))
+        confirm = next(
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["text"] == "🎁 Confirm Promo"
+        )
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "confirm-promo",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": confirm["callback_data"],
+            }
+        )
+
+        configured = self.bot.service.giveaway_status(123, "QUICK10")
+        self.assertEqual(configured["quota_bytes"], 10_000_000_000)
+        self.assertEqual(configured["duration_days"], 7)
+        self.assertEqual(configured["winner_limit"], 3)
+        self.assertEqual(configured["frequency"], "daily")
+
+        self.bot.handle(self.message(999, "/promo"))
+        self.assertIn("Code: QUICK10", self.bot.sent[-1][1])
+        self.assertIn("Gift: 10 GB / 7 days", self.bot.sent[-1][1])
+        labels = {
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        }
+        self.assertIn("⏸ Stop Promo", labels)
+        self.assertIn("📋 Copy Setup Example", labels)
+
+    def test_customer_actions_return_after_promo_season_is_stopped(self):
+        self.bot.handle(self.message(123, "100GBFREE"))
+        self.bot.handle(self.message(123, "/help"))
+        locked_labels = {
+            button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
+        }
+        self.assertNotIn("🎁 Daily 300MB", locked_labels)
+        self.assertNotIn("💎 Plans & Upgrade", locked_labels)
+
+        self.bot.service.set_giveaway_active("100GBFREE", False)
+        self.bot.handle(self.message(123, "/help"))
+        restored_labels = {
+            button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
+        }
+        self.assertIn("🎁 Daily 300MB", restored_labels)
+        self.assertIn("🚀 Monthly 3GB", restored_labels)
+        self.assertIn("💎 Plans & Upgrade", restored_labels)
+
+        order = self.commerce.create_order(123, "Min", "basic_50gb")
+        self.assertTrue(order.created)
 
     def test_open_paid_order_makes_user_ineligible_for_giveaway(self):
         self.commerce.create_order(123, "Min", "basic_50gb")
@@ -1563,6 +1697,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "whoami",
                 "help",
                 "admin",
+                "promo",
             },
         )
 

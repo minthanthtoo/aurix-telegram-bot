@@ -82,11 +82,7 @@ class TelegramCallbackMixin:
             return
         scope, action, entity_id = parts
         if scope == "g" and action == "c":
-            promo_command = self.PROMO_CODE_COMMANDS.get(entity_id.upper())
-            if promo_command is None:
-                self.send(chat_id, "This promo code is no longer available. Open Plans to refresh.")
-                return
-            synthetic["text"] = promo_command
+            synthetic["text"] = f"/claimpromo {entity_id.upper()}"
             self.handle(synthetic)
         elif scope == "o" and action == "v":
             self._send_order_detail(chat_id, telegram_id, entity_id)
@@ -201,6 +197,7 @@ class TelegramCallbackMixin:
                     "reconcile": "/reconcile",
                     "failed": "/failed",
                     "enforcement": "/enforcement",
+                    "promo": "/promo",
                 }
                 target = admin_navigation.get(entity_id)
                 if target is None:
@@ -228,6 +225,25 @@ class TelegramCallbackMixin:
                     [entity_id],
                     f"Retry worker job {entity_id}?",
                     "Confirm Retry",
+                )
+            elif action == "g":
+                try:
+                    promo_action, promo_code = entity_id.split(":", 1)
+                except ValueError:
+                    self.send(chat_id, "This promo action is no longer valid.")
+                    return
+                command = "/stoppromo" if promo_action == "stop" else "/resumepromo"
+                if promo_action not in {"stop", "resume"}:
+                    self.send(chat_id, "This promo action is no longer valid.")
+                    return
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    command,
+                    [promo_code],
+                    f"{promo_action.title()} promo {promo_code}?",
+                    "Confirm Promo Change",
+                    cancel_data="a:n:promo",
                 )
             elif action == "h":
                 self._queue_admin_confirmation(

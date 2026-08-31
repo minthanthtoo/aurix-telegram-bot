@@ -103,21 +103,33 @@ class CommerceService(CommerceWorkerMixin):
             ).fetchone()
 
     @staticmethod
-    def _assert_not_giveaway_winner(connection: Any, telegram_id: int) -> None:
+    def _assert_no_active_promo(connection: Any, telegram_id: int) -> None:
         if not isinstance(connection, _PostgresConnection):
             table = connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'giveaway_claims'"
             ).fetchone()
             if table is None:
                 return
+        now_text = _now_text()
         winner = connection.execute(
-            "SELECT 1 FROM giveaway_claims WHERE telegram_id = ? LIMIT 1",
-            (telegram_id,),
+            """SELECT 1
+               FROM giveaway_claims g
+               JOIN giveaway_campaigns c ON c.code = g.campaign_code
+               JOIN keys k ON k.id = g.key_id
+               WHERE g.telegram_id = ?
+                 AND c.active = 1
+                 AND (c.starts_at IS NULL OR c.starts_at <= ?)
+                 AND (c.ends_at IS NULL OR c.ends_at > ?)
+                 AND k.status IN ('active', 'revoke_failed')
+                 AND k.expires_at > ?
+                 AND k.quota_reason IS NULL
+               LIMIT 1""",
+            (telegram_id, now_text, now_text, now_text),
         ).fetchone()
         if winner is not None:
             raise CommerceError(
-                "Your 100 GiB giveaway win is your final AuriX entitlement; "
-                "additional free or paid plans are disabled for this account."
+                "Your promo VPN gift is currently active. Normal plans return automatically "
+                "when the gift or promo season ends."
             )
 
     def initialize(self) -> None:
@@ -207,7 +219,7 @@ class CommerceService(CommerceWorkerMixin):
                     "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
                     (telegram_id,),
                 ).fetchone()
-            self._assert_not_giveaway_winner(connection, telegram_id)
+            self._assert_no_active_promo(connection, telegram_id)
             existing = connection.execute(
                 """SELECT * FROM orders
                    WHERE telegram_id = ?
@@ -285,7 +297,7 @@ class CommerceService(CommerceWorkerMixin):
                     "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
                     (telegram_id,),
                 ).fetchone()
-            self._assert_not_giveaway_winner(connection, telegram_id)
+            self._assert_no_active_promo(connection, telegram_id)
             existing = connection.execute(
                 """SELECT * FROM orders
                    WHERE telegram_id = ? AND status IN ('awaiting_payment', 'payment_submitted')
@@ -681,7 +693,7 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
-            self._assert_not_giveaway_winner(connection, telegram_id)
+            self._assert_no_active_promo(connection, telegram_id)
             if order["status"] == "approved":
                 raise CommerceError("Order is already approved")
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
@@ -791,7 +803,7 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
-            self._assert_not_giveaway_winner(connection, telegram_id)
+            self._assert_no_active_promo(connection, telegram_id)
             if order["status"] == "approved":
                 raise CommerceError("Order is already approved")
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
@@ -1431,7 +1443,7 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
-            self._assert_not_giveaway_winner(connection, telegram_id)
+            self._assert_no_active_promo(connection, telegram_id)
             if order["status"] == "approved":
                 return "already_approved"
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
@@ -1567,7 +1579,7 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None:
                 raise CommerceError("Order not found")
-            self._assert_not_giveaway_winner(connection, int(order["telegram_id"]))
+            self._assert_no_active_promo(connection, int(order["telegram_id"]))
             if order["status"] == "approved":
                 subscription = connection.execute(
                     "SELECT id FROM subscriptions WHERE order_id = ?", (order_id,)

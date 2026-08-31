@@ -678,15 +678,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "7749dae396236cf2da3700dcdb75ceebb932eafc88a38e079ac65c1cd8119992",
+            "b6a77ab7d7c3bc940f27f1177e4bb9a8e3d704b6b507a7c0578523c0bb3c97c7",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "9b265f0decf7a80476e2f03d7e0553a46e6c1ead78b7b58ee3c296ab69e52f63",
+            "c0ab23a423eb91b4f7681d222c080fba9336d98cc3d7529e264144bbde4aebf5",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "6d8c7766e8a1dca8025b39a3b9900b4fe4c9be81e9a0aee54505198f9915118d",
+            "aac6567baab1670b19f08209e4d24f43cb04003e302f88628bfb64a31fdfa7d0",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

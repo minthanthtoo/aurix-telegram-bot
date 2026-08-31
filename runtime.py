@@ -114,6 +114,13 @@ def main() -> None:
     except OutlineError as exc:
         raise SystemExit(f"Outline readiness check failed: {exc}") from exc
     print(f"Outline connected: version {outline_info.get('version', 'unknown')}")
+    claim_service = ClaimService(database, outline, limit_bytes=PUBLIC_LIMIT_BYTES)
+    try:
+        promo_limits_reconciled = claim_service.reconcile_giveaway_limits()
+    except OutlineError as exc:
+        raise SystemExit(f"Promo quota readiness check failed: {exc}") from exc
+    if promo_limits_reconciled:
+        print(f"Promo quotas reconciled: {promo_limits_reconciled} active key(s)")
 
     def parse_ids(name: str) -> set[int]:
         try:
@@ -158,7 +165,7 @@ def main() -> None:
         )
     bot = TelegramBot(
         token,
-        ClaimService(database, outline, limit_bytes=PUBLIC_LIMIT_BYTES),
+        claim_service,
         commerce,
         admin_ids,
         trial_ids,

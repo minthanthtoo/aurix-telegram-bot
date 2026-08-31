@@ -3,10 +3,35 @@
 from __future__ import annotations
 
 import sys
+import re
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from commerce import CommerceError
 from entitlements import OutlineError
+
+UTC = timezone.utc
+
+
+def _parse_promo_datetime(value: str) -> datetime:
+    normalized = str(value).strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _promo_gb_to_bytes(value: str) -> int:
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError("Promo quota must be a number of decimal GB") from exc
+    if not amount.is_finite():
+        raise ValueError("Promo quota must be a finite number")
+    return int(amount * Decimal(1_000_000_000))
 
 
 class TelegramCommandMixin:
@@ -37,7 +62,11 @@ class TelegramCommandMixin:
         if not isinstance(text, str) or not text.strip():
             return
         raw_text = text.strip()
-        text = self.PROMO_CODE_COMMANDS.get(raw_text.upper())
+        text = None
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{2,31}", raw_text):
+            promo = self.service.giveaway_status(telegram_id, raw_text)
+            if promo["exists"]:
+                text = f"/claimpromo {promo['code']}"
         if text is None:
             text = self.CUSTOMER_BUTTON_COMMANDS.get(raw_text)
         if text is None and self._is_admin(telegram_id):
@@ -51,6 +80,22 @@ class TelegramCommandMixin:
         if command in self.ADMIN_ONLY_COMMANDS and not self._is_admin(telegram_id):
             self._send_customer_fallback(chat["id"], telegram_id)
             return
+        if command == "/setpromo" and not confirmed and len(args) == 7:
+            try:
+                _promo_gb_to_bytes(args[1])
+                int(args[2])
+                int(args[3])
+                if args[4].lower() not in {"campaign", "daily", "hourly"}:
+                    raise ValueError("invalid frequency")
+                _parse_promo_datetime(args[5])
+                _parse_promo_datetime(args[6])
+            except (ValueError, OverflowError):
+                self.send(
+                    chat["id"],
+                    "Invalid promo settings. Use: /setpromo CODE QUOTA_GB DAYS COUNT "
+                    "campaign|daily|hourly FROM_UTC TO_UTC",
+                )
+                return
         if command in self.ADMIN_CONFIRMATION_COMMANDS and not confirmed:
             # Validate syntax before presenting a challenge, but never mutate
             # commerce state from a directly typed administrative command.
@@ -64,6 +109,10 @@ class TelegramCommandMixin:
                 pass
             elif command == "/rejectreceipt" and not args:
                 pass
+            elif command == "/setpromo" and len(args) != 7:
+                pass
+            elif command in {"/stoppromo", "/resumepromo"} and len(args) != 1:
+                pass
             else:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
@@ -72,6 +121,9 @@ class TelegramCommandMixin:
                     "/refund": lambda: f"Refund order {args[0]} to the customer wallet and revoke paid access?",
                     "/verify": lambda: f"Verify receipt {args[0]} for transaction {args[1]} and amount {args[2]}?",
                     "/rejectreceipt": lambda: f"Reject receipt {args[0]} and request a replacement screenshot?",
+                    "/setpromo": lambda: f"Activate promo campaign {args[0]} with these settings?",
+                    "/stoppromo": lambda: f"Stop promo campaign {args[0]}?",
+                    "/resumepromo": lambda: f"Resume promo campaign {args[0]}?",
                 }[command]()
                 self._queue_admin_confirmation(
                     chat["id"],
@@ -86,6 +138,9 @@ class TelegramCommandMixin:
                         "/refund": "💸 Confirm Refund",
                         "/verify": "✅ Confirm Verify",
                         "/rejectreceipt": "🛑 Confirm Receipt Rejection",
+                        "/setpromo": "🎁 Confirm Promo",
+                        "/stoppromo": "⏸ Confirm Stop",
+                        "/resumepromo": "▶ Confirm Resume",
                     }[command],
                 )
                 return
@@ -93,37 +148,54 @@ class TelegramCommandMixin:
             if command == "/start":
                 giveaway = self.service.giveaway_status(telegram_id)
                 remaining = int(giveaway["remaining_slots"])
-                availability = (
-                    f"🔥 အခု နေရာ {remaining} နေရာ ကျန်ပါတယ်။"
-                    if remaining > 0
-                    else "ပြည့်သွားပါပြီ — Launch Promo ၅ နေရာလုံး ရယူပြီးပါပြီ။"
-                )
-                welcome_text = (
-                    "🎉 AuriX VPN မှ ကြိုဆိုပါတယ်!\n\n"
-                    "🎁 Launch Promo\n"
-                    "အရည်အချင်းပြည့်မီပြီး အရင်ဆုံးရောက်လာတဲ့ ၅ ယောက်အတွက်\n"
-                    "100 GB Outline VPN Key • 30 ရက် • အခမဲ့\n"
-                    f"{availability}\n\n"
-                    "👇 ရယူဖို့ ဒီကုဒ်တစ်ကြောင်းပဲ ပို့ပါ\n"
-                    "100GBFREE\n\n"
-                    "ငွေလွှဲ/ပြေစာ မလိုပါ။ မဲနှိုက်တာ မဟုတ်ပါ — နေရာကျန်သရွေ့ "
-                    "အရင်ရောက် ၅ ယောက် ရပါမယ်။\n\n"
-                    "⚠️ လက်ရှိ Paid Order/Subscription ရှိသူ မပါဝင်နိုင်ပါ။ ရပြီးနောက် "
-                    "အခြား AuriX Free/Paid Plan, Renewal နဲ့ Replacement မရတော့ပါ။ "
-                    "Account တစ်ခုလျှင် Key တစ်ခုသာ။\n\n"
-                    "ℹ️ 100 GB သည် Outline VPN အသုံးပြုခွင့်ဖြစ်ပြီး SIM Data မဟုတ်ပါ။ "
-                    "အမြန်နှုန်းနှင့် ချိတ်ဆက်မှုသည် Network, ISP နှင့် Server အခြေအနေအပေါ် "
-                    "မူတည်နိုင်ပါတယ်။\n\n"
-                    "အကူအညီ — https://t.me/+oA18TDWAD9NiNWU1\n"
-                    "သတင်း — https://t.me/AurixDigitalStore\n\n"
-                    "AuriX သည် Outline Foundation ၏ တရားဝင်မိတ်ဖက် မဟုတ်ပါ။"
-                )
+                if giveaway["exists"] and giveaway["campaign_state"] in {
+                    "active",
+                    "scheduled",
+                }:
+                    quota = self._promo_quota_label(giveaway["quota_bytes"])
+                    availability = (
+                        f"🔥 {remaining}/{giveaway['winner_limit']} gifts available "
+                        f"{self._promo_frequency_label(giveaway['frequency'])}."
+                        if giveaway["campaign_state"] == "active" and remaining > 0
+                        else "⏳ This promo is scheduled; Redeem appears when it starts."
+                    )
+                    welcome_text = (
+                        "🎉 AuriX VPN မှ ကြိုဆိုပါတယ်!\n\n"
+                        f"🎁 Promo: {giveaway['code']}\n"
+                        f"{quota} Outline VPN • {giveaway['duration_days']} days • Free\n"
+                        f"{availability}\n\n"
+                        f"👇 Tap Redeem or send {giveaway['code']} exactly. "
+                        "No payment or receipt.\n\n"
+                        "While both the promo season and your gift are active, other plans pause. "
+                        "Daily 300 MB, monthly 3 GB, and paid plans return automatically when "
+                        "the season or your gift ends. One gift per account per campaign.\n\n"
+                        "ℹ️ This is Outline VPN allowance, not SIM/mobile data. Network speed "
+                        "depends on your ISP and server conditions.\n\n"
+                        "အကူအညီ — https://t.me/+oA18TDWAD9NiNWU1\n"
+                        "သတင်း — https://t.me/AurixDigitalStore\n\n"
+                        "AuriX is not an official Outline Foundation partner."
+                    )
+                else:
+                    welcome_text = (
+                        "🎉 Welcome to AuriX VPN!\n\n"
+                        "The seasonal promo is currently closed. Your regular choices are ready: "
+                        "daily 300 MB, monthly 3 GB, and paid 50/100 GB plans."
+                    )
             else:
+                giveaway = self.service.giveaway_status(telegram_id)
+                promo_line = (
+                    f"Active promo: {giveaway['code']} · "
+                    f"{self._promo_quota_label(giveaway['quota_bytes'])} / "
+                    f"{giveaway['duration_days']} days.\n"
+                    if giveaway["exists"] and giveaway["active"]
+                    else "No promo season is active now.\n"
+                )
                 welcome_text = (
                     "AuriX VPN\n\n"
                     "Choose an action below. Everyone can claim 300 MB daily or "
-                    "3 GB every 30 days, with 50 GB and 100 GB paid upgrades. "
-                    "The first five eligible users to type 100GBFREE receive 100 GiB for 30 days.\n\n"
+                    "3 GB every 30 days, with 50 GB and 100 GB paid upgrades.\n"
+                    + promo_line
+                    + "\n"
                     "No key is issued until you choose an action. For payment, create an upgrade "
                     "order and send only the receipt screenshot."
                 )
@@ -144,10 +216,11 @@ class TelegramCommandMixin:
                 f"Your Telegram ID: {telegram_id}{access}",
                 self._customer_keyboard(telegram_id),
             )
-        elif command == "/giveaway100gb":
+        elif command in {"/claimpromo", "/giveaway100gb"}:
+            promo_code = args[0] if command == "/claimpromo" and args else None
             try:
                 result = self.service.claim_giveaway(
-                    telegram_id, first_name, username=username
+                    telegram_id, first_name, username=username, code=promo_code
                 )
             except OutlineError:
                 self.send(
@@ -156,13 +229,15 @@ class TelegramCommandMixin:
                 )
                 return
             if result.outcome == "won":
+                quota = self._promo_quota_label(int(result.quota_bytes or 0))
                 self.send(
                     chat["id"],
-                    f"🎉 You are giveaway winner #{result.winner_number} of 5!\n\n"
-                    f"Your 100 GiB / 30-day Outline key:\n\n{result.access_url}\n\n"
+                    f"🎉 Promo gift #{result.winner_number}: {result.code}\n\n"
+                    f"Your {quota} / {result.duration_days}-day Outline key:\n\n"
+                    f"{result.access_url}\n\n"
                     f"Expires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-                    "This is your final AuriX entitlement. Daily, monthly-free, paid, "
-                    "renewal, and replacement plans are now permanently disabled for this account.",
+                    "Normal plans are paused only while both this gift and its promo season "
+                    "remain active; they return automatically afterward.",
                     self._key_delivery_keyboard(str(result.access_url)),
                 )
             elif result.outcome == "already_won":
@@ -170,13 +245,22 @@ class TelegramCommandMixin:
                     chat["id"],
                     f"You already won slot #{result.winner_number}. No second key or slot was created.\n"
                     f"Expires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
-                    "Open My VPN to retrieve the key and track its usage.",
+                    "Open My VPN to retrieve the key and track usage. Regular plans are available "
+                    "again after the gift or season ends.",
                     self._customer_keyboard(telegram_id),
                 )
             elif result.outcome == "ineligible":
                 self.send(chat["id"], f"This account is not eligible: {result.reason}")
+            elif result.outcome == "scheduled":
+                self.send(chat["id"], "This promo has not started yet. Open Plans later to refresh.")
+            elif result.outcome in {"ended", "paused", "unavailable"}:
+                self.send(
+                    chat["id"],
+                    result.reason or "This promo is not active. Your regular plans remain available.",
+                    self._customer_keyboard(telegram_id),
+                )
             else:
-                self.send(chat["id"], "The 5 × 100 GiB giveaway is fully claimed.")
+                self.send(chat["id"], "This promo's current giveaway window is fully claimed.")
         elif command == "/admin":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -205,6 +289,101 @@ class TelegramCommandMixin:
                     "payment decisions." + summary,
                     self._admin_keyboard(telegram_id),
                 )
+        elif command == "/promo":
+            promo = self._admin_service_call(
+                telegram_id, "giveaway_status", telegram_id
+            )
+            if not promo["exists"]:
+                self.send(chat["id"], "No promo campaign is configured.")
+            else:
+                quota = self._promo_quota_label(promo["quota_bytes"])
+                example = (
+                    "/setpromo NEWCODE 100 30 5 campaign "
+                    "2026-09-01T00:00Z 2026-09-30T23:59Z"
+                )
+                buttons = self._promo_code_buttons(str(promo["code"]))
+                rows: list[list[dict[str, Any]]] = []
+                if buttons:
+                    rows.append(buttons)
+                copy_setup = self._copy_text_button("📋 Copy Setup Example", example)
+                if copy_setup:
+                    rows.append([copy_setup])
+                action = "stop" if promo["campaign_state"] != "paused" else "resume"
+                rows.append(
+                    [
+                        {
+                            "text": "⏸ Stop Promo" if action == "stop" else "▶ Resume Promo",
+                            "callback_data": f"a:g:{action}:{promo['code']}"[:64],
+                        },
+                        {"text": "🏠 Admin Home", "callback_data": "a:n:admin"},
+                    ]
+                )
+                self.send(
+                    chat["id"],
+                    "Promo campaign\n\n"
+                    f"Code: {promo['code']}\n"
+                    f"State: {promo['campaign_state']}\n"
+                    f"Gift: {quota} / {promo['duration_days']} days\n"
+                    f"Capacity: {promo['winner_limit']} {self._promo_frequency_label(promo['frequency'])}\n"
+                    f"Current window: {promo['window_claimed_count']} claimed · "
+                    f"{promo['remaining_slots']} remaining\n"
+                    f"Lifetime claims: {promo['claimed_count']}\n"
+                    f"From: {promo['starts_at'] or 'open'}\n"
+                    f"To: {promo['ends_at'] or 'open'}\n\n"
+                    "Setup syntax:\n"
+                    "/setpromo CODE QUOTA_GB DAYS COUNT campaign|daily|hourly FROM_UTC TO_UTC\n\n"
+                    "Each account can claim once per campaign. Daily/hourly resets the slot count, "
+                    "not the same account's eligibility.",
+                    {"inline_keyboard": rows},
+                )
+        elif command == "/setpromo":
+            if len(args) != 7:
+                self.send(
+                    chat["id"],
+                    "Usage: /setpromo CODE QUOTA_GB DAYS COUNT campaign|daily|hourly "
+                    "FROM_UTC TO_UTC",
+                )
+            else:
+                try:
+                    promo = self._admin_service_call(
+                        telegram_id,
+                        "configure_giveaway",
+                        code=args[0],
+                        quota_bytes=_promo_gb_to_bytes(args[1]),
+                        duration_days=int(args[2]),
+                        winner_limit=int(args[3]),
+                        frequency=args[4],
+                        starts_at=_parse_promo_datetime(args[5]),
+                        ends_at=_parse_promo_datetime(args[6]),
+                    )
+                except (ValueError, OverflowError) as exc:
+                    self.send(chat["id"], str(exc))
+                else:
+                    self.send(
+                        chat["id"],
+                        f"Promo {promo['code']} saved. Current state: {promo['campaign_state']}.",
+                        self._admin_keyboard(telegram_id),
+                    )
+        elif command in {"/stoppromo", "/resumepromo"}:
+            if len(args) != 1:
+                self.send(chat["id"], f"Usage: {command} <promo-code>")
+            else:
+                try:
+                    promo = self._admin_service_call(
+                        telegram_id,
+                        "set_giveaway_active",
+                        args[0],
+                        command == "/resumepromo",
+                    )
+                except ValueError as exc:
+                    self.send(chat["id"], str(exc))
+                else:
+                    self.send(
+                        chat["id"],
+                        f"Promo {promo['code']} is now {promo['campaign_state']}. "
+                        "Customer plan choices update immediately.",
+                        self._admin_keyboard(telegram_id),
+                    )
         elif command == "/myorders":
             if self.commerce is None:
                 self.send(chat["id"], "Order tracking is not configured.")
@@ -396,10 +575,11 @@ class TelegramCommandMixin:
             except OutlineError:
                 self.send(chat["id"], "Trial service temporarily unavailable. Try again later.")
                 return
-            if result.denied_reason == "giveaway_winner":
+            if result.denied_reason == "active_promo":
                 self.send(
                     chat["id"],
-                    "Your 100 GiB giveaway win is your final AuriX entitlement; no additional free plan is available.",
+                    "Your promo gift is active. Monthly 3 GB returns automatically when the "
+                    "gift or promo season ends.",
                 )
             elif result.access_url:
                 self.send(
@@ -590,8 +770,12 @@ class TelegramCommandMixin:
                         f"Expiring within 24h: {snapshot['expiring_24h']}\n"
                         f"Pending jobs: {snapshot['pending_jobs']}\n"
                         f"Failed jobs: {snapshot['failed_jobs']}\n"
-                        f"100GBFREE winners: {giveaway['claimed_count']} / {giveaway['winner_limit']}\n"
-                        f"100GBFREE slots remaining: {giveaway['remaining_slots']}",
+                        f"Promo: {giveaway['code']} · {giveaway['campaign_state']} · "
+                        f"{self._promo_quota_label(giveaway.get('quota_bytes', 0))}\n"
+                        f"Promo claims: {giveaway['claimed_count']} lifetime · "
+                        f"{giveaway['window_claimed_count']} current window\n"
+                        f"Promo slots remaining: {giveaway['remaining_slots']} / "
+                        f"{giveaway['winner_limit']}",
                         self._admin_keyboard(telegram_id),
                     )
         elif command == "/reconcile":
@@ -784,10 +968,11 @@ class TelegramCommandMixin:
                     "Service temporarily unavailable. Your claim was not consumed. Try again later.",
                 )
                 return
-            if result.denied_reason == "giveaway_winner":
+            if result.denied_reason == "active_promo":
                 self.send(
                     chat["id"],
-                    "Your 100 GiB giveaway win is your final AuriX entitlement; no additional free plan is available.",
+                    "Your promo gift is active. Daily 300 MB returns automatically when the "
+                    "gift or promo season ends.",
                 )
             elif result.access_url:
                 expiry = result.expires_at.strftime("%Y-%m-%d %H:%M UTC")

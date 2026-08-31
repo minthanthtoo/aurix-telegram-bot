@@ -5,6 +5,9 @@ Telegram-first paid-concierge MVP with public free/trial access:
 - catalog-backed 30-day plans: 50 GiB for 3,000 MMK and 100 GiB for 6,000 MMK;
 - every tracked Telegram account can claim a 300 MiB key once per rolling 24 hours;
 - 3 GiB / 30-day free entitlement, renewable every rolling 30 days;
+- owner-configurable promo seasons with decimal-GB quota, gift duration,
+  UTC start/end, campaign/daily/hourly capacity, one claim per account, and
+  automatic restoration of regular plans when a gift or season ends;
 - Telegram order creation and receipt-screenshot submission (optional vision LLM extracts candidate transaction IDs);
 - immutable wallet ledger records verified credits and order captures;
 - Telegram-ID allowlisted staff approval/rejection;
@@ -301,11 +304,17 @@ Customer:
 - `/status`
 - `/myvpn`
 - `/renew`
+- sending the exact active promo code claims that campaign; `/start`, `/plans`,
+  and `/myvpn` provide one-tap Redeem and Copy buttons while it is available
 
 Admin-only (available to allowlisted administrators through the `/admin`
 inline panel; only `/admin` is advertised in the administrator command menu):
 
 - `/admin`
+- `/promo` (admin; view the active/scheduled campaign and copy a setup example)
+- `/setpromo CODE QUOTA_GB DAYS COUNT campaign|daily|hourly FROM_UTC TO_UTC`
+  (admin; confirmed mutation; decimal GB means `1 GB = 1,000,000,000 bytes`)
+- `/stoppromo <code>` / `/resumepromo <code>` (admin; confirmed season control)
 - `/orders` (admin)
 - `/receipts` (admin)
 - `/receipt <evidence-id>` (admin)
@@ -321,6 +330,17 @@ inline panel; only `/admin` is advertised in the administrator command menu):
 - `/refund <order-id> [reason]` (admin; issue a wallet reversal and revoke access)
 
 To enable an administrator, send `/whoami` to the bot, place the returned numeric ID in `ADMIN_TELEGRAM_IDS` (comma-separated for multiple staff), and restart the bot. Telegram usernames are not accepted for authorization because they can change; only numeric IDs are used. The bot advertises only `/admin` to current administrators; all other staff operations are behind the inline admin panel.
+
+Promo `COUNT` is the number of gifts available in each selected window:
+`campaign` shares one count across the entire season, `daily` resets at 00:00
+UTC, and `hourly` resets at the start of every UTC hour. An account can still
+claim only once for a given promo code. Stopping a season does not delete an
+already-issued key, but it immediately removes the promo lock so daily,
+monthly, paid, renewal, and replacement actions return. Those actions also
+return automatically when the gift expires or reaches quota. After a promo has
+claims, its quota, duration, frequency, and start are immutable; use a new code
+for a materially new season so issued entitlements and audit history stay
+truthful.
 
 Creating an order is idempotent while the customer already has an order in `awaiting_payment` or `payment_submitted`: repeated `/buy`, Upgrade-button, and renewal requests return that open order instead of inserting duplicates. Once an order is approved, another `/buy` or `/renew` creates an independent entitlement, so a customer may hold multiple paid keys for separate devices or plans at the same time. `/myvpn` lists every active key and hides expired/revoked credentials. Untouched orders expire after 24 hours and can be cancelled by the customer; orders with payment activity remain protected for staff review. Customers can inspect only their own orders; allowlisted admins can use `/order <order-id>` to inspect any order’s payment, receipt-review, wallet reservation, subscription, and provisioning trail.
 
