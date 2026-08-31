@@ -96,29 +96,10 @@ class TelegramCommandMixin:
                 "Choose an action below. Everyone can claim 300 MB daily or "
                 "3 GB every 30 days, with 50 GB and 100 GB paid upgrades. "
                 "The first five eligible users to type 100GBFREE receive 100 GiB for 30 days.\n\n"
-                "For payment, create an upgrade order and send only the receipt screenshot.",
+                "No key is issued until you choose an action. For payment, create an upgrade "
+                "order and send only the receipt screenshot.",
                 self._customer_keyboard(telegram_id),
             )
-            if command == "/start":
-                if self.trial_ids and telegram_id not in self.trial_ids:
-                    return
-                if self._free_claim_blocked_by_paid(telegram_id):
-                    return
-                try:
-                    welcome_claim = self.service.claim(telegram_id, first_name, username=username)
-                except OutlineError:
-                    self.send(
-                        chat["id"],
-                        "Your free key is temporarily unavailable. Use /claim to retry later.",
-                    )
-                else:
-                    if welcome_claim.access_url:
-                        self.send(
-                            chat["id"],
-                            f"Your {self.service.limit_bytes / 1024**2:g} MiB starter key:\n\n"
-                            f"{welcome_claim.access_url}\n\n"
-                            f"Expires: {welcome_claim.expires_at.strftime('%Y-%m-%d %H:%M UTC')}",
-                        )
         elif command == "/whoami":
             access = "\nAdmin access: enabled" if self._is_admin(telegram_id) else ""
             self.send(

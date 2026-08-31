@@ -607,7 +607,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "Choose an action below. Everyone can claim 300 MB daily or "
                 "3 GB every 30 days, with 50 GB and 100 GB paid upgrades. "
                 "The first five eligible users to type 100GBFREE receive 100 GiB for 30 days.\n\n"
-                "For payment, create an upgrade order and send only the receipt screenshot.",
+                "No key is issued until you choose an action. For payment, create an upgrade "
+                "order and send only the receipt screenshot.",
             ),
         )
         self.assertEqual(
@@ -627,6 +628,25 @@ class TelegramBotCommerceTest(unittest.TestCase):
             },
         )
         self.assertEqual(self.outline.created, [])
+
+    def test_start_only_opens_menu_and_never_provisions_a_key(self):
+        self.bot.handle(self.message(123, "/start"))
+
+        self.assertEqual(len(self.bot.sent), 1)
+        self.assertIn("No key is issued until you choose an action", self.bot.sent[0][1])
+        self.assertEqual(self.outline.created, [])
+        with self.db.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM keys WHERE telegram_id = ?", (123,)
+                ).fetchone()[0],
+                0,
+            )
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT last_claim_at FROM users WHERE telegram_id = ?", (123,)
+                ).fetchone()["last_claim_at"]
+            )
 
     def test_admin_home_message_and_navigation_are_stable_contracts(self):
         self.bot.handle(self.message(999, "/admin"))
