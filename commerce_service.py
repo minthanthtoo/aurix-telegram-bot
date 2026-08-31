@@ -2088,6 +2088,7 @@ class CommerceService(CommerceWorkerMixin):
                 continue
             result.append(
                 {
+                    "outline_key_id": key_id,
                     "tier": row["plan_name"] or row["plan_code"],
                     "used_bytes": used,
                     "quota_bytes": quota,
@@ -2122,8 +2123,10 @@ class CommerceService(CommerceWorkerMixin):
         """
         with self.database.connect() as connection:
             rows = connection.execute(
-                """SELECT s.id AS subscription_id, s.plan_code, s.status, s.expires_at,
-                          s.starts_at, k.access_url, k.quota_bytes, k.status AS key_status
+                """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
+                          s.expires_at, s.starts_at, k.outline_key_id, k.access_url,
+                          COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
+                          k.status AS key_status, k.created_at, k.quota_reason
                    FROM subscriptions s LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
                    WHERE s.telegram_id = ? AND s.status IN ('pending', 'active', 'expired', 'revoked')
                    ORDER BY CASE s.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,

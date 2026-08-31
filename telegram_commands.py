@@ -158,14 +158,14 @@ class TelegramCommandMixin:
                     f"Expires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
                     "This is your final AuriX entitlement. Daily, monthly-free, paid, "
                     "renewal, and replacement plans are now permanently disabled for this account.",
-                    self._customer_keyboard(telegram_id),
+                    self._key_delivery_keyboard(str(result.access_url)),
                 )
             elif result.outcome == "already_won":
                 self.send(
                     chat["id"],
                     f"You already won slot #{result.winner_number}. No second key or slot was created.\n"
                     f"Expires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
-                    "Use /status or /usage to track it.",
+                    "Open My VPN to retrieve the key and track its usage.",
                     self._customer_keyboard(telegram_id),
                 )
             elif result.outcome == "ineligible":
@@ -329,10 +329,10 @@ class TelegramCommandMixin:
                             print(
                                 f"admin notification error: {type(exc).__name__}", file=sys.stderr
                             )
-        elif command in ("/status", "/myvpn"):
-            self._send_status(chat["id"], telegram_id, include_key=command == "/myvpn")
-        elif command == "/usage":
-            self._send_usage(chat["id"], telegram_id)
+        elif command in ("/myvpn", "/status", "/usage"):
+            # /status and /usage remain safe aliases for links and old Telegram
+            # keyboards, but My VPN is the single customer-facing dashboard.
+            self._send_my_vpn(chat["id"], telegram_id)
         elif command == "/renew":
             if self.commerce is None:
                 self.send(chat["id"], "Paid plans are not configured in this staging process.")
@@ -400,6 +400,7 @@ class TelegramCommandMixin:
                 self.send(
                     chat["id"],
                     f"Your monthly 3 GiB key:\n\n{result.access_url}\n\nExpires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}",
+                    self._key_delivery_keyboard(str(result.access_url)),
                 )
             else:
                 retry = (
@@ -789,6 +790,7 @@ class TelegramCommandMixin:
                 self.send(
                     chat["id"],
                     f"Your {amount:g} MiB Outline key:\n\n{result.access_url}\n\nExpires: {expiry}",
+                    self._key_delivery_keyboard(str(result.access_url)),
                 )
             elif result.next_claim_at:
                 retry = result.next_claim_at.strftime("%Y-%m-%d %H:%M UTC")

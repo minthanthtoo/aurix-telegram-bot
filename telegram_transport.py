@@ -47,7 +47,10 @@ class TelegramBot(
         "🚀 Monthly 3GB": "/trial",
         "💎 Upgrade 50GB": "/buy basic_50gb",
         "💠 Upgrade 100GB": "/buy standard_100gb",
+        "💎 Plans & Upgrade": "/plans",
         "🔐 My VPN": "/myvpn",
+        # Compatibility mappings for reply keyboards already present in old
+        # Telegram messages. New menus use the unified My VPN dashboard.
         "📊 Status": "/status",
         "📶 Usage": "/usage",
         "💰 Wallet": "/wallet",
@@ -240,6 +243,21 @@ class TelegramBot(
             ]
         }
 
+    @staticmethod
+    def _copy_text_button(label: str, value: str) -> dict[str, Any] | None:
+        """Build Telegram's native one-tap clipboard button when supported by size."""
+        if not isinstance(value, str) or not 1 <= len(value) <= 256:
+            return None
+        return {"text": label, "copy_text": {"text": value}}
+
+    def _key_delivery_keyboard(self, access_url: str) -> dict[str, Any]:
+        rows: list[list[dict[str, Any]]] = []
+        copy_button = self._copy_text_button("📋 Copy Outline Key", access_url)
+        if copy_button is not None:
+            rows.append([copy_button])
+        rows.append([{"text": "🔐 Open My VPN", "callback_data": "n:myvpn"}])
+        return {"inline_keyboard": rows}
+
     def _handle_panel_callback(
         self, query: dict[str, Any], token: str, action: str, arg: str | None
     ) -> bool:
@@ -309,39 +327,27 @@ class TelegramBot(
             giveaway_winner = bool(self.service.giveaway_status(telegram_id)["winner"])
         except Exception:
             giveaway_winner = False
-        rows = []
+        rows = [["🔐 My VPN"]]
+        paid_active = self._free_claim_blocked_by_paid(telegram_id)
+        if not giveaway_winner and not paid_active:
+            rows.append(["🎁 Daily 300MB", "🚀 Monthly 3GB"])
         if not giveaway_winner:
-            rows.extend(
-                [
-                    ["🎁 Daily 300MB", "🚀 Monthly 3GB"],
-                    ["💎 Upgrade 50GB", "💠 Upgrade 100GB"],
-                ]
-            )
-        rows.extend(
-            [
-                ["🔐 My VPN"],
-                ["📊 Status", "📶 Usage"],
-                ["🧾 My Orders", "💰 Wallet"],
-                ["❓ Help"],
-            ]
-        )
+            rows.append(["💎 Plans & Upgrade", "🧾 My Orders"])
+        else:
+            rows.append(["🧾 My Orders"])
+        rows.extend([["💰 Wallet", "❓ Help"]])
         return self._reply_keyboard(rows)
 
     def configure_commands(self) -> None:
         self._command_menu_configure_attempted = True
         customer_commands = [
             {"command": "start", "description": "Open the AuriX menu"},
+            {"command": "myvpn", "description": "Keys, status and data usage"},
             {"command": "claim", "description": "Claim free 300 MB for 24 hours"},
             {"command": "trial", "description": "Claim free 3 GB for 30 days"},
-            {"command": "buy", "description": "Buy a VPN plan"},
-            {"command": "replace", "description": "Replace an untouched open order"},
-            {"command": "status", "description": "Check VPN status"},
-            {"command": "usage", "description": "Show used and remaining VPN data"},
-            {"command": "myvpn", "description": "Show your active VPN key"},
+            {"command": "plans", "description": "View current plans and prices"},
             {"command": "wallet", "description": "Show wallet balance"},
             {"command": "myorders", "description": "Track your recent orders"},
-            {"command": "order", "description": "Review one order by ID"},
-            {"command": "cancelorder", "description": "Cancel an untouched order"},
             {"command": "whoami", "description": "Show your Telegram ID"},
             {"command": "help", "description": "Show customer help"},
         ]
@@ -700,7 +706,8 @@ class TelegramBot(
             f"{giveaway['remaining_slots']} of {giveaway['winner_limit']} slot(s) remain"
         )
         lines.append("free_3gb — free every 30 days — 3 GiB / 30 days (use /trial)")
-        for plan in self.commerce.plans():
+        plans = self.commerce.plans()
+        for plan in plans:
             quota = f"{plan.quota_bytes / 1024**3:g} GB" if plan.quota_bytes else "fair-use"
             lines.append(
                 f"{plan.code} — {plan.price_minor:,} {plan.currency} — {quota} / {plan.duration_days} days"
@@ -711,10 +718,15 @@ class TelegramBot(
             "\n".join(lines),
             self._inline_keyboard(
                 [
-                    [("💎 50GB · 3,000", "p:b:basic_50gb")],
-                    [("💠 100GB · 6,000", "p:b:standard_100gb")],
-                    [("🚀 Free Monthly 3GB", "p:t:trial")],
+                    [
+                        (
+                            f"💎 {plan.name} · {plan.price_minor:,} {plan.currency}",
+                            f"p:b:{plan.code}",
+                        )
+                    ]
+                    for plan in plans
                 ]
+                + [[("🚀 Free Monthly 3GB", "p:t:trial")]]
             ),
         )
 
@@ -796,6 +808,211 @@ class TelegramBot(
         if unit == "B":
             return f"{int(amount)} {unit}"
         return f"{amount:.2f} {unit}"
+
+    def _send_my_vpn(self, chat_id: int, telegram_id: int) -> None:
+        """Render keys, lifecycle state, usage, and next actions in one dashboard."""
+        giveaway = self.service.giveaway_status(telegram_id)
+        usage_available = True
+        try:
+            metrics = self.service.outline.transfer_metrics()
+            usage_by_key = (
+                metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+            )
+            if not isinstance(usage_by_key, dict):
+                raise ValueError("invalid Outline metrics response")
+        except Exception as exc:
+            usage_available = False
+            usage_by_key = {}
+            print(f"myvpn usage error: {type(exc).__name__}", file=sys.stderr)
+
+        access_available = True
+        access_by_key: dict[str, str] = {}
+        try:
+            remote = self.service.outline.list_keys()
+            remote_keys = remote.get("accessKeys", []) if isinstance(remote, dict) else []
+            if not isinstance(remote_keys, list):
+                raise ValueError("invalid Outline key response")
+            for item in remote_keys:
+                if not isinstance(item, dict) or not item.get("id") or not item.get("accessUrl"):
+                    continue
+                value = str(item["accessUrl"]).replace("\r", "").replace("\n", "").strip()
+                if value:
+                    access_by_key[str(item["id"])] = value
+        except Exception as exc:
+            access_available = False
+            print(f"myvpn key retrieval error: {type(exc).__name__}", file=sys.stderr)
+
+        entries = self.service.user_usage(telegram_id, usage_by_key, access_by_key)
+        subscriptions: list[dict[str, Any]] = []
+        open_order: dict[str, Any] | None = None
+        if self.commerce is not None:
+            paid_usage = {
+                str(item.get("outline_key_id")): item
+                for item in self.commerce.user_usage(telegram_id, usage_by_key)
+                if item.get("outline_key_id")
+            }
+            subscriptions = self.commerce.user_vpns(telegram_id)
+            relevant = [
+                item
+                for item in subscriptions
+                if item.get("status") in ("active", "pending")
+                or item.get("key_status") in ("active", "revoke_failed")
+            ]
+            if not relevant and subscriptions:
+                relevant = subscriptions[:1]
+            for item in relevant:
+                key_id = str(item.get("outline_key_id") or "")
+                usage = paid_usage.get(key_id, {})
+                status = str(usage.get("status") or item.get("status") or "unknown")
+                if item.get("status") == "pending" and not item.get("key_status"):
+                    status = "activation pending"
+                quota = int(usage.get("quota_bytes") or item.get("quota_bytes") or 0)
+                entries.append(
+                    {
+                        "outline_key_id": key_id,
+                        "key_type": "paid",
+                        "tier": item.get("plan_name") or item.get("plan_code") or "Paid VPN",
+                        "plan_code": item.get("plan_code"),
+                        "used_bytes": int(usage.get("used_bytes") or 0),
+                        "quota_bytes": quota,
+                        "remaining_bytes": int(usage.get("remaining_bytes") or quota),
+                        "usage_observed": bool(usage.get("usage_observed")),
+                        "expires_at": item.get("expires_at"),
+                        "status": status,
+                        "access_url": item.get("access_url"),
+                        "created_at": item.get("created_at") or item.get("starts_at"),
+                    }
+                )
+            orders = self.commerce.list_user_orders(telegram_id, limit=5)
+            open_order = next(
+                (
+                    order
+                    for order in orders
+                    if order.get("stage")
+                    not in ("fulfilled", "rejected", "cancelled", "refunded")
+                ),
+                None,
+            )
+
+        priority = {
+            "active": 0,
+            "activation pending": 1,
+            "revocation pending": 2,
+            "quota exhausted": 3,
+            "expired": 4,
+            "revoked": 5,
+        }
+        entries.sort(
+            key=lambda item: (
+                priority.get(str(item.get("status")), 6),
+                str(item.get("created_at") or ""),
+            )
+        )
+        displayed = entries[:6]
+        blocks = ["🔐 My VPN\nKeys • status • usage • next action"]
+        copy_rows: list[list[dict[str, Any]]] = []
+        for index, entry in enumerate(displayed, start=1):
+            status = str(entry.get("status") or "unknown")
+            icon = "🟢" if status == "active" else "🟡" if "pending" in status else "🔴"
+            quota = int(entry.get("quota_bytes") or 0)
+            used = int(entry.get("used_bytes") or 0)
+            remaining = max(0, int(entry.get("remaining_bytes") or 0))
+            lines = [
+                f"{index}. {entry['tier']}",
+                f"{icon} {status} · Expires: {entry.get('expires_at') or 'pending'}",
+            ]
+            if quota > 0:
+                percent = min(100.0, used * 100 / quota)
+                filled = min(10, max(0, int(percent / 10)))
+                bar = "█" * filled + "░" * (10 - filled)
+                observed_note = "" if entry.get("usage_observed") else " · awaiting traffic data"
+                lines.extend(
+                    [
+                        f"{bar} {percent:.1f}%{observed_note}",
+                        f"Used {self._format_bytes(used)} · Remaining "
+                        f"{self._format_bytes(remaining)} / {self._format_bytes(quota)}",
+                    ]
+                )
+            access_url = entry.get("access_url")
+            if isinstance(access_url, str) and access_url:
+                lines.append(f"Key:\n{access_url}")
+                copy_button = self._copy_text_button(
+                    f"📋 Copy #{index} · {str(entry['tier'])[:28]}", access_url
+                )
+                if copy_button is not None:
+                    copy_rows.append([copy_button])
+                else:
+                    lines.append("Press and hold the key above to copy it.")
+            elif status == "active" and entry.get("key_type") != "paid" and not access_available:
+                lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
+            elif status == "activation pending":
+                lines.append("Your key will appear here after activation.")
+            blocks.append("\n".join(lines))
+
+        if not displayed:
+            blocks.append("No VPN key yet. Choose a free entitlement or view current plans below.")
+        elif len(entries) > len(displayed):
+            blocks.append(f"{len(entries) - len(displayed)} older entitlement(s) hidden.")
+        if open_order is not None:
+            blocks.append(
+                f"🧾 Open order {str(open_order['id'])[:8]} · "
+                f"{open_order.get('plan_name') or open_order.get('plan_code')} · "
+                f"{str(open_order.get('stage') or '').replace('_', ' ')}"
+            )
+        if giveaway["winner"]:
+            blocks.append(
+                f"🎉 Giveaway winner #{giveaway['winner_number']} · this is your final entitlement."
+            )
+        elif not displayed:
+            blocks.append(
+                f"🎁 100GBFREE launch promo: {giveaway['remaining_slots']} / "
+                f"{giveaway['winner_limit']} slots remain."
+            )
+        if not usage_available:
+            blocks.append("Usage is temporarily unavailable; keys and lifecycle status are still shown.")
+        else:
+            blocks.append("Usage is Outline's rolling 30-day transfer total, not live speed.")
+
+        action_rows: list[list[dict[str, Any]]] = []
+        action_rows.extend(copy_rows)
+        action_rows.append(
+            [
+                {"text": "🔄 Refresh", "callback_data": "n:myvpn"},
+                {"text": "🧾 My Orders", "callback_data": "n:myorders"},
+            ]
+        )
+        if open_order is not None:
+            action_rows.append(
+                [
+                    {
+                        "text": f"Open Order {str(open_order['id'])[:8]}",
+                        "callback_data": f"o:v:{open_order['id']}"[:64],
+                    }
+                ]
+            )
+        if not giveaway["winner"]:
+            active_paid = any(
+                item.get("status") == "active" and item.get("key_status") == "active"
+                for item in subscriptions
+            )
+            if active_paid:
+                plan_codes = []
+                for item in subscriptions:
+                    code = item.get("plan_code")
+                    if item.get("status") == "active" and code and code not in plan_codes:
+                        plan_codes.append(str(code))
+                for code in plan_codes[:2]:
+                    action_rows.append(
+                        [{"text": f"🔄 Renew {code}", "callback_data": f"p:r:{code}"[:64]}]
+                    )
+            else:
+                free_row = [{"text": "🎁 Daily 300MB", "callback_data": "n:claim"}]
+                if self._trial_allowed(telegram_id):
+                    free_row.append({"text": "🚀 Monthly 3GB", "callback_data": "n:trial"})
+                action_rows.append(free_row)
+            action_rows.append([{"text": "💎 Plans & Upgrade", "callback_data": "n:plans"}])
+        text = "\n\n".join(blocks)
+        self.send(chat_id, text[:4096], {"inline_keyboard": action_rows})
 
     def _send_usage(self, chat_id: int, telegram_id: int) -> None:
         try:

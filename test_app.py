@@ -47,6 +47,9 @@ class FakeOutline:
     def delete_key(self, key_id):
         self.deleted.append(key_id)
 
+    def set_data_limit(self, _key_id, _limit_bytes):
+        return None
+
     def get_key(self, key_id):
         if str(key_id) in self.deleted:
             return None
@@ -54,6 +57,13 @@ class FakeOutline:
             if key["id"] == str(key_id):
                 return key
         return None
+
+    def list_keys(self):
+        return {
+            "accessKeys": [
+                key for _name, _limit, key in self.created if key["id"] not in self.deleted
+            ]
+        }
 
     def transfer_metrics(self):
         return {"bytesTransferredByUserId": self.transfer}
@@ -615,12 +625,10 @@ class TelegramBotCommerceTest(unittest.TestCase):
             self.bot.markups[-1],
             {
                 "keyboard": [
-                    [{"text": "🎁 Daily 300MB"}, {"text": "🚀 Monthly 3GB"}],
-                    [{"text": "💎 Upgrade 50GB"}, {"text": "💠 Upgrade 100GB"}],
                     [{"text": "🔐 My VPN"}],
-                    [{"text": "📊 Status"}, {"text": "📶 Usage"}],
-                    [{"text": "🧾 My Orders"}, {"text": "💰 Wallet"}],
-                    [{"text": "❓ Help"}],
+                    [{"text": "🎁 Daily 300MB"}, {"text": "🚀 Monthly 3GB"}],
+                    [{"text": "💎 Plans & Upgrade"}, {"text": "🧾 My Orders"}],
+                    [{"text": "💰 Wallet"}, {"text": "❓ Help"}],
                 ],
                 "resize_keyboard": True,
                 "is_persistent": True,
@@ -1339,7 +1347,9 @@ class TelegramBotCommerceTest(unittest.TestCase):
             button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
         }
         self.assertIn("🎁 Daily 300MB", customer_labels)
-        self.assertIn("💠 Upgrade 100GB", customer_labels)
+        self.assertIn("💎 Plans & Upgrade", customer_labels)
+        self.assertNotIn("📊 Status", customer_labels)
+        self.assertNotIn("📶 Usage", customer_labels)
         self.assertNotIn("🛠 Admin Panel", customer_labels)
 
         self.bot.handle(self.message(999, "/admin"))
@@ -1352,7 +1362,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
     def test_button_actions_and_whoami(self):
         self.bot.handle(self.message(123, "📊 Status"))
-        self.assertIn("No subscription found", self.bot.sent[-1][1])
+        self.assertIn("No VPN key yet", self.bot.sent[-1][1])
         self.bot.handle(self.message(123, "/whoami"))
         self.assertIn("Your Telegram ID: 123", self.bot.sent[-1][1])
         self.assertNotIn("Admin access", self.bot.sent[-1][1])
@@ -1361,15 +1371,21 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "100gbfree"))
         self.assertIn("giveaway winner #1 of 5", self.bot.sent[-1][1])
         self.assertIn("100 GiB / 30-day Outline key", self.bot.sent[-1][1])
-        labels = {
-            button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
-        }
-        self.assertNotIn("🎁 Daily 300MB", labels)
-        self.assertNotIn("💠 Upgrade 100GB", labels)
+        buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        copy_button = next(button for button in buttons if button["text"] == "📋 Copy Outline Key")
+        self.assertEqual(copy_button["copy_text"], {"text": "ss://secret"})
 
         self.bot.handle(self.message(123, "/status"))
-        self.assertIn("winner #1 of 5", self.bot.sent[-1][1])
-        self.assertIn("all further free and paid plans disabled", self.bot.sent[-1][1])
+        self.assertIn("100 GiB Giveaway", self.bot.sent[-1][1])
+        self.assertIn("Giveaway winner #1", self.bot.sent[-1][1])
+        labels = {
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        }
+        self.assertNotIn("💎 Plans & Upgrade", labels)
 
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         self.assertIn("final AuriX entitlement", self.bot.sent[-1][1])
@@ -1387,13 +1403,90 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "📶 Usage"))
         text = self.bot.sent[-1][1]
         self.assertIn("Daily Free 300 MiB", text)
-        self.assertIn("Used: 150.00 MiB", text)
-        self.assertIn("Remaining: 150.00 MiB of 300.00 MiB", text)
+        self.assertIn("Used 150.00 MiB", text)
+        self.assertIn("Remaining 150.00 MiB / 300.00 MiB", text)
         self.assertIn("50.0%", text)
-        labels = {
-            button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
-        }
-        self.assertIn("🔄 Refresh Usage", labels)
+        buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        self.assertIn("🔄 Refresh", {button["text"] for button in buttons})
+        copy_button = next(button for button in buttons if button["text"].startswith("📋 Copy #1"))
+        self.assertEqual(copy_button["copy_text"], {"text": "ss://secret"})
+
+    def test_new_free_key_delivery_has_native_one_tap_copy(self):
+        self.bot.handle(self.message(123, "/claim"))
+
+        buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        self.assertEqual(
+            next(button for button in buttons if button["text"] == "📋 Copy Outline Key")[
+                "copy_text"
+            ],
+            {"text": "ss://secret"},
+        )
+        self.assertTrue(any(button.get("callback_data") == "n:myvpn" for button in buttons))
+
+    def test_myvpn_status_and_usage_aliases_converge_on_one_dashboard(self):
+        self.bot.handle(self.message(123, "/claim"))
+        dashboards = []
+        for command in ("/myvpn", "/status", "/usage"):
+            self.bot.handle(self.message(123, command))
+            dashboards.append(self.bot.sent[-1][1])
+
+        self.assertEqual(dashboards[0], dashboards[1])
+        self.assertEqual(dashboards[1], dashboards[2])
+        self.assertIn("Keys • status • usage • next action", dashboards[0])
+
+    def test_myvpn_surfaces_open_order_as_the_next_action(self):
+        order = self.commerce.create_order(123, "Min", "basic_50gb")
+
+        self.bot.handle(self.message(123, "/myvpn"))
+
+        self.assertIn(f"Open order {order.order_id[:8]}", self.bot.sent[-1][1])
+        buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        self.assertTrue(
+            any(button.get("callback_data") == f"o:v:{order.order_id}" for button in buttons)
+        )
+
+    def test_paid_key_is_retrievable_and_copyable_from_myvpn(self):
+        order = self.commerce.create_order(123, "Min", "basic_50gb")
+        self.commerce.submit_payment(123, order.order_id, "manual", "paid-dashboard")
+        self.commerce.approve_order(order.order_id, 999)
+        self.assertEqual(self.commerce.process_jobs(), 1)
+
+        self.bot.handle(self.message(123, "/myvpn"))
+
+        self.assertIn("50 GB", self.bot.sent[-1][1])
+        self.assertIn("ss://secret", self.bot.sent[-1][1])
+        buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        self.assertTrue(any(button.get("copy_text") == {"text": "ss://secret"} for button in buttons))
+        self.assertTrue(any(button["text"].startswith("🔄 Renew") for button in buttons))
+        self.assertFalse(any(button.get("callback_data") == "n:claim" for button in buttons))
+
+    def test_copy_button_falls_back_safely_above_telegram_limit(self):
+        markup = self.bot._key_delivery_keyboard("s" * 257)
+        buttons = [button for row in markup["inline_keyboard"] for button in row]
+        self.assertFalse(any("copy_text" in button for button in buttons))
+        self.assertEqual(buttons[-1]["callback_data"], "n:myvpn")
+
+    def test_plan_buttons_follow_live_catalog_instead_of_hardcoded_prices(self):
+        with self.commerce.database.connect() as connection:
+            connection.execute(
+                "UPDATE plans SET name = '55 GB Launch', price_minor = 3500 "
+                "WHERE code = 'basic_50gb'"
+            )
+
+        self.bot.handle(self.message(123, "/plans"))
+
+        buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        self.assertTrue(any(button["text"] == "💎 55 GB Launch · 3,500 MMK" for button in buttons))
 
     def test_command_scopes_hide_admin_commands_from_customers(self):
         calls = []
@@ -1421,17 +1514,12 @@ class TelegramBotCommerceTest(unittest.TestCase):
             {item["command"] for item in admin["commands"]},
             {
                 "start",
+                "plans",
                 "claim",
                 "trial",
-                "buy",
-                "replace",
-                "status",
-                "usage",
                 "myvpn",
                 "wallet",
                 "myorders",
-                "order",
-                "cancelorder",
                 "whoami",
                 "help",
                 "admin",

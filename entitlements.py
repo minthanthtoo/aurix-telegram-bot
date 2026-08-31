@@ -619,11 +619,18 @@ class ClaimService:
                     raise
         return queued
 
-    def user_usage(self, telegram_id: int, usage_by_key: dict[str, Any]) -> list[dict[str, Any]]:
-        """Return this user's free/trial key usage without exposing key secrets."""
+    def user_usage(
+        self,
+        telegram_id: int,
+        usage_by_key: dict[str, Any],
+        access_by_key: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return this user's current free/trial key state for the customer dashboard."""
+        access_by_key = access_by_key or {}
+        now = datetime.now(UTC)
         with self.database.connect() as connection:
             rows = connection.execute(
-                """SELECT outline_key_id, created_at, expires_at, data_limit_bytes,
+                """SELECT outline_key_id, key_type, created_at, expires_at, data_limit_bytes,
                           status, last_usage_bytes, quota_reason,
                           (SELECT remote_state FROM key_termination_events e
                            WHERE e.key_id = keys.id ORDER BY e.detected_at DESC LIMIT 1) AS termination_state
@@ -649,26 +656,38 @@ class ClaimService:
                 used = max(0, int(row["last_usage_bytes"] or 0))
                 observed = False
             quota = int(row["data_limit_bytes"])
+            effective_status = (
+                "quota exhausted"
+                if row["quota_reason"] == "quota"
+                else (
+                    "revocation failed"
+                    if row["termination_state"] == "escalated"
+                    else (
+                        "revocation pending"
+                        if row["termination_state"] in ("retrying", "delete_accepted")
+                        or row["status"] == "revoke_failed"
+                        else (
+                            "expired"
+                            if datetime.fromisoformat(row["expires_at"]).astimezone(UTC) <= now
+                            else row["status"]
+                        )
+                    )
+                )
+            )
             result.append(
                 {
+                    "outline_key_id": key_id,
+                    "key_type": row["key_type"],
                     "tier": tiers.get(quota, "Free access"),
                     "used_bytes": used,
                     "quota_bytes": quota,
                     "remaining_bytes": max(0, quota - used),
                     "usage_observed": observed,
                     "expires_at": row["expires_at"],
-                    "status": "quota exhausted"
-                    if row["quota_reason"] == "quota"
-                    else (
-                        "revocation failed"
-                        if row["termination_state"] == "escalated"
-                        else (
-                            "revocation pending"
-                            if row["termination_state"] in ("retrying", "delete_accepted")
-                            or row["status"] == "revoke_failed"
-                            else row["status"]
-                        )
-                    ),
+                    "status": effective_status,
+                    "access_url": access_by_key.get(key_id)
+                    if effective_status == "active"
+                    else None,
                     "created_at": row["created_at"],
                 }
             )

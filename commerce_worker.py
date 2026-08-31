@@ -850,6 +850,7 @@ class CommerceWorkerMixin:
             access_url = self._decrypt_access_url(notification.get("access_url_ciphertext"))
             if access_url:
                 notification["text"] += f"\n\nYour Outline key:\n{access_url}"
+                notification["access_url"] = access_url
             elif notification.get("access_url_ciphertext"):
                 notification["secret_unavailable"] = True
             notifications.append(notification)

@@ -25,7 +25,12 @@ class TelegramMaintenanceMixin:
                 print("notification secret unavailable", file=sys.stderr)
                 continue
             try:
-                self.send(notification["telegram_id"], notification["text"])
+                markup = (
+                    self._key_delivery_keyboard(notification["access_url"])
+                    if notification.get("access_url")
+                    else None
+                )
+                self.send(notification["telegram_id"], notification["text"], markup)
             except Exception as exc:
                 self.commerce.mark_notification_failed(notification["id"])
                 print(f"notification error: {type(exc).__name__}", file=sys.stderr)
