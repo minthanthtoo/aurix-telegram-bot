@@ -226,6 +226,72 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(len(successes), 1)
         self.assertEqual(len(self.outline.created), 1)
 
+    def test_giveaway_issues_exactly_five_unique_100_gib_winners(self):
+        results = [
+            self.service.claim_giveaway(user_id, f"User {user_id}", self.now)
+            for user_id in range(1, 7)
+        ]
+
+        self.assertEqual([item.outcome for item in results], ["won"] * 5 + ["full"])
+        self.assertEqual([item.winner_number for item in results[:5]], [1, 2, 3, 4, 5])
+        self.assertTrue(all(item.remaining_slots == 0 for item in results[4:]))
+        self.assertEqual(len(self.outline.created), 5)
+        self.assertTrue(all(item[1] == 100 * 1024**3 for item in self.outline.created))
+        self.assertEqual(
+            self.outline.created[0][0], "1-GIVEAWAY100GB-30day-202608270307"
+        )
+
+    def test_concurrent_giveaway_claims_cannot_oversubscribe_five_slots(self):
+        self.outline.create_delay = 0.01
+        results = []
+        threads = [
+            threading.Thread(
+                target=lambda user_id=user_id: results.append(
+                    self.service.claim_giveaway(user_id, f"User {user_id}", self.now)
+                )
+            )
+            for user_id in range(1, 9)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        winners = [item for item in results if item.outcome == "won"]
+        self.assertEqual(len(winners), 5)
+        self.assertEqual(sorted(item.winner_number for item in winners), [1, 2, 3, 4, 5])
+        self.assertEqual(len(self.outline.created), 5)
+
+    def test_giveaway_retry_is_idempotent_and_win_is_terminal(self):
+        won = self.service.claim_giveaway(123, "Min", self.now, username="min")
+        retried = self.service.claim_giveaway(123, "Min", self.now + timedelta(minutes=1))
+
+        self.assertEqual(won.outcome, "won")
+        self.assertEqual(retried.outcome, "already_won")
+        self.assertEqual(retried.winner_number, 1)
+        self.assertEqual(len(self.outline.created), 1)
+        self.assertEqual(self.service.claim(123, "Min", self.now).denied_reason, "giveaway_winner")
+        self.assertEqual(
+            self.service.claim_trial(123, "Min", self.now).denied_reason,
+            "giveaway_winner",
+        )
+
+    def test_failed_giveaway_provisioning_does_not_consume_slot(self):
+        self.outline.fail_create = True
+        with self.assertRaises(OutlineError):
+            self.service.claim_giveaway(123, "Min", self.now)
+        self.assertEqual(self.service.giveaway_status(123)["remaining_slots"], 5)
+
+        self.outline.fail_create = False
+        result = self.service.claim_giveaway(123, "Min", self.now)
+        self.assertEqual(result.winner_number, 1)
+
+    def test_giveaway_usage_is_labeled_separately_from_paid_plan(self):
+        self.service.claim_giveaway(123, "Min", self.now)
+        usage = self.service.user_usage(123, {"1": 25 * 1024**3})
+        self.assertEqual(usage[0]["tier"], "100 GiB Giveaway")
+        self.assertEqual(usage[0]["remaining_bytes"], 75 * 1024**3)
+
     def test_outline_key_id_conflict_rejected(self):
         # Verify UNIQUE constraint on outline_key_id exists in schema
         with open_sqlite_connection(self.db.path) as conn:
@@ -539,7 +605,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 123,
                 "AuriX VPN\n\n"
                 "Choose an action below. Everyone can claim 300 MB daily or "
-                "3 GB every 30 days, with 50 GB and 100 GB paid upgrades.\n\n"
+                "3 GB every 30 days, with 50 GB and 100 GB paid upgrades. "
+                "The first five eligible users to type 100GBFREE receive 100 GiB for 30 days.\n\n"
                 "For payment, create an upgrade order and send only the receipt screenshot.",
             ),
         )
@@ -1264,6 +1331,30 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "/whoami"))
         self.assertIn("Your Telegram ID: 123", self.bot.sent[-1][1])
         self.assertNotIn("Admin access", self.bot.sent[-1][1])
+
+    def test_giveaway_keyword_updates_status_hides_acquisition_and_blocks_orders(self):
+        self.bot.handle(self.message(123, "100gbfree"))
+        self.assertIn("giveaway winner #1 of 5", self.bot.sent[-1][1])
+        self.assertIn("100 GiB / 30-day Outline key", self.bot.sent[-1][1])
+        labels = {
+            button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
+        }
+        self.assertNotIn("🎁 Daily 300MB", labels)
+        self.assertNotIn("💠 Upgrade 100GB", labels)
+
+        self.bot.handle(self.message(123, "/status"))
+        self.assertIn("winner #1 of 5", self.bot.sent[-1][1])
+        self.assertIn("all further free and paid plans disabled", self.bot.sent[-1][1])
+
+        self.bot.handle(self.message(123, "/buy basic_50gb"))
+        self.assertIn("final AuriX entitlement", self.bot.sent[-1][1])
+        self.assertEqual(self.commerce.list_user_orders(123), [])
+
+    def test_open_paid_order_makes_user_ineligible_for_giveaway(self):
+        self.commerce.create_order(123, "Min", "basic_50gb")
+        self.bot.handle(self.message(123, "100GBFREE"))
+        self.assertIn("not eligible", self.bot.sent[-1][1])
+        self.assertEqual(self.bot.service.giveaway_status(123)["remaining_slots"], 5)
 
     def test_usage_button_shows_free_key_stats_and_refresh_action(self):
         self.bot.handle(self.message(123, "/claim"))

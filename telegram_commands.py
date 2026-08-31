@@ -37,7 +37,9 @@ class TelegramCommandMixin:
         if not isinstance(text, str) or not text.strip():
             return
         raw_text = text.strip()
-        text = self.CUSTOMER_BUTTON_COMMANDS.get(raw_text)
+        text = "/giveaway100gb" if raw_text.upper() == "100GBFREE" else None
+        if text is None:
+            text = self.CUSTOMER_BUTTON_COMMANDS.get(raw_text)
         if text is None and self._is_admin(telegram_id):
             text = self.ADMIN_BUTTON_COMMANDS.get(raw_text, raw_text)
         if text is None:
@@ -92,7 +94,8 @@ class TelegramCommandMixin:
                 chat["id"],
                 "AuriX VPN\n\n"
                 "Choose an action below. Everyone can claim 300 MB daily or "
-                "3 GB every 30 days, with 50 GB and 100 GB paid upgrades.\n\n"
+                "3 GB every 30 days, with 50 GB and 100 GB paid upgrades. "
+                "The first five eligible users to type 100GBFREE receive 100 GiB for 30 days.\n\n"
                 "For payment, create an upgrade order and send only the receipt screenshot.",
                 self._customer_keyboard(telegram_id),
             )
@@ -123,6 +126,39 @@ class TelegramCommandMixin:
                 f"Your Telegram ID: {telegram_id}{access}",
                 self._customer_keyboard(telegram_id),
             )
+        elif command == "/giveaway100gb":
+            try:
+                result = self.service.claim_giveaway(
+                    telegram_id, first_name, username=username
+                )
+            except OutlineError:
+                self.send(
+                    chat["id"],
+                    "The giveaway key could not be provisioned. No winner slot was consumed; try again.",
+                )
+                return
+            if result.outcome == "won":
+                self.send(
+                    chat["id"],
+                    f"🎉 You are giveaway winner #{result.winner_number} of 5!\n\n"
+                    f"Your 100 GiB / 30-day Outline key:\n\n{result.access_url}\n\n"
+                    f"Expires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+                    "This is your final AuriX entitlement. Daily, monthly-free, paid, "
+                    "renewal, and replacement plans are now permanently disabled for this account.",
+                    self._customer_keyboard(telegram_id),
+                )
+            elif result.outcome == "already_won":
+                self.send(
+                    chat["id"],
+                    f"You already won slot #{result.winner_number}. No second key or slot was created.\n"
+                    f"Expires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+                    "Use /status or /usage to track it.",
+                    self._customer_keyboard(telegram_id),
+                )
+            elif result.outcome == "ineligible":
+                self.send(chat["id"], f"This account is not eligible: {result.reason}")
+            else:
+                self.send(chat["id"], "The 5 × 100 GiB giveaway is fully claimed.")
         elif command == "/admin":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -177,7 +213,7 @@ class TelegramCommandMixin:
                     chat["id"], telegram_id, args[0], admin_view=self._is_admin(telegram_id)
                 )
         elif command == "/plans":
-            self._send_plans(chat["id"])
+            self._send_plans(chat["id"], telegram_id)
         elif command in ("/buy", "/upgrade"):
             if self.commerce is None:
                 self.send(chat["id"], "Paid plans are not configured in this staging process.")
@@ -342,7 +378,12 @@ class TelegramCommandMixin:
             except OutlineError:
                 self.send(chat["id"], "Trial service temporarily unavailable. Try again later.")
                 return
-            if result.access_url:
+            if result.denied_reason == "giveaway_winner":
+                self.send(
+                    chat["id"],
+                    "Your 100 GiB giveaway win is your final AuriX entitlement; no additional free plan is available.",
+                )
+            elif result.access_url:
                 self.send(
                     chat["id"],
                     f"Your monthly 3 GiB key:\n\n{result.access_url}\n\nExpires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}",
@@ -519,6 +560,7 @@ class TelegramCommandMixin:
                     print(f"capacity error: {type(exc).__name__}", file=sys.stderr)
                 else:
                     mapped_usage = sum(item["used_bytes"] for item in snapshot["usage"])
+                    giveaway = self.service.giveaway_status(telegram_id)
                     self.send(
                         chat["id"],
                         "AuriX capacity\n"
@@ -528,7 +570,10 @@ class TelegramCommandMixin:
                         f"Mapped transfer (Outline window): {mapped_usage:,} bytes\n"
                         f"Expiring within 24h: {snapshot['expiring_24h']}\n"
                         f"Pending jobs: {snapshot['pending_jobs']}\n"
-                        f"Failed jobs: {snapshot['failed_jobs']}",
+                        f"Failed jobs: {snapshot['failed_jobs']}\n"
+                        f"100GBFREE winners: {giveaway['claimed_count']} / {giveaway['winner_limit']}\n"
+                        f"100GBFREE slots remaining: {giveaway['remaining_slots']}",
+                        self._admin_keyboard(telegram_id),
                     )
         elif command == "/reconcile":
             if not self._is_admin(telegram_id):
@@ -720,7 +765,12 @@ class TelegramCommandMixin:
                     "Service temporarily unavailable. Your claim was not consumed. Try again later.",
                 )
                 return
-            if result.access_url:
+            if result.denied_reason == "giveaway_winner":
+                self.send(
+                    chat["id"],
+                    "Your 100 GiB giveaway win is your final AuriX entitlement; no additional free plan is available.",
+                )
+            elif result.access_url:
                 expiry = result.expires_at.strftime("%Y-%m-%d %H:%M UTC")
                 amount = self.service.limit_bytes / 1024**2
                 self.send(

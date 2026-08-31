@@ -31,6 +31,54 @@ class Migration:
 
 FREE_ACCESS_MIGRATIONS = (
     Migration(1, "legacy_free_access_schema"),
+    Migration(
+        2,
+        "giveaway_campaigns",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS giveaway_campaigns (
+                   code TEXT PRIMARY KEY,
+                   quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                   duration_days INTEGER NOT NULL CHECK (duration_days > 0),
+                   winner_limit INTEGER NOT NULL CHECK (winner_limit > 0),
+                   claimed_count INTEGER NOT NULL DEFAULT 0
+                       CHECK (claimed_count >= 0 AND claimed_count <= winner_limit),
+                   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+                   created_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS giveaway_claims (
+                   campaign_code TEXT NOT NULL REFERENCES giveaway_campaigns(code),
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   key_id INTEGER NOT NULL UNIQUE REFERENCES keys(id),
+                   winner_number INTEGER NOT NULL CHECK (winner_number > 0),
+                   claimed_at TEXT NOT NULL,
+                   PRIMARY KEY (campaign_code, telegram_id),
+                   UNIQUE (campaign_code, winner_number)
+               )""",
+            "CREATE INDEX IF NOT EXISTS giveaway_claims_user ON giveaway_claims(telegram_id)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS giveaway_campaigns (
+                   code TEXT PRIMARY KEY,
+                   quota_bytes BIGINT NOT NULL CHECK (quota_bytes > 0),
+                   duration_days INTEGER NOT NULL CHECK (duration_days > 0),
+                   winner_limit INTEGER NOT NULL CHECK (winner_limit > 0),
+                   claimed_count INTEGER NOT NULL DEFAULT 0
+                       CHECK (claimed_count >= 0 AND claimed_count <= winner_limit),
+                   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+                   created_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS giveaway_claims (
+                   campaign_code TEXT NOT NULL REFERENCES giveaway_campaigns(code),
+                   telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
+                   key_id BIGINT NOT NULL UNIQUE REFERENCES keys(id),
+                   winner_number INTEGER NOT NULL CHECK (winner_number > 0),
+                   claimed_at TEXT NOT NULL,
+                   PRIMARY KEY (campaign_code, telegram_id),
+                   UNIQUE (campaign_code, winner_number)
+               )""",
+            "CREATE INDEX IF NOT EXISTS giveaway_claims_user ON giveaway_claims(telegram_id)",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (

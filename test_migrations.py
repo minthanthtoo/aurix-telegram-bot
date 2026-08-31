@@ -118,6 +118,7 @@ class MigrationRegistryTest(unittest.TestCase):
                 [
                     ("commerce", 1, "legacy_commerce_schema"),
                     ("free_access", 1, "legacy_free_access_schema"),
+                    ("free_access", 2, "giveaway_campaigns"),
                 ],
             )
 

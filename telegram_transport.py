@@ -305,14 +305,26 @@ class TelegramBot(
         return True
 
     def _customer_keyboard(self, telegram_id: int) -> dict[str, Any]:
-        rows = [
-            ["🎁 Daily 300MB", "🚀 Monthly 3GB"],
-            ["💎 Upgrade 50GB", "💠 Upgrade 100GB"],
-            ["🔐 My VPN"],
-            ["📊 Status", "📶 Usage"],
-            ["🧾 My Orders", "💰 Wallet"],
-            ["❓ Help"],
-        ]
+        try:
+            giveaway_winner = bool(self.service.giveaway_status(telegram_id)["winner"])
+        except Exception:
+            giveaway_winner = False
+        rows = []
+        if not giveaway_winner:
+            rows.extend(
+                [
+                    ["🎁 Daily 300MB", "🚀 Monthly 3GB"],
+                    ["💎 Upgrade 50GB", "💠 Upgrade 100GB"],
+                ]
+            )
+        rows.extend(
+            [
+                ["🔐 My VPN"],
+                ["📊 Status", "📶 Usage"],
+                ["🧾 My Orders", "💰 Wallet"],
+                ["❓ Help"],
+            ]
+        )
         return self._reply_keyboard(rows)
 
     def configure_commands(self) -> None:
@@ -668,11 +680,25 @@ class TelegramBot(
             return True
         return False
 
-    def _send_plans(self, chat_id: int) -> None:
+    def _send_plans(self, chat_id: int, telegram_id: int | None = None) -> None:
+        giveaway = self.service.giveaway_status(telegram_id or chat_id)
+        if giveaway["winner"]:
+            self.send(
+                chat_id,
+                f"Giveaway winner #{giveaway['winner_number']}\n\n"
+                "Your 100 GiB giveaway is your final AuriX entitlement. Additional free, "
+                "paid, renewal, and replacement plans are disabled for this account.",
+                self._customer_keyboard(telegram_id or chat_id),
+            )
+            return
         if self.commerce is None:
             self.send(chat_id, "Paid plans are not configured in this staging process.")
             return
         lines = ["AuriX plans:"]
+        lines.append(
+            f"100GBFREE giveaway — 100 GiB / 30 days — "
+            f"{giveaway['remaining_slots']} of {giveaway['winner_limit']} slot(s) remain"
+        )
         lines.append("free_3gb — free every 30 days — 3 GiB / 30 days (use /trial)")
         for plan in self.commerce.plans():
             quota = f"{plan.quota_bytes / 1024**3:g} GB" if plan.quota_bytes else "fair-use"
@@ -693,8 +719,26 @@ class TelegramBot(
         )
 
     def _send_status(self, chat_id: int, telegram_id: int, include_key: bool = False) -> None:
+        giveaway = self.service.giveaway_status(telegram_id)
+        giveaway_text = ""
+        if giveaway["winner"]:
+            giveaway_key_status = (
+                "quota exhausted" if giveaway.get("quota_reason") == "quota" else giveaway["status"]
+            )
+            giveaway_text = (
+                f"🎉 Giveaway: winner #{giveaway['winner_number']} of {giveaway['winner_limit']}\n"
+                f"Plan: 100 GiB / 30 days\n"
+                f"Key status: {giveaway_key_status}\n"
+                f"Expires: {giveaway['expires_at']}\n"
+                "Eligibility: final entitlement — all further free and paid plans disabled"
+            )
+        else:
+            giveaway_text = (
+                f"100GBFREE giveaway: {giveaway['remaining_slots']} of "
+                f"{giveaway['winner_limit']} slot(s) remain"
+            )
         if self.commerce is None:
-            self.send(chat_id, "Paid subscriptions are not configured in this staging process.")
+            self.send(chat_id, giveaway_text, self._customer_keyboard(telegram_id))
             return
         if hasattr(self.commerce, "user_vpns"):
             subscriptions = self.commerce.user_vpns(telegram_id)
@@ -702,10 +746,18 @@ class TelegramBot(
             latest = self.commerce.user_vpn(telegram_id)
             subscriptions = [latest] if latest else []
         if not subscriptions:
-            self.send(chat_id, "No subscription found. Use /plans to see available plans.")
+            self.send(
+                chat_id,
+                giveaway_text + (
+                    "\n\nThe access URL is shown only when the giveaway is first claimed. "
+                    "Use /usage to track quota." if giveaway["winner"] else
+                    "\n\nNo subscription found. Use /plans to see available plans."
+                ),
+                self._customer_keyboard(telegram_id),
+            )
             return
         subscription = subscriptions[0]
-        text = (
+        text = giveaway_text + "\n\n" + (
             f"Status: {subscription['status']}\n"
             f"Plan: {subscription['plan_code']}\n"
             f"Expires: {subscription['expires_at']}\n"
@@ -728,7 +780,7 @@ class TelegramBot(
                 else "\n\nNo active paid key is available."
             )
         actions = [[("📶 Usage", "n:usage"), ("🧾 My Orders", "n:myorders")]]
-        if subscription.get("status") in ("active", "expired", "revoked"):
+        if not giveaway["winner"] and subscription.get("status") in ("active", "expired", "revoked"):
             actions[0].append(("🔄 Renew", f"p:r:{subscription['plan_code']}"))
         self.send(chat_id, text, self._inline_keyboard(actions))
 

@@ -102,6 +102,24 @@ class CommerceService(CommerceWorkerMixin):
                 "SELECT id FROM orders WHERE id = ? FOR UPDATE", (order_id,)
             ).fetchone()
 
+    @staticmethod
+    def _assert_not_giveaway_winner(connection: Any, telegram_id: int) -> None:
+        if not isinstance(connection, _PostgresConnection):
+            table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'giveaway_claims'"
+            ).fetchone()
+            if table is None:
+                return
+        winner = connection.execute(
+            "SELECT 1 FROM giveaway_claims WHERE telegram_id = ? LIMIT 1",
+            (telegram_id,),
+        ).fetchone()
+        if winner is not None:
+            raise CommerceError(
+                "Your 100 GiB giveaway win is your final AuriX entitlement; "
+                "additional free or paid plans are disabled for this account."
+            )
+
     def initialize(self) -> None:
         self.database.initialize()
 
@@ -189,6 +207,7 @@ class CommerceService(CommerceWorkerMixin):
                     "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
                     (telegram_id,),
                 ).fetchone()
+            self._assert_not_giveaway_winner(connection, telegram_id)
             existing = connection.execute(
                 """SELECT * FROM orders
                    WHERE telegram_id = ?
@@ -261,6 +280,12 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             self._ensure_user(connection, telegram_id, first_name, username)
+            if isinstance(connection, _PostgresConnection):
+                connection.execute(
+                    "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
+                    (telegram_id,),
+                ).fetchone()
+            self._assert_not_giveaway_winner(connection, telegram_id)
             existing = connection.execute(
                 """SELECT * FROM orders
                    WHERE telegram_id = ? AND status IN ('awaiting_payment', 'payment_submitted')
@@ -656,6 +681,7 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
+            self._assert_not_giveaway_winner(connection, telegram_id)
             if order["status"] == "approved":
                 raise CommerceError("Order is already approved")
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
@@ -765,6 +791,7 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
+            self._assert_not_giveaway_winner(connection, telegram_id)
             if order["status"] == "approved":
                 raise CommerceError("Order is already approved")
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
@@ -1404,6 +1431,7 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
+            self._assert_not_giveaway_winner(connection, telegram_id)
             if order["status"] == "approved":
                 return "already_approved"
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
@@ -1539,6 +1567,7 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None:
                 raise CommerceError("Order not found")
+            self._assert_not_giveaway_winner(connection, int(order["telegram_id"]))
             if order["status"] == "approved":
                 subscription = connection.execute(
                     "SELECT id FROM subscriptions WHERE order_id = ?", (order_id,)

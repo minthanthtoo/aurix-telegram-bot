@@ -33,6 +33,18 @@ CLAIM_PERIOD = timedelta(hours=24)
 TRIAL_PERIOD = timedelta(days=30)
 
 
+GIVEAWAY_CODE = "100GBFREE"
+
+
+GIVEAWAY_LIMIT_BYTES = 100 * 1024**3
+
+
+GIVEAWAY_PERIOD = timedelta(days=30)
+
+
+GIVEAWAY_WINNER_LIMIT = 5
+
+
 QUOTA_WARNING_THRESHOLDS = ((25, 0.25), (10, 0.10), (5, 0.05))
 
 
@@ -74,6 +86,17 @@ class ClaimResult:
     access_url: str | None = None
     expires_at: datetime | None = None
     next_claim_at: datetime | None = None
+    denied_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class GiveawayResult:
+    outcome: str
+    access_url: str | None = None
+    expires_at: datetime | None = None
+    winner_number: int | None = None
+    remaining_slots: int = 0
+    reason: str | None = None
 
 
 class ClaimService:
@@ -88,6 +111,178 @@ class ClaimService:
         self.outline = outline
         self.limit_bytes = int(limit_bytes)
         self.trial_limit_bytes = int(trial_limit_bytes)
+
+    @staticmethod
+    def _lock_user(connection: Any, telegram_id: int) -> None:
+        if connection.__class__.__name__ == "_PostgresConnection":
+            connection.execute(
+                "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
+                (telegram_id,),
+            ).fetchone()
+
+    @staticmethod
+    def _is_giveaway_winner(connection: Any, telegram_id: int) -> bool:
+        return (
+            connection.execute(
+                "SELECT 1 FROM giveaway_claims WHERE telegram_id = ? LIMIT 1",
+                (telegram_id,),
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def _commerce_tables_exist(connection: Any) -> bool:
+        if connection.__class__.__name__ == "_PostgresConnection":
+            row = connection.execute(
+                "SELECT to_regclass('public.orders') AS table_name"
+            ).fetchone()
+            return bool(row and row["table_name"])
+        row = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'orders'"
+        ).fetchone()
+        return row is not None
+
+    def giveaway_status(self, telegram_id: int) -> dict[str, Any]:
+        """Return public campaign capacity and this user's durable winner state."""
+        with self.database.connect() as connection:
+            campaign = connection.execute(
+                "SELECT * FROM giveaway_campaigns WHERE code = ?", (GIVEAWAY_CODE,)
+            ).fetchone()
+            claim = connection.execute(
+                """SELECT g.winner_number, g.claimed_at, k.expires_at, k.status,
+                          k.quota_reason
+                   FROM giveaway_claims g JOIN keys k ON k.id = g.key_id
+                   WHERE g.campaign_code = ? AND g.telegram_id = ?""",
+                (GIVEAWAY_CODE, telegram_id),
+            ).fetchone()
+        claimed = int(campaign["claimed_count"]) if campaign else 0
+        winner_limit = int(campaign["winner_limit"]) if campaign else GIVEAWAY_WINNER_LIMIT
+        result: dict[str, Any] = {
+            "code": GIVEAWAY_CODE,
+            "claimed_count": claimed,
+            "winner_limit": winner_limit,
+            "remaining_slots": max(0, winner_limit - claimed),
+            "active": bool(campaign["active"]) if campaign else True,
+            "winner": claim is not None,
+        }
+        if claim is not None:
+            result.update(dict(claim))
+        return result
+
+    def claim_giveaway(
+        self,
+        telegram_id: int,
+        first_name: str,
+        now: datetime | None = None,
+        username: str | None = None,
+    ) -> GiveawayResult:
+        """Atomically issue one of five 100 GiB promotional entitlements."""
+        now = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = now.isoformat()
+        key: dict[str, Any] | None = None
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """INSERT INTO users (telegram_id, first_name, username, created_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(telegram_id) DO UPDATE SET
+                       first_name = excluded.first_name,
+                       username = excluded.username""",
+                (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
+            )
+            self._lock_user(connection, telegram_id)
+            connection.execute(
+                """INSERT INTO giveaway_campaigns
+                   (code, quota_bytes, duration_days, winner_limit, claimed_count, active, created_at)
+                   VALUES (?, ?, 30, ?, 0, 1, ?)
+                   ON CONFLICT(code) DO NOTHING""",
+                (GIVEAWAY_CODE, GIVEAWAY_LIMIT_BYTES, GIVEAWAY_WINNER_LIMIT, now_text),
+            )
+            suffix = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
+            campaign = connection.execute(
+                "SELECT * FROM giveaway_campaigns WHERE code = ?" + suffix,
+                (GIVEAWAY_CODE,),
+            ).fetchone()
+            existing = connection.execute(
+                """SELECT g.winner_number, k.expires_at
+                   FROM giveaway_claims g JOIN keys k ON k.id = g.key_id
+                   WHERE g.campaign_code = ? AND g.telegram_id = ?""",
+                (GIVEAWAY_CODE, telegram_id),
+            ).fetchone()
+            remaining = max(0, int(campaign["winner_limit"]) - int(campaign["claimed_count"]))
+            if existing is not None:
+                return GiveawayResult(
+                    "already_won",
+                    expires_at=datetime.fromisoformat(existing["expires_at"]),
+                    winner_number=int(existing["winner_number"]),
+                    remaining_slots=remaining,
+                )
+            if not bool(campaign["active"]) or remaining <= 0:
+                return GiveawayResult("full", remaining_slots=0)
+            if self._commerce_tables_exist(connection):
+                conflict = connection.execute(
+                    """SELECT 1 FROM orders
+                       WHERE telegram_id = ?
+                         AND status IN ('awaiting_payment', 'payment_submitted')
+                         AND COALESCE(refund_status, 'none') != 'refunded'
+                       UNION ALL
+                       SELECT 1 FROM subscriptions
+                       WHERE telegram_id = ? AND status IN ('pending', 'active')
+                       LIMIT 1""",
+                    (telegram_id, telegram_id),
+                ).fetchone()
+                if conflict is not None:
+                    return GiveawayResult(
+                        "ineligible",
+                        remaining_slots=remaining,
+                        reason="An open or completed paid order already belongs to this account.",
+                    )
+            key = self.outline.create_key(
+                _outline_key_name(telegram_id, username, "GIVEAWAY100GB", "30day", now),
+                GIVEAWAY_LIMIT_BYTES,
+            )
+            expires_at = now + GIVEAWAY_PERIOD
+            winner_number = int(campaign["claimed_count"]) + 1
+            try:
+                connection.execute(
+                    """INSERT INTO keys
+                       (telegram_id, outline_key_id, key_type, created_at, expires_at,
+                        data_limit_bytes, status)
+                       VALUES (?, ?, 'monthly_trial', ?, ?, ?, 'active')""",
+                    (
+                        telegram_id,
+                        str(key["id"]),
+                        now_text,
+                        expires_at.isoformat(),
+                        GIVEAWAY_LIMIT_BYTES,
+                    ),
+                )
+                key_row = connection.execute(
+                    "SELECT id FROM keys WHERE outline_key_id = ?", (str(key["id"]),)
+                ).fetchone()
+                connection.execute(
+                    """INSERT INTO giveaway_claims
+                       (campaign_code, telegram_id, key_id, winner_number, claimed_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (GIVEAWAY_CODE, telegram_id, key_row["id"], winner_number, now_text),
+                )
+                connection.execute(
+                    """UPDATE giveaway_campaigns SET claimed_count = claimed_count + 1
+                       WHERE code = ? AND claimed_count < winner_limit""",
+                    (GIVEAWAY_CODE,),
+                )
+            except Exception:
+                try:
+                    self.outline.delete_key(str(key["id"]))
+                finally:
+                    raise
+        return GiveawayResult(
+            "won",
+            access_url=str(key["accessUrl"]),
+            expires_at=expires_at,
+            winner_number=winner_number,
+            remaining_slots=max(0, remaining - 1),
+        )
 
     def track_user(
         self,
@@ -126,9 +321,12 @@ class ClaimService:
                        username = excluded.username""",
                 (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
             )
+            self._lock_user(connection, telegram_id)
             user = connection.execute(
                 "SELECT last_claim_at FROM users WHERE telegram_id = ?", (telegram_id,)
             ).fetchone()
+            if self._is_giveaway_winner(connection, telegram_id):
+                return ClaimResult(denied_reason="giveaway_winner")
             if user["last_claim_at"]:
                 next_claim = datetime.fromisoformat(user["last_claim_at"]) + CLAIM_PERIOD
                 if now < next_claim:
@@ -185,9 +383,12 @@ class ClaimService:
                        username = excluded.username""",
                 (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
             )
+            self._lock_user(connection, telegram_id)
             user = connection.execute(
                 "SELECT trial_claimed_at FROM users WHERE telegram_id = ?", (telegram_id,)
             ).fetchone()
+            if self._is_giveaway_winner(connection, telegram_id):
+                return ClaimResult(denied_reason="giveaway_winner")
             if user["trial_claimed_at"]:
                 next_claim = datetime.fromisoformat(user["trial_claimed_at"]) + TRIAL_PERIOD
                 if now < next_claim:
@@ -383,7 +584,9 @@ class ClaimService:
                         (dedupe_key,),
                     ).fetchone()
                     if existing is None:
-                        if quota == TRIAL_LIMIT_BYTES:
+                        if quota == GIVEAWAY_LIMIT_BYTES:
+                            tier = "100 GiB giveaway"
+                        elif quota == TRIAL_LIMIT_BYTES:
                             tier = "monthly 3 GiB"
                         elif quota == PUBLIC_LIMIT_BYTES:
                             tier = "daily 300 MiB"
@@ -433,6 +636,7 @@ class ClaimService:
         tiers = {
             300 * 1024**2: "Daily Free 300 MiB",
             3 * 1024**3: "Monthly Free 3 GiB",
+            GIVEAWAY_LIMIT_BYTES: "100 GiB Giveaway",
         }
         result = []
         for row in rows:
