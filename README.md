@@ -329,7 +329,7 @@ inline panel; only `/admin` is advertised in the administrator command menu):
 - `/ledger <telegram-id>` (admin; inspect wallet balance and immutable events)
 - `/refund <order-id> [reason]` (admin; issue a wallet reversal and revoke access)
 
-To enable an administrator, send `/whoami` to the bot, place the returned numeric ID in `ADMIN_TELEGRAM_IDS` (comma-separated for multiple staff), and restart the bot. Telegram usernames are not accepted for authorization because they can change; only numeric IDs are used. The bot advertises only `/admin` to current administrators; all other staff operations are behind the inline admin panel.
+To enable an administrator, send `/whoami` to the bot, place the returned numeric ID in `ADMIN_TELEGRAM_IDS` (comma-separated for multiple staff), and restart the bot. Telegram usernames are not accepted for authorization because they can change; only numeric IDs are used. The bot advertises `/admin` and `/promo` to current administrators; all other staff operations are behind the inline admin panel.
 
 Promo `COUNT` is the number of gifts available in each selected window:
 `campaign` shares one count across the entire season, `daily` resets at 00:00
