@@ -611,23 +611,8 @@ class TelegramCommandMixin:
                             chat["id"], telegram_id, order.order_id, heading="Existing open order"
                         )
                         return
-                    heading = "Order created"
-                    self.send(
-                        chat["id"],
-                        f"{heading}: {order.order_id}\n"
-                        f"Plan: {order.plan.name}\n"
-                        f"Amount: {order.plan.price_minor:,} {order.plan.currency}\n\n"
-                        f"Pay through the approved channel, then send the receipt screenshot.\n"
-                        f"Reply to this order message or caption it with: /paid {order.order_id}",
-                        self._inline_keyboard(
-                            [
-                                [
-                                    ("📷 Send Receipt", f"o:r:{order.order_id}"),
-                                    ("💰 Pay Wallet", f"o:w:{order.order_id}"),
-                                ],
-                                [("View Order", f"o:v:{order.order_id}")],
-                            ]
-                        ),
+                    self._send_payment_method_chooser(
+                        chat["id"], telegram_id, order.order_id, heading="✅ Order created"
                     )
         elif command == "/paid":
             if self.commerce is None:
@@ -709,9 +694,8 @@ class TelegramCommandMixin:
                         heading = (
                             "Renewal order created" if order.created else "Existing open order"
                         )
-                        self.send(
-                            chat["id"],
-                            f"{heading}: {order.order_id}\nSend /paid {order.order_id} then the receipt screenshot after payment.",
+                        self._send_payment_method_chooser(
+                            chat["id"], telegram_id, order.order_id, heading=heading
                         )
         elif command == "/trial":
             if not self._trial_allowed(telegram_id):

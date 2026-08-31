@@ -529,6 +529,14 @@ class RecordingTelegramBot(TelegramBot):
     def send_document(self, chat_id, file_id, caption="", reply_markup=None):
         self.media.append(("document", chat_id, file_id, caption, reply_markup))
 
+    def send_local_photo(self, chat_id, path, caption="", reply_markup=None):
+        self.media.append(("local_photo", chat_id, str(path), caption, reply_markup))
+
+    def edit_local_photo(self, chat_id, message_id, path, caption="", reply_markup=None):
+        self.media.append(
+            ("edit_local_photo", chat_id, message_id, str(path), caption, reply_markup)
+        )
+
 
 class _TelegramPoolResponse:
     def __init__(self, status=200, payload=None):
@@ -854,6 +862,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
     def test_uploaded_photo_notifies_admin_without_persisting_image_in_telegram(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order_id = self.commerce.list_pending_orders()[0]["id"]
+        self.commerce.choose_payment_method(123, order_id, "kbzpay")
         self.bot._download_telegram_file = lambda _file_id: (b"photo-receipt", "image/jpeg")
 
         self.bot.handle(
@@ -869,6 +878,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         )
 
         receipt = self.commerce.list_pending_receipts()[0]
+        self.assertEqual(receipt["provider"], "kbzpay")
         self.assertEqual(self.bot.media, [])
         self.assertIn(f"Evidence: {receipt['id']}", self.bot.sent[-1][1])
         markup = self.bot.markups[-1]
@@ -956,6 +966,63 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("AuriX Order", self.bot.sent[-1][1])
         self.assertIn("Payment: not submitted", self.bot.sent[-1][1])
 
+    def test_new_order_uses_compact_payment_method_chooser_in_required_order(self):
+        self.bot.handle(self.message(123, "/buy basic_50gb"))
+        order_id = self.commerce.list_pending_orders()[0]["id"]
+
+        self.assertIn("Choose a payment method", self.bot.sent[-1][1])
+        buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        method_buttons = [
+            button["text"] for button in buttons if button.get("callback_data", "").startswith("m:s:")
+        ]
+        self.assertEqual(
+            method_buttons,
+            ["🔵 KBZPay", "🟡 WavePay", "🔴 AYA Pay", "🟣 UABPay", "🔵 CB Pay"],
+        )
+
+        calls = []
+        self.bot.request = lambda method, payload: calls.append((method, payload)) or True
+        self.bot.handle_callback(
+            {
+                "id": "payment-method-1",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {
+                    "message_id": 50,
+                    "chat": {"id": 123, "type": "private"},
+                },
+                "data": f"m:s:wavepay:{order_id}",
+            }
+        )
+
+        self.assertEqual(calls[0][0], "answerCallbackQuery")
+        self.assertEqual(self.bot.media[-1][0], "local_photo")
+        self.assertTrue(self.bot.media[-1][2].endswith("assets/payment_qr/wavepay.png"))
+        detail = self.commerce.order_detail(order_id, 123)
+        self.assertEqual(detail["payment_method"], "wavepay")
+        qr_markup = self.bot.media[-1][-1]
+        qr_labels = [button["text"] for row in qr_markup["inline_keyboard"] for button in row]
+        self.assertIn("✓ 🟡 WavePay", qr_labels)
+        self.assertIn("✅ I’ve Paid · Send Receipt", qr_labels)
+
+        self.bot.handle_callback(
+            {
+                "id": "payment-method-2",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {
+                    "message_id": 51,
+                    "photo": [{"file_id": "existing-card"}],
+                    "chat": {"id": 123, "type": "private"},
+                },
+                "data": f"m:s:ayapay:{order_id}",
+            }
+        )
+        self.assertEqual(self.bot.media[-1][0], "edit_local_photo")
+        self.assertEqual(self.bot.media[-1][2], 51)
+        self.assertTrue(self.bot.media[-1][3].endswith("assets/payment_qr/ayapay.png"))
+        self.assertEqual(self.commerce.order_detail(order_id, 123)["payment_method"], "ayapay")
+
     def test_different_plan_button_requires_explicit_replacement(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         self.bot.handle(self.message(123, "/buy standard_100gb"))
@@ -982,7 +1049,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         labels = {
             button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         }
-        self.assertIn("📷 Send Receipt", labels)
+        self.assertIn("🏦 Choose Payment Method", labels)
         self.assertIn("💰 Pay Wallet", labels)
         self.assertIn("🔄 Refresh", labels)
 
@@ -1021,6 +1088,31 @@ class TelegramBotCommerceTest(unittest.TestCase):
             self.assertFalse(kwargs["retries"])
             self.assertEqual(kwargs["timeout"].connect_timeout, 5.0)
             self.assertEqual(kwargs["timeout"].read_timeout, 30.0)
+
+    def test_local_qr_photos_use_multipart_upload_and_in_place_media_edit(self):
+        pool = _RecordingTelegramPool()
+        bot = TelegramBot(
+            "test-token",
+            ClaimService(self.db, self.outline),
+            self.commerce,
+            {999},
+            {123},
+        )
+        bot._http = pool
+        path = bot.PAYMENT_QR_DIR / "kbzpay.png"
+        markup = {"inline_keyboard": [[{"text": "Order", "callback_data": "o:v:test"}]]}
+
+        bot.send_local_photo(123, path, "payment card", markup)
+        bot.edit_local_photo(123, 77, path, "changed card", markup)
+
+        self.assertEqual(len(pool.calls), 2)
+        self.assertTrue(pool.calls[0][1].endswith("/sendPhoto"))
+        self.assertTrue(pool.calls[1][1].endswith("/editMessageMedia"))
+        for _method, _url, kwargs in pool.calls:
+            self.assertTrue(kwargs["headers"]["Content-Type"].startswith("multipart/form-data;"))
+            self.assertIn(b'name="photo"', kwargs["body"])
+            self.assertIn(b'filename="kbzpay.png"', kwargs["body"])
+        self.assertIn(b"attach://photo", pool.calls[1][2]["body"])
 
     def test_telegram_error_description_is_bounded_and_payload_free(self):
         self.bot._http = _RecordingTelegramPool(

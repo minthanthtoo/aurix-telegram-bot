@@ -27,6 +27,8 @@ from repositories import RepositoryDatabase
 from commerce_worker import CommerceWorkerMixin
 from supabase_storage import NullReceiptStorage
 
+LOCAL_PAYMENT_METHODS = frozenset({"kbzpay", "wavepay", "ayapay", "uabpay", "cbpay"})
+
 
 class CommerceService(CommerceWorkerMixin):
     """Commerce state machine and idempotent Outline job processor."""
@@ -672,6 +674,45 @@ class CommerceService(CommerceWorkerMixin):
         if not is_admin and int(result["telegram_id"]) != int(requester_id):
             return None
         result["stage"] = self._order_stage(result)
+        return result
+
+    def choose_payment_method(
+        self, telegram_id: int, order_id: str, payment_method: str
+    ) -> dict[str, Any]:
+        """Attach an explicit local transfer rail to an open customer order."""
+        method = str(payment_method).strip().lower()
+        if method not in LOCAL_PAYMENT_METHODS:
+            raise CommerceError("That payment method is unavailable")
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            self._lock_order(connection, order_id)
+            order = connection.execute(
+                "SELECT * FROM orders WHERE id = ?", (order_id,)
+            ).fetchone()
+            if order is None or int(order["telegram_id"]) != int(telegram_id):
+                raise CommerceError("Order not found")
+            if order["status"] != "awaiting_payment":
+                raise CommerceError("The payment method can no longer be changed")
+            evidence = connection.execute(
+                "SELECT 1 FROM payment_evidence WHERE order_id = ? LIMIT 1", (order_id,)
+            ).fetchone()
+            if evidence is not None:
+                raise CommerceError("A receipt is already attached to this order")
+            connection.execute(
+                "UPDATE orders SET payment_method = ? WHERE id = ?", (method, order_id)
+            )
+            self._audit(
+                connection,
+                "payment_method_selected",
+                "order",
+                order_id,
+                "customer",
+                str(telegram_id),
+                {"payment_method": method},
+            )
+        result = self.order_detail(order_id, telegram_id)
+        if result is None:  # pragma: no cover - transaction just verified ownership
+            raise CommerceError("Order not found")
         return result
 
     def submit_payment(
@@ -1527,7 +1568,8 @@ class CommerceService(CommerceWorkerMixin):
                 ),
             )
             connection.execute(
-                "UPDATE orders SET status = 'payment_submitted' WHERE id = ?", (order_id,)
+                "UPDATE orders SET status = 'payment_submitted', payment_method = 'wallet' WHERE id = ?",
+                (order_id,),
             )
             self._audit(
                 connection,

@@ -8,7 +8,7 @@ Telegram-first paid-concierge MVP with public free/trial access:
 - owner-configurable promo seasons with decimal-GB quota, gift duration,
   UTC start/end, campaign/daily/hourly capacity, one claim per account, and
   automatic restoration of regular plans when a gift or season ends;
-- Telegram order creation and receipt-screenshot submission (optional vision LLM extracts candidate transaction IDs);
+- Telegram order creation with a compact KBZPay → WavePay → AYA Pay → UABPay → CB Pay QR chooser, in-place method switching, and receipt-screenshot submission (optional vision LLM extracts candidate transaction IDs);
 - immutable wallet ledger records verified credits and order captures;
 - Telegram-ID allowlisted staff approval/rejection;
 - idempotent Outline key provisioning, quota application, reconciliation, and revocation;
@@ -73,6 +73,11 @@ Optional:
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
+
+Customer-facing payment cards live in `assets/payment_qr/`. They intentionally
+contain the merchant QR, but no visible account names or phone numbers. A QR can
+still reveal its recipient inside the wallet app. Treat replacements as payment
+credentials and scan-compare the source and final payload before deployment.
 
 Do not expose `OUTLINE_API_URL`, bot token, DB, or generated access URLs. Firewall Outline Management API so only bot host can reach it.
 
@@ -299,7 +304,8 @@ Customer:
 - `/plans`
 - `/buy <plan-code>`
 - `/replace <plan-code>` — replace an untouched open order with another plan
-- `/paid <order-id>` (then send the receipt screenshot)
+- choose a payment method from the order, scan the single QR card, then tap **I’ve Paid** and send the receipt screenshot
+- `/paid <order-id>` — compatibility path for sending a receipt directly
 - `/trial`
 - `/wallet`
 - `/walletpay <order-id>`

@@ -7,6 +7,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from commerce import CommerceError
+
 UTC = timezone.utc
 
 
@@ -88,6 +90,26 @@ class TelegramCallbackMixin:
             self.handle(synthetic)
         elif scope == "o" and action == "v":
             self._send_order_detail(chat_id, telegram_id, entity_id)
+        elif scope == "o" and action == "p":
+            self._send_payment_method_chooser(chat_id, telegram_id, entity_id)
+        elif scope == "m" and action == "s":
+            if ":" not in entity_id:
+                self.send(chat_id, "This payment button has expired. Open the order again.")
+                return
+            method, order_id = entity_id.split(":", 1)
+            if method not in self.PAYMENT_METHODS:
+                self.send(chat_id, "That payment method is unavailable.")
+                return
+            try:
+                self._show_payment_qr(query, chat_id, telegram_id, order_id, method)
+            except CommerceError as exc:
+                self.send(chat_id, str(exc), self._customer_keyboard(telegram_id))
+            except (OSError, RuntimeError):
+                self.send(
+                    chat_id,
+                    "That payment QR is temporarily unavailable. Choose another method or contact AuriX support.",
+                    self._payment_method_keyboard(order_id),
+                )
         elif scope == "o" and action == "r":
             order = self.commerce.order_detail(entity_id, telegram_id) if self.commerce else None
             if order is None:
@@ -97,6 +119,20 @@ class TelegramCallbackMixin:
                     chat_id,
                     f"Send the receipt screenshot now. Caption it with:\n/paid {entity_id}",
                     self._inline_keyboard([[("🔄 Refresh Order", f"o:v:{entity_id}")]]),
+                )
+        elif scope == "o" and action == "u":
+            order = self.commerce.order_detail(entity_id, telegram_id) if self.commerce else None
+            if order is None:
+                self.send(chat_id, "Order not found.")
+            elif not order.get("payment_method"):
+                self._send_payment_method_chooser(chat_id, telegram_id, entity_id)
+            else:
+                self.send(
+                    chat_id,
+                    f"📷 Send the completed receipt screenshot for order #{str(entity_id)[:8]} now.\n\n"
+                    "No caption is needed. AuriX records the image for staff verification; "
+                    "the screenshot alone never activates payment.",
+                    self._inline_keyboard([[('🧾 View Order', f"o:v:{entity_id}")]]),
                 )
         elif scope == "o" and action == "w":
             synthetic["text"] = f"/walletpay {entity_id}"

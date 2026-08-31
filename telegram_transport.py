@@ -9,9 +9,11 @@ import threading
 import time
 import urllib.error
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import urllib3
+from urllib3.filepost import encode_multipart_formdata
 
 from commerce import CommerceError, CommerceService
 from entitlements import ClaimService
@@ -119,6 +121,15 @@ class TelegramBot(
         }
     )
     UNKNOWN_ACTION_TEXT = "Use the menu to choose an AuriX action."
+    PAYMENT_METHODS = {
+        "kbzpay": {"label": "KBZPay", "button": "🔵 KBZPay", "asset": "kbzpay.png"},
+        "wavepay": {"label": "WavePay", "button": "🟡 WavePay", "asset": "wavepay.png"},
+        "ayapay": {"label": "AYA Pay", "button": "🔴 AYA Pay", "asset": "ayapay.png"},
+        "uabpay": {"label": "UABPay", "button": "🟣 UABPay", "asset": "uabpay.png"},
+        "cbpay": {"label": "CB Pay", "button": "🔵 CB Pay", "asset": "cbpay.png"},
+    }
+    PAYMENT_METHOD_ORDER = ("kbzpay", "wavepay", "ayapay", "uabpay", "cbpay")
+    PAYMENT_QR_DIR = Path(__file__).resolve().parent / "assets" / "payment_qr"
 
     def __init__(
         self,
@@ -220,6 +231,33 @@ class TelegramBot(
         if not result.get("ok"):
             raise RuntimeError("Telegram API request failed")
         return result["result"]
+
+    def _multipart_request(self, method: str, fields: dict[str, Any]) -> Any:
+        body, content_type = encode_multipart_formdata(fields)
+        started_at = time.perf_counter()
+        try:
+            response = self._http.request(
+                "POST",
+                f"{self.api}/{method}",
+                body=body,
+                headers={"Content-Type": content_type},
+                timeout=urllib3.Timeout(connect=5.0, read=30.0),
+                retries=False,
+            )
+            try:
+                result = json.loads(response.data.decode("utf-8"))
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                raise TelegramAPIError(f"{method} returned an invalid JSON response") from exc
+            if response.status >= 400 or not result.get("ok"):
+                description = str(result.get("description") or "request rejected")
+                raise TelegramAPIError(
+                    f"{method} failed status={response.status}: {' '.join(description.split())[:240]}"
+                )
+            return result["result"]
+        except urllib3.exceptions.HTTPError as exc:
+            raise TelegramAPIError(f"{method} transport failed: request rejected") from exc
+        finally:
+            _latency_log("telegram_request", started_at, method=method)
 
     def send(
         self,
@@ -581,6 +619,43 @@ class TelegramBot(
             payload["reply_markup"] = reply_markup
         self.request("sendPhoto", payload)
 
+    def send_local_photo(
+        self,
+        chat_id: int,
+        path: Path,
+        caption: str = "",
+        reply_markup: dict[str, Any] | None = None,
+    ) -> Any:
+        data = path.read_bytes()
+        fields: dict[str, Any] = {
+            "chat_id": str(chat_id),
+            "caption": caption[:1024],
+            "photo": (path.name, data, "image/png"),
+        }
+        if reply_markup is not None:
+            fields["reply_markup"] = json.dumps(reply_markup, separators=(",", ":"))
+        return self._multipart_request("sendPhoto", fields)
+
+    def edit_local_photo(
+        self,
+        chat_id: int,
+        message_id: int,
+        path: Path,
+        caption: str = "",
+        reply_markup: dict[str, Any] | None = None,
+    ) -> Any:
+        data = path.read_bytes()
+        media = {"type": "photo", "media": "attach://photo", "caption": caption[:1024]}
+        fields: dict[str, Any] = {
+            "chat_id": str(chat_id),
+            "message_id": str(int(message_id)),
+            "media": json.dumps(media, separators=(",", ":")),
+            "photo": (path.name, data, "image/png"),
+        }
+        if reply_markup is not None:
+            fields["reply_markup"] = json.dumps(reply_markup, separators=(",", ":"))
+        return self._multipart_request("editMessageMedia", fields)
+
     def send_document(
         self,
         chat_id: int,
@@ -606,6 +681,7 @@ class TelegramBot(
             f"Evidence: {evidence_id}\n"
             f"Order: {receipt['order_id']}\n"
             f"Customer: {receipt['telegram_id']}\n"
+            f"Method: {str(receipt.get('provider') or 'manual').upper()}\n"
             f"Expected: {int(receipt['amount_minor']):,} {receipt['currency']}\n"
             f"Extracted transaction: {extracted.get('transaction_id') or '-'}\n\n"
             "Check the receiving account, then use:\n"
@@ -854,6 +930,8 @@ class TelegramBot(
             )
             return
         try:
+            order = self.commerce.order_detail(order_id, telegram_id)
+            provider = str((order or {}).get("payment_method") or "manual")
             image, mime = self._download_telegram_file(file_id)
             extraction = None
             policy = self.commerce.receipt_policy()
@@ -871,7 +949,7 @@ class TelegramBot(
             result = self.commerce.submit_receipt(
                 telegram_id,
                 order_id,
-                provider="manual",
+                provider=provider,
                 file_id=file_id,
                 file_unique_id=str(unique_id) if unique_id else None,
                 image_bytes=image,

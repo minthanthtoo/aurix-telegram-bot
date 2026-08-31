@@ -648,9 +648,90 @@ class TelegramAdminMixin:
         ]
         if order.get("expires_at"):
             lines.append(f"Expires: {order['expires_at']}")
+        if order.get("payment_method"):
+            lines.append(f"Selected method: {str(order['payment_method']).upper()}")
         if order.get("evidence_id"):
             lines.append(f"Evidence ID: {order['evidence_id']}")
         return "\n".join(lines)
+
+    def _payment_method_keyboard(
+        self, order_id: str, *, selected: str | None = None, qr_view: bool = False
+    ) -> dict[str, Any]:
+        buttons = []
+        for method in self.PAYMENT_METHOD_ORDER:
+            item = self.PAYMENT_METHODS[method]
+            label = str(item["button"])
+            if method == selected:
+                label = "✓ " + label
+            buttons.append((label, f"m:s:{method}:{order_id}"))
+        rows = [buttons[:2], buttons[2:4], buttons[4:]]
+        if qr_view:
+            rows.append([("✅ I’ve Paid · Send Receipt", f"o:u:{order_id}")])
+        rows.append(
+            [
+                ("💰 Pay Wallet", f"o:w:{order_id}"),
+                ("🧾 Order", f"o:v:{order_id}"),
+            ]
+        )
+        return self._inline_keyboard(rows)
+
+    def _send_payment_method_chooser(
+        self, chat_id: int, telegram_id: int, order_id: str, heading: str | None = None
+    ) -> None:
+        if self.commerce is None:
+            self.send(chat_id, "Payment is not configured.")
+            return
+        order = self.commerce.order_detail(order_id, telegram_id)
+        if order is None:
+            self.send(chat_id, "Order not found.")
+            return
+        if order.get("status") != "awaiting_payment":
+            self._send_order_detail(chat_id, telegram_id, order_id)
+            return
+        short_id = str(order_id)[:8]
+        title = (heading + "\n\n") if heading else ""
+        self.send(
+            chat_id,
+            title
+            + "🏦 Choose a payment method\n\n"
+            + f"Order #{short_id} · {order.get('plan_name') or order['plan_code']}\n"
+            + f"Order ID: {order_id}\n"
+            + f"Pay exactly {int(order['amount_minor']):,} {order['currency']}.\n\n"
+            + "Tap one method to see its QR. Only one QR card is shown at a time. "
+            + "Confirm the recipient and amount inside your wallet before paying.",
+            self._payment_method_keyboard(
+                order_id, selected=str(order.get("payment_method") or "") or None
+            ),
+        )
+
+    def _show_payment_qr(
+        self,
+        query: dict[str, Any],
+        chat_id: int,
+        telegram_id: int,
+        order_id: str,
+        method: str,
+    ) -> None:
+        order = self.commerce.choose_payment_method(telegram_id, order_id, method)
+        item = self.PAYMENT_METHODS[method]
+        path = self.PAYMENT_QR_DIR / str(item["asset"])
+        if not path.is_file():
+            raise RuntimeError("Payment QR asset is unavailable")
+        caption = (
+            f"🏦 {item['label']} · Order #{str(order_id)[:8]}\n\n"
+            f"Pay exactly {int(order['amount_minor']):,} {order['currency']}.\n"
+            "1. Scan this QR in the selected wallet.\n"
+            "2. Verify the recipient and amount before confirming.\n"
+            "3. Tap “I’ve Paid” and send the completed receipt screenshot.\n\n"
+            "Never send your PIN, password or OTP."
+        )
+        markup = self._payment_method_keyboard(order_id, selected=method, qr_view=True)
+        message = query.get("message") or {}
+        message_id = message.get("message_id")
+        if isinstance(message_id, int) and message.get("photo"):
+            self.edit_local_photo(chat_id, message_id, path, caption, markup)
+        else:
+            self.send_local_photo(chat_id, path, caption, markup)
 
     def _order_actions(self, order: dict[str, Any], is_admin: bool) -> dict[str, Any]:
         order_id = str(order["id"])
@@ -702,7 +783,7 @@ class TelegramAdminMixin:
             ):
                 rows.append(
                     [
-                        ("📷 Send Receipt", f"o:r:{order_id}"),
+                        ("🏦 Choose Payment Method", f"o:p:{order_id}"),
                         ("💰 Pay Wallet", f"o:w:{order_id}"),
                     ]
                 )

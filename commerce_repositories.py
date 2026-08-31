@@ -64,6 +64,7 @@ class CommerceDatabase:
                     plan_name TEXT NOT NULL DEFAULT '',
                     quota_bytes_snapshot INTEGER,
                     duration_days_snapshot INTEGER,
+                    payment_method TEXT,
                     status TEXT NOT NULL CHECK (status IN (
                         'awaiting_payment', 'payment_submitted', 'approved',
                         'rejected', 'cancelled'
@@ -295,6 +296,7 @@ class CommerceDatabase:
                 ("quota_bytes_snapshot", "INTEGER"),
                 ("duration_days_snapshot", "INTEGER"),
                 ("refund_status", "TEXT NOT NULL DEFAULT 'none'"),
+                ("payment_method", "TEXT"),
             ):
                 if name not in order_columns:
                     connection.execute(f"ALTER TABLE orders ADD COLUMN {name} {definition}")
@@ -689,6 +691,7 @@ class PostgresCommerceDatabase:
             plan_name TEXT NOT NULL DEFAULT '',
             quota_bytes_snapshot BIGINT,
             duration_days_snapshot INTEGER,
+            payment_method TEXT,
             status TEXT NOT NULL CHECK (status IN (
                 'awaiting_payment', 'payment_submitted', 'approved',
                 'rejected', 'cancelled'
@@ -908,6 +911,9 @@ class PostgresCommerceDatabase:
             )
             connection.execute(
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS refund_status TEXT NOT NULL DEFAULT 'none'"
+            )
+            connection.execute(
+                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT"
             )
             connection.execute(
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS plan_name TEXT NOT NULL DEFAULT ''"
