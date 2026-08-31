@@ -15,6 +15,10 @@
 
 `Customer စာပြန်ချိန်` → `VPN လိုက်စမ်းရတာ မောနေပြီလား?` → `Outline VPN Key ကို AuriX Bot မှာ ဝယ်` → `Quota လက်ကျန်ပါ တန်းစစ်` → wallet proof.
 
+## Caption strategy
+
+The image remains focused. The caption carries the fuller proof stack: anytime My VPN lookup, 25%/10%/5% paid-quota reminders, receipt-detail extraction followed by human payment verification, paid plans, and a short secondary free-plan entry note. Automated receipt extraction must never be described as automated payment approval.
+
 ## Asset preflight
 
 - AuriX primary geometry: `brand/v2/aurix-logo-mark-v2.svg`.
