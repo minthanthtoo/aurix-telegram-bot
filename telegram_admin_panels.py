@@ -158,10 +158,58 @@ class TelegramAdminMixin:
                 [("📥 Pending Orders", "a:n:orders"), ("🧾 Receipt Review", "a:n:receipts")],
                 [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
                 [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
-                [("🎁 Promo Settings", "a:n:promo")],
+                [("🧪 Receipt System", "a:n:receiptsystem"), ("🎁 Promotions", "a:n:promo")],
+                *([[("👑 Owner Controls", "a:n:owner")]] if self._is_owner(telegram_id) else []),
                 [("🏠 Customer Menu", "n:start")],
             ]
         )
+
+    def _owner_keyboard(self) -> dict[str, Any]:
+        return self._inline_keyboard(
+            [
+                [("👥 Staff & Access", "a:n:staff"), ("🧾 Receipt System", "a:n:receiptsystem")],
+                [("🔄 Preview Group Sync", "a:n:groupsync"), ("📊 Operations", "a:n:admin")],
+                [("🏠 Customer Menu", "n:start")],
+            ]
+        )
+
+    def _receipt_system_keyboard(self) -> dict[str, Any]:
+        return self._inline_keyboard(
+            [
+                [("Manual Review", "a:m:manual"), ("AI-Assisted", "a:m:assisted")],
+                [("🧪 Test Actual Receipt", "a:t:start"), ("📋 Last Test", "a:t:last")],
+                [("🔬 Technical Details", "a:t:details")],
+                [("🧾 Review Queue", "a:n:receipts"), ("🔄 Refresh", "a:n:receiptsystem")],
+                [("⬅ Admin Home", "a:n:admin")],
+            ]
+        )
+
+    def _send_receipt_diagnostic_result(
+        self, chat_id: int, telegram_id: int, diagnostic: dict[str, Any] | None
+    ) -> None:
+        if not diagnostic:
+            self.send(chat_id, "No completed receipt test is available yet.", self._receipt_system_keyboard())
+            return
+        result = diagnostic.get("result") or {}
+        llm = result.get("llm") or {}
+        extraction = result.get("extraction") or {}
+        passed = diagnostic.get("status") == "passed"
+        lines = [
+            f"🧪 Receipt Test · {'PASSED' if passed else 'FAILED'}",
+            "",
+            f"Run: {str(diagnostic.get('id') or '-')[:12]}",
+            f"Summary: {result.get('summary') or '-'}",
+            f"LLM host: {llm.get('endpoint_host') or '-'}",
+            f"Model: {llm.get('model') or '-'}",
+            f"HTTP: {llm.get('http_status') or '-'} · {llm.get('duration_ms') or '-'} ms",
+            f"Transaction: {extraction.get('transaction_id') or '-'}",
+            f"Amount: {extraction.get('amount_minor') or '-'} {extraction.get('currency') or ''}".strip(),
+            f"Confidence: {extraction.get('confidence') if extraction else '-'}",
+            "",
+            str(result.get("simulated_decision") or "No financial action was taken."),
+            "This diagnostic never creates an order, wallet credit, subscription or VPN key.",
+        ]
+        self.send(chat_id, "\n".join(lines)[:4096], self._receipt_system_keyboard())
 
     def _admin_call(self, telegram_id: int, operation: str, *args: Any, **kwargs: Any) -> Any:
         """Invoke a commerce operation through the admin authorization boundary."""
@@ -195,6 +243,20 @@ class TelegramAdminMixin:
             "target_id": target_id,
             "state": "unavailable",
         }
+        if command == "/receiptmode":
+            try:
+                policy = self._admin_call(telegram_id, "receipt_policy")
+                snapshot.update(
+                    {
+                        "state": "present",
+                        "current_mode": policy.get("mode"),
+                        "version": policy.get("version"),
+                        "requested_mode": args[0] if args else None,
+                    }
+                )
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
         if command in {"/setpromo", "/stoppromo", "/resumepromo"}:
             try:
                 promo = self._admin_service_call(
@@ -338,6 +400,15 @@ class TelegramAdminMixin:
             return (
                 fallback_prompt
                 + "\n\nCurrent state could not be loaded; it will be rechecked before execution."
+            )
+        if command == "/receiptmode":
+            return "\n".join(
+                [
+                    f"Current receipt mode: {snapshot.get('current_mode') or '-'}",
+                    f"New receipt mode: {snapshot.get('requested_mode') or '-'}",
+                    "AI-Assisted mode extracts fields only; staff still verifies the receiving account.",
+                    "Automatic approval remains locked without an authoritative payment verifier.",
+                ]
             )
         if command in {"/setpromo", "/stoppromo", "/resumepromo"}:
             promo = snapshot.get("promo") or {}

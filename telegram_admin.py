@@ -33,6 +33,12 @@ class AdminOperations:
             "capacity_snapshot",
             "wallet_balance",
             "wallet_history",
+            "receipt_policy",
+            "set_receipt_mode",
+            "start_receipt_diagnostic",
+            "finish_receipt_diagnostic",
+            "last_receipt_diagnostic",
+            "receipt_system_snapshot",
         }
     )
     SERVICE_OPERATIONS = frozenset(
@@ -50,12 +56,17 @@ class AdminOperations:
         commerce: CommerceService | None,
         admin_ids: set[int],
         service: Any | None = None,
+        staff_access: Any | None = None,
     ):
         self.commerce = commerce
         self.admin_ids = admin_ids
         self.service = service
+        self.staff_access = staff_access
 
     def require_admin(self, telegram_id: int) -> None:
+        if self.staff_access is not None:
+            self.staff_access.require_admin(telegram_id)
+            return
         if int(telegram_id) not in self.admin_ids:
             raise PermissionError("administrator access required")
 

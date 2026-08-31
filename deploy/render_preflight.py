@@ -22,7 +22,6 @@ def main() -> None:
 
     required = (
         "TELEGRAM_BOT_TOKEN",
-        "ADMIN_TELEGRAM_IDS",
         "OUTLINE_API_URL",
         "OUTLINE_CERT_SHA256",
         "AURIX_ACCESS_URL_KEY",
@@ -33,16 +32,31 @@ def main() -> None:
     if missing:
         fail("missing required environment variables: " + ", ".join(missing))
 
-    try:
-        admin_ids = {
-            int(value.strip())
-            for value in os.environ["ADMIN_TELEGRAM_IDS"].split(",")
-            if value.strip()
-        }
-    except ValueError:
-        fail("ADMIN_TELEGRAM_IDS must contain comma-separated numeric IDs")
-    if not admin_ids or any(value <= 0 for value in admin_ids):
-        fail("ADMIN_TELEGRAM_IDS must contain at least one positive numeric ID")
+    for name in ("OWNER_TELEGRAM_ID", "ADMIN_TELEGRAM_IDS"):
+        try:
+            values = {
+                int(value.strip())
+                for value in os.environ.get(name, "").split(",")
+                if value.strip()
+            }
+        except ValueError:
+            fail(f"{name} must contain Telegram numeric IDs")
+        if any(value <= 0 for value in values):
+            fail(f"{name} must contain positive Telegram numeric IDs")
+        if name == "OWNER_TELEGRAM_ID" and len(values) > 1:
+            fail("OWNER_TELEGRAM_ID must contain exactly one ID")
+    control_group = os.environ.get("AURIX_CONTROL_GROUP_ID", "").strip()
+    if control_group:
+        try:
+            if int(control_group) >= 0:
+                raise ValueError
+        except ValueError:
+            fail("AURIX_CONTROL_GROUP_ID must be a negative Telegram group ID")
+    if not any(
+        os.environ.get(name, "").strip()
+        for name in ("OWNER_TELEGRAM_ID", "ADMIN_TELEGRAM_IDS", "AURIX_CONTROL_GROUP_ID")
+    ):
+        fail("configure OWNER_TELEGRAM_ID or the AuriX control group/admin bootstrap")
 
     parsed = urlsplit(os.environ["OUTLINE_API_URL"].strip())
     if parsed.scheme != "https" or not parsed.hostname or not parsed.path.strip("/"):

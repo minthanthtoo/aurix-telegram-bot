@@ -349,6 +349,27 @@ class MvpFeatureTest(unittest.TestCase):
         parsed = validate_extraction({"transaction_id": "TX", "confidence": 1, "flags": [], "notes": []})
         self.assertEqual(parsed.transaction_id, "TX")
 
+    def test_receipt_policy_defaults_manual_and_assisted_never_approves(self):
+        self.assertEqual(self.commerce.receipt_policy()["mode"], "manual")
+        changed = self.commerce.set_receipt_mode("assisted", 999)
+        self.assertEqual(changed["mode"], "assisted")
+        with self.assertRaisesRegex(CommerceError, "authoritative payment verifier"):
+            self.commerce.set_receipt_mode("automatic", 999)
+
+    def test_receipt_diagnostic_is_isolated_from_financial_state(self):
+        run_id = self.commerce.start_receipt_diagnostic(999)
+        result = self.commerce.finish_receipt_diagnostic(
+            run_id,
+            999,
+            "passed",
+            {"summary": "synthetic diagnostic", "transaction_id": "TEST-ONLY"},
+        )
+        self.assertEqual(result["status"], "passed")
+        with self.commerce.database.connect() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM payments").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0], 0)
+
     def test_outline_quota_api_helpers_are_available(self):
         from app import OutlineClient
 

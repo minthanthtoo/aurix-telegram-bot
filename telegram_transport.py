@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 import threading
 import time
@@ -67,6 +68,7 @@ class TelegramBot(
         "🔁 Failed Jobs": "/failed",
         "🚨 Enforcement": "/enforcement",
         "🎁 Promo Settings": "/promo",
+        "🧪 Receipt System": "/receiptsystem",
         # Retain this mapping for old keyboards, but do not render a global
         # ledger button: ledger access should be scoped to a specific order.
         "💰 Wallet Ledger": "/ledger",
@@ -93,8 +95,13 @@ class TelegramBot(
             "/verify",
             "/approve",
             "/reject",
+            "/receiptsystem",
+            "/receiptmode",
+            "/receipttest",
+            "/staff",
         }
     )
+    OWNER_ONLY_COMMANDS = frozenset({"/owner", "/staff", "/addadmin", "/removeadmin", "/groupsync"})
     ADMIN_CONFIRMATION_COMMANDS = frozenset(
         {
             "/retry",
@@ -106,6 +113,9 @@ class TelegramBot(
             "/setpromo",
             "/stoppromo",
             "/resumepromo",
+            "/receiptmode",
+            "/addadmin",
+            "/removeadmin",
         }
     )
     UNKNOWN_ACTION_TEXT = "Use the menu to choose an AuriX action."
@@ -121,6 +131,8 @@ class TelegramBot(
         allow_text_payment: bool = True,
         maintenance_interval_seconds: float = DEFAULT_MAINTENANCE_INTERVAL_SECONDS,
         command_scope_cleanup_ids: set[int] | None = None,
+        staff_access: Any | None = None,
+        control_group_id: int | None = None,
     ):
         self.api = f"https://api.telegram.org/bot{token}"
         # urllib.request establishes a fresh TLS connection for every Bot API
@@ -137,7 +149,11 @@ class TelegramBot(
         self.service = service
         self.commerce = commerce
         self.admin_ids = admin_ids or set()
-        self.admin_operations = AdminOperations(self.commerce, self.admin_ids, self.service)
+        self.staff_access = staff_access
+        self.control_group_id = int(control_group_id) if control_group_id else None
+        self.admin_operations = AdminOperations(
+            self.commerce, self.admin_ids, self.service, staff_access=self.staff_access
+        )
         self.trial_ids = trial_ids or set()
         self.receipt_extractor = receipt_extractor or OpenAICompatibleReceiptExtractor()
         self.allow_text_payment = bool(allow_text_payment)
@@ -155,6 +171,8 @@ class TelegramBot(
         self._maintenance_lock = threading.Lock()
         self._panel_lock = threading.Lock()
         self._panels: dict[str, dict[str, Any]] = {}
+        self._receipt_test_waiting: set[int] = set()
+        self._admin_add_waiting: set[int] = set()
         self._maintenance_last_status: dict[str, Any] = {
             "status": "never_run",
             "last_started_at": None,
@@ -273,8 +291,10 @@ class TelegramBot(
         rows.append([{"text": "🔐 Open My VPN", "callback_data": "n:myvpn"}])
         return {"inline_keyboard": rows}
 
-    def _promo_code_buttons(self, promo_code: str) -> list[dict[str, Any]]:
-        """Build reusable one-tap redeem and clipboard controls for a promo."""
+    def _promo_code_buttons(
+        self, promo_code: str, *, include_copy: bool = False
+    ) -> list[dict[str, Any]]:
+        """Build a redeem-first promo action; copying is secondary/share-only."""
         normalized = str(promo_code).strip().upper()
         if not normalized or len(normalized.encode("utf-8")) > 60:
             return []
@@ -285,7 +305,7 @@ class TelegramBot(
             }
         ]
         copy_button = self._copy_text_button("📋 Copy Promo Code", normalized)
-        if copy_button is not None:
+        if include_copy and copy_button is not None:
             buttons.append(copy_button)
         return buttons
 
@@ -520,7 +540,6 @@ class TelegramBot(
 
         admin_commands = customer_commands + [
             {"command": "admin", "description": "Open the admin panel"},
-            {"command": "promo", "description": "View and configure promo campaign"},
         ]
         for admin_id in self.admin_ids:
             scope = {"type": "chat", "chat_id": admin_id}
@@ -532,6 +551,15 @@ class TelegramBot(
                         errors.append(
                             f"record admin command scope {admin_id}: {type(exc).__name__}"
                         )
+        owner_id = self.staff_access.owner_id() if self.staff_access is not None else None
+        if owner_id:
+            owner_commands = admin_commands + [
+                {"command": "owner", "description": "Open owner controls"},
+            ]
+            scope = {"type": "chat", "chat_id": int(owner_id)}
+            if set_and_verify(scope, owner_commands, f"owner command scope {owner_id}"):
+                if scope_store and hasattr(scope_store, "record_command_scope"):
+                    scope_store.record_command_scope(int(owner_id))
         if errors:
             self._command_menu_ready = False
             raise RuntimeError("Telegram command menu degraded: " + "; ".join(errors))
@@ -647,6 +675,119 @@ class TelegramBot(
         mime = "image/jpeg" if file_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
         return data, mime
 
+    def _control_group_staff(
+        self,
+    ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        if self.control_group_id is None:
+            raise RuntimeError("AURIX_CONTROL_GROUP_ID is not configured")
+        members = self.request("getChatAdministrators", {"chat_id": self.control_group_id})
+        if not isinstance(members, list):
+            raise RuntimeError("Telegram returned an invalid administrator list")
+        owner = None
+        administrators = []
+        for member in members:
+            user = member.get("user") if isinstance(member, dict) else None
+            if not isinstance(user, dict) or user.get("is_bot") or not isinstance(user.get("id"), int):
+                continue
+            profile = {
+                "id": int(user["id"]),
+                "username": user.get("username"),
+                "display_name": " ".join(
+                    value
+                    for value in (
+                        str(user.get("first_name") or "").strip(),
+                        str(user.get("last_name") or "").strip(),
+                    )
+                    if value
+                ),
+                "is_bot": False,
+            }
+            if member.get("status") == "creator":
+                owner = profile
+            elif member.get("status") == "administrator":
+                administrators.append(profile)
+        return owner, administrators
+
+    @staticmethod
+    def _receipt_file_metadata(message: dict[str, Any]) -> tuple[str, str | None, str, str] | None:
+        photos = message.get("photo")
+        document = message.get("document")
+        if isinstance(photos, list) and photos and isinstance(photos[-1], dict):
+            item = photos[-1]
+            file_id = item.get("file_id")
+            if isinstance(file_id, str):
+                return file_id, item.get("file_unique_id"), "image/jpeg", "photo"
+        if isinstance(document, dict) and str(document.get("mime_type", "")).startswith("image/"):
+            file_id = document.get("file_id")
+            if isinstance(file_id, str):
+                return (
+                    file_id,
+                    document.get("file_unique_id"),
+                    str(document.get("mime_type"))[:64],
+                    "document",
+                )
+        return None
+
+    def _handle_receipt_diagnostic(
+        self, message: dict[str, Any], chat_id: int, telegram_id: int
+    ) -> None:
+        if not self._is_admin(telegram_id) or self.commerce is None:
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        metadata = self._receipt_file_metadata(message)
+        if metadata is None:
+            self.send(chat_id, "Send a JPEG, PNG or WebP receipt image for the safe test.")
+            return
+        run_id = self._admin_call(telegram_id, "start_receipt_diagnostic", telegram_id)
+        started = time.perf_counter()
+        storage_path = None
+        try:
+            image, mime = self._download_telegram_file(metadata[0])
+            digest = hashlib.sha256(image).hexdigest()
+            storage = getattr(self.commerce, "receipt_storage", None)
+            storage_configured = bool(getattr(storage, "configured", False))
+            storage_ms = None
+            if storage_configured:
+                extension = self.commerce._receipt_storage_extension(mime)
+                storage_path = f"diagnostics/{run_id}.{extension}"
+                storage_started = time.perf_counter()
+                storage.upload(storage_path, image, mime)
+                storage_ms = round((time.perf_counter() - storage_started) * 1000, 1)
+            extraction, technical = self.receipt_extractor.extract_with_diagnostics(image, mime)
+            result = {
+                "summary": "LLM extraction and schema validation passed",
+                "image": {"mime_type": mime, "byte_size": len(image), "sha256_prefix": digest[:12]},
+                "storage": {"configured": storage_configured, "upload_ms": storage_ms},
+                "llm": technical,
+                "extraction": extraction.as_dict(),
+                "simulated_decision": "ready for assisted human review; automatic approval unavailable",
+                "total_duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            }
+            diagnostic = self._admin_call(
+                telegram_id, "finish_receipt_diagnostic", run_id, telegram_id, "passed", result
+            )
+        except Exception as exc:
+            details = dict(getattr(exc, "diagnostics", {}) or {})
+            result = {
+                "summary": str(exc)[:300] or type(exc).__name__,
+                "error_type": type(exc).__name__,
+                "llm": details,
+                "total_duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            }
+            try:
+                diagnostic = self._admin_call(
+                    telegram_id, "finish_receipt_diagnostic", run_id, telegram_id, "failed", result
+                )
+            except Exception:
+                diagnostic = {"id": run_id, "status": "failed", "result": result}
+        finally:
+            if storage_path:
+                try:
+                    self.commerce.receipt_storage.delete(storage_path)
+                except Exception:
+                    result["cleanup_warning"] = "temporary object deletion failed"
+        self._send_receipt_diagnostic_result(chat_id, telegram_id, diagnostic)
+
     def _latency_action(self, update: dict[str, Any]) -> str:
         """Return a bounded operation label without logging user text or IDs."""
         message = update.get("message")
@@ -711,16 +852,18 @@ class TelegramBot(
         try:
             image, mime = self._download_telegram_file(file_id)
             extraction = None
-            try:
-                extraction = self.receipt_extractor.extract(image, mime)
-            except ReceiptLLMUnavailable:
-                pass  # retain evidence for a human reviewer
-            except ReceiptExtractionError as exc:
-                print(f"receipt extraction error: {type(exc).__name__}", file=sys.stderr)
-            except Exception as exc:
-                # Model/provider output is untrusted; a parser failure must not
-                # prevent the evidence record from reaching manual review.
-                print(f"receipt extraction error: {type(exc).__name__}", file=sys.stderr)
+            policy = self.commerce.receipt_policy()
+            if str(policy.get("mode") or "manual") == "assisted":
+                try:
+                    extraction = self.receipt_extractor.extract(image, mime)
+                except ReceiptLLMUnavailable:
+                    pass  # retain evidence for a human reviewer
+                except ReceiptExtractionError as exc:
+                    print(f"receipt extraction error: {type(exc).__name__}", file=sys.stderr)
+                except Exception as exc:
+                    # Model/provider output is untrusted; a parser failure must not
+                    # prevent the evidence record from reaching manual review.
+                    print(f"receipt extraction error: {type(exc).__name__}", file=sys.stderr)
             result = self.commerce.submit_receipt(
                 telegram_id,
                 order_id,
@@ -767,7 +910,24 @@ class TelegramBot(
                 print(f"admin receipt notification error: {type(exc).__name__}", file=sys.stderr)
 
     def _is_admin(self, telegram_id: int) -> bool:
+        if self.staff_access is not None:
+            return bool(self.staff_access.is_admin(telegram_id))
         return telegram_id in self.admin_ids
+
+    def _is_owner(self, telegram_id: int) -> bool:
+        if self.staff_access is not None:
+            return bool(self.staff_access.is_owner(telegram_id))
+        return False
+
+    def _refresh_staff_scopes(self) -> None:
+        if self.staff_access is not None:
+            self.admin_ids = set(self.staff_access.admin_ids())
+            self.admin_operations.admin_ids = self.admin_ids
+        threading.Thread(
+            target=self.configure_commands,
+            name="aurix-staff-command-scopes",
+            daemon=True,
+        ).start()
 
     def _trial_allowed(self, telegram_id: int) -> bool:
         """Keep the optional trial allow-list consistent across every entrypoint."""
@@ -959,7 +1119,9 @@ class TelegramBot(
             amount /= 1000
         return f"{int(amount)} B" if unit == "B" else f"{amount:.2f} {unit}"
 
-    def _send_my_vpn(self, chat_id: int, telegram_id: int) -> None:
+    def _send_my_vpn(
+        self, chat_id: int, telegram_id: int, *, show_key_text: bool = False
+    ) -> None:
         """Render keys, lifecycle state, usage, and next actions in one dashboard."""
         giveaway = self.service.giveaway_status(telegram_id)
         usage_available = True
@@ -1090,14 +1252,15 @@ class TelegramBot(
                 )
             access_url = entry.get("access_url")
             if isinstance(access_url, str) and access_url:
-                lines.append(f"Key:\n{access_url}")
+                if show_key_text:
+                    lines.append(f"Outline key (press and hold to copy):\n{access_url}")
                 copy_button = self._copy_text_button(
-                    f"📋 Copy #{index} · {str(entry['tier'])[:28]}", access_url
+                    f"📋 {str(entry['tier'])[:24]} · copy key", access_url
                 )
                 if copy_button is not None:
                     copy_rows.append([copy_button])
                 else:
-                    lines.append("Press and hold the key above to copy it.")
+                    lines.append("Open Show Keys as Text, then press and hold the key to copy it.")
             elif status == "active" and entry.get("key_type") != "paid" and not access_available:
                 lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
             elif status == "activation pending":
@@ -1136,6 +1299,10 @@ class TelegramBot(
 
         action_rows: list[list[dict[str, Any]]] = []
         action_rows.extend(copy_rows)
+        if copy_rows and not show_key_text:
+            action_rows.append(
+                [{"text": "👁 Show Keys as Text", "callback_data": "n:keytext"}]
+            )
         action_rows.append(
             [
                 {"text": "🔄 Refresh", "callback_data": "n:myvpn"},

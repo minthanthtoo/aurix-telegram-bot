@@ -2163,3 +2163,133 @@ class CommerceService(CommerceWorkerMixin):
         """Backward-compatible latest/most relevant paid entitlement view."""
         subscriptions = self.user_vpns(telegram_id, limit=1)
         return subscriptions[0] if subscriptions else None
+
+    def receipt_policy(self) -> dict[str, Any]:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM receipt_verification_policy WHERE id = 1"
+            ).fetchone()
+        if row is None:
+            return {"mode": "manual", "version": 0, "updated_at": None}
+        return dict(row)
+
+    def set_receipt_mode(
+        self,
+        mode: str,
+        admin_id: int,
+        *,
+        expected_version: int | None = None,
+        reason: str = "changed from Telegram admin panel",
+    ) -> dict[str, Any]:
+        normalized = str(mode).strip().lower()
+        if normalized not in {"manual", "assisted"}:
+            raise CommerceError(
+                "Automatic approval requires an authoritative payment verifier; choose manual or assisted"
+            )
+        now_text = _now_text()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            current = connection.execute(
+                "SELECT mode, version FROM receipt_verification_policy WHERE id = 1"
+            ).fetchone()
+            if current is None:
+                raise CommerceError("Receipt verification policy is unavailable")
+            if expected_version is not None and int(current["version"]) != int(expected_version):
+                raise CommerceError("Receipt mode changed while you were reviewing it; refresh first")
+            old_mode = str(current["mode"])
+            connection.execute(
+                """UPDATE receipt_verification_policy
+                   SET mode = ?, version = version + 1, updated_by = ?,
+                       updated_at = ?, change_reason = ? WHERE id = 1""",
+                (normalized, int(admin_id), now_text, str(reason)[:500]),
+            )
+            self._audit(
+                connection,
+                "receipt_mode_changed",
+                "receipt_policy",
+                "1",
+                "admin",
+                str(admin_id),
+                {"old_mode": old_mode, "new_mode": normalized},
+            )
+        return self.receipt_policy()
+
+    def start_receipt_diagnostic(self, admin_id: int) -> str:
+        run_id = _new_id()
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO receipt_diagnostic_runs
+                   (id, admin_id, status, result_json, started_at)
+                   VALUES (?, ?, 'running', '{}', ?)""",
+                (run_id, int(admin_id), _now_text()),
+            )
+        return run_id
+
+    def finish_receipt_diagnostic(
+        self, run_id: str, admin_id: int, status: str, result: dict[str, Any]
+    ) -> dict[str, Any]:
+        normalized = "passed" if status == "passed" else "failed"
+        safe_result = json.loads(json.dumps(result, default=str))
+        encoded = json.dumps(safe_result, sort_keys=True)
+        if len(encoded) > 20_000:
+            safe_result["raw_response"] = str(safe_result.get("raw_response") or "")[:4000]
+            safe_result["truncated"] = True
+            encoded = json.dumps(safe_result, sort_keys=True)
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            updated = connection.execute(
+                """UPDATE receipt_diagnostic_runs
+                   SET status = ?, result_json = ?, completed_at = ?
+                   WHERE id = ? AND admin_id = ? AND status = 'running'""",
+                (normalized, encoded, _now_text(), str(run_id), int(admin_id)),
+            )
+            if int(getattr(updated, "rowcount", 0) or 0) != 1:
+                raise CommerceError("Receipt diagnostic run is no longer active")
+            self._audit(
+                connection,
+                f"receipt_diagnostic_{normalized}",
+                "receipt_diagnostic",
+                str(run_id),
+                "admin",
+                str(admin_id),
+                {"summary": str(safe_result.get("summary") or "")[:300]},
+            )
+        return self.last_receipt_diagnostic()
+
+    def last_receipt_diagnostic(self) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM receipt_diagnostic_runs
+                   WHERE status IN ('passed', 'failed')
+                   ORDER BY started_at DESC LIMIT 1"""
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        try:
+            result["result"] = json.loads(result.pop("result_json") or "{}")
+        except json.JSONDecodeError:
+            result["result"] = {}
+        return result
+
+    def receipt_system_snapshot(self) -> dict[str, Any]:
+        policy = self.receipt_policy()
+        with self.database.connect() as connection:
+            pending = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS count FROM payment_evidence WHERE review_status = 'pending'"
+                ).fetchone()["count"]
+            )
+            failed_uploads = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS count FROM payment_evidence WHERE storage_status = 'failed'"
+                ).fetchone()["count"]
+            )
+        return {
+            "policy": policy,
+            "pending_receipts": pending,
+            "failed_uploads": failed_uploads,
+            "last_diagnostic": self.last_receipt_diagnostic(),
+            "storage_configured": self._storage_is_configured(),
+            "storage_bucket": self._storage_bucket(),
+        }

@@ -71,6 +71,16 @@ class _ClaimService:
         return 1
 
 
+class _StaffAccess:
+    def __init__(self, database, owner_id=None):
+        self.database = database
+        self.owner = owner_id
+
+    def bootstrap(self, **kwargs):
+        admins = set(kwargs.get("admin_ids") or ())
+        return {"owner_id": self.owner or (min(admins) if admins else None), "admin_ids": admins, "imported_admins": len(admins)}
+
+
 class _Bot:
     instances = []
 
@@ -129,6 +139,7 @@ class RuntimeCompositionTest(unittest.TestCase):
             patch("runtime.OutlineClient", _Outline),
             patch("runtime.CommerceService", _Commerce),
             patch("runtime.ClaimService", _ClaimService),
+            patch("runtime.StaffAccessControl", _StaffAccess),
             patch("runtime.TelegramBot", _Bot),
             patch("runtime.signal.signal"),
             contextlib.redirect_stdout(output),
@@ -143,6 +154,7 @@ class RuntimeCompositionTest(unittest.TestCase):
         self.assertEqual(bot.args[4], {30})
         self.assertEqual(bot.kwargs["command_scope_cleanup_ids"], {40})
         self.assertEqual(bot.kwargs["maintenance_interval_seconds"], 90.0)
+        self.assertIsInstance(bot.kwargs["staff_access"], _StaffAccess)
         self.assertIn("Bot authorized: @aurix_test_bot", output.getvalue())
         self.assertIn("Outline connected: version test-outline", output.getvalue())
         self.assertIn("Promo quotas reconciled: 1 active key(s)", output.getvalue())

@@ -125,10 +125,119 @@ FREE_ACCESS_MIGRATIONS = (
                WHERE id IN (SELECT key_id FROM giveaway_claims WHERE campaign_code = '100GBFREE')""",
         ),
     ),
+    Migration(
+        4,
+        "staff_access_control",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS staff_accounts (
+                   telegram_id INTEGER PRIMARY KEY,
+                   role TEXT NOT NULL CHECK (role IN ('owner', 'admin')),
+                   status TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active', 'revoked')),
+                   display_name TEXT,
+                   username TEXT,
+                   source TEXT NOT NULL,
+                   added_by INTEGER,
+                   added_at TEXT NOT NULL,
+                   revoked_by INTEGER,
+                   revoked_at TEXT,
+                   last_privileged_action_at TEXT,
+                   access_version INTEGER NOT NULL DEFAULT 1
+               )""",
+            "CREATE INDEX IF NOT EXISTS staff_active_role ON staff_accounts(role, status)",
+            """CREATE TABLE IF NOT EXISTS staff_sync_runs (
+                   id TEXT PRIMARY KEY,
+                   control_group_id INTEGER NOT NULL,
+                   requested_by INTEGER,
+                   source TEXT NOT NULL,
+                   status TEXT NOT NULL CHECK (status IN ('previewed', 'applied', 'failed')),
+                   snapshot_json TEXT NOT NULL DEFAULT '{}',
+                   created_at TEXT NOT NULL,
+                   applied_at TEXT
+               )""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS staff_accounts (
+                   telegram_id BIGINT PRIMARY KEY,
+                   role TEXT NOT NULL CHECK (role IN ('owner', 'admin')),
+                   status TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active', 'revoked')),
+                   display_name TEXT,
+                   username TEXT,
+                   source TEXT NOT NULL,
+                   added_by BIGINT,
+                   added_at TEXT NOT NULL,
+                   revoked_by BIGINT,
+                   revoked_at TEXT,
+                   last_privileged_action_at TEXT,
+                   access_version INTEGER NOT NULL DEFAULT 1
+               )""",
+            "CREATE INDEX IF NOT EXISTS staff_active_role ON staff_accounts(role, status)",
+            """CREATE TABLE IF NOT EXISTS staff_sync_runs (
+                   id TEXT PRIMARY KEY,
+                   control_group_id BIGINT NOT NULL,
+                   requested_by BIGINT,
+                   source TEXT NOT NULL,
+                   status TEXT NOT NULL CHECK (status IN ('previewed', 'applied', 'failed')),
+                   snapshot_json TEXT NOT NULL DEFAULT '{}',
+                   created_at TEXT NOT NULL,
+                   applied_at TEXT
+               )""",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (
     Migration(1, "legacy_commerce_schema"),
+    Migration(
+        2,
+        "receipt_control_and_diagnostics",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS receipt_verification_policy (
+                   id INTEGER PRIMARY KEY CHECK (id = 1),
+                   mode TEXT NOT NULL CHECK (mode IN ('manual', 'assisted')),
+                   version INTEGER NOT NULL DEFAULT 1,
+                   updated_by INTEGER,
+                   updated_at TEXT NOT NULL,
+                   change_reason TEXT
+               )""",
+            """INSERT OR IGNORE INTO receipt_verification_policy
+               (id, mode, version, updated_at, change_reason)
+               VALUES (1, 'manual', 1, '1970-01-01T00:00:00+00:00', 'safe migration default')""",
+            """CREATE TABLE IF NOT EXISTS receipt_diagnostic_runs (
+                   id TEXT PRIMARY KEY,
+                   admin_id INTEGER NOT NULL,
+                   status TEXT NOT NULL CHECK (status IN ('running', 'passed', 'failed')),
+                   result_json TEXT NOT NULL DEFAULT '{}',
+                   started_at TEXT NOT NULL,
+                   completed_at TEXT
+               )""",
+            "CREATE INDEX IF NOT EXISTS receipt_diagnostic_recent ON receipt_diagnostic_runs(started_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS receipt_verification_policy (
+                   id INTEGER PRIMARY KEY CHECK (id = 1),
+                   mode TEXT NOT NULL CHECK (mode IN ('manual', 'assisted')),
+                   version INTEGER NOT NULL DEFAULT 1,
+                   updated_by BIGINT,
+                   updated_at TEXT NOT NULL,
+                   change_reason TEXT
+               )""",
+            """INSERT INTO receipt_verification_policy
+               (id, mode, version, updated_at, change_reason)
+               VALUES (1, 'manual', 1, '1970-01-01T00:00:00+00:00', 'safe migration default')
+               ON CONFLICT(id) DO NOTHING""",
+            """CREATE TABLE IF NOT EXISTS receipt_diagnostic_runs (
+                   id TEXT PRIMARY KEY,
+                   admin_id BIGINT NOT NULL,
+                   status TEXT NOT NULL CHECK (status IN ('running', 'passed', 'failed')),
+                   result_json TEXT NOT NULL DEFAULT '{}',
+                   started_at TEXT NOT NULL,
+                   completed_at TEXT
+               )""",
+            "CREATE INDEX IF NOT EXISTS receipt_diagnostic_recent ON receipt_diagnostic_runs(started_at)",
+        ),
+    ),
 )
 
 

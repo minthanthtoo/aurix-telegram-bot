@@ -60,7 +60,9 @@ Required variables:
 Optional:
 
 - `DATABASE_PATH` — default `data/bot.db`
-- `ADMIN_TELEGRAM_IDS` — comma-separated Telegram numeric IDs for staff access
+- `OWNER_TELEGRAM_ID` — preferred immutable owner/recovery Telegram numeric ID
+- `ADMIN_TELEGRAM_IDS` — legacy one-time comma-separated administrator bootstrap
+- `AURIX_CONTROL_GROUP_ID` — trusted numeric `-100...` AuriX group ID. When no owner/admin exists, the human group creator/admins are safely imported; bots are excluded. Later group changes are preview-only until owner approval.
 - `ADMIN_SCOPE_CLEANUP_IDS` — optional one-time comma-separated IDs whose old Telegram admin command scopes must be deleted after an administrator is removed
 - `TRIAL_TELEGRAM_IDS` — legacy allowlist; leave empty for public daily 300 MiB and monthly 3 GiB claims
 - `COMMERCE_DATABASE_URL` — PostgreSQL URL for all bot state when using the hosted PostgreSQL profile; empty uses SQLite
@@ -99,7 +101,8 @@ Before opening Render:
 3. In Supabase Storage, create a **private** bucket named
    `payment-receipts`. Both profiles use it for receipt screenshots.
 4. Send `/whoami` to the bot and save the returned numeric Telegram ID for
-   `ADMIN_TELEGRAM_IDS`.
+   `OWNER_TELEGRAM_ID`. Optionally set the trusted AuriX group numeric ID in
+   `AURIX_CONTROL_GROUP_ID` for safe bootstrap and owner-reviewed sync previews.
 5. Stop every other process using this bot token. Only one long-polling
    `getUpdates` consumer may run reliably.
 6. Collect the complete secret Outline Management API URL and its certificate
@@ -128,7 +131,9 @@ without surrounding quotes.
 | Variable | Value |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Token from BotFather |
-| `ADMIN_TELEGRAM_IDS` | Your numeric ID; use comma-separated IDs for multiple admins |
+| `OWNER_TELEGRAM_ID` | Owner numeric Telegram ID; cannot be removed from the bot UI |
+| `ADMIN_TELEGRAM_IDS` | Optional legacy bootstrap; manage admins from Owner Controls afterward |
+| `AURIX_CONTROL_GROUP_ID` | Optional trusted negative `-100...` group ID |
 | `OUTLINE_API_URL` | Complete secret HTTPS management URL, including its path |
 | `OUTLINE_CERT_SHA256` | The 64-character SHA-256 certificate digest |
 | `AURIX_ACCESS_URL_KEY` | The Fernet key generated above; never regenerate it after keys are stored |
@@ -311,6 +316,9 @@ Admin-only (available to allowlisted administrators through the `/admin`
 inline panel; only `/admin` is advertised in the administrator command menu):
 
 - `/admin`
+- `/receiptsystem` (Manual/AI-Assisted policy, health and isolated actual-receipt test)
+- `/receiptmode manual|assisted` (confirmed; AI never proves payment receipt)
+- `/receipttest` (diagnostic only; cannot create an order, credit, subscription or key)
 - `/promo` (admin; view the active/scheduled campaign and copy a setup example)
 - `/setpromo CODE QUOTA_GB DAYS COUNT campaign|daily|hourly FROM_UTC TO_UTC`
   (admin; confirmed mutation; decimal GB means `1 GB = 1,000,000,000 bytes`)
@@ -329,7 +337,22 @@ inline panel; only `/admin` is advertised in the administrator command menu):
 - `/ledger <telegram-id>` (admin; inspect wallet balance and immutable events)
 - `/refund <order-id> [reason]` (admin; issue a wallet reversal and revoke access)
 
-To enable an administrator, send `/whoami` to the bot, place the returned numeric ID in `ADMIN_TELEGRAM_IDS` (comma-separated for multiple staff), and restart the bot. Telegram usernames are not accepted for authorization because they can change; only numeric IDs are used. The bot advertises `/admin` and `/promo` to current administrators; all other staff operations are behind the inline admin panel.
+Owner-only `/owner` provides Staff & Access, group-sync preview and receipt
+controls. A new administrator must first open the bot and use `/whoami`; the
+owner then uses `/addadmin ID` (or the Staff panel) with a durable confirmation.
+Removal is immediate, invalidates pending confirmations and removes the private
+Telegram command scope. If neither environment nor database identifies staff,
+the bot can bootstrap the human creator as owner and human administrators as
+admins from `AURIX_CONTROL_GROUP_ID`. It never infers a group from messages,
+imports bot accounts, silently replaces an established owner, or continuously
+mirrors group promotions into financial authority.
+
+Promo codes and Outline credentials intentionally use different UX. Promo cards
+make **Redeem** the primary action; the visible code remains long-press
+selectable and a Copy Code control is reserved for share/admin views. Outline
+keys use native readable **Copy Outline Key** buttons. `/myvpn` shows one copy
+row per plan and hides raw `ss://` credentials by default; **Show Keys as Text**
+is the compatibility fallback for older Telegram clients.
 
 Promo `COUNT` is the number of gifts available in each selected window:
 `campaign` shares one count across the entire season, `daily` resets at 00:00

@@ -11,10 +11,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 
 class ReceiptExtractionError(RuntimeError):
@@ -123,10 +125,32 @@ class OpenAICompatibleReceiptExtractor:
             self.timeout = 45
 
     def extract(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> ReceiptExtraction:
+        extraction, _diagnostics = self.extract_with_diagnostics(image_bytes, mime_type)
+        return extraction
+
+    def extract_with_diagnostics(
+        self, image_bytes: bytes, mime_type: str = "image/jpeg"
+    ) -> tuple[ReceiptExtraction, dict[str, Any]]:
+        """Extract fields and return a secret-safe technical envelope."""
+        started_at = time.perf_counter()
+        diagnostics: dict[str, Any] = {
+            "configured": bool(self.base_url and self.model and self.api_key),
+            "endpoint_host": urlsplit(self.base_url).hostname if self.base_url else None,
+            "model": self.model or None,
+            "http_status": None,
+            "provider_request_id": None,
+            "raw_response": None,
+        }
         if not self.base_url or not self.model or not self.api_key:
-            raise ReceiptLLMUnavailable("Receipt vision extraction is not configured")
+            error = ReceiptLLMUnavailable("Receipt vision extraction is not configured")
+            diagnostics["duration_ms"] = round((time.perf_counter() - started_at) * 1000, 1)
+            error.diagnostics = diagnostics
+            raise error
         if not image_bytes or len(image_bytes) > 20 * 1024 * 1024:
-            raise ReceiptExtractionError("Receipt image is empty or too large")
+            error = ReceiptExtractionError("Receipt image is empty or too large")
+            diagnostics["duration_ms"] = round((time.perf_counter() - started_at) * 1000, 1)
+            error.diagnostics = diagnostics
+            raise error
         encoded = base64.b64encode(image_bytes).decode("ascii")
         schema_hint = {
             "provider": "string|null",
@@ -149,7 +173,9 @@ class OpenAICompatibleReceiptExtractor:
                     "content": (
                         "Extract receipt facts only. Never decide whether payment is valid. "
                         "Use null for unreadable fields; do not invent values. Return JSON with "
-                        f"exactly these fields: {json.dumps(schema_hint)}"
+                        f"exactly these fields: {json.dumps(schema_hint)}. "
+                        "MMK is zero-decimal: a receipt showing 12,500 MMK must return "
+                        "amount_minor 12500, never 1250000."
                     ),
                 },
                 {
@@ -175,10 +201,21 @@ class OpenAICompatibleReceiptExtractor:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                diagnostics["http_status"] = int(getattr(response, "status", 200) or 200)
+                headers = getattr(response, "headers", None)
+                if headers is not None:
+                    diagnostics["provider_request_id"] = (
+                        headers.get("x-request-id") or headers.get("request-id")
+                    )
                 result = json.load(response)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
-            raise ReceiptLLMUnavailable("Receipt vision provider is temporarily unavailable") from exc
+            diagnostics["http_status"] = getattr(exc, "code", None)
+            diagnostics["duration_ms"] = round((time.perf_counter() - started_at) * 1000, 1)
+            error = ReceiptLLMUnavailable("Receipt vision provider is temporarily unavailable")
+            error.diagnostics = diagnostics
+            raise error from exc
         try:
+            diagnostics["provider_request_id"] = diagnostics["provider_request_id"] or result.get("id")
             content = result["choices"][0]["message"]["content"]
             if isinstance(content, list):
                 content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
@@ -187,8 +224,14 @@ class OpenAICompatibleReceiptExtractor:
             content = content.strip()
             if content.startswith("```"):
                 content = content.strip("`").removeprefix("json").strip()
+            diagnostics["raw_response"] = content[:4000]
             parsed = json.loads(content)
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ReceiptExtractionError("Receipt vision response was not valid JSON") from exc
-        return validate_extraction(parsed)
-
+            diagnostics["duration_ms"] = round((time.perf_counter() - started_at) * 1000, 1)
+            error = ReceiptExtractionError("Receipt vision response was not valid JSON")
+            error.diagnostics = diagnostics
+            raise error from exc
+        extraction = validate_extraction(parsed)
+        diagnostics["duration_ms"] = round((time.perf_counter() - started_at) * 1000, 1)
+        diagnostics["validated"] = True
+        return extraction, diagnostics

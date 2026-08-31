@@ -57,7 +57,9 @@ Create `/etc/aurix-bot/aurix.env` with mode `0640` and owner `root:aurix`:
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=replace-with-a-staging-bot-token
-ADMIN_TELEGRAM_IDS=replace-with-owner-telegram-id
+OWNER_TELEGRAM_ID=replace-with-owner-telegram-id
+ADMIN_TELEGRAM_IDS=
+AURIX_CONTROL_GROUP_ID=replace-with-trusted-negative-group-id
 # Optional one-time cleanup list for Telegram command scopes of removed admins.
 ADMIN_SCOPE_CLEANUP_IDS=
 # Leave empty for public daily 300 MiB and monthly 3 GiB claims.

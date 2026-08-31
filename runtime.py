@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from access_control import StaffAccessControl, StaffAccessError
 from commerce import CommerceDatabase, CommerceService, PostgresCommerceDatabase
 from entitlements import PUBLIC_LIMIT_BYTES, ClaimService, OutlineError
 from free_repository import Database
@@ -131,6 +132,76 @@ def main() -> None:
             raise SystemExit(f"{name} must be comma-separated Telegram numeric IDs") from exc
 
     admin_ids = parse_ids("ADMIN_TELEGRAM_IDS")
+    owner_ids = parse_ids("OWNER_TELEGRAM_ID")
+    if len(owner_ids) > 1:
+        raise SystemExit("OWNER_TELEGRAM_ID must contain exactly one Telegram numeric ID")
+    owner_id = next(iter(owner_ids), None)
+    control_group_value = os.environ.get("AURIX_CONTROL_GROUP_ID", "").strip()
+    try:
+        control_group_id = int(control_group_value) if control_group_value else None
+    except ValueError as exc:
+        raise SystemExit("AURIX_CONTROL_GROUP_ID must be a numeric Telegram group ID") from exc
+    if control_group_id is not None and control_group_id >= 0:
+        raise SystemExit("AURIX_CONTROL_GROUP_ID must be a negative Telegram group ID")
+
+    def group_staff() -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        if control_group_id is None:
+            return None, []
+        request = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/getChatAdministrators",
+            data=json.dumps({"chat_id": control_group_id}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                payload = json.load(response)
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+            raise StaffAccessError(
+                "AuriX control-group administrators could not be loaded"
+            ) from exc
+        members = payload.get("result") if isinstance(payload, dict) and payload.get("ok") else None
+        if not isinstance(members, list):
+            raise StaffAccessError("AuriX control-group administrator response was invalid")
+        owner: dict[str, Any] | None = None
+        administrators: list[dict[str, Any]] = []
+        for member in members:
+            user = member.get("user") if isinstance(member, dict) else None
+            if not isinstance(user, dict) or user.get("is_bot") or not isinstance(user.get("id"), int):
+                continue
+            profile = {
+                "id": int(user["id"]),
+                "username": user.get("username"),
+                "display_name": " ".join(
+                    part for part in (str(user.get("first_name") or "").strip(), str(user.get("last_name") or "").strip()) if part
+                ),
+                "is_bot": False,
+            }
+            if member.get("status") == "creator":
+                owner = profile
+            elif member.get("status") == "administrator":
+                administrators.append(profile)
+        return owner, administrators
+
+    group_owner: dict[str, Any] | None = None
+    group_admins: list[dict[str, Any]] = []
+    if owner_id is None or not admin_ids:
+        try:
+            group_owner, group_admins = group_staff()
+        except StaffAccessError as exc:
+            print(f"WARNING: {exc}", file=sys.stderr)
+
+    staff_access = StaffAccessControl(database, owner_id)
+    try:
+        staff = staff_access.bootstrap(
+            owner_id=owner_id,
+            admin_ids=admin_ids,
+            group_owner=group_owner,
+            group_admins=group_admins,
+        )
+    except StaffAccessError as exc:
+        raise SystemExit(f"Staff authorization failed: {exc}") from exc
+    admin_ids = set(staff["admin_ids"])
     command_scope_cleanup_ids = parse_ids("ADMIN_SCOPE_CLEANUP_IDS")
     trial_ids = parse_ids("TRIAL_TELEGRAM_IDS")
     try:
@@ -144,9 +215,9 @@ def main() -> None:
         raise SystemExit("AURIX_MAINTENANCE_INTERVAL_SECONDS must be numeric") from exc
     if maintenance_interval_seconds < 1:
         raise SystemExit("AURIX_MAINTENANCE_INTERVAL_SECONDS must be at least 1")
-    if not admin_ids:
+    if not staff.get("owner_id"):
         print(
-            "WARNING: ADMIN_TELEGRAM_IDS is empty; paid receipt verification and approvals are unavailable.",
+            "WARNING: no AuriX owner is configured; privileged operations are unavailable.",
             file=sys.stderr,
         )
     receipt_llm_config = [
@@ -172,6 +243,8 @@ def main() -> None:
         allow_text_payment=allow_text_payment,
         maintenance_interval_seconds=maintenance_interval_seconds,
         command_scope_cleanup_ids=command_scope_cleanup_ids,
+        staff_access=staff_access,
+        control_group_id=control_group_id,
     )
     # Long polling cannot coexist with a previously configured webhook. Keep
     # queued updates while explicitly converging the bot into polling mode.

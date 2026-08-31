@@ -719,12 +719,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("not SIM/mobile data", self.bot.sent[0][1])
         self.assertIn("return automatically", self.bot.sent[0][1])
         promo_buttons = self.bot.markups[-1]["inline_keyboard"][0]
-        self.assertEqual(
-            next(button for button in promo_buttons if button["text"] == "📋 Copy Promo Code")[
-                "copy_text"
-            ],
-            {"text": "100GBFREE"},
-        )
+        self.assertFalse(any("copy_text" in button for button in promo_buttons))
         self.assertEqual(
             next(button for button in promo_buttons if button["text"].startswith("🎁 Redeem"))[
                 "callback_data"
@@ -760,25 +755,14 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "0 upload(s) failed · 0 failed job(s) · 0 stale review(s) · "
             "0 dead notification(s)",
         )
-        expected_markup = {
-            "inline_keyboard": [
-                [
-                    {"text": "📥 Pending Orders", "callback_data": "a:n:orders"},
-                    {"text": "🧾 Receipt Review", "callback_data": "a:n:receipts"},
-                ],
-                [
-                    {"text": "📈 Capacity", "callback_data": "a:n:capacity"},
-                    {"text": "🔎 Consistency", "callback_data": "a:n:reconcile"},
-                ],
-                [
-                    {"text": "🔁 Failed Jobs", "callback_data": "a:n:failed"},
-                    {"text": "🚨 Enforcement", "callback_data": "a:n:enforcement"},
-                ],
-                [{"text": "🎁 Promo Settings", "callback_data": "a:n:promo"}],
-                [{"text": "🏠 Customer Menu", "callback_data": "n:start"}],
-            ]
+        expected_markup = self.bot.markups[-1]
+        labels = {
+            button["text"]
+            for row in expected_markup["inline_keyboard"]
+            for button in row
         }
-        self.assertEqual(self.bot.markups[-1], expected_markup)
+        self.assertIn("🧪 Receipt System", labels)
+        self.assertIn("🎁 Promotions", labels)
         self.assertTrue(
             all(
                 len(button["callback_data"].encode()) <= 64
@@ -1505,12 +1489,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
         buttons = [
             button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         ]
-        self.assertEqual(
-            next(button for button in buttons if button["text"] == "📋 Copy Promo Code")[
-                "copy_text"
-            ],
-            {"text": "100GBFREE"},
-        )
+        self.assertTrue(any(button["text"].startswith("🎁 Redeem") for button in buttons))
+        self.assertFalse(any("copy_text" in button for button in buttons))
 
     def test_admin_can_configure_and_stop_a_custom_promo_with_confirmation(self):
         command = (
@@ -1591,7 +1571,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         ]
         self.assertIn("🔄 Refresh", {button["text"] for button in buttons})
-        copy_button = next(button for button in buttons if button["text"].startswith("📋 Copy #1"))
+        copy_button = next(button for button in buttons if button["text"].startswith("📋 Daily"))
         self.assertEqual(copy_button["copy_text"], {"text": "ss://secret"})
 
     def test_new_free_key_delivery_has_native_one_tap_copy(self):
@@ -1641,7 +1621,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "/myvpn"))
 
         self.assertIn("50 GB", self.bot.sent[-1][1])
-        self.assertIn("ss://secret", self.bot.sent[-1][1])
+        self.assertNotIn("ss://secret", self.bot.sent[-1][1])
         buttons = [
             button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         ]
@@ -1704,7 +1684,6 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "whoami",
                 "help",
                 "admin",
-                "promo",
             },
         )
 

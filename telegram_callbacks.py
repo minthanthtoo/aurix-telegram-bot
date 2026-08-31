@@ -62,6 +62,7 @@ class TelegramCallbackMixin:
             "n:trial": "/trial",
             "n:start": "/start",
             "n:menu": "/help",
+            "n:keytext": "/keysastext",
         }
         # Legacy admin navigation buttons may still exist in Telegram message
         # history. Keep them safe and role-gated while no longer generating
@@ -192,6 +193,10 @@ class TelegramCallbackMixin:
             elif action == "n":
                 admin_navigation = {
                     "admin": "/admin",
+                    "owner": "/owner",
+                    "staff": "/staff",
+                    "groupsync": "/groupsync",
+                    "receiptsystem": "/receiptsystem",
                     "orders": "/orders",
                     "receipts": "/receipts",
                     "capacity": "/capacity",
@@ -216,6 +221,83 @@ class TelegramCallbackMixin:
                 else:
                     synthetic["text"] = target
                     self.handle(synthetic)
+            elif action == "m":
+                if entity_id not in {"manual", "assisted"}:
+                    self.send(chat_id, "That receipt mode is unavailable.")
+                    return
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/receiptmode",
+                    [entity_id],
+                    f"Change receipt workflow to {entity_id}?",
+                    "Confirm Mode Change",
+                    cancel_data="a:n:receiptsystem",
+                )
+            elif action == "t":
+                if entity_id == "start":
+                    synthetic["text"] = "/receipttest"
+                    self.handle(synthetic)
+                elif entity_id == "last":
+                    last = self._admin_call(telegram_id, "last_receipt_diagnostic")
+                    self._send_receipt_diagnostic_result(chat_id, telegram_id, last)
+                elif entity_id == "details":
+                    last = self._admin_call(telegram_id, "last_receipt_diagnostic")
+                    if not last:
+                        self.send(chat_id, "No completed receipt test is available yet.")
+                        return
+                    result = last.get("result") or {}
+                    llm = result.get("llm") or {}
+                    raw = str(llm.get("raw_response") or "not available")[:3000]
+                    self.send(
+                        chat_id,
+                        "📋 Receipt Test · Technical Details\n\n"
+                        f"Run: {str(last.get('id') or '-')[:12]}\n"
+                        f"Status: {last.get('status') or '-'}\n"
+                        f"Host: {llm.get('endpoint_host') or '-'}\n"
+                        f"Model: {llm.get('model') or '-'}\n"
+                        f"HTTP: {llm.get('http_status') or '-'}\n"
+                        f"Request ID: {str(llm.get('provider_request_id') or '-')[:128]}\n"
+                        f"Latency: {llm.get('duration_ms') or '-'} ms\n"
+                        f"Validated: {llm.get('validated', False)}\n\n"
+                        "Sanitized, bounded LLM response:\n"
+                        f"{raw}",
+                        self._receipt_system_keyboard(),
+                    )
+                elif entity_id == "cancel":
+                    self._receipt_test_waiting.discard(telegram_id)
+                    self.send(chat_id, "Receipt test cancelled.", self._receipt_system_keyboard())
+                else:
+                    self.send(chat_id, "That diagnostic action is no longer valid.")
+            elif action == "s":
+                if not self._is_owner(telegram_id):
+                    self._send_customer_fallback(chat_id, telegram_id)
+                    return
+                if entity_id == "add":
+                    self._admin_add_waiting.add(telegram_id)
+                    self.send(
+                        chat_id,
+                        "➕ Add Administrator\n\nSend the numeric Telegram ID shown by that person's /whoami. Access is not granted until you review and confirm the next screen.",
+                        {"force_reply": True, "input_field_placeholder": "Telegram numeric ID"},
+                    )
+                    return
+                try:
+                    staff_action, staff_id = entity_id.split(":", 1)
+                except ValueError:
+                    self.send(chat_id, "That staff action is no longer valid.")
+                    return
+                if staff_action != "remove" or not staff_id.isdigit():
+                    self.send(chat_id, "That staff action is no longer valid.")
+                    return
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/removeadmin",
+                    [staff_id],
+                    f"Revoke administrator {staff_id}? Their access and pending confirmations stop immediately.",
+                    "Confirm Remove Admin",
+                    cancel_data="a:n:staff",
+                )
             elif action == "o":
                 self._send_order_detail(chat_id, telegram_id, entity_id, admin_view=True)
             elif action == "p":

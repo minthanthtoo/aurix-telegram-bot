@@ -23,6 +23,10 @@ services:
         sync: false
       - key: ADMIN_TELEGRAM_IDS
         sync: false
+      - key: OWNER_TELEGRAM_ID
+        sync: false
+      - key: AURIX_CONTROL_GROUP_ID
+        sync: false
       - key: TRIAL_TELEGRAM_IDS
         value: ""
       - key: OUTLINE_API_URL
