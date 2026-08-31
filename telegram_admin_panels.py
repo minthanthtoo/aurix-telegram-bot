@@ -167,9 +167,12 @@ class TelegramAdminMixin:
     def _owner_keyboard(self) -> dict[str, Any]:
         return self._inline_keyboard(
             [
-                [("👥 Staff & Access", "a:n:staff"), ("🧾 Receipt System", "a:n:receiptsystem")],
-                [("🏢 Choose Control Group", "a:s:group"), ("🔄 Preview Sync", "a:n:groupsync")],
-                [("📊 Operations", "a:n:admin")],
+                [("📊 Admin Dashboard", "a:n:admin"), ("👥 Staff & Access", "a:n:staff")],
+                [("📥 Pending Orders", "a:n:orders"), ("🧾 Receipt Review", "a:n:receipts")],
+                [("🧪 Receipt System", "a:n:receiptsystem"), ("🎁 Promotions", "a:n:promo")],
+                [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
+                [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
+                [("🏢 Control Group", "a:s:group"), ("🔄 Group Sync", "a:n:groupsync")],
                 [("🏠 Customer Menu", "n:start")],
             ]
         )

@@ -819,6 +819,29 @@ class TelegramBotCommerceTest(unittest.TestCase):
             )
         )
 
+    def test_owner_control_center_exposes_every_admin_area_and_staff_management(self):
+        labels = {
+            button["text"]
+            for row in self.bot._owner_keyboard()["inline_keyboard"]
+            for button in row
+        }
+        self.assertTrue(
+            {
+                "📊 Admin Dashboard",
+                "👥 Staff & Access",
+                "📥 Pending Orders",
+                "🧾 Receipt Review",
+                "🧪 Receipt System",
+                "🎁 Promotions",
+                "📈 Capacity",
+                "🔎 Consistency",
+                "🔁 Failed Jobs",
+                "🚨 Enforcement",
+                "🏢 Control Group",
+                "🔄 Group Sync",
+            }.issubset(labels)
+        )
+
     def test_customer_can_create_and_submit_a_paid_order(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order = self.commerce.list_pending_orders()[0]

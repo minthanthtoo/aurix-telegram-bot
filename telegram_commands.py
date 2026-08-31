@@ -339,6 +339,8 @@ class TelegramCommandMixin:
                 f"Administrators    {admins} active\n"
                 f"Control group     {(control_group or {}).get('title') or 'Not connected'}\n"
                 f"Review queue      {snapshot.get('pending_receipts', 0)} receipt(s)\n\n"
+                "Full owner access is active. Use the controls below for operations, "
+                "orders, receipts, promotions, enforcement and administrator management.\n\n"
                 "Staff access is database-backed. Initial human administrators are imported "
                 "only when you connect a group with no active admin roster; later role changes "
                 "stay preview-only until owner review.",
