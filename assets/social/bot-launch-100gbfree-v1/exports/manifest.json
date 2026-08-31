@@ -1,0 +1,21 @@
+{
+  "campaign": "aurix-bot-launch-100gbfree-v1",
+  "generated_at": "2026-08-31T19:15:00+06:30",
+  "recommended_order": ["aurix-bot-launch-100gbfree-v1"],
+  "items": [
+    {
+      "id": "aurix-bot-launch-100gbfree-v1",
+      "status": "conditional_publish",
+      "image": "20260831-191500_aurix-bot-launch-100gbfree-v1_r2.png",
+      "caption": "20260831-191500_aurix-bot-launch-100gbfree-v1_r2.txt",
+      "source": "20260831-191500_aurix-bot-launch-100gbfree-v1_r2.svg"
+    }
+  ],
+  "preview": "20260831-191500_aurix-bot-launch-100gbfree-v1_r2.png",
+  "publication_gates": [
+    "Live-test the production Bot with exact message 100GBFREE",
+    "Confirm five giveaway slots and Outline provisioning capacity",
+    "Confirm the terminal-account entitlement rule is commercially intended",
+    "Publish the PNG and complete TXT caption together"
+  ]
+}
