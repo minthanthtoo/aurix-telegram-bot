@@ -1,0 +1,32 @@
+{
+  "campaign": "aurix-quota-control-v1",
+  "version": "r2",
+  "stamp": "20260831-220000",
+  "audience": "Tech-savvy Myanmar professionals and existing Outline VPN users who need quota visibility and predictable access",
+  "role": "conversion",
+  "format": {
+    "platform": "Facebook and Telegram feed",
+    "width": 1080,
+    "height": 1350,
+    "ratio": "4:5"
+  },
+  "finals": [
+    {
+      "id": "quota-control-r2",
+      "image": "20260831-220000_aurix-quota-control-v1_r2.png",
+      "caption": "20260831-220000_aurix-quota-control-v1_r2.txt",
+      "source": "20260831-220000_aurix-quota-control-v1_r2.svg"
+    }
+  ],
+  "preview": "20260831-220000_aurix-quota-control-v1_preview.png",
+  "verified_product_claims": {
+    "usage_lookup": "My VPN exposes used, remaining, percentage, expiry, and key state from the latest available Outline transfer metrics",
+    "warning_thresholds": [25, 10, 5],
+    "quota_reached_notice": true,
+    "accounting_window": "rolling 30-day transfer metrics"
+  },
+  "publication_gates": [
+    "Run live production acceptance for usage refresh and Telegram warning delivery",
+    "Do not advertise 50%, 10%, 0% unless implementation and tests are changed first"
+  ]
+}

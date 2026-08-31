@@ -1,0 +1,24 @@
+အလုပ်တန်းလန်းမှာ VPN Key ရပ်သွားမှ Quota ကုန်သွားတာ သိရတာက အဆင်မပြေပါဘူး။
+
+AuriX က ထုတ်ပေးထားတဲ့ Outline VPN Key ကို သုံးနေရင် Telegram Bot ရဲ့ My VPN မှာ —
+• သုံးပြီးပမာဏ
+• ကျန်တဲ့ပမာဏနဲ့ ရာခိုင်နှုန်း
+• သက်တမ်းကုန်မယ့်အချိန်
+• Key ရဲ့ လက်ရှိအခြေအနေ
+ကို အချိန်မရွေး ပြန်ကြည့်နိုင်ပါတယ်။
+
+Quota လက်ကျန် 25%၊ 10% နဲ့ 5% ကို ရောက်တိုင်း Telegram ကနေ တစ်ကြိမ်စီ သတိပေးပါတယ်။ Quota ပြည့်သွားတာကို Bot က စစ်တွေ့ရင် Key ရပ်သွားကြောင်းလည်း သီးခြားအသိပေးပါတယ်။
+
+ဒီစာရင်းက Outline က နောက်ဆုံးပေးထားတဲ့ transfer metrics ကို အခြေခံတာပါ။ Live speed meter မဟုတ်သလို Calendar လပြည့်တိုင်း သုညက ပြန်စတဲ့ Usage စာရင်းလည်း မဟုတ်ပါဘူး။ Refresh လုပ်ပြီး နောက်ဆုံးရရှိထားတဲ့ပမာဏကို ကြည့်နိုင်ပါတယ်။
+
+ရနိုင်တဲ့ Outline VPN Plan —
+• 50 GB · ရက် ၃၀ · 3,000 ကျပ်
+• 100 GB · ရက် ၃၀ · 6,000 ကျပ်
+
+Bot — https://t.me/aurix_outline_vpn_bot
+Admin နဲ့ Group Chat — https://t.me/+oA18TDWAD9NiNWU1
+Channel — https://t.me/AurixDigitalStore
+
+AuriX ဟာ Outline Foundation ရဲ့ တရားဝင်မိတ်ဖက် မဟုတ်ပါဘူး။ ချိတ်ဆက်နိုင်မှုနဲ့ အမြန်နှုန်းက အသုံးပြုနေတဲ့ Network၊ ISP နဲ့ လက်ရှိ Server အခြေအနေပေါ် မူတည်နိုင်ပါတယ်။
+
+#AuriXVPN #OutlineVPN #VPNUsage #VPNMyanmar
