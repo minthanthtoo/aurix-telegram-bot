@@ -1,5 +1,7 @@
 # AuriX Brand Assets
 
+Before using any mark, follow [`AURIX_LOGO_USAGE_PROTOCOL.md`](AURIX_LOGO_USAGE_PROTOCOL.md). It defines canonical asset selection, co-brand hierarchy, responsive behavior, and rejection tests.
+
 These SVG files are editable master concepts for the AuriX brand system. V2 is the recommended working direction; the root-level V1 files are retained only as design history.
 
 ## Recommended V2 files

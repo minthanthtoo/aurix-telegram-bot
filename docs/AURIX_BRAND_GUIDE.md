@@ -145,6 +145,8 @@ AuriX answers with visible terms, short steps, and a named support path.
 
 ## 6. Logo system
 
+All production work must first follow the [AuriX Logo-Use Protocol](../brand/AURIX_LOGO_USAGE_PROTOCOL.md). A higher version number does not by itself mean an asset is approved.
+
 ### Logo concept
 
 The refined mark combines:

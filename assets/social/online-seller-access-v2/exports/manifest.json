@@ -1,0 +1,26 @@
+{
+  "campaign": "aurix-online-seller-access-v2",
+  "version": "r2",
+  "stamp": "20260901-130000",
+  "canvas": {"width": 1080, "height": 1350, "aspect_ratio": "4:5"},
+  "finals": [
+    {
+      "id": "online-seller-access-v2-r2",
+      "image": "20260901-130000_aurix-online-seller-access-v2_r2.png",
+      "caption": "20260901-130000_aurix-online-seller-access-v2_r2.txt",
+      "source": "20260901-130000_aurix-online-seller-access-v2_r2.svg",
+      "sha256": {
+        "image": "6735e9956fb1dea08a2a8b9b5686035464fd7d14f5bfd920b7e199966595c221",
+        "caption": "54a0b2d568dda0492c97322fb6f2ba347a271d15f5ba71454743f35201366352",
+        "source": "ee62cf1f187d931ee078576073259c1896cf6888b799546ffbf64bb277e3e240"
+      }
+    }
+  ],
+  "preview": "previews/20260901-130000_aurix-online-seller-access-v2_r2_324x405.png",
+  "canonical_brand_assets": [
+    "brand/v2/aurix-logo-mark-v2.svg",
+    "brand/v4/exports/aurix-telegram-bot-avatar-v4-1024.png",
+    "brand/outline/official/outline-client-icon-1024.png"
+  ],
+  "language_council": {"model_route": "ag/gemini-3.7-flash-high", "final_score": 9.5}
+}
