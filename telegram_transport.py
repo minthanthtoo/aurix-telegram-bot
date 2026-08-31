@@ -289,7 +289,15 @@ class TelegramBot(
         }
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        return self.request("editMessageText", payload)
+        try:
+            return self.request("editMessageText", payload)
+        except TelegramAPIError as exc:
+            # Repeated refreshes can produce an identical render. Telegram
+            # reports that as a 400 even though the requested UI state is
+            # already visible, so converge without emitting a replacement.
+            if "message is not modified" in str(exc).lower():
+                return None
+            raise
 
     @staticmethod
     def _reply_keyboard(rows: list[list[str]]) -> dict[str, Any]:
@@ -456,6 +464,10 @@ class TelegramBot(
                 state["page"] = int(state.get("page", 0)) + 1
             elif action == "prev":
                 state["page"] = max(0, int(state.get("page", 0)) - 1)
+            elif action == "first":
+                state["page"] = 0
+            elif action == "last":
+                state["page"] = max(0, (len(state.get("all_items", [])) - 1) // 5)
             elif action == "refresh":
                 pass
             elif action == "item":
@@ -468,7 +480,13 @@ class TelegramBot(
                     view = state["view"]
                     target = item.get("id") or item.get("job_id")
                     if view == "orders":
-                        self._send_order_detail(chat_id, telegram_id, str(target), admin_view=True)
+                        self._send_order_detail(
+                            chat_id,
+                            telegram_id,
+                            str(target),
+                            admin_view=True,
+                            message_id=message.get("message_id"),
+                        )
                     elif view == "receipts":
                         self.handle(
                             {
@@ -478,23 +496,20 @@ class TelegramBot(
                             }
                         )
                     elif view == "failed":
-                        self.handle(
-                            {
-                                "chat": {"id": chat_id, "type": "private"},
-                                "from": {"id": telegram_id},
-                                "text": f"/order {item.get('order_id')}",
-                            }
+                        self._send_order_detail(
+                            chat_id,
+                            telegram_id,
+                            str(item.get("order_id")),
+                            admin_view=True,
+                            message_id=message.get("message_id"),
                         )
                     return True
             state["all_items"] = self._panel_data(telegram_id, state["view"])
             message_id = message.get("message_id") or state.get("message_id")
         text, markup = self._render_panel(token)
         if isinstance(message_id, int):
-            try:
-                self.edit_message(chat_id, message_id, text, markup)
-                return True
-            except Exception:
-                pass
+            self.edit_message(chat_id, message_id, text, markup)
+            return True
         self.send(chat_id, text, markup)
         return True
 
@@ -1213,7 +1228,11 @@ class TelegramBot(
         message_id: int | None = None,
     ) -> None:
         if self.commerce is None:
-            self.send(chat_id, "Paid keys are not configured.")
+            text = "Paid keys are not configured."
+            if message_id is not None:
+                self.edit_message(chat_id, message_id, text)
+            else:
+                self.send(chat_id, text)
             return
         keys = self.commerce.user_vpns(telegram_id, limit=100)
         page_size = 5
@@ -1246,10 +1265,14 @@ class TelegramBot(
                 ]
             )
         nav: list[dict[str, Any]] = []
+        if page > 1:
+            nav.append({"text": "⏮ First", "callback_data": "k:l:0"})
         if page > 0:
             nav.append({"text": "◀ Previous", "callback_data": f"k:l:{page - 1}"})
         if page + 1 < page_count:
             nav.append({"text": "Next ▶", "callback_data": f"k:l:{page + 1}"})
+        if page + 2 < page_count:
+            nav.append({"text": "Last ⏭", "callback_data": f"k:l:{page_count - 1}"})
         if nav:
             rows.append(nav)
         rows.extend(
@@ -1260,6 +1283,33 @@ class TelegramBot(
         )
         markup = {"inline_keyboard": rows}
         if isinstance(message_id, int):
+            self.edit_message(chat_id, message_id, text, markup)
+        else:
+            self.send(chat_id, text, markup)
+
+    def _send_my_orders(
+        self, chat_id: int, telegram_id: int, *, message_id: int | None = None
+    ) -> None:
+        if self.commerce is None:
+            text = "Order tracking is not configured."
+            markup = self._customer_keyboard(telegram_id)
+        else:
+            orders = self.commerce.list_user_orders(telegram_id)
+            if not orders:
+                text = "You have no orders yet."
+                markup = self._customer_keyboard(telegram_id)
+            else:
+                text = "Your recent orders\n\n" + "\n\n".join(
+                    self._order_summary(order) for order in orders
+                )
+                rows = [
+                    [(f"View {str(order['id'])[:8]}", f"o:v:{order['id']}")]
+                    for order in orders
+                ]
+                rows.append([("🔄 Refresh", "n:myorders")])
+                rows.append([("💎 Upgrade", "n:plans"), ("💰 Wallet", "n:wallet")])
+                markup = self._inline_keyboard(rows)
+        if message_id is not None:
             self.edit_message(chat_id, message_id, text, markup)
         else:
             self.send(chat_id, text, markup)
@@ -1344,7 +1394,12 @@ class TelegramBot(
             self.send(chat_id, text, markup)
 
     def _send_my_vpn(
-        self, chat_id: int, telegram_id: int, *, show_key_text: bool = False
+        self,
+        chat_id: int,
+        telegram_id: int,
+        *,
+        show_key_text: bool = False,
+        message_id: int | None = None,
     ) -> None:
         """Render keys, lifecycle state, usage, and next actions in one dashboard."""
         giveaway = self.service.giveaway_status(telegram_id)
@@ -1584,7 +1639,11 @@ class TelegramBot(
                 ]
             )
         text = "\n\n".join(blocks)
-        self.send(chat_id, text[:4096], {"inline_keyboard": action_rows})
+        markup = {"inline_keyboard": action_rows}
+        if message_id is not None:
+            self.edit_message(chat_id, message_id, text[:4096], markup)
+        else:
+            self.send(chat_id, text[:4096], markup)
 
     def _send_usage(self, chat_id: int, telegram_id: int) -> None:
         try:

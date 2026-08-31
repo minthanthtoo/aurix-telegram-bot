@@ -409,22 +409,7 @@ class TelegramCommandMixin:
                         self._owner_keyboard(),
                     )
         elif command == "/receiptsystem":
-            snapshot = self._admin_call(telegram_id, "receipt_system_snapshot")
-            policy = snapshot.get("policy") or {}
-            last = snapshot.get("last_diagnostic") or {}
-            self.send(
-                chat["id"],
-                "🧾 Receipt Verification\n\n"
-                f"Current mode       {str(policy.get('mode') or 'manual').title()}\n"
-                f"LLM extraction     {'Ready' if getattr(self.receipt_extractor, 'base_url', '') and getattr(self.receipt_extractor, 'model', '') else 'Not configured'}\n"
-                f"Receipt storage    {'Ready' if snapshot.get('storage_configured') else 'Not configured'}\n"
-                "Payment verifier   Not connected\n"
-                "Automatic approval Locked\n"
-                f"Pending review     {snapshot.get('pending_receipts', 0)}\n"
-                f"Last safe test     {last.get('status') or 'not run'}\n\n"
-                "AI-Assisted mode extracts fields only. Staff must still verify the receiving account.",
-                self._receipt_system_keyboard(),
-            )
+            self._send_receipt_system(chat["id"], telegram_id)
         elif command == "/receiptmode":
             if len(args) != 1:
                 self.send(chat["id"], "Usage: /receiptmode manual|assisted")
@@ -538,23 +523,7 @@ class TelegramCommandMixin:
                         self._admin_keyboard(telegram_id),
                     )
         elif command == "/myorders":
-            if self.commerce is None:
-                self.send(chat["id"], "Order tracking is not configured.")
-            else:
-                orders = self.commerce.list_user_orders(telegram_id)
-                if not orders:
-                    self.send(
-                        chat["id"], "You have no orders yet.", self._customer_keyboard(telegram_id)
-                    )
-                else:
-                    text = "Your recent orders\n\n" + "\n\n".join(
-                        self._order_summary(order) for order in orders
-                    )
-                    rows = [
-                        [(f"View {str(order['id'])[:8]}", f"o:v:{order['id']}")] for order in orders
-                    ]
-                    rows.append([("💎 Upgrade", "n:plans"), ("💰 Wallet", "n:wallet")])
-                    self.send(chat["id"], text, self._inline_keyboard(rows))
+            self._send_my_orders(chat["id"], telegram_id)
         elif command == "/order":
             if self.commerce is None or len(args) != 1:
                 self.send(chat["id"], "Usage: /order <order-id>")

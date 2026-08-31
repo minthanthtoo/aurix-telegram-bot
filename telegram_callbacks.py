@@ -76,6 +76,21 @@ class TelegramCallbackMixin:
                 synthetic["text"] = "/orders"
                 self.handle(synthetic)
             return
+        message_id = message.get("message_id")
+        can_edit_text = isinstance(message_id, int) and not message.get("photo") and not message.get(
+            "document"
+        )
+        if can_edit_text and data in {"n:myvpn", "n:usage", "n:keytext", "n:myorders"}:
+            if data == "n:myorders":
+                self._send_my_orders(chat_id, telegram_id, message_id=message_id)
+            else:
+                self._send_my_vpn(
+                    chat_id,
+                    telegram_id,
+                    show_key_text=data == "n:keytext",
+                    message_id=message_id,
+                )
+            return
         if data in navigation:
             synthetic["text"] = navigation[data]
             self.handle(synthetic)
@@ -109,7 +124,12 @@ class TelegramCallbackMixin:
                 message_id=message_id if isinstance(message_id, int) else None,
             )
         elif scope == "o" and action == "v":
-            self._send_order_detail(chat_id, telegram_id, entity_id)
+            self._send_order_detail(
+                chat_id,
+                telegram_id,
+                entity_id,
+                message_id=message_id if can_edit_text else None,
+            )
         elif scope == "o" and action == "p":
             self._send_payment_method_chooser(chat_id, telegram_id, entity_id)
         elif scope == "m" and action == "s":
@@ -264,6 +284,12 @@ class TelegramCallbackMixin:
                 target = admin_navigation.get(entity_id)
                 if target is None:
                     self.send(chat_id, "This admin action is no longer valid.")
+                elif entity_id == "receiptsystem":
+                    self._send_receipt_system(
+                        chat_id,
+                        telegram_id,
+                        message_id=message_id if can_edit_text else None,
+                    )
                 elif entity_id in {"orders", "receipts", "failed", "enforcement"}:
                     if self.commerce is None and entity_id != "enforcement":
                         self.send(chat_id, "Commerce is not configured.")
@@ -358,7 +384,13 @@ class TelegramCallbackMixin:
                     cancel_data="a:n:staff",
                 )
             elif action == "o":
-                self._send_order_detail(chat_id, telegram_id, entity_id, admin_view=True)
+                self._send_order_detail(
+                    chat_id,
+                    telegram_id,
+                    entity_id,
+                    admin_view=True,
+                    message_id=message_id if can_edit_text else None,
+                )
             elif action == "p":
                 self._queue_admin_confirmation(
                     chat_id,

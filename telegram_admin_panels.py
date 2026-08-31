@@ -42,11 +42,15 @@ class TelegramAdminMixin:
             label = str(item.get("label") or item.get("id") or "Open")[:40]
             rows.append([(label, f"v2:{token}:item:{index}")])
         navigation: list[tuple[str, str]] = []
+        if page > 1:
+            navigation.append(("⏮ First", f"v2:{token}:first"))
         if page > 0:
             navigation.append(("◀ Previous", f"v2:{token}:prev"))
         navigation.append((f"{page + 1}/{max(1, pages)}", f"v2:{token}:refresh"))
         if page + 1 < pages:
             navigation.append(("Next ▶", f"v2:{token}:next"))
+        if page + 2 < pages:
+            navigation.append(("Last ⏭", f"v2:{token}:last"))
         rows.append(navigation)
         rows.append([("🔄 Refresh", f"v2:{token}:refresh"), ("🏠 Admin Home", "a:n:admin")])
         return self._inline_keyboard(rows)
@@ -132,19 +136,19 @@ class TelegramAdminMixin:
                 "failed": "No terminal worker failures.",
                 "enforcement": "No free/trial termination events recorded.",
             }.get(view, "Nothing needs attention.")
-            self.send(chat_id, empty)
+            if message_id is not None:
+                self.edit_message(chat_id, message_id, empty, self._admin_keyboard(telegram_id))
+            else:
+                self.send(chat_id, empty)
             return
         with self._panel_lock:
             self._panels[token]["all_items"] = items
         text, markup = self._render_panel(token)
         if message_id is not None:
-            try:
-                self.edit_message(chat_id, message_id, text, markup)
-                with self._panel_lock:
-                    self._panels[token]["message_id"] = int(message_id)
-                return
-            except Exception:
-                pass
+            self.edit_message(chat_id, message_id, text, markup)
+            with self._panel_lock:
+                self._panels[token]["message_id"] = int(message_id)
+            return
         result = self.send(chat_id, text, markup)
         if isinstance(result, dict) and result.get("message_id"):
             with self._panel_lock:
@@ -187,6 +191,29 @@ class TelegramAdminMixin:
                 [("⬅ Admin Home", "a:n:admin")],
             ]
         )
+
+    def _send_receipt_system(
+        self, chat_id: int, telegram_id: int, *, message_id: int | None = None
+    ) -> None:
+        snapshot = self._admin_call(telegram_id, "receipt_system_snapshot")
+        policy = snapshot.get("policy") or {}
+        last = snapshot.get("last_diagnostic") or {}
+        text = (
+            "🧾 Receipt Verification\n\n"
+            f"Current mode       {str(policy.get('mode') or 'manual').title()}\n"
+            f"LLM extraction     {'Ready' if getattr(self.receipt_extractor, 'base_url', '') and getattr(self.receipt_extractor, 'model', '') else 'Not configured'}\n"
+            f"Receipt storage    {'Ready' if snapshot.get('storage_configured') else 'Not configured'}\n"
+            "Payment verifier   Not connected\n"
+            "Automatic approval Locked\n"
+            f"Pending review     {snapshot.get('pending_receipts', 0)}\n"
+            f"Last safe test     {last.get('status') or 'not run'}\n\n"
+            "AI-Assisted mode extracts fields only. Staff must still verify the receiving account."
+        )
+        markup = self._receipt_system_keyboard()
+        if message_id is not None:
+            self.edit_message(chat_id, message_id, text, markup)
+        else:
+            self.send(chat_id, text, markup)
 
     def _send_receipt_diagnostic_result(
         self, chat_id: int, telegram_id: int, diagnostic: dict[str, Any] | None
@@ -247,6 +274,7 @@ class TelegramAdminMixin:
             "target_id": target_id,
             "state": "unavailable",
         }
+
         if command == "/receiptmode":
             try:
                 policy = self._admin_call(telegram_id, "receipt_policy")
@@ -807,17 +835,27 @@ class TelegramAdminMixin:
         order_id: str,
         admin_view: bool = False,
         heading: str | None = None,
+        message_id: int | None = None,
     ) -> None:
         if self.commerce is None:
-            self.send(chat_id, "Order tracking is not configured.")
+            text = "Order tracking is not configured."
+            if message_id is not None:
+                self.edit_message(chat_id, message_id, text)
+            else:
+                self.send(chat_id, text)
             return
         is_admin = bool(admin_view and self._is_admin(telegram_id))
         order = self.commerce.order_detail(order_id, telegram_id, is_admin=is_admin)
         if order is None:
-            self.send(chat_id, "Order not found.")
+            text = "Order not found."
+            if message_id is not None:
+                self.edit_message(chat_id, message_id, text)
+            else:
+                self.send(chat_id, text)
             return
-        self.send(
-            chat_id,
-            ((heading + "\n\n") if heading else "") + self._order_detail_text(order),
-            self._order_actions(order, is_admin),
-        )
+        text = ((heading + "\n\n") if heading else "") + self._order_detail_text(order)
+        markup = self._order_actions(order, is_admin)
+        if message_id is not None:
+            self.edit_message(chat_id, message_id, text, markup)
+        else:
+            self.send(chat_id, text, markup)

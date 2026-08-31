@@ -1053,6 +1053,44 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("💰 Pay Wallet", labels)
         self.assertIn("🔄 Refresh", labels)
 
+    def test_order_list_and_order_refresh_edit_the_interacting_message(self):
+        order = self.commerce.create_order(123, "Min", "basic_50gb")
+        self.bot.handle(self.message(123, "/myorders"))
+        sent_count = len(self.bot.sent)
+        calls = []
+        self.bot.request = lambda method, payload: calls.append((method, payload)) or True
+
+        self.bot.handle_callback(
+            {
+                "id": "orders-refresh",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {
+                    "message_id": 61,
+                    "text": self.bot.sent[-1][1],
+                    "chat": {"id": 123, "type": "private"},
+                },
+                "data": "n:myorders",
+            }
+        )
+        self.bot.handle_callback(
+            {
+                "id": "order-refresh",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {
+                    "message_id": 61,
+                    "text": "order detail",
+                    "chat": {"id": 123, "type": "private"},
+                },
+                "data": f"o:v:{order.order_id}",
+            }
+        )
+
+        self.assertEqual(len(self.bot.sent), sent_count)
+        edits = [payload for method, payload in calls if method == "editMessageText"]
+        self.assertEqual([payload["message_id"] for payload in edits], [61, 61])
+        self.assertIn("Your recent orders", edits[0]["text"])
+        self.assertIn("AuriX Order", edits[1]["text"])
+
     def test_polling_remains_available_while_housekeeping_is_blocked(self):
         bot = NonBlockingMaintenanceBot()
         thread = threading.Thread(target=bot.run)
@@ -1187,6 +1225,65 @@ class TelegramBotCommerceTest(unittest.TestCase):
         )
         self.assertEqual(len(self.bot.sent), sent_count)
         self.assertTrue(any(method == "editMessageText" for method, _payload in requests))
+
+    def test_receipt_system_refresh_edits_the_interacting_message(self):
+        self.bot.handle(self.message(999, "/receiptsystem"))
+        sent_count = len(self.bot.sent)
+        requests = []
+        self.bot.request = lambda method, payload: requests.append((method, payload)) or True
+
+        self.bot.handle_callback(
+            {
+                "id": "receipt-system-refresh",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {
+                    "chat": {"id": 999, "type": "private"},
+                    "message_id": 76,
+                    "text": self.bot.sent[-1][1],
+                },
+                "data": "a:n:receiptsystem",
+            }
+        )
+
+        self.assertEqual(len(self.bot.sent), sent_count)
+        edit = next(payload for method, payload in requests if method == "editMessageText")
+        self.assertEqual(edit["message_id"], 76)
+        self.assertIn("Receipt Verification", edit["text"])
+
+    def test_admin_first_and_last_page_buttons_edit_the_same_message(self):
+        for telegram_id in range(200, 212):
+            self.commerce.create_order(telegram_id, f"User {telegram_id}", "basic_50gb")
+        self.bot.handle(self.message(999, "/orders"))
+        last = next(
+            button["callback_data"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["text"] == "Last ⏭"
+        )
+        sent_count = len(self.bot.sent)
+        requests = []
+        self.bot.request = lambda method, payload: requests.append((method, payload)) or True
+
+        self.bot.handle_callback(
+            {
+                "id": "admin-last",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}, "message_id": 78},
+                "data": last,
+            }
+        )
+
+        self.assertEqual(len(self.bot.sent), sent_count)
+        edit = next(payload for method, payload in requests if method == "editMessageText")
+        self.assertEqual(edit["message_id"], 78)
+        self.assertIn("Page 3/3", edit["text"])
+        self.assertTrue(
+            any(
+                button["text"] == "⏮ First"
+                for row in edit["reply_markup"]["inline_keyboard"]
+                for button in row
+            )
+        )
 
     def test_maintenance_delivers_free_quota_warning_through_telegram(self):
         now = datetime(2026, 8, 27, 3, 7, tzinfo=UTC)
@@ -1762,6 +1859,31 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(dashboards[1], dashboards[2])
         self.assertIn("Keys • status • usage • next action", dashboards[0])
 
+    def test_customer_refresh_buttons_edit_the_interacting_message(self):
+        self.bot.handle(self.message(123, "/claim"))
+        self.bot.handle(self.message(123, "/myvpn"))
+        sent_count = len(self.bot.sent)
+        requests = []
+        self.bot.request = lambda method, payload: requests.append((method, payload)) or True
+
+        self.bot.handle_callback(
+            {
+                "id": "myvpn-refresh",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {
+                    "message_id": 81,
+                    "text": self.bot.sent[-1][1],
+                    "chat": {"id": 123, "type": "private"},
+                },
+                "data": "n:myvpn",
+            }
+        )
+
+        self.assertEqual(len(self.bot.sent), sent_count)
+        edit = next(payload for method, payload in requests if method == "editMessageText")
+        self.assertEqual(edit["message_id"], 81)
+        self.assertIn("Keys • status • usage • next action", edit["text"])
+
     def test_myvpn_surfaces_open_order_as_the_next_action(self):
         order = self.commerce.create_order(123, "Min", "basic_50gb")
 
@@ -1794,7 +1916,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertFalse(any(button.get("callback_data") == "n:claim" for button in buttons))
 
     def test_many_paid_keys_use_paginated_browser_and_focused_copy_view(self):
-        for index in range(7):
+        for index in range(12):
             order = self.commerce.create_order(123, "Min", "basic_50gb")
             self.commerce.submit_payment(
                 123, order.order_id, "manual", f"multi-key-{index}"
@@ -1807,7 +1929,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         ]
         self.assertTrue(
-            any(button["text"] == "🔑 Paid Keys · 7 active / 7 total" for button in dashboard_buttons)
+            any(button["text"] == "🔑 Paid Keys · 12 active / 12 total" for button in dashboard_buttons)
         )
         # The summary avoids seven repetitive paid-key copy rows.
         self.assertEqual(
@@ -1816,11 +1938,39 @@ class TelegramBotCommerceTest(unittest.TestCase):
         )
 
         self.bot._send_paid_key_list(123, 123)
-        self.assertIn("7 active · 7 total · Page 1/2", self.bot.sent[-1][1])
+        self.assertIn("12 active · 12 total · Page 1/3", self.bot.sent[-1][1])
         page_one = self.bot.markups[-1]["inline_keyboard"]
         key_rows = [row for row in page_one if row[0].get("callback_data", "").startswith("k:v:")]
         self.assertEqual(len(key_rows), 5)
         self.assertTrue(any(button.get("callback_data") == "k:l:1" for row in page_one for button in row))
+        self.assertTrue(any(button.get("callback_data") == "k:l:2" for row in page_one for button in row))
+
+        sent_count = len(self.bot.sent)
+        requests = []
+        self.bot.request = lambda method, payload: requests.append((method, payload)) or True
+        self.bot.handle_callback(
+            {
+                "id": "paid-keys-last",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {
+                    "message_id": 82,
+                    "text": self.bot.sent[-1][1],
+                    "chat": {"id": 123, "type": "private"},
+                },
+                "data": "k:l:2",
+            }
+        )
+        self.assertEqual(len(self.bot.sent), sent_count)
+        last_page = next(payload for method, payload in requests if method == "editMessageText")
+        self.assertEqual(last_page["message_id"], 82)
+        self.assertIn("Page 3/3", last_page["text"])
+        self.assertTrue(
+            any(
+                button.get("callback_data") == "k:l:0"
+                for row in last_page["reply_markup"]["inline_keyboard"]
+                for button in row
+            )
+        )
 
         subscription_id = key_rows[0][0]["callback_data"].split(":", 2)[2]
         self.bot._send_paid_key_detail(123, 123, subscription_id)
