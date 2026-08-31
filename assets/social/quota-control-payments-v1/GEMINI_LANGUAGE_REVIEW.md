@@ -22,3 +22,18 @@ Rejected:
 - `ရောက်တိုင်း`, because a maintenance pass that crosses several thresholds can queue only the deepest newly reached warning;
 - `ချက်ချင်း`, because immediate delivery has not been production-verified;
 - formal `နှင့်` in the customer-facing list, where natural `နဲ့` better matches the selected register.
+
+## User-sample R4 review
+
+After the user supplied a conversational meeting scenario, Gemini ranked `Meeting ဝင်နေတုန်း / Outline VPN Quota ကုန်သွားဖူးလား?` first: 9/10 naturalness, 9/10 catchiness, and 10/10 audience fit. The final visual uses the existing `OUTLINE VPN QUOTA` context label and shortens the display hook to `Meeting ဝင်နေတုန်း / Quota ကုန်သွားဖူးလား?`.
+
+The exact R4 image lines and caption then received 9/10 and a language-ready verdict. Adopted corrections:
+
+- `Quota ပြည့်သွားရင် Key ရပ်သွားကြောင်းလည်း သီးခြားအသိပေးပါတယ်။`
+- `လက်ကျန်ပမာဏနဲ့ ရာခိုင်နှုန်း`, retaining natural `နဲ့` instead of the reviewer’s more formal `နှင့်`.
+
+Rejected from the candidate response:
+
+- reducing the payment line to only KPay and WavePay;
+- an invented trial CTA;
+- a placeholder Bot handle.

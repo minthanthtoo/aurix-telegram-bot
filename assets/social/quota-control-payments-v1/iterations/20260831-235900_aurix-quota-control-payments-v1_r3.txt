@@ -1,0 +1,19 @@
+Outline VPN Quota ဘယ်လောက်ကျန်သေးလဲ သိချင်ရင် AuriX Bot ထဲမှာ စစ်ကြည့်လို့ရပါတယ်။
+
+AuriX က ထုတ်ပေးထားတဲ့ Outline VPN Key တွေအတွက် My VPN မှာ —
+• သုံးပြီးသားပမာဏ
+• လက်ကျန်နဲ့ ရာခိုင်နှုန်း
+• သက်တမ်းနဲ့ Key အခြေအနေ
+ကို ကြည့်နိုင်ပါတယ်။
+
+လက်ကျန် 25%၊ 10% နဲ့ 5% ရောက်တဲ့အခါ Telegram ကနေ သတိပေးစာ ပို့ပေးပါတယ်။ Quota ပြည့်သွားတာကို စစ်တွေ့ရင် Key ရပ်သွားကြောင်းလည်း သီးခြားအသိပေးပါတယ်။
+
+ငွေလွှဲနိုင်တဲ့ Wallet — KBZPay၊ WavePay၊ AYA Pay၊ uabpay နဲ့ CB Pay။
+
+Bot — https://t.me/aurix_outline_vpn_bot
+Admin နဲ့ Group Chat — https://t.me/+oA18TDWAD9NiNWU1
+Channel — https://t.me/AurixDigitalStore
+
+မှတ်ချက် — My VPN မှာပြတဲ့ Usage က Outline ဆီက နောက်ဆုံးရထားတဲ့ rolling 30-day transfer metrics ကို အခြေခံထားတာပါ။ Live speed meter မဟုတ်သလို လဆန်းတိုင်း reset ဖြစ်တဲ့ စာရင်းလည်း မဟုတ်ပါဘူး။
+
+#AuriXVPN #OutlineVPN #VPNUsage #VPNMyanmar

@@ -37,3 +37,9 @@
 - Complete a production acceptance check for usage refresh, warning delivery, and quota-reached notice before paid acquisition.
 - Confirm all five payment recipient accounts are currently operational.
 - Do not imply official partnership with Outline Foundation or payment providers.
+
+## R4 — conversational audience correction
+
+- Replaced the generic quota slogan with a concrete professional situation: a meeting interrupted by an exhausted Outline VPN quota.
+- Rephrased feature one as `လိုတဲ့အချိန် ဝင်စစ်နိုင်` and feature two as `25% · 10% · 5% ကျန်ရင် Noti ကြိုပို့`.
+- Gemini ranked the meeting hook first and gave the exact final language 9/10 with a publish-ready language verdict.
