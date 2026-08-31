@@ -647,6 +647,19 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("100GBFREE", self.bot.sent[0][1])
         self.assertIn("ငွေလွှဲ/ပြေစာ မလိုပါ", self.bot.sent[0][1])
         self.assertIn("SIM Data မဟုတ်ပါ", self.bot.sent[0][1])
+        promo_buttons = self.bot.markups[-1]["inline_keyboard"][0]
+        self.assertEqual(
+            next(button for button in promo_buttons if button["text"] == "📋 Copy Promo Code")[
+                "copy_text"
+            ],
+            {"text": "100GBFREE"},
+        )
+        self.assertEqual(
+            next(button for button in promo_buttons if button["text"].startswith("🎁 Redeem"))[
+                "callback_data"
+            ],
+            "g:c:100GBFREE",
+        )
         self.assertEqual(self.outline.created, [])
         with self.db.connect() as connection:
             self.assertEqual(
@@ -1390,6 +1403,33 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         self.assertIn("final AuriX entitlement", self.bot.sent[-1][1])
         self.assertEqual(self.commerce.list_user_orders(123), [])
+
+    def test_promo_redeem_button_claims_the_registered_campaign(self):
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "promo-query",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {"chat": {"id": 123, "type": "private"}},
+                "data": "g:c:100GBFREE",
+            }
+        )
+
+        self.assertIn("giveaway winner #1 of 5", self.bot.sent[-1][1])
+        self.assertEqual(len(self.outline.created), 1)
+
+    def test_plans_exposes_native_copy_for_active_registered_promo(self):
+        self.bot.handle(self.message(123, "/plans"))
+
+        buttons = [
+            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+        ]
+        self.assertEqual(
+            next(button for button in buttons if button["text"] == "📋 Copy Promo Code")[
+                "copy_text"
+            ],
+            {"text": "100GBFREE"},
+        )
 
     def test_open_paid_order_makes_user_ineligible_for_giveaway(self):
         self.commerce.create_order(123, "Min", "basic_50gb")

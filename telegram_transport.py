@@ -42,6 +42,11 @@ class TelegramBot(
     TelegramMaintenanceMixin,
     TelegramCommandMixin,
 ):
+    # Keep promo presentation and routing in one registry. New campaigns get
+    # the same native copy/redeem controls by adding their code here.
+    PROMO_CODE_COMMANDS = {
+        "100GBFREE": "/giveaway100gb",
+    }
     CUSTOMER_BUTTON_COMMANDS = {
         "🎁 Daily 300MB": "/claim",
         "🚀 Monthly 3GB": "/trial",
@@ -256,6 +261,38 @@ class TelegramBot(
         if copy_button is not None:
             rows.append([copy_button])
         rows.append([{"text": "🔐 Open My VPN", "callback_data": "n:myvpn"}])
+        return {"inline_keyboard": rows}
+
+    def _promo_code_buttons(self, promo_code: str) -> list[dict[str, Any]]:
+        """Build reusable one-tap redeem and clipboard controls for a promo."""
+        normalized = str(promo_code).strip().upper()
+        if normalized not in self.PROMO_CODE_COMMANDS:
+            return []
+        buttons = [
+            {
+                "text": f"🎁 Redeem {normalized}",
+                "callback_data": f"g:c:{normalized}"[:64],
+            }
+        ]
+        copy_button = self._copy_text_button("📋 Copy Promo Code", normalized)
+        if copy_button is not None:
+            buttons.append(copy_button)
+        return buttons
+
+    def _launch_promo_keyboard(self, promo_code: str) -> dict[str, Any]:
+        rows: list[list[dict[str, Any]]] = []
+        promo_buttons = self._promo_code_buttons(promo_code)
+        if promo_buttons:
+            rows.append(promo_buttons)
+        rows.extend(
+            [
+                [
+                    {"text": "🔐 My VPN", "callback_data": "n:myvpn"},
+                    {"text": "💎 Plans & Upgrade", "callback_data": "n:plans"},
+                ],
+                [{"text": "❓ Help", "callback_data": "n:menu"}],
+            ]
+        )
         return {"inline_keyboard": rows}
 
     def _handle_panel_callback(
@@ -713,22 +750,22 @@ class TelegramBot(
                 f"{plan.code} — {plan.price_minor:,} {plan.currency} — {quota} / {plan.duration_days} days"
             )
         lines.append("\nBuy with: /buy <plan-code>")
-        self.send(
-            chat_id,
-            "\n".join(lines),
-            self._inline_keyboard(
+        markup = self._inline_keyboard(
+            [
                 [
-                    [
-                        (
-                            f"💎 {plan.name} · {plan.price_minor:,} {plan.currency}",
-                            f"p:b:{plan.code}",
-                        )
-                    ]
-                    for plan in plans
+                    (
+                        f"💎 {plan.name} · {plan.price_minor:,} {plan.currency}",
+                        f"p:b:{plan.code}",
+                    )
                 ]
-                + [[("🚀 Free Monthly 3GB", "p:t:trial")]]
-            ),
+                for plan in plans
+            ]
+            + [[("🚀 Free Monthly 3GB", "p:t:trial")]]
         )
+        promo_buttons = self._promo_code_buttons(str(giveaway["code"]))
+        if giveaway["active"] and giveaway["remaining_slots"] > 0 and promo_buttons:
+            markup["inline_keyboard"].insert(0, promo_buttons)
+        self.send(chat_id, "\n".join(lines), markup)
 
     def _send_status(self, chat_id: int, telegram_id: int, include_key: bool = False) -> None:
         giveaway = self.service.giveaway_status(telegram_id)

@@ -37,7 +37,7 @@ class TelegramCommandMixin:
         if not isinstance(text, str) or not text.strip():
             return
         raw_text = text.strip()
-        text = "/giveaway100gb" if raw_text.upper() == "100GBFREE" else None
+        text = self.PROMO_CODE_COMMANDS.get(raw_text.upper())
         if text is None:
             text = self.CUSTOMER_BUTTON_COMMANDS.get(raw_text)
         if text is None and self._is_admin(telegram_id):
@@ -130,7 +130,12 @@ class TelegramCommandMixin:
             self.send(
                 chat["id"],
                 welcome_text,
-                self._customer_keyboard(telegram_id),
+                self._launch_promo_keyboard(str(giveaway["code"]))
+                if command == "/start"
+                and giveaway["active"]
+                and remaining > 0
+                and not giveaway["winner"]
+                else self._customer_keyboard(telegram_id),
             )
         elif command == "/whoami":
             access = "\nAdmin access: enabled" if self._is_admin(telegram_id) else ""

@@ -81,7 +81,14 @@ class TelegramCallbackMixin:
             self.send(chat_id, "This button is no longer valid. Refresh the menu.")
             return
         scope, action, entity_id = parts
-        if scope == "o" and action == "v":
+        if scope == "g" and action == "c":
+            promo_command = self.PROMO_CODE_COMMANDS.get(entity_id.upper())
+            if promo_command is None:
+                self.send(chat_id, "This promo code is no longer available. Open Plans to refresh.")
+                return
+            synthetic["text"] = promo_command
+            self.handle(synthetic)
+        elif scope == "o" and action == "v":
             self._send_order_detail(chat_id, telegram_id, entity_id)
         elif scope == "o" and action == "r":
             order = self.commerce.order_detail(entity_id, telegram_id) if self.commerce else None
