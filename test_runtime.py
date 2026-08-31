@@ -80,6 +80,9 @@ class _StaffAccess:
         admins = set(kwargs.get("admin_ids") or ())
         return {"owner_id": self.owner or (min(admins) if admins else None), "admin_ids": admins, "imported_admins": len(admins)}
 
+    def control_group(self):
+        return None
+
 
 class _Bot:
     instances = []

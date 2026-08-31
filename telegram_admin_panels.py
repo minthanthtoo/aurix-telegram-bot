@@ -168,7 +168,8 @@ class TelegramAdminMixin:
         return self._inline_keyboard(
             [
                 [("👥 Staff & Access", "a:n:staff"), ("🧾 Receipt System", "a:n:receiptsystem")],
-                [("🔄 Preview Group Sync", "a:n:groupsync"), ("📊 Operations", "a:n:admin")],
+                [("🏢 Choose Control Group", "a:s:group"), ("🔄 Preview Sync", "a:n:groupsync")],
+                [("📊 Operations", "a:n:admin")],
                 [("🏠 Customer Menu", "n:start")],
             ]
         )

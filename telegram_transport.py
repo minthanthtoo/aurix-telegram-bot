@@ -677,10 +677,14 @@ class TelegramBot(
 
     def _control_group_staff(
         self,
+        control_group_id: int | None = None,
     ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-        if self.control_group_id is None:
+        target_group_id = (
+            int(control_group_id) if control_group_id is not None else self.control_group_id
+        )
+        if target_group_id is None:
             raise RuntimeError("AURIX_CONTROL_GROUP_ID is not configured")
-        members = self.request("getChatAdministrators", {"chat_id": self.control_group_id})
+        members = self.request("getChatAdministrators", {"chat_id": target_group_id})
         if not isinstance(members, list):
             raise RuntimeError("Telegram returned an invalid administrator list")
         owner = None

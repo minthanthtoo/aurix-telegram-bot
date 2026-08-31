@@ -119,7 +119,9 @@ class StaffAccessControl:
             candidates: list[dict[str, Any]] = []
             source = "none"
             if active_admin_count == 0:
-                environment_ids = legacy_admin_ids
+                environment_ids = [
+                    value for value in legacy_admin_ids if value != selected_owner
+                ]
                 if environment_ids:
                     candidates = [{"id": value} for value in environment_ids]
                     source = "environment_legacy"
@@ -172,6 +174,52 @@ class StaffAccessControl:
                 (int(telegram_id),),
             ).fetchone()
         return str(row["role"]) if row is not None else None
+
+    def control_group(self) -> dict[str, Any] | None:
+        """Return the owner-approved control group, if one has been bound."""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT control_group_id, title, bound_by, bound_at, source "
+                "FROM staff_control_group WHERE id = 1"
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def bind_control_group(
+        self,
+        control_group_id: int,
+        owner_id: int,
+        *,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist a Telegram-authenticated group selected by the owner."""
+        self.require_owner(owner_id)
+        group_id = int(control_group_id)
+        if group_id >= 0:
+            raise StaffAccessError("The control group must have a negative Telegram chat ID")
+        bound_at = _now()
+        clean_title = str(title or "").strip()[:128] or None
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """INSERT INTO staff_control_group
+                   (id, control_group_id, title, bound_by, bound_at, source)
+                   VALUES (1, ?, ?, ?, ?, 'telegram_chat_shared')
+                   ON CONFLICT(id) DO UPDATE SET
+                     control_group_id = excluded.control_group_id,
+                     title = excluded.title,
+                     bound_by = excluded.bound_by,
+                     bound_at = excluded.bound_at,
+                     source = excluded.source""",
+                (group_id, clean_title, int(owner_id), bound_at),
+            )
+            self._audit(
+                connection,
+                "control_group_bound",
+                int(owner_id),
+                int(owner_id),
+                {"control_group_id": group_id, "title": clean_title},
+            )
+        return self.control_group() or {}
 
     def owner_id(self) -> int | None:
         with self.database.connect() as connection:

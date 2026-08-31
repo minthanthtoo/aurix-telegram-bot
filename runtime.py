@@ -144,6 +144,12 @@ def main() -> None:
     if control_group_id is not None and control_group_id >= 0:
         raise SystemExit("AURIX_CONTROL_GROUP_ID must be a negative Telegram group ID")
 
+    staff_access = StaffAccessControl(database, owner_id)
+    if control_group_id is None:
+        stored_control_group = staff_access.control_group()
+        if stored_control_group is not None:
+            control_group_id = int(stored_control_group["control_group_id"])
+
     def group_staff() -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
         if control_group_id is None:
             return None, []
@@ -191,7 +197,6 @@ def main() -> None:
         except StaffAccessError as exc:
             print(f"WARNING: {exc}", file=sys.stderr)
 
-    staff_access = StaffAccessControl(database, owner_id)
     try:
         staff = staff_access.bootstrap(
             owner_id=owner_id,

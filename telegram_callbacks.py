@@ -273,6 +273,9 @@ class TelegramCallbackMixin:
                 if not self._is_owner(telegram_id):
                     self._send_customer_fallback(chat_id, telegram_id)
                     return
+                if entity_id == "group":
+                    self._send_control_group_picker(chat_id)
+                    return
                 if entity_id == "add":
                     self._admin_add_waiting.add(telegram_id)
                     self.send(

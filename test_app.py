@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+from access_control import StaffAccessControl
 from app import ClaimService, Database, OutlineClient, OutlineError, TelegramBot
 from commerce import CommerceDatabase, CommerceService
 from persistence import open_sqlite_connection
@@ -739,6 +740,50 @@ class TelegramBotCommerceTest(unittest.TestCase):
                     "SELECT last_claim_at FROM users WHERE telegram_id = ?", (123,)
                 ).fetchone()["last_claim_at"]
             )
+
+    def test_owner_selects_and_persists_control_group_via_chat_shared(self):
+        access = StaffAccessControl(self.db, 999)
+        access.bootstrap(owner_id=999)
+        bot = RecordingTelegramBot(
+            "test-token",
+            ClaimService(self.db, self.outline),
+            self.commerce,
+            {999},
+            {123},
+            staff_access=access,
+        )
+        bot._refresh_staff_scopes = lambda: None
+        bot._control_group_staff = lambda group_id=None: (
+            {"id": 999, "display_name": "Owner"},
+            [],
+        )
+        bot.request = lambda method, payload: (
+            {"id": -100123, "title": "AuriX Group"}
+            if method == "getChat"
+            else 2
+        )
+
+        bot._send_control_group_picker(999)
+        request_chat = bot.markups[-1]["keyboard"][0][0]["request_chat"]
+        self.assertEqual(request_chat["request_id"], bot.CONTROL_GROUP_REQUEST_ID)
+        self.assertTrue(request_chat["bot_is_member"])
+
+        bot.handle(
+            {
+                "chat": {"id": 999, "type": "private"},
+                "from": {"id": 999, "first_name": "Owner"},
+                "chat_shared": {
+                    "request_id": bot.CONTROL_GROUP_REQUEST_ID,
+                    "chat_id": -100123,
+                    "title": "AuriX Group",
+                },
+            }
+        )
+
+        self.assertEqual(bot.control_group_id, -100123)
+        self.assertEqual(access.control_group()["control_group_id"], -100123)
+        self.assertIn("control group connected", bot.sent[-1][1])
+        self.assertEqual(bot.markups[-1], {"remove_keyboard": True})
 
     def test_admin_home_message_and_navigation_are_stable_contracts(self):
         self.bot.handle(self.message(999, "/admin"))

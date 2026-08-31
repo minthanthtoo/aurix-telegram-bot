@@ -62,7 +62,7 @@ Optional:
 - `DATABASE_PATH` — default `data/bot.db`
 - `OWNER_TELEGRAM_ID` — preferred immutable owner/recovery Telegram numeric ID
 - `ADMIN_TELEGRAM_IDS` — legacy one-time comma-separated administrator bootstrap
-- `AURIX_CONTROL_GROUP_ID` — trusted numeric `-100...` AuriX group ID. When no owner/admin exists, the human group creator/admins are safely imported; bots are excluded. Later group changes are preview-only until owner approval.
+- `AURIX_CONTROL_GROUP_ID` — optional trusted numeric `-100...` bootstrap override. Normally the owner connects the group from **Owner Controls → Choose Control Group**; Telegram supplies and AuriX persists the numeric ID without invite-link parsing.
 - `ADMIN_SCOPE_CLEANUP_IDS` — optional one-time comma-separated IDs whose old Telegram admin command scopes must be deleted after an administrator is removed
 - `TRIAL_TELEGRAM_IDS` — legacy allowlist; leave empty for public daily 300 MiB and monthly 3 GiB claims
 - `COMMERCE_DATABASE_URL` — PostgreSQL URL for all bot state when using the hosted PostgreSQL profile; empty uses SQLite
@@ -341,11 +341,15 @@ Owner-only `/owner` provides Staff & Access, group-sync preview and receipt
 controls. A new administrator must first open the bot and use `/whoami`; the
 owner then uses `/addadmin ID` (or the Staff panel) with a durable confirmation.
 Removal is immediate, invalidates pending confirmations and removes the private
-Telegram command scope. If neither environment nor database identifies staff,
-the bot can bootstrap the human creator as owner and human administrators as
-admins from `AURIX_CONTROL_GROUP_ID`. It never infers a group from messages,
-imports bot accounts, silently replaces an established owner, or continuously
-mirrors group promotions into financial authority.
+Telegram command scope. The owner can select a group through Telegram's native
+chat picker. AuriX requires the bot to already be a member, verifies that the
+AuriX owner is also the group creator, stores the numeric chat ID, and imports
+human administrators only when no active administrators exist.
+`AURIX_CONTROL_GROUP_ID` remains an optional server bootstrap override. Invite
+links are not parsed, bot accounts are not imported, and an established owner
+is never silently replaced. Later group-role changes are preview-only until
+owner review. Telegram provides member count and administrator data, but not a
+full ordinary-member directory.
 
 Promo codes and Outline credentials intentionally use different UX. Promo cards
 make **Redeem** the primary action; the visible code remains long-press

@@ -35,6 +35,8 @@ def _promo_gb_to_bytes(value: str) -> int:
 
 
 class TelegramCommandMixin:
+    CONTROL_GROUP_REQUEST_ID = 60421
+
     def handle(self, message: dict[str, Any]) -> None:
         chat = message.get("chat") or {}
         user = message.get("from") or {}
@@ -55,6 +57,9 @@ class TelegramCommandMixin:
         if username is not None and not isinstance(username, str):
             username = str(username)
         self.service.track_user(telegram_id, first_name, username=username)
+        if isinstance(message.get("chat_shared"), dict):
+            self._handle_control_group_shared(message, chat["id"], telegram_id)
+            return
         if message.get("photo") or message.get("document"):
             if self._is_admin(telegram_id) and telegram_id in self._receipt_test_waiting:
                 self._receipt_test_waiting.discard(telegram_id)
@@ -114,6 +119,7 @@ class TelegramCommandMixin:
                     "campaign|daily|hourly FROM_UTC TO_UTC",
                 )
                 return
+
         if command in self.ADMIN_CONFIRMATION_COMMANDS and not confirmed:
             # Validate syntax before presenting a challenge, but never mutate
             # commerce state from a directly typed administrative command.
@@ -322,6 +328,7 @@ class TelegramCommandMixin:
         elif command == "/owner":
             staff = self.staff_access.list_staff() if self.staff_access is not None else []
             admins = sum(1 for item in staff if item.get("role") == "admin")
+            control_group = self.staff_access.control_group() if self.staff_access is not None else None
             snapshot = self._admin_call(telegram_id, "receipt_system_snapshot")
             mode = str((snapshot.get("policy") or {}).get("mode") or "manual")
             self.send(
@@ -330,9 +337,11 @@ class TelegramCommandMixin:
                 f"Receipt workflow  {mode.title()}\n"
                 f"Receipt storage   {'Ready' if snapshot.get('storage_configured') else 'Not configured'}\n"
                 f"Administrators    {admins} active\n"
+                f"Control group     {(control_group or {}).get('title') or 'Not connected'}\n"
                 f"Review queue      {snapshot.get('pending_receipts', 0)} receipt(s)\n\n"
-                "Staff access is database-backed. Telegram group roles are imported only "
-                "during safe bootstrap or after an owner-reviewed sync.",
+                "Staff access is database-backed. Initial human administrators are imported "
+                "only when you connect a group with no active admin roster; later role changes "
+                "stay preview-only until owner review.",
                 self._owner_keyboard(),
             )
         elif command == "/staff":
@@ -349,7 +358,8 @@ class TelegramCommandMixin:
                     rows.append([(f"Remove {str(name)[:24]}", f"a:s:remove:{staff_id}")])
             lines.extend(["", "To add someone, ask them to open this bot and use /whoami first."])
             rows.append([("➕ Add Administrator", "a:s:add")])
-            rows.append([("🔄 Group Sync Preview", "a:n:groupsync"), ("⬅ Owner Home", "a:n:owner")])
+            rows.append([("🏢 Choose Control Group", "a:s:group"), ("🔄 Sync Preview", "a:n:groupsync")])
+            rows.append([("⬅ Owner Home", "a:n:owner")])
             self.send(chat["id"], "\n".join(lines), self._inline_keyboard(rows))
         elif command == "/addadmin":
             if len(args) != 1:
@@ -376,7 +386,7 @@ class TelegramCommandMixin:
                     self.send(chat["id"], f"Administrator {target_id} was revoked immediately.", self._owner_keyboard())
         elif command == "/groupsync":
             if self.control_group_id is None:
-                self.send(chat["id"], "Set AURIX_CONTROL_GROUP_ID before using group synchronization.", self._owner_keyboard())
+                self._send_control_group_picker(chat["id"])
             else:
                 try:
                     group_owner, group_admins = self._control_group_staff()
@@ -1132,3 +1142,94 @@ class TelegramCommandMixin:
                 self.send(chat["id"], "Claims are unavailable for this account.")
         else:
             self._send_customer_fallback(chat["id"], telegram_id)
+
+    def _send_control_group_picker(self, chat_id: int) -> None:
+        self.send(
+            chat_id,
+            "🏢 Choose the AuriX control group\n\n"
+            "Telegram will show only groups where this bot is already a member. "
+            "AuriX will verify that you are the group creator before saving it.",
+            {
+                "keyboard": [
+                    [
+                        {
+                            "text": "🏢 Choose Control Group",
+                            "request_chat": {
+                                "request_id": self.CONTROL_GROUP_REQUEST_ID,
+                                "chat_is_channel": False,
+                                "bot_is_member": True,
+                                "request_title": True,
+                                "request_username": True,
+                            },
+                        }
+                    ]
+                ],
+                "resize_keyboard": True,
+                "one_time_keyboard": True,
+                "input_field_placeholder": "Tap Choose Control Group",
+            },
+        )
+
+    def _handle_control_group_shared(
+        self,
+        message: dict[str, Any],
+        chat_id: int,
+        telegram_id: int,
+    ) -> None:
+        shared = message.get("chat_shared") or {}
+        if not self._is_owner(telegram_id) or self.staff_access is None:
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        if (
+            shared.get("request_id") != self.CONTROL_GROUP_REQUEST_ID
+            or not isinstance(shared.get("chat_id"), int)
+            or int(shared["chat_id"]) >= 0
+        ):
+            self.send(
+                chat_id,
+                "That group selection could not be verified. Open Owner Controls and choose it again.",
+                {"remove_keyboard": True},
+            )
+            return
+        group_id = int(shared["chat_id"])
+        try:
+            group_owner, group_admins = self._control_group_staff(group_id)
+            if group_owner is None or int(group_owner.get("id") or 0) != telegram_id:
+                raise PermissionError(
+                    "Your AuriX owner account must also be the Telegram group creator"
+                )
+            chat_info = self.request("getChat", {"chat_id": group_id})
+            member_count = self.request("getChatMemberCount", {"chat_id": group_id})
+            title = (
+                str(chat_info.get("title") or "").strip()
+                if isinstance(chat_info, dict)
+                else ""
+            ) or str(shared.get("title") or "").strip()
+            self.staff_access.bind_control_group(group_id, telegram_id, title=title)
+            self.control_group_id = group_id
+            staff = self.staff_access.bootstrap(
+                owner_id=None,
+                admin_ids=(),
+                group_owner=group_owner,
+                group_admins=group_admins,
+            )
+            self._refresh_staff_scopes()
+        except Exception as exc:
+            self.send(
+                chat_id,
+                f"Control-group setup was refused: {str(exc)[:240]}",
+                {"remove_keyboard": True},
+            )
+            return
+        active_admins = max(0, len(staff["admin_ids"]) - 1)
+        self.send(
+            chat_id,
+            "✅ AuriX control group connected\n\n"
+            f"Group: {title or group_id}\n"
+            f"Members: {int(member_count)}\n"
+            "Creator verified: yes\n"
+            f"Human administrators active: {active_admins}\n\n"
+            "Telegram does not expose a full ordinary-member list to bots. "
+            "AuriX can read the member count, creator/admins, and verify a specific member when needed.",
+            {"remove_keyboard": True},
+        )

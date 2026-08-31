@@ -66,6 +66,32 @@ class StaffAccessControlTest(unittest.TestCase):
         self.assertEqual(result["owner_id"], 10)
         self.assertTrue(access.is_owner(10))
 
+    def test_group_admins_import_when_legacy_admin_is_the_selected_owner(self):
+        access = StaffAccessControl(self.database)
+        result = access.bootstrap(
+            owner_id=None,
+            admin_ids={10},
+            group_owner={"id": 10, "display_name": "Owner"},
+            group_admins=[{"id": 20, "username": "human"}],
+        )
+        self.assertEqual(result["owner_id"], 10)
+        self.assertEqual(result["admin_ids"], {10, 20})
+        self.assertEqual(result["imported_admins"], 1)
+
+    def test_owner_can_persist_a_negative_control_group(self):
+        access = StaffAccessControl(self.database, 10)
+        access.bootstrap(owner_id=10)
+        bound = access.bind_control_group(-100123, 10, title="AuriX Group")
+        self.assertEqual(bound["control_group_id"], -100123)
+        self.assertEqual(bound["title"], "AuriX Group")
+        self.assertEqual(access.control_group()["source"], "telegram_chat_shared")
+
+    def test_non_owner_cannot_bind_a_control_group(self):
+        access = StaffAccessControl(self.database, 10)
+        access.bootstrap(owner_id=10)
+        with self.assertRaises(PermissionError):
+            access.bind_control_group(-100123, 20)
+
 
 if __name__ == "__main__":
     unittest.main()

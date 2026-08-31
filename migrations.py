@@ -185,6 +185,30 @@ FREE_ACCESS_MIGRATIONS = (
                )""",
         ),
     ),
+    Migration(
+        5,
+        "staff_control_group_binding",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS staff_control_group (
+                   id INTEGER PRIMARY KEY CHECK (id = 1),
+                   control_group_id INTEGER NOT NULL CHECK (control_group_id < 0),
+                   title TEXT,
+                   bound_by INTEGER NOT NULL,
+                   bound_at TEXT NOT NULL,
+                   source TEXT NOT NULL
+               )""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS staff_control_group (
+                   id INTEGER PRIMARY KEY CHECK (id = 1),
+                   control_group_id BIGINT NOT NULL CHECK (control_group_id < 0),
+                   title TEXT,
+                   bound_by BIGINT NOT NULL,
+                   bound_at TEXT NOT NULL,
+                   source TEXT NOT NULL
+               )""",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (
