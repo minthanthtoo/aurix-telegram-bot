@@ -11,12 +11,19 @@
 - Kept character through a real SemiCondensed Black font and a single curved amber underline.
 - Product proof became clearer, but its rounded panel still resembled a generic web card.
 
-## R2 — selected
+## R2
 
 - Replaced the rounded card with a parcel-label shape belonging to the seller scene.
 - Maintained one circular Bot boundary.
 - AuriX remains primary; Outline and wallets remain supporting recognition/proof.
 - Final image copy retained by Gemini at 9.5/10.
+
+## R3 — selected
+
+- Replaced the compressed but vague `Quota လက်ကျန်ပါ တန်းစစ်` with an explicit anytime lookup promise.
+- Reframed the middle line as the buyer's natural question: `Quota ဘယ်လောက်ကျန်လဲ?`.
+- Preserved the qualifying context that the Key was bought through AuriX Bot.
+- Kept the same proven visual hierarchy and parcel-label treatment; no extra feature labels were added.
 
 ## Gates
 

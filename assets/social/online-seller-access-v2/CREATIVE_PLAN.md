@@ -13,7 +13,9 @@
 
 ## Final reading path
 
-`Customer စာပြန်ချိန်` → `VPN လိုက်စမ်းရတာ မောနေပြီလား?` → `Outline VPN Key ကို AuriX Bot မှာ ဝယ်` → `Quota လက်ကျန်ပါ တန်းစစ်` → wallet proof.
+`Customer စာပြန်ချိန်` → `VPN လိုက်စမ်းရတာ မောနေပြီလား?` → `AuriX Bot မှာ ဝယ်ထားတဲ့ Key` → `Quota ဘယ်လောက်ကျန်လဲ?` → `အချိန်မရွေး ဝင်စစ်နိုင်` → wallet proof.
+
+The product proof uses a viewer question in the middle instead of three declarative statements. This keeps the exact ownership condition while making the benefit easier to scan and remember.
 
 ## Caption strategy
 

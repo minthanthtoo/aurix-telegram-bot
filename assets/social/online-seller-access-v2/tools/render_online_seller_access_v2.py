@@ -61,7 +61,7 @@ def text(
 
 
 def payment_row(round_no: int) -> str:
-    icon = (42, 46, 48)[round_no]
+    icon = (42, 46, 48, 48)[round_no]
     cell = icon + 16
     start = 600
     gap = 84
@@ -82,15 +82,15 @@ def payment_row(round_no: int) -> str:
 
 
 def build(round_no: int) -> str:
-    hook_size = (48, 51, 53)[round_no]
-    bot_size = (164, 174, 180)[round_no]
+    hook_size = (48, 51, 53, 53)[round_no]
+    bot_size = (164, 174, 180, 180)[round_no]
     bot_x = 82
     bot_y = 1084 - (bot_size - 164) // 2
-    product_y = (838, 828, 818)[round_no]
+    product_y = (838, 828, 818, 818)[round_no]
     product_panel = (
         '<path d="M0 0H450L500 50V218H0Z" fill="#FFFFFF" fill-opacity=".93" stroke="#B8E3E8" stroke-width="2"/>'
         '<path d="M450 0V50H500" fill="#DDF8FA" stroke="#B8E3E8" stroke-width="2"/>'
-        if round_no == 2
+        if round_no >= 2
         else '<rect x="0" y="0" width="500" height="218" rx="34" fill="#FFFFFF" fill-opacity=".91" stroke="#B8E3E8" stroke-width="2"/>'
     )
     return f'''<?xml version="1.0" encoding="UTF-8"?>
@@ -127,9 +127,9 @@ def build(round_no: int) -> str:
   <g transform="translate(95 {product_y})">
     {product_panel}
     <rect x="0" y="30" width="8" height="158" rx="4" fill="url(#signal)"/>
-    {text(34, 53, 'Outline VPN Key ကို', 31, 850, '#0B5278', family='Inter, Noto Sans Myanmar UI, sans-serif', role='headline', group='product')}
-    {text(34, 112, 'AuriX Bot မှာ ဝယ်၊', 35, 850, '#183C52', role='headline', group='product')}
-    {text(34, 165, 'Quota လက်ကျန်ပါ တန်းစစ်။', 34, 850, '#183C52', family='Noto Sans Myanmar SemiCondensed, Noto Sans Myanmar UI, sans-serif', role='headline', group='product')}
+    {text(34, 53, 'AuriX Bot မှာ ဝယ်ထားတဲ့ Key', 29, 850, '#0B5278', family='Inter, Noto Sans Myanmar SemiCondensed, Noto Sans Myanmar UI, sans-serif', role='headline', group='product')}
+    {text(34, 112, 'Quota ဘယ်လောက်ကျန်လဲ?', 35, 850, '#183C52', family='Inter, Noto Sans Myanmar SemiCondensed, Noto Sans Myanmar UI, sans-serif', role='headline', group='product')}
+    {text(34, 165, 'အချိန်မရွေး ဝင်စစ်နိုင်', 34, 850, '#183C52', family='Noto Sans Myanmar SemiCondensed, Noto Sans Myanmar UI, sans-serif', role='headline', group='product')}
     {text(34, 200, '@aurix_outline_vpn_bot', 20, 800, '#0A6B98', family='Inter, sans-serif')}
   </g>
 
@@ -175,7 +175,7 @@ Connection speed နဲ့ latency က အသုံးပြုနေတဲ့ N
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()

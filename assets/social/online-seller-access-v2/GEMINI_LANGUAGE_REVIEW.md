@@ -23,3 +23,13 @@ Rejected:
 - Added paid-key quota warnings at the implemented 25%, 10%, and 5% remaining thresholds.
 - Described receipt automation accurately: the vision layer can extract transaction details, while the Admin Team still verifies that money reached the receiving account.
 - Added free plans only after the paid offer as a low-risk entry note, so the caption continues to prioritize paid professional users.
+
+## R3 static-proof review
+
+Gemini ranked the question-led structure above the declarative alternatives and judged `ဝယ်ထားတဲ့` more natural than the clipped `ဝယ်တဲ့`. The final combines that recommendation with the locked product condition:
+
+1. `AuriX Bot မှာ ဝယ်ထားတဲ့ Key`
+2. `Quota ဘယ်လောက်ကျန်လဲ?`
+3. `အချိန်မရွေး ဝင်စစ်နိုင်`
+
+This version keeps the full meaning of the longer sentence while giving the image a faster three-beat reading rhythm.
