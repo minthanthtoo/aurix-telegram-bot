@@ -9,6 +9,11 @@ from typing import Any, Iterable
 
 
 UTC = timezone.utc
+STAFF_NOTIFICATION_EVENTS = (
+    "order_created",
+    "receipt_submitted",
+    "rejected",
+)
 
 
 def _now() -> str:
@@ -260,6 +265,45 @@ class StaffAccessControl:
                             s.added_at, s.telegram_id"""
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def notification_preferences(self, telegram_id: int) -> dict[str, bool]:
+        """Return one staff member's event choices; missing rows default on."""
+        self.require_admin(telegram_id)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT event_type, enabled FROM staff_notification_preferences
+                   WHERE telegram_id = ?""",
+                (int(telegram_id),),
+            ).fetchall()
+        configured = {str(row["event_type"]): bool(row["enabled"]) for row in rows}
+        return {event: configured.get(event, True) for event in STAFF_NOTIFICATION_EVENTS}
+
+    def set_notification_preference(
+        self, telegram_id: int, event_type: str, enabled: bool
+    ) -> dict[str, bool]:
+        """Change the caller's own staff alert choice and audit the change."""
+        self.require_admin(telegram_id)
+        event = str(event_type).strip().lower()
+        if event not in STAFF_NOTIFICATION_EVENTS:
+            raise StaffAccessError("That notification type is unavailable")
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """INSERT INTO staff_notification_preferences
+                   (telegram_id, event_type, enabled, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(telegram_id, event_type) DO UPDATE SET
+                     enabled = excluded.enabled, updated_at = excluded.updated_at""",
+                (int(telegram_id), event, 1 if enabled else 0, _now()),
+            )
+            self._audit(
+                connection,
+                "staff_notification_preference_changed",
+                int(telegram_id),
+                int(telegram_id),
+                {"event_type": event, "enabled": bool(enabled)},
+            )
+        return self.notification_preferences(telegram_id)
 
     def add_admin(self, telegram_id: int, owner_id: int) -> dict[str, Any]:
         self.require_owner(owner_id)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import html
 import os
 import sys
 import time
@@ -16,6 +17,22 @@ UTC = timezone.utc
 
 
 class TelegramMaintenanceMixin:
+    @staticmethod
+    def _staff_alert_html(text: str) -> str:
+        """Apply restrained Telegram styling after escaping every stored value."""
+        lines = str(text).splitlines()
+        rendered: list[str] = []
+        for index, line in enumerate(lines):
+            safe = html.escape(line)
+            if index == 0 and safe:
+                rendered.append(f"<b>{safe}</b>")
+            elif ": " in safe:
+                label, value = safe.split(": ", 1)
+                rendered.append(f"<b>{label}:</b> {value}")
+            else:
+                rendered.append(safe)
+        return "\n".join(rendered)
+
     def _send_pending_notifications(self) -> None:
         if self.commerce is None:
             return
@@ -25,12 +42,41 @@ class TelegramMaintenanceMixin:
                 print("notification secret unavailable", file=sys.stderr)
                 continue
             try:
-                markup = (
-                    self._key_delivery_keyboard(notification["access_url"])
-                    if notification.get("access_url")
-                    else None
+                markup = None
+                if notification.get("access_url"):
+                    markup = self._key_delivery_keyboard(notification["access_url"])
+                elif str(notification.get("kind") or "").startswith("staff_"):
+                    parts = str(notification.get("dedupe_key") or "").split(":")
+                    entity_id = parts[2] if len(parts) >= 4 else ""
+                    if notification.get("kind") == "staff_order_created":
+                        markup = self._inline_keyboard(
+                            [[("🛒 Open Order", f"a:o:{entity_id}")], [("⚙ Alerts", "a:n:notifications")]]
+                        )
+                    elif notification.get("kind") == "staff_rejected" and entity_id.startswith(
+                        "order-"
+                    ):
+                        markup = self._inline_keyboard(
+                            [
+                                [("🛒 Open Order", f"a:o:{entity_id.removeprefix('order-')}")],
+                                [("⚙ Alerts", "a:n:notifications")],
+                            ]
+                        )
+                    elif entity_id:
+                        markup = self._inline_keyboard(
+                            [[("🧾 Open Receipt", f"a:r:{entity_id}")], [("⚙ Alerts", "a:n:notifications")]]
+                        )
+                is_staff_alert = str(notification.get("kind") or "").startswith("staff_")
+                text = (
+                    self._staff_alert_html(notification["text"])
+                    if is_staff_alert
+                    else notification["text"]
                 )
-                self.send(notification["telegram_id"], notification["text"], markup)
+                self.send(
+                    notification["telegram_id"],
+                    text,
+                    markup,
+                    parse_mode="HTML" if is_staff_alert else None,
+                )
             except Exception as exc:
                 self.commerce.mark_notification_failed(notification["id"])
                 print(f"notification error: {type(exc).__name__}", file=sys.stderr)

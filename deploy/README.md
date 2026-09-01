@@ -77,7 +77,9 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=replace-with-service-role-key
 SUPABASE_RECEIPTS_BUCKET=payment-receipts
 RECEIPT_STORAGE_REQUIRED=1
-# Optional OpenAI-compatible vision endpoint for receipt parsing.
+# Optional OpenAI-compatible vision endpoint for receipt parsing. For the
+# standalone Antigravity proxy use https://your-gateway.example/v1, the gateway
+# API key, and antigravity/<vision-model-id> returned by GET /v1/models.
 RECEIPT_LLM_BASE_URL=
 RECEIPT_LLM_MODEL=
 RECEIPT_LLM_API_KEY=

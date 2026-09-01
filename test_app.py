@@ -519,7 +519,7 @@ class RecordingTelegramBot(TelegramBot):
         self.markups = []
         self.media = []
 
-    def send(self, chat_id, text, reply_markup=None):
+    def send(self, chat_id, text, reply_markup=None, parse_mode=None):
         self.sent.append((chat_id, text))
         self.markups.append(reply_markup)
 
@@ -860,6 +860,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertTrue(any("Payment recorded" in text for _, text in self.bot.sent))
 
     def test_uploaded_photo_notifies_admin_without_persisting_image_in_telegram(self):
+        StaffAccessControl(self.db, 999).bootstrap(owner_id=999)
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order_id = self.commerce.list_pending_orders()[0]["id"]
         self.commerce.choose_payment_method(123, order_id, "kbzpay")
@@ -880,11 +881,12 @@ class TelegramBotCommerceTest(unittest.TestCase):
         receipt = self.commerce.list_pending_receipts()[0]
         self.assertEqual(receipt["provider"], "kbzpay")
         self.assertEqual(self.bot.media, [])
-        self.assertIn(f"Evidence: {receipt['id']}", self.bot.sent[-1][1])
+        self.bot._send_pending_notifications()
+        self.assertIn(f"<b>Evidence:</b> {receipt['id'][:10]}", self.bot.sent[-1][1])
         markup = self.bot.markups[-1]
         labels = {button["text"] for row in markup["inline_keyboard"] for button in row}
-        self.assertIn("Open Receipt", labels)
-        self.assertIn("Open Order", labels)
+        self.assertIn("🧾 Open Receipt", labels)
+        self.assertIn("⚙ Alerts", labels)
 
     def test_image_document_keeps_its_media_type_for_admin_review(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
@@ -1160,6 +1162,13 @@ class TelegramBotCommerceTest(unittest.TestCase):
         with self.assertRaisesRegex(TelegramAPIError, "query is too old"):
             self.bot.request("answerCallbackQuery", {"callback_query_id": "secret-id"})
 
+    def test_technical_identifiers_are_masked_with_recognizable_edges(self):
+        self.assertEqual(
+            self.bot._mask_technical_value("157-245-63-95.sslip.io"),
+            "157-****p.io",
+        )
+        self.assertEqual(self.bot._mask_technical_value("short"), "****")
+
     def test_maintenance_reuses_one_outline_metrics_snapshot(self):
         outline = MaintenanceOutline()
         claim = MaintenanceClaimService(outline)
@@ -1225,6 +1234,65 @@ class TelegramBotCommerceTest(unittest.TestCase):
         )
         self.assertEqual(len(self.bot.sent), sent_count)
         self.assertTrue(any(method == "editMessageText" for method, _payload in requests))
+
+    def test_staff_can_control_their_own_operational_alerts(self):
+        access = StaffAccessControl(self.db, 999)
+        access.bootstrap(owner_id=999)
+        self.bot.staff_access = access
+        self.bot.admin_operations.staff_access = access
+
+        self.bot.handle(self.message(999, "/notifications"))
+        self.assertIn("✅ New orders: On", self.bot.sent[-1][1])
+        requests = []
+        self.bot.request = lambda method, payload: requests.append((method, payload)) or True
+        self.bot.handle_callback(
+            {
+                "id": "toggle-order-alert",
+                "from": {"id": 999, "first_name": "Owner"},
+                "message": {
+                    "chat": {"id": 999, "type": "private"},
+                    "message_id": 91,
+                    "text": self.bot.sent[-1][1],
+                },
+                "data": "a:u:order_created",
+            }
+        )
+
+        self.assertFalse(access.notification_preferences(999)["order_created"])
+        edit = next(payload for method, payload in requests if method == "editMessageText")
+        self.assertEqual(edit["message_id"], 91)
+        self.assertIn("🔕 New orders: Off", edit["text"])
+
+    def test_order_alert_fanout_respects_staff_preference(self):
+        access = StaffAccessControl(self.db, 999)
+        access.bootstrap(owner_id=999)
+
+        first = self.commerce.create_order(123, "Min", "basic_50gb")
+        alerts = [
+            item
+            for item in self.commerce.pending_notifications(limit=100)
+            if item["kind"] == "staff_order_created"
+        ]
+        self.assertEqual(len(alerts), 1)
+
+        self.commerce.reject_order(first.order_id, 999)
+        rejection_alerts = [
+            item
+            for item in self.commerce.pending_notifications(limit=100)
+            if item["kind"] == "staff_rejected"
+        ]
+        self.assertEqual(len(rejection_alerts), 1)
+        self.assertIn(first.order_id[:8], rejection_alerts[0]["text"])
+        self.assertIn(first.order_id[:8], alerts[0]["text"])
+
+        access.set_notification_preference(999, "order_created", False)
+        self.commerce.create_order(456, "Other", "basic_50gb")
+        alerts = [
+            item
+            for item in self.commerce.pending_notifications(limit=100)
+            if item["kind"] == "staff_order_created"
+        ]
+        self.assertEqual(len(alerts), 1)
 
     def test_receipt_system_refresh_edits_the_interacting_message(self):
         self.bot.handle(self.message(999, "/receiptsystem"))
@@ -1831,7 +1899,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         ]
         self.assertIn("🔄 Refresh", {button["text"] for button in buttons})
-        copy_button = next(button for button in buttons if button["text"].startswith("📋 Daily"))
+        copy_button = next(button for button in buttons if button["text"].startswith("📋 #1"))
         self.assertEqual(copy_button["copy_text"], {"text": "ss://secret"})
 
     def test_new_free_key_delivery_has_native_one_tap_copy(self):
@@ -1912,7 +1980,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
         ]
         self.assertFalse(any(button.get("copy_text") == {"text": "ss://secret"} for button in buttons))
         self.assertTrue(any(button["text"].startswith("🔑 Paid Keys") for button in buttons))
-        self.assertTrue(any(button["text"] == "➕ Buy Another Key" for button in buttons))
+        self.assertTrue(any(button["text"].startswith("🔑 #1") for button in buttons))
+        self.assertFalse(any(button.get("callback_data") == "n:plans" for button in buttons))
         self.assertFalse(any(button.get("callback_data") == "n:claim" for button in buttons))
 
     def test_many_paid_keys_use_paginated_browser_and_focused_copy_view(self):
@@ -2041,6 +2110,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "whoami",
                 "help",
                 "admin",
+                "notifications",
             },
         )
 

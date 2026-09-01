@@ -363,6 +363,8 @@ class TelegramCommandMixin:
             rows.append([("🏢 Choose Control Group", "a:s:group"), ("🔄 Sync Preview", "a:n:groupsync")])
             rows.append([("⬅ Owner Home", "a:n:owner")])
             self.send(chat["id"], "\n".join(lines), self._inline_keyboard(rows))
+        elif command == "/notifications":
+            self._send_staff_notifications(chat["id"], telegram_id)
         elif command == "/addadmin":
             if len(args) != 1:
                 self.send(chat["id"], "Usage: /addadmin <Telegram numeric ID>")

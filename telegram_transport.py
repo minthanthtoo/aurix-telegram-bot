@@ -101,6 +101,7 @@ class TelegramBot(
             "/receiptmode",
             "/receipttest",
             "/staff",
+            "/notifications",
         }
     )
     OWNER_ONLY_COMMANDS = frozenset({"/owner", "/staff", "/addadmin", "/removeadmin", "/groupsync"})
@@ -264,6 +265,7 @@ class TelegramBot(
         chat_id: int,
         text: str,
         reply_markup: dict[str, Any] | None = None,
+        parse_mode: str | None = None,
     ) -> Any:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -272,6 +274,8 @@ class TelegramBot(
         }
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
+        if parse_mode is not None:
+            payload["parse_mode"] = parse_mode
         return self.request("sendMessage", payload)
 
     def edit_message(
@@ -298,6 +302,16 @@ class TelegramBot(
             if "message is not modified" in str(exc).lower():
                 return None
             raise
+
+    @staticmethod
+    def _mask_technical_value(value: Any, prefix: int = 4, suffix: int = 4) -> str:
+        """Keep diagnostics recognizable without disclosing full infrastructure IDs."""
+        text = str(value or "").strip()
+        if not text:
+            return "-"
+        if len(text) <= prefix + suffix:
+            return "****"
+        return f"{text[:prefix]}****{text[-suffix:]}"
 
     @staticmethod
     def _reply_keyboard(rows: list[list[str]]) -> dict[str, Any]:
@@ -593,6 +607,7 @@ class TelegramBot(
 
         admin_commands = customer_commands + [
             {"command": "admin", "description": "Open the admin panel"},
+            {"command": "notifications", "description": "Choose operational alerts"},
         ]
         for admin_id in self.admin_ids:
             scope = {"type": "chat", "chat_id": admin_id}
@@ -985,26 +1000,6 @@ class TelegramBot(
                 chat_id,
                 "Receipt received for manual review. No payment is activated from the image alone.",
             )
-        evidence_id = str(result["evidence_id"])
-        for admin_id in self.admin_ids:
-            try:
-                # Keep receipt images and customer metadata out of persistent
-                # Telegram history. Admins open evidence on demand through the
-                # authorized review route.
-                self.send(
-                    admin_id,
-                    f"New receipt submitted for order {order_id}. Evidence: {evidence_id}.",
-                    self._inline_keyboard(
-                        [
-                            [
-                                ("Open Receipt", f"a:r:{evidence_id}"),
-                                ("Open Order", f"a:o:{order_id}"),
-                            ]
-                        ]
-                    ),
-                )
-            except Exception as exc:
-                print(f"admin receipt notification error: {type(exc).__name__}", file=sys.stderr)
 
     def _is_admin(self, telegram_id: int) -> bool:
         if self.staff_access is not None:
@@ -1259,7 +1254,7 @@ class TelegramBot(
             rows.append(
                 [
                     {
-                        "text": f"{icon} {offset}. {name[:22]} · {short_id}",
+                        "text": f"{icon} #{offset} · {name[:22]} · {short_id}",
                         "callback_data": f"k:v:{item['subscription_id']}"[:64],
                     }
                 ]
@@ -1471,6 +1466,7 @@ class TelegramBot(
                         "expires_at": item.get("expires_at"),
                         "status": status,
                         "access_url": item.get("access_url"),
+                        "subscription_id": item.get("subscription_id"),
                         "created_at": item.get("created_at") or item.get("starts_at"),
                     }
                 )
@@ -1505,7 +1501,7 @@ class TelegramBot(
             used = int(entry.get("used_bytes") or 0)
             remaining = max(0, int(entry.get("remaining_bytes") or 0))
             lines = [
-                f"{index}. {entry['tier']}",
+                f"#{index} · {entry['tier']}",
                 f"{icon} {status} · Expires: {entry.get('expires_at') or 'pending'}",
             ]
             if quota > 0:
@@ -1531,12 +1527,21 @@ class TelegramBot(
                     lines.append(f"Outline key (press and hold to copy):\n{access_url}")
                 if entry.get("key_type") != "paid":
                     copy_button = self._copy_text_button(
-                        f"📋 {str(entry['tier'])[:24]} · copy key", access_url
+                        f"📋 #{index} · Copy {str(entry['tier'])[:20]}", access_url
                     )
                     if copy_button is not None:
                         copy_rows.append([copy_button])
                     else:
                         lines.append("Open Show Keys as Text, then press and hold the key to copy it.")
+                elif entry.get("subscription_id"):
+                    copy_rows.append(
+                        [
+                            {
+                                "text": f"🔑 #{index} · Open {str(entry['tier'])[:20]}",
+                                "callback_data": f"k:v:{entry['subscription_id']}"[:64],
+                            }
+                        ]
+                    )
             elif status == "active" and entry.get("key_type") != "paid" and not access_available:
                 lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
             elif status == "activation pending":
@@ -1578,7 +1583,11 @@ class TelegramBot(
 
         action_rows: list[list[dict[str, Any]]] = []
         action_rows.extend(copy_rows)
-        if copy_rows and not show_key_text:
+        has_copyable_free = any(
+            entry.get("key_type") != "paid" and isinstance(entry.get("access_url"), str)
+            for entry in displayed
+        )
+        if has_copyable_free and not show_key_text:
             action_rows.append(
                 [{"text": "👁 Show Keys as Text", "callback_data": "n:keytext"}]
             )
@@ -1597,10 +1606,7 @@ class TelegramBot(
                 ]
             )
         action_rows.append(
-            [
-                {"text": "🔄 Refresh", "callback_data": "n:myvpn"},
-                {"text": "🧾 My Orders", "callback_data": "n:myorders"},
-            ]
+            [{"text": "🔄 Refresh", "callback_data": "n:myvpn"}]
         )
         if open_order is not None:
             action_rows.append(
@@ -1608,33 +1614,6 @@ class TelegramBot(
                     {
                         "text": f"Open Order {str(open_order['id'])[:8]}",
                         "callback_data": f"o:v:{open_order['id']}"[:64],
-                    }
-                ]
-            )
-        if not giveaway["access_lock_active"]:
-            if (
-                giveaway["exists"]
-                and giveaway["active"]
-                and not giveaway["winner"]
-                and giveaway["remaining_slots"] > 0
-            ):
-                promo_buttons = self._promo_code_buttons(str(giveaway["code"]))
-                if promo_buttons:
-                    action_rows.append(promo_buttons)
-            active_paid = any(
-                item.get("status") == "active" and item.get("key_status") == "active"
-                for item in subscriptions
-            )
-            if not active_paid:
-                free_row = [{"text": "🎁 Daily 300MB", "callback_data": "n:claim"}]
-                if self._trial_allowed(telegram_id):
-                    free_row.append({"text": "🚀 Monthly 3GB", "callback_data": "n:trial"})
-                action_rows.append(free_row)
-            action_rows.append(
-                [
-                    {
-                        "text": "➕ Buy Another Key" if active_paid else "💎 Plans & Upgrade",
-                        "callback_data": "n:plans",
                     }
                 ]
             )

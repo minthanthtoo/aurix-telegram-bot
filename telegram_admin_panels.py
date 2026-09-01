@@ -163,6 +163,7 @@ class TelegramAdminMixin:
                 [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
                 [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
                 [("🧪 Receipt System", "a:n:receiptsystem"), ("🎁 Promotions", "a:n:promo")],
+                [("🔔 My Alerts", "a:n:notifications")],
                 *([[("👑 Owner Controls", "a:n:owner")]] if self._is_owner(telegram_id) else []),
                 [("🏠 Customer Menu", "n:start")],
             ]
@@ -174,12 +175,52 @@ class TelegramAdminMixin:
                 [("📊 Admin Dashboard", "a:n:admin"), ("👥 Staff & Access", "a:n:staff")],
                 [("📥 Pending Orders", "a:n:orders"), ("🧾 Receipt Review", "a:n:receipts")],
                 [("🧪 Receipt System", "a:n:receiptsystem"), ("🎁 Promotions", "a:n:promo")],
+                [("🔔 My Alerts", "a:n:notifications")],
                 [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
                 [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
                 [("🏢 Control Group", "a:s:group"), ("🔄 Group Sync", "a:n:groupsync")],
                 [("🏠 Customer Menu", "n:start")],
             ]
         )
+
+    def _send_staff_notifications(
+        self, chat_id: int, telegram_id: int, *, message_id: int | None = None
+    ) -> None:
+        if self.staff_access is None:
+            self.send(chat_id, "Staff notification controls are not configured.")
+            return
+        preferences = self.staff_access.notification_preferences(telegram_id)
+        labels = {
+            "order_created": "New orders",
+            "receipt_submitted": "Receipts awaiting review",
+            "rejected": "Receipt/order rejections",
+        }
+        lines = [
+            "🔔 My Operational Alerts",
+            "",
+            "These settings apply only to your Telegram account.",
+            "Customer confirmations and critical VPN enforcement notices are unaffected.",
+            "",
+        ]
+        rows: list[list[tuple[str, str]]] = []
+        for event, label in labels.items():
+            enabled = bool(preferences.get(event, True))
+            lines.append(f"{'✅' if enabled else '🔕'} {label}: {'On' if enabled else 'Off'}")
+            rows.append(
+                [
+                    (
+                        f"{'🔕 Turn off' if enabled else '🔔 Turn on'} · {label}",
+                        f"a:u:{event}",
+                    )
+                ]
+            )
+        rows.append([("🔄 Refresh", "a:n:notifications"), ("⬅ Admin Home", "a:n:admin")])
+        text = "\n".join(lines)
+        markup = self._inline_keyboard(rows)
+        if message_id is not None:
+            self.edit_message(chat_id, message_id, text, markup)
+        else:
+            self.send(chat_id, text, markup)
 
     def _receipt_system_keyboard(self) -> dict[str, Any]:
         return self._inline_keyboard(
@@ -230,7 +271,7 @@ class TelegramAdminMixin:
             "",
             f"Run: {str(diagnostic.get('id') or '-')[:12]}",
             f"Summary: {result.get('summary') or '-'}",
-            f"LLM host: {llm.get('endpoint_host') or '-'}",
+            f"LLM host: {self._mask_technical_value(llm.get('endpoint_host'))}",
             f"Model: {llm.get('model') or '-'}",
             f"HTTP: {llm.get('http_status') or '-'} · {llm.get('duration_ms') or '-'} ms",
             f"Transaction: {extraction.get('transaction_id') or '-'}",

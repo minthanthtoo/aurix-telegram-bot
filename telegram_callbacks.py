@@ -273,6 +273,7 @@ class TelegramCallbackMixin:
                     "staff": "/staff",
                     "groupsync": "/groupsync",
                     "receiptsystem": "/receiptsystem",
+                    "notifications": "/notifications",
                     "orders": "/orders",
                     "receipts": "/receipts",
                     "capacity": "/capacity",
@@ -286,6 +287,12 @@ class TelegramCallbackMixin:
                     self.send(chat_id, "This admin action is no longer valid.")
                 elif entity_id == "receiptsystem":
                     self._send_receipt_system(
+                        chat_id,
+                        telegram_id,
+                        message_id=message_id if can_edit_text else None,
+                    )
+                elif entity_id == "notifications":
+                    self._send_staff_notifications(
                         chat_id,
                         telegram_id,
                         message_id=message_id if can_edit_text else None,
@@ -336,10 +343,10 @@ class TelegramCallbackMixin:
                         "📋 Receipt Test · Technical Details\n\n"
                         f"Run: {str(last.get('id') or '-')[:12]}\n"
                         f"Status: {last.get('status') or '-'}\n"
-                        f"Host: {llm.get('endpoint_host') or '-'}\n"
+                        f"Host: {self._mask_technical_value(llm.get('endpoint_host'))}\n"
                         f"Model: {llm.get('model') or '-'}\n"
                         f"HTTP: {llm.get('http_status') or '-'}\n"
-                        f"Request ID: {str(llm.get('provider_request_id') or '-')[:128]}\n"
+                        f"Request ID: {self._mask_technical_value(llm.get('provider_request_id'), 6, 4)}\n"
                         f"Latency: {llm.get('duration_ms') or '-'} ms\n"
                         f"Validated: {llm.get('validated', False)}\n\n"
                         "Sanitized, bounded LLM response:\n"
@@ -382,6 +389,22 @@ class TelegramCallbackMixin:
                     f"Revoke administrator {staff_id}? Their access and pending confirmations stop immediately.",
                     "Confirm Remove Admin",
                     cancel_data="a:n:staff",
+                )
+            elif action == "u":
+                if self.staff_access is None:
+                    self.send(chat_id, "Staff notification controls are not configured.")
+                    return
+                current = self.staff_access.notification_preferences(telegram_id)
+                if entity_id not in current:
+                    self.send(chat_id, "That notification type is unavailable.")
+                    return
+                self.staff_access.set_notification_preference(
+                    telegram_id, entity_id, not current[entity_id]
+                )
+                self._send_staff_notifications(
+                    chat_id,
+                    telegram_id,
+                    message_id=message_id if can_edit_text else None,
                 )
             elif action == "o":
                 self._send_order_detail(

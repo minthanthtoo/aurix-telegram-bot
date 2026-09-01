@@ -202,6 +202,46 @@ class CommerceService(CommerceWorkerMixin):
             ),
         )
 
+    @staticmethod
+    def _queue_staff_notification(
+        connection: Any,
+        event_type: str,
+        entity_id: str,
+        text: str,
+        created_at: str,
+    ) -> None:
+        """Durably fan out one deduplicated operational alert per opted-in staff member."""
+        try:
+            rows = connection.execute(
+                """SELECT s.telegram_id
+                   FROM staff_accounts s
+                   LEFT JOIN staff_notification_preferences p
+                     ON p.telegram_id = s.telegram_id AND p.event_type = ?
+                   WHERE s.status = 'active' AND COALESCE(p.enabled, 1) = 1""",
+                (event_type,),
+            ).fetchall()
+        except Exception:
+            # Some isolated commerce test/migration stores do not include the
+            # free-access staff component. Runtime uses the shared database.
+            return
+        for row in rows:
+            staff_id = int(row["telegram_id"])
+            connection.execute(
+                """INSERT INTO notifications
+                   (id, dedupe_key, telegram_id, kind, text, status, next_attempt_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                   ON CONFLICT(dedupe_key) DO NOTHING""",
+                (
+                    _new_id(),
+                    f"staff:{event_type}:{entity_id}:{staff_id}",
+                    staff_id,
+                    f"staff_{event_type}",
+                    text,
+                    created_at,
+                    created_at,
+                ),
+            )
+
     def create_order(
         self,
         telegram_id: int,
@@ -275,6 +315,18 @@ class CommerceService(CommerceWorkerMixin):
                 "customer",
                 str(telegram_id),
                 {"plan_code": plan.code, "amount_minor": plan.price_minor},
+            )
+            self._queue_staff_notification(
+                connection,
+                "order_created",
+                order_id,
+                "🛒 NEW ORDER\n\n"
+                f"Order: #{order_id[:8]}\n"
+                f"Customer: tg:{telegram_id}\n"
+                f"Plan: {plan.name}\n"
+                f"Amount: {plan.price_minor:,} {plan.currency}\n\n"
+                "Status: waiting for payment",
+                created_at,
             )
         return OrderResult(order_id, plan, "awaiting_payment")
 
@@ -1033,6 +1085,19 @@ class CommerceService(CommerceWorkerMixin):
                         str(telegram_id),
                         {"evidence_id": evidence_id, "extraction_status": status},
                     )
+                    self._queue_staff_notification(
+                        connection,
+                        "receipt_submitted",
+                        evidence_id,
+                        "🧾 RECEIPT AWAITING REVIEW\n\n"
+                        f"Order: #{order_id[:8]}\n"
+                        f"Evidence: {evidence_id[:10]}\n"
+                        f"Customer: tg:{telegram_id}\n"
+                        f"Method: {provider_name.upper()}\n"
+                        f"AI extraction: {status.replace('_', ' ')}\n\n"
+                        "Action: open the receipt and confirm it against the receiving account.",
+                        submitted_at,
+                    )
             except Exception:
                 # Do not leave a billable orphan if the final metadata commit
                 # fails. Deletion is best-effort and the row remains retryable.
@@ -1060,6 +1125,19 @@ class CommerceService(CommerceWorkerMixin):
                         str(telegram_id),
                         {"evidence_id": evidence_id, "extraction_status": status},
                     )
+                self._queue_staff_notification(
+                    connection,
+                    "receipt_submitted",
+                    evidence_id,
+                    "🧾 RECEIPT AWAITING REVIEW\n\n"
+                    f"Order: #{order_id[:8]}\n"
+                    f"Evidence: {evidence_id[:10]}\n"
+                    f"Customer: tg:{telegram_id}\n"
+                    f"Method: {provider_name.upper()}\n"
+                    f"AI extraction: {status.replace('_', ' ')}\n\n"
+                    "Action: open the receipt and confirm it against the receiving account.",
+                    submitted_at,
+                )
         result = dict(extraction or {})
         result["evidence_id"] = evidence_id
         result["image_sha256"] = digest
@@ -1266,7 +1344,10 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             evidence = connection.execute(
-                "SELECT id, order_id, review_status FROM payment_evidence WHERE id = ?",
+                """SELECT e.id, e.order_id, e.review_status, e.telegram_id, e.provider,
+                          o.plan_name, o.plan_code
+                   FROM payment_evidence e JOIN orders o ON o.id = e.order_id
+                   WHERE e.id = ?""",
                 (evidence_id,),
             ).fetchone()
             if evidence is None:
@@ -1285,6 +1366,23 @@ class CommerceService(CommerceWorkerMixin):
                 "UPDATE payments SET status = 'rejected' WHERE order_id = ? AND status = 'submitted'",
                 (evidence["order_id"],),
             )
+            connection.execute(
+                """INSERT INTO notifications
+                   (id, dedupe_key, telegram_id, kind, text, status, next_attempt_at, created_at)
+                   VALUES (?, ?, ?, 'receipt_rejected', ?, 'pending', ?, ?)
+                   ON CONFLICT(dedupe_key) DO NOTHING""",
+                (
+                    _new_id(),
+                    f"receipt-rejected:{evidence_id}",
+                    evidence["telegram_id"],
+                    "❌ Your receipt was not accepted.\n\n"
+                    f"Order: #{str(evidence['order_id'])[:8]}\n"
+                    f"Reason: {(notes or 'Please submit a clearer screenshot.')[:240]}\n\n"
+                    "Your order remains available for a replacement receipt.",
+                    reviewed_at,
+                    reviewed_at,
+                ),
+            )
             self._audit(
                 connection,
                 "receipt_rejected",
@@ -1293,6 +1391,19 @@ class CommerceService(CommerceWorkerMixin):
                 "admin",
                 str(admin_id),
                 {"notes": (notes or "")[:500]},
+            )
+            self._queue_staff_notification(
+                connection,
+                "rejected",
+                evidence_id,
+                "❌ RECEIPT REJECTED\n\n"
+                f"Order: #{str(evidence['order_id'])[:8]}\n"
+                f"Evidence: {evidence_id[:10]}\n"
+                f"Customer: tg:{evidence['telegram_id']}\n"
+                f"Method: {str(evidence['provider'] or 'manual').upper()}\n"
+                f"Reviewed by: tg:{admin_id}\n\n"
+                f"Reason: {(notes or 'rejected by admin')[:240]}",
+                reviewed_at,
             )
         return str(evidence["order_id"])
 
@@ -1877,7 +1988,9 @@ class CommerceService(CommerceWorkerMixin):
             self.database.begin_write(connection)
             self._lock_order(connection, order_id)
             order = connection.execute(
-                "SELECT status, telegram_id FROM orders WHERE id = ?", (order_id,)
+                """SELECT status, telegram_id, plan_name, plan_code, amount_minor, currency
+                   FROM orders WHERE id = ?""",
+                (order_id,),
             ).fetchone()
             if order is None:
                 raise CommerceError("Order not found")
@@ -1971,6 +2084,18 @@ class CommerceService(CommerceWorkerMixin):
                 order_id,
                 "admin",
                 str(admin_id),
+            )
+            self._queue_staff_notification(
+                connection,
+                "rejected",
+                f"order-{order_id}",
+                "❌ ORDER REJECTED\n\n"
+                f"Order: #{order_id[:8]}\n"
+                f"Customer: tg:{order['telegram_id']}\n"
+                f"Plan: {order['plan_name'] or order['plan_code']}\n"
+                f"Amount: {int(order['amount_minor']):,} {order['currency']}\n"
+                f"Reviewed by: tg:{admin_id}",
+                rejected_at,
             )
         return "rejected"
 

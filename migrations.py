@@ -209,6 +209,32 @@ FREE_ACCESS_MIGRATIONS = (
                )""",
         ),
     ),
+    Migration(
+        6,
+        "staff_notification_preferences",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS staff_notification_preferences (
+                   telegram_id INTEGER NOT NULL REFERENCES staff_accounts(telegram_id),
+                   event_type TEXT NOT NULL CHECK (
+                       event_type IN ('order_created', 'receipt_submitted', 'rejected')
+                   ),
+                   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (telegram_id, event_type)
+               )""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS staff_notification_preferences (
+                   telegram_id BIGINT NOT NULL REFERENCES staff_accounts(telegram_id),
+                   event_type TEXT NOT NULL CHECK (
+                       event_type IN ('order_created', 'receipt_submitted', 'rejected')
+                   ),
+                   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (telegram_id, event_type)
+               )""",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (

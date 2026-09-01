@@ -123,6 +123,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("free_access", 3, "configurable_promo_campaigns"),
                     ("free_access", 4, "staff_access_control"),
                     ("free_access", 5, "staff_control_group_binding"),
+                    ("free_access", 6, "staff_notification_preferences"),
                 ],
             )
 

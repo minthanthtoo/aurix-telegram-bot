@@ -152,6 +152,11 @@ without surrounding quotes.
 `RECEIPT_LLM_BASE_URL`, `RECEIPT_LLM_MODEL`, and `RECEIPT_LLM_API_KEY` are
 optional, but must be either all configured or all blank. Without them, receipt
 screenshots still enter manual review. LLM extraction never verifies a payment.
+The standalone Antigravity OAuth proxy is compatible: set the base URL to its
+authenticated `/v1` endpoint, use a model ID returned by `/v1/models`, and use
+the gateway API key—not a Google/OAuth access or refresh token. Keep the gateway
+behind TLS and authentication. Bot diagnostics mask infrastructure hosts and
+request IDs with retained prefixes/suffixes.
 
 ### 3A. Recommended: paid Background Worker with persistent disk
 
@@ -437,11 +442,14 @@ Outline key names are operator-readable and use UTC start time: `<username-or-te
 Receipt images are evidence, not proof. AuriX stores each new raw image in a private Supabase Storage bucket and stores only its bucket/path, checksum, MIME type, size, extraction result, and review state in the database. Telegram file metadata remains as a compatibility fallback for older evidence. The upload is completed before the order enters `payment_submitted`; failed uploads remain retryable and are never shown in the admin review queue. The optional LLM output is untrusted and never approves a payment or credits a wallet. Staff must verify recipient, amount/currency, timestamp, and unique transaction ID against the receiving account, record that decision with `/verify`, and only then use `/approve`. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.
 Configure the bucket's lifecycle/retention rule separately after confirming the business and payment-record retention policy; the application does not silently delete evidence.
 
-When a customer submits a receipt, each configured admin receives the screenshot
-immediately with order/review controls. Telegram distinguishes photos from image
-documents, so AuriX preserves that media type and retries the alternate send method
-for evidence saved before this metadata was introduced. `/receipts` remains the
-durable recovery queue if an admin was offline or the immediate notification failed.
+New orders, submitted receipts, and receipt rejections create deduplicated,
+durable alerts for every active owner/admin who has that event enabled. Each
+staff account controls its own choices through `/notifications`; customer
+confirmations and critical VPN-enforcement alerts are unaffected. Receipt images
+remain private and are opened on demand from the alert rather than copied into
+persistent admin chat history. Telegram distinguishes photos from image documents,
+so AuriX preserves that media type and retries the alternate review method for
+older evidence. `/receipts` remains the durable recovery queue.
 
 Wallet events are immutable. An external verified receipt records `credit → reserve → capture`; a wallet purchase records `reserve → capture`; rejection releases a reservation exactly once. Capture does not deduct the balance a second time. `/wallet` shows the current projection and recent ledger events, while `/reconcile` reports balance mismatches and impossible order/job combinations.
 
@@ -450,6 +458,12 @@ vision-capable model. Configure the three `RECEIPT_LLM_*` variables only after
 testing that endpoint with a synthetic receipt. If they are unset, unreachable,
 or return invalid JSON, the bot records the screenshot for manual review and
 does not guess a transaction ID.
+
+For `https://157-245-63-95.sslip.io`, obtain the gateway API key from the proxy
+owner, query its authenticated `/v1/models` endpoint, choose a vision-capable
+route, and configure `RECEIPT_LLM_BASE_URL=https://157-245-63-95.sslip.io/v1`.
+The public dashboard URL alone is insufficient: unauthenticated model requests
+correctly return HTTP 401. Never put OAuth tokens in the bot environment.
 
 SQLite fits one-process MVP on persistent local storage. Do not deploy DB onto an ephemeral filesystem. Run one bot process only; Telegram long polling and this SQLite workflow are not designed for replicas.
 
