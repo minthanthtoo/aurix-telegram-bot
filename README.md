@@ -98,6 +98,8 @@ up to three Singapore 1 GB nodes, one creation per 24 hours, and an $18/month
 node ceiling. Do not put `DIGITALOCEAN_API_TOKEN` in the normal bot
 service. The exact gates and manual Outline verification step are documented in
 the [fleet runbook](docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md).
+The exact second-node installation and canary sequence is in
+[`docs/NODE2_INSTALL_AND_CANARY.md`](docs/NODE2_INSTALL_AND_CANARY.md).
 After node-two verification, `AURIX_INFRASTRUCTURE_QUEUE_ENABLED=1` exposes a
 single idempotent **Prepare next node** action in the admin Capacity panel. That
 button records intent only; the separate worker and its mutation gate remain the
