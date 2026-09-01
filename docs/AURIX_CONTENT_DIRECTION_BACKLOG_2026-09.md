@@ -4,6 +4,8 @@ Status: strategy exploration complete; asset production not started for the new 
 
 Reference standard: `AURIX-SOCIAL-S1`
 
+Selected next-two brief: `docs/AURIX_NEXT_TWO_CONTENT_SELECTION.md`
+
 ## Audit conclusion
 
 The repository already contains substantial work for public launch, pricing, 100 GB promotions, quota visibility, payment marks, retention, and Outline setup. The remaining need is not another broad launch graphic. It is a disciplined lifecycle campaign that reduces payment hesitation, setup abandonment, quota surprise, and avoidable support load.
