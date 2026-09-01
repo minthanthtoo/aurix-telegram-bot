@@ -3,7 +3,7 @@
 This runbook targets the supplied DigitalOcean staging Droplet:
 
 ```text
-Public IPv4: 139.59.122.170
+Public IPv4: 157.245.63.95
 Region: SGP1
 Image: Ubuntu 24.04 LTS x64
 Size: 1 vCPU / 1 GB RAM / 25 GB disk
@@ -20,7 +20,7 @@ From the operator workstation, use the approved SSH key and a short timeout:
 ```sh
 ssh -i /Users/min/.ssh/digitalocean_1994 \
   -o BatchMode=yes -o ConnectTimeout=10 \
-  root@139.59.122.170 'id; uname -a; free -h; df -h /'
+  root@157.245.63.95 'id; uname -a; free -h; df -h /'
 ```
 
 If this times out, fix the Droplet firewall, cloud firewall, SSH service, or
@@ -145,6 +145,70 @@ staging keys before opening the bot to additional users.
 
 ## Current deployment evidence
 
-The application and fake-Outline regression tests pass locally. Deployment to
-`139.59.122.170` is not asserted until SSH succeeds and the installed Outline
-version, bot token, admin ID, firewall, and persistent disk are verified.
+The application regression suite and pinned Outline readiness checks must pass
+before every deployment to `157.245.63.95`. The GitHub-gated workflow below
+records the deployed commit and retains rollback releases.
+
+## GitHub-gated automatic deployment
+
+The DigitalOcean bot does not update merely because a commit exists locally or
+on GitHub. Install the repository's timer once to make GitHub `main` the release
+source. The timer polls every two minutes and deploys only when the `safety-net`
+GitHub Actions check has completed successfully for that exact commit.
+
+Each accepted commit is built under `/opt/aurix-releases/<full-commit-sha>` with
+its own virtual environment. The deployer compiles the release, runs the full
+test suite, validates the production configuration and live Telegram,
+Supabase, receipt-vision, and database dependencies, then atomically changes
+`/opt/aurix-current`. It restarts one `aurix-bot` process and requires fresh
+`Bot authorized` and `Outline connected` startup evidence. A failed release
+restores the previous symlink and restarts the previous version.
+
+One-time bootstrap, run from a checked-out, already-tested release:
+
+```sh
+install -d -o root -g root -m 0755 /var/lib/aurix-deploy /opt/aurix-releases
+install -d -o root -g root -m 0755 /opt/aurix-bot/deploy
+install -o root -g root -m 0755 \
+  deploy/digitalocean_autodeploy.py \
+  /opt/aurix-bot/deploy/digitalocean_autodeploy.py
+ln -sfn /opt/aurix-venv /opt/aurix-bot/.venv
+ln -sfn /opt/aurix-bot /opt/aurix-current
+install -o root -g root -m 0644 deploy/aurix-bot.service \
+  /etc/systemd/system/aurix-bot.service
+install -o root -g root -m 0644 deploy/aurix-autodeploy.service \
+  /etc/systemd/system/aurix-autodeploy.service
+install -o root -g root -m 0644 deploy/aurix-autodeploy.timer \
+  /etc/systemd/system/aurix-autodeploy.timer
+systemctl daemon-reload
+systemctl restart aurix-bot
+systemctl enable --now aurix-autodeploy.timer
+systemctl start aurix-autodeploy.service
+```
+
+Production deployment is deliberately blocked unless private receipt storage
+and the vision parser are configured and reachable. Keep these in
+`/etc/aurix-bot/aurix.env`, never Git:
+
+```dotenv
+RECEIPT_STORAGE_REQUIRED=1
+SUPABASE_URL=https://PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=server-side-secret
+SUPABASE_RECEIPTS_BUCKET=payment-receipts
+RECEIPT_LLM_BASE_URL=https://vision-gateway.example/v1
+RECEIPT_LLM_MODEL=vision-model-id
+RECEIPT_LLM_API_KEY=gateway-secret
+```
+
+Operational checks:
+
+```sh
+systemctl list-timers aurix-autodeploy.timer
+journalctl -u aurix-autodeploy -n 100 --no-pager
+readlink -f /opt/aurix-current
+cat /var/lib/aurix-deploy/deployed-sha
+```
+
+Do not run a Render service, a local bot, or a second VPS with the same Telegram
+token. Git auto-deployment changes code delivery; it does not make Telegram
+long polling multi-instance safe.

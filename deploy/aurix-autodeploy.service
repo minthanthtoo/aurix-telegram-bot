@@ -1,0 +1,32 @@
+[Unit]
+Description=AuriX GitHub-gated deployment check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/var/lib/aurix-deploy
+EnvironmentFile=/etc/aurix-bot/aurix.env
+Environment=AURIX_DEPLOY_REPOSITORY=https://github.com/minthanthtoo/aurix-telegram-bot.git
+Environment=AURIX_DEPLOY_BRANCH=main
+Environment=AURIX_DEPLOY_REQUIRE_GITHUB_CI=1
+ExecStart=/usr/bin/python3 /opt/aurix-current/deploy/digitalocean_autodeploy.py
+TimeoutStartSec=10min
+UMask=0027
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/opt /var/lib/aurix-deploy /var/lib/aurix-bot
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+MemoryHigh=600M
+MemoryMax=800M

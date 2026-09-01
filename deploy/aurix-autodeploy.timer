@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll GitHub main for a CI-approved AuriX release
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+RandomizedDelaySec=15s
+Persistent=true
+Unit=aurix-autodeploy.service
+
+[Install]
+WantedBy=timers.target
