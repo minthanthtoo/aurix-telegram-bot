@@ -7,12 +7,18 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-from receipt_llm import ReceiptExtractionError, build_receipt_extractor
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from receipt_llm import ReceiptExtractionError, build_receipt_extractor  # noqa: E402
 
 
 def mask(value: Any, prefix: int = 3, suffix: int = 3) -> str:

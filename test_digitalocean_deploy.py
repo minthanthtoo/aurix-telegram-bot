@@ -1,4 +1,7 @@
+import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +15,20 @@ from deploy.digitalocean_autodeploy import (
 
 
 class DigitalOceanDeployTest(unittest.TestCase):
+    def test_receipt_smoke_is_directly_executable_outside_repository(self):
+        script = Path(__file__).resolve().parent / "deploy/receipt_pipeline_smoke.py"
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run(
+                [sys.executable, str(script), "--help"],
+                cwd=temporary,
+                env={"PATH": os.environ.get("PATH", "")},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_root_built_release_is_traversable_by_service_user(self):
         with tempfile.TemporaryDirectory() as temporary:
             release = Path(temporary) / "release"
