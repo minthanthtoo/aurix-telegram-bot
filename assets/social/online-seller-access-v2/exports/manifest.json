@@ -1,5 +1,7 @@
 {
   "campaign": "aurix-online-seller-access-v2",
+  "standard_id": "AURIX-SOCIAL-S1",
+  "standard_status": "canonical_reference",
   "version": "r4",
   "stamp": "20260901-143000",
   "canvas": {"width": 1080, "height": 1350, "aspect_ratio": "4:5"},

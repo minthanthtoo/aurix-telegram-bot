@@ -1,5 +1,13 @@
 # AuriX Facebook Static Posts
 
+## Current standard and roadmap
+
+- `../../docs/AURIX_SOCIAL_STATIC_STANDARD_S1.md` — canonical situation-led Facebook-to-Telegram static standard, based on `online-seller-access-v2` R4.
+- `../../docs/AURIX_CONTENT_DIRECTION_BACKLOG_2026-09.md` — audited coverage, missing directions, creative territories, priority order, and publication gates.
+- Canonical S1 reference: `online-seller-access-v2/exports/20260901-143000_aurix-online-seller-access-v2_r4.png`.
+
+S1 is a reusable visual and production grammar, not a requirement to clone the seller composition for pricing, guides, giveaways, or service notices.
+
 First launch-safe batch generated from `docs/AURIX_SOCIAL_PROMPT_LIBRARY.md`.
 
 ## Posts
