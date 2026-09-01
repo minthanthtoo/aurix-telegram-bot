@@ -198,24 +198,28 @@ class FleetController:
                     matched += 1
                 else:
                     unmatched += 1
-                connection.execute(
-                    """INSERT INTO infrastructure_events
-                       (id, event_type, metadata_json, created_at)
-                       VALUES (?, 'provider_inventory_observed', ?, ?)""",
-                    (
-                        uuid.uuid4().hex,
-                        json.dumps(
-                            {
-                                "provider_resource_id": provider_id,
-                                "status": status,
-                                "region": str(region.get("slug") or "")[:32],
-                                "size": str(droplet.get("size_slug") or "")[:64],
-                            },
-                            sort_keys=True,
-                        ),
-                        now_text,
-                    ),
+                metadata = json.dumps(
+                    {
+                        "provider_resource_id": provider_id,
+                        "status": status,
+                        "region": str(region.get("slug") or "")[:32],
+                        "size": str(droplet.get("size_slug") or "")[:64],
+                    },
+                    sort_keys=True,
                 )
+                recent = connection.execute(
+                    """SELECT 1 FROM infrastructure_events
+                       WHERE event_type = 'provider_inventory_observed'
+                         AND metadata_json = ? AND created_at >= ? LIMIT 1""",
+                    (metadata, (datetime.now(UTC) - timedelta(hours=1)).isoformat()),
+                ).fetchone()
+                if recent is None:
+                    connection.execute(
+                        """INSERT INTO infrastructure_events
+                           (id, event_type, metadata_json, created_at)
+                           VALUES (?, 'provider_inventory_observed', ?, ?)""",
+                        (uuid.uuid4().hex, metadata, now_text),
+                    )
         return {"managed": len(inventory), "matched": matched, "unmatched": unmatched}
 
     def queue_provision(

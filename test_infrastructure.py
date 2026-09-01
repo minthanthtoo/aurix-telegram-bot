@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from commerce import CommerceDatabase
-from infrastructure import FleetController, InfrastructureError
+from infrastructure import DigitalOceanClient, FleetController, InfrastructureError
 
 
 UTC = timezone.utc
@@ -171,6 +171,7 @@ class FleetControllerTest(unittest.TestCase):
                 ("sg-a", "Singapore A", "101", self.now.isoformat(), self.now.isoformat()),
             )
         result = controller.reconcile_provider_inventory()
+        controller.reconcile_provider_inventory()
         self.assertEqual(result, {"managed": 1, "matched": 1, "unmatched": 0})
         with self.database.connect() as connection:
             row = connection.execute(
@@ -179,6 +180,29 @@ class FleetControllerTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["provider_status"], "active")
         self.assertTrue(row["provider_last_seen_at"])
+        with self.database.connect() as connection:
+            event_count = connection.execute(
+                "SELECT COUNT(*) AS n FROM infrastructure_events WHERE event_type = 'provider_inventory_observed'"
+            ).fetchone()["n"]
+        self.assertEqual(event_count, 1)
+
+    def test_digitalocean_inventory_follows_pagination(self):
+        client = DigitalOceanClient("token")
+        calls = []
+
+        def request(_method, path):
+            calls.append(path)
+            page = 1 if "?page=1&" in path else 2
+            count = 100 if page == 1 else 1
+            return {
+                "droplets": [{"id": page * 1000 + index} for index in range(count)],
+                "meta": {"total": 101},
+            }
+
+        client._request = request
+        droplets = client.list_droplets()
+        self.assertEqual(len(droplets), 101)
+        self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":
