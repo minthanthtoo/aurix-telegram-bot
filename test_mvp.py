@@ -1,7 +1,10 @@
+import io
+import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
@@ -348,6 +351,46 @@ class MvpFeatureTest(unittest.TestCase):
             OpenAICompatibleReceiptExtractor().extract(b"x")
         parsed = validate_extraction({"transaction_id": "TX", "confidence": 1, "flags": [], "notes": []})
         self.assertEqual(parsed.transaction_id, "TX")
+
+    def test_llm_explicitly_disables_streaming_for_openai_compatible_gateways(self):
+        response = io.BytesIO(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "provider": None,
+                                        "transaction_id": None,
+                                        "amount_minor": None,
+                                        "currency": None,
+                                        "timestamp": None,
+                                        "recipient": None,
+                                        "confidence": 0,
+                                        "flags": ["unreadable"],
+                                        "notes": ["synthetic test"],
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+        )
+        response.status = 200
+        response.headers = {}
+        extractor = OpenAICompatibleReceiptExtractor(
+            base_url="https://gateway.example/v1",
+            model="vision-model",
+            api_key="test-only",
+        )
+
+        with patch("receipt_llm.urllib.request.urlopen", return_value=response) as urlopen:
+            extractor.extract(b"synthetic-image", "image/png")
+
+        request = urlopen.call_args.args[0]
+        self.assertIs(json.loads(request.data)["stream"], False)
 
     def test_receipt_policy_defaults_manual_and_assisted_never_approves(self):
         self.assertEqual(self.commerce.receipt_policy()["mode"], "manual")

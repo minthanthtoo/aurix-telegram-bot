@@ -166,6 +166,7 @@ class OpenAICompatibleReceiptExtractor:
         body = {
             "model": self.model,
             "temperature": 0,
+            "stream": False,
             "response_format": {"type": "json_object"},
             "messages": [
                 {
