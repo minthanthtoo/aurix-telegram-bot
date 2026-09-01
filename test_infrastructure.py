@@ -130,6 +130,19 @@ class FleetControllerTest(unittest.TestCase):
                     requested_by=123, now=self.now,
                 )
 
+    def test_explicit_managed_provider_ids_count_before_tags_are_visible(self):
+        controller = FleetController(self.database, FakeProvider(droplets=[]))
+        environment = {
+            "AURIX_MANAGED_DROPLET_IDS": "101,102",
+            "AURIX_MAX_VPN_NODES": "2",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            with self.assertRaisesRegex(InfrastructureError, "node limit"):
+                controller.queue_provision(
+                    region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+                    requested_by=123, now=self.now,
+                )
+
     def test_budget_uses_existing_nodes_not_only_month_to_date_usage(self):
         provider = FakeProvider(
             usage="0.10",
