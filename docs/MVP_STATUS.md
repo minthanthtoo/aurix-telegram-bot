@@ -1,6 +1,6 @@
 # AuriX MVP status
 
-Status date: 2026-08-28 (Asia/Rangoon)
+Status date: 2026-09-02 (Asia/Rangoon)
 
 The percentages below separate code completion from live readiness. They are
 engineering estimates, not production traffic or revenue metrics.
@@ -34,13 +34,15 @@ engineering estimates, not production traffic or revenue metrics.
 - Core paid-concierge code: approximately **80%** of the scoped first pilot.
 - Local test/evidence coverage: **100%** for the current fake-Outline, TLS,
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
-  order, multi-key, quota-warning, Telegram delivery, and wallet suite (89 tests passing).
-- Live deployment readiness: approximately **35%**; the unit and runbook exist,
-  but SSH, Outline installation/version, secrets, firewall, and live smoke checks
-  are unverified.
-- End-to-end MVP readiness: approximately **60%** when code and live gates are
-  weighted together. This is the useful progress number for the current task;
-  it is not a claim that customers can safely use the service today.
+  order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
+  and wallet suite (232 tests passing).
+- Live deployment readiness: approximately **70%**; the primary node, bot,
+  database backup, worker/timer, provider inventory, and guarded release path
+  are verified. The second node's Outline installation, endpoint registration,
+  capacity declaration, and canary remain open.
+- End-to-end MVP readiness: approximately **75%** when code and live gates are
+  weighted together. This is a progress estimate, not a claim that the fleet is
+  ready for unrestricted public traffic.
 
 ## Remaining MVP gates
 
@@ -53,6 +55,8 @@ engineering estimates, not production traffic or revenue metrics.
    → LLM/manual review → approve → provision → quota-hit DELETE → `/myvpn` smoke
    tests, with before/after key inventories and a receiving-account transaction
    comparison. Confirm whether active sessions stop within the promised window.
-6. Decide whether the paid pilot remains one-process SQLite or enables the
-   PostgreSQL backend plus an independent worker before admitting more than a
-   controlled cohort; the PostgreSQL schema path is now present but not live-tested.
+6. Complete the 100% acceptance checklist in
+   `docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`, then decide whether the paid
+   pilot remains one-process SQLite or enables the PostgreSQL backend plus an
+   independent worker before admitting more than a controlled cohort; the
+   PostgreSQL schema path is now present but not live-tested.

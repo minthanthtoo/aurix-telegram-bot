@@ -448,3 +448,66 @@ installed, its pinned Management API endpoint is registered, inventory is
 healthy, and the owner declares allocations. A future non-Outline transport
 must prove replicated identity/quota state before any load-balanced design is
 reconsidered.
+
+## 20. Definition of done (100% acceptance)
+
+The implementation is complete when every item below has a recorded command,
+timestamp, and audit/evidence reference. A green unit suite alone is not
+completion.
+
+### Code and repository
+
+- CI passes compile, Ruff, migrations, provider-worker, Telegram, commerce,
+  receipt, wallet, quota, and multi-server tests on the exact commit deployed.
+- The working tree is clean; the deployed SHA is recorded in the release log.
+- No secret, Management API path, access URL, receipt image, provider token, or
+  customer key appears in Git, test output, journald, or diagnostics.
+- SQLite integrity/backup or PostgreSQL backup has been verified immediately
+  before the release.
+
+### Control plane and storage
+
+- Exactly one Telegram long-polling process is active for this bot token.
+- The configured database survives a restart and a restore rehearsal; migrations
+  are idempotent and schema fingerprints match the release.
+- Private receipt storage accepts an object, rejects a duplicate checksum, and
+  preserves review/audit metadata without exposing the object publicly.
+- Owner/admin authorization, notification preferences, order state transitions,
+  wallet ledger invariants, and in-place Telegram pagination are smoke-tested.
+
+### Every Outline endpoint
+
+- Each node has a secret Management URL and pinned SHA-256 fingerprint installed
+  out of band; `GET /server`, `/access-keys`, and metrics all succeed.
+- The endpoint is registered with a stable `server_id` and numeric provider ID,
+  has declared key/traffic/tier/plan allocations, and is fresh/healthy in the
+  last observation window.
+- One canary key is created, copied, connected, measured, quota-limited, deleted,
+  and verified absent through the same server-scoped identity tuple.
+- Expired and `used >= limit` keys are hard-deleted with a durable termination
+  event, retry/escalation path, and customer/staff notice.
+
+### Fleet and provider safety
+
+- The worker reports every explicitly managed Droplet as `managed`; each has a
+  matching registered Outline endpoint before it is eligible for issuance.
+- Provider mutation remains disabled through node installation and canary.
+  Enabling it requires owner approval, allowlisted region/size/image, budget,
+  cooldown, node-count, and two consecutive fresh capacity observations.
+- A queued provision is an idempotent intent only; the worker is the sole actor
+  allowed to call DigitalOcean and stops at `awaiting_verification`.
+- Scale-in is proven by a drain rehearsal: allocations zero, no active keys or
+  reservations, final inventory captured, endpoint removed, then manual destroy.
+
+### Final live pilot
+
+- Run the complete customer path: `/start` → free daily/monthly claim → each
+  paid plan → wallet top-up → receipt upload → AI triage/manual decision → key
+  delivery → `/myvpn`/usage → expiry/quota termination.
+- Run the complete staff path: owner/admin panel, receipt accept/reject, refund or
+  rejection notification, capacity/allocation edit, reconcile, and worker audit.
+- Observe at least 24 hours of maintenance/worker logs with no unclassified
+  errors, then keep a 72-hour rollback window and the last known-good release.
+
+Until the second node and these live gates are evidenced, the project is
+**code-complete and operationally staged**, not 100% production-ready.
