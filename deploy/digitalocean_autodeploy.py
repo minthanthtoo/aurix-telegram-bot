@@ -33,10 +33,30 @@ REQUIRE_CI = os.environ.get("AURIX_DEPLOY_REQUIRE_GITHUB_CI", "1").lower() not i
     "no",
 }
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
+RELEASE_GATE_VARIABLES = (
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "RECEIPT_LLM_BASE_URL",
+    "RECEIPT_LLM_MODEL",
+    "RECEIPT_LLM_API_KEY",
+)
 
 
 class DeployError(RuntimeError):
     pass
+
+
+def missing_release_configuration(environment: dict[str, str]) -> list[str]:
+    """Return only variable names so blocked timer logs never expose values."""
+    missing = [name for name in RELEASE_GATE_VARIABLES if not environment.get(name, "").strip()]
+    if environment.get("RECEIPT_STORAGE_REQUIRED", "0").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        missing.append("RECEIPT_STORAGE_REQUIRED=1")
+    return missing
 
 
 def run(
@@ -274,6 +294,10 @@ def _cleanup_releases(keep: int = 3) -> None:
 def deploy() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     RELEASES_DIR.mkdir(parents=True, exist_ok=True)
+    missing = missing_release_configuration(dict(os.environ))
+    if missing:
+        print("AuriX deploy: blocked by missing production configuration: " + ", ".join(missing))
+        return
     repository = STATE_DIR / "repository"
     if not (repository / ".git").is_dir():
         if repository.exists():
