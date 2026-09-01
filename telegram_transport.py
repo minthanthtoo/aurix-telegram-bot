@@ -172,6 +172,7 @@ class TelegramBot(
         self._maintenance_stop = threading.Event()
         self._maintenance_thread: threading.Thread | None = None
         self._admin_confirmations: dict[str, dict[str, Any]] = {}
+        self._receipt_verify_inputs: dict[int, str] = {}
         self._admin_confirmation_lock = threading.Lock()
         self._command_menu_ready = False
         self._command_menu_retry_enabled = hasattr(self.service, "database")
@@ -709,9 +710,10 @@ class TelegramBot(
             f"Customer: {receipt['telegram_id']}\n"
             f"Method: {str(receipt.get('provider') or 'manual').upper()}\n"
             f"Expected: {int(receipt['amount_minor']):,} {receipt['currency']}\n"
-            f"Extracted transaction: {extracted.get('transaction_id') or '-'}\n\n"
-            "Check the receiving account, then use:\n"
-            f"/verify {evidence_id} <transaction-id> <amount>"
+            f"Extracted transaction: {extracted.get('transaction_id') or '-'}\n"
+            f"AI amount: {extracted.get('amount_minor') or extracted.get('amount') or '-'}\n\n"
+            "AI extraction is a hint—not payment proof. Check the receiving account, "
+            "then tap Verify Payment."
         )
 
     def _send_receipt_review(self, chat_id: int, receipt: dict[str, Any]) -> None:
@@ -719,6 +721,7 @@ class TelegramBot(
         evidence_id = str(receipt["id"])
         markup = self._inline_keyboard(
             [
+                [("✅ Verify Payment", f"a:v:{evidence_id}")],
                 [("View Order", f"a:o:{receipt['order_id']}")],
                 [("🛑 Reject Receipt", f"a:q:{evidence_id}")],
             ]
@@ -1080,10 +1083,18 @@ class TelegramBot(
             )
         lines.append("free_3gb — free every 30 days — 3 GiB / 30 days (use /trial)")
         plans = self.commerce.plans()
+        availability = self.commerce.plan_availability()
         for plan in plans:
             quota = f"{plan.quota_bytes / 1024**3:g} GB" if plan.quota_bytes else "fair-use"
+            capacity = availability.get(plan.code, {})
+            slots = capacity.get("remaining_slots")
+            availability_text = (
+                "temporarily full"
+                if not capacity.get("available", True)
+                else (f"{slots} slot(s) left" if slots is not None else "available")
+            )
             lines.append(
-                f"{plan.code} — {plan.price_minor:,} {plan.currency} — {quota} / {plan.duration_days} days"
+                f"{plan.code} — {plan.price_minor:,} {plan.currency} — {quota} / {plan.duration_days} days — {availability_text}"
             )
         lines.append(
             "\nEach paid purchase creates its own Outline key. Buy again after the current "
@@ -1091,12 +1102,8 @@ class TelegramBot(
         )
         markup = self._inline_keyboard(
             [
-                [
-                    (
-                        f"💎 {plan.name} · {plan.price_minor:,} {plan.currency}",
-                        f"p:b:{plan.code}",
-                    )
-                ]
+                [(f"{'💎' if availability.get(plan.code, {}).get('available', True) else '⏳'} {plan.name} · {plan.price_minor:,} {plan.currency}",
+                  f"p:b:{plan.code}" if availability.get(plan.code, {}).get("available", True) else "n:plans")]
                 for plan in plans
             ]
             + [[("🚀 Free Monthly 3GB", "p:t:trial")]]

@@ -9,7 +9,7 @@ import json
 import ssl
 import time
 import urllib.parse
-from typing import Any
+from typing import Any, Mapping
 
 from entitlements import OutlineError
 from observability import latency_log as _latency_log
@@ -89,6 +89,19 @@ class OutlineClient:
             raise OutlineError("Outline transfer metrics response is not an object")
         return result
 
+    def experimental_metrics(self, since: str = "30d") -> dict[str, Any]:
+        """Return Outline 1.12+ operational telemetry.
+
+        The endpoint is explicitly experimental in Outline's OpenAPI contract,
+        so callers must tolerate 404/shape changes and fall back to transfer
+        metrics. ``since`` is kept conservative and URL encoded.
+        """
+        query = urllib.parse.urlencode({"since": str(since)[:32]})
+        result = self._request("GET", f"/experimental/server/metrics?{query}")
+        if not isinstance(result, dict):
+            raise OutlineError("Outline experimental metrics response is not an object")
+        return result
+
     def create_key(self, name: str, limit_bytes: int | None) -> dict[str, Any]:
         body: dict[str, Any] = {"name": name}
         if limit_bytes is not None:
@@ -154,3 +167,27 @@ class OutlineClient:
             f"/access-keys/{urllib.parse.quote(key_id, safe='')}/name",
             {"name": name[:128]},
         )
+
+
+class OutlineServerPool:
+    """Named Outline clients with legacy delegation to the default server."""
+
+    def __init__(self, clients: Mapping[str, OutlineClient], default_server_id: str):
+        normalized = {str(key): value for key, value in clients.items() if str(key)}
+        if not normalized or default_server_id not in normalized:
+            raise ValueError("Outline server pool requires a valid default server")
+        self.clients = normalized
+        self.default_server_id = str(default_server_id)
+
+    def server_ids(self) -> tuple[str, ...]:
+        return tuple(self.clients)
+
+    def client(self, server_id: str | None = None) -> OutlineClient:
+        target = str(server_id or self.default_server_id)
+        try:
+            return self.clients[target]
+        except KeyError as exc:
+            raise OutlineError(f"Outline server {target!r} is not configured") from exc
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.client(), name)

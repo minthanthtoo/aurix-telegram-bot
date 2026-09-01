@@ -169,6 +169,125 @@ class TelegramAdminMixin:
             ]
         )
 
+    @staticmethod
+    def _capacity_text(snapshot: dict[str, Any]) -> str:
+        servers = snapshot.get("servers") or []
+        lines = [
+            "📈 AuriX Server Capacity",
+            "",
+            f"Active paid keys: {snapshot.get('active_keys', 0)} · pending jobs: {snapshot.get('pending_jobs', 0)}",
+            "Observed values come from Outline; limits and plan slots are owner policy.",
+        ]
+        for item in servers:
+            max_keys = item.get("max_keys")
+            remaining = item.get("remaining_key_slots")
+            key_limit = "not capped" if max_keys is None else f"{remaining}/{max_keys} headroom"
+            traffic = item.get("remote_transfer_bytes")
+            traffic_text = "-" if traffic is None else f"{int(traffic) / 1_000_000_000:.1f} GB / 30d"
+            budget = item.get("monthly_traffic_bytes")
+            commitment = int(item.get("committed_traffic_bytes") or 0)
+            lines.extend(
+                [
+                    "",
+                    f"{'🟢' if item.get('health_status') == 'healthy' else '🔴'} {item.get('label') or item.get('server_id')}",
+                    f"Remote keys: {item.get('remote_key_count') or 0} · {key_limit}",
+                    f"Traffic observed: {traffic_text}",
+                    "Traffic allocation: "
+                    + (
+                        f"{commitment / 1_000_000_000:g}/{int(budget) / 1_000_000_000:g} GB committed"
+                        if budget
+                        else "monitor only"
+                    ),
+                ]
+            )
+            allocations = item.get("allocations") or []
+            if allocations:
+                lines.append(
+                    "Plan slots: "
+                    + " · ".join(
+                        f"{allocation['name']} {allocation['remaining_slots']}/{allocation['slot_limit']}"
+                        for allocation in allocations
+                    )
+                )
+            else:
+                lines.append("Plan slots: not allocated (server headroom only)")
+        if not servers:
+            lines.extend(["", "No environment-configured Outline servers were registered."])
+        return "\n".join(lines)[:4096]
+
+    def _show_capacity(
+        self, chat_id: int, telegram_id: int, message_id: int | None = None
+    ) -> None:
+        snapshot = self._admin_call(telegram_id, "capacity_snapshot")
+        rows = [
+            [(f"⚙️ {str(item.get('label') or item['server_id'])[:24]}", f"a:S:{item['server_id']}")]
+            for item in snapshot.get("servers", [])
+        ]
+        rows.append([("🔄 Reconcile", "a:n:capacity"), ("🏠 Admin Home", "a:n:admin")])
+        text = self._capacity_text(snapshot)
+        markup = self._inline_keyboard(rows)
+        if message_id is not None:
+            try:
+                self.edit_message(chat_id, int(message_id), text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+
+    def _show_server_allocation(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        server_id: str,
+        message_id: int | None = None,
+    ) -> None:
+        snapshot = self._admin_call(telegram_id, "capacity_snapshot")
+        server = next(
+            (item for item in snapshot.get("servers", []) if str(item["server_id"]) == server_id),
+            None,
+        )
+        if server is None:
+            self.send(chat_id, "That Outline server is no longer configured.")
+            return
+        max_keys = server.get("max_keys")
+        traffic = server.get("monthly_traffic_bytes")
+        lines = [
+            f"⚙️ {server.get('label') or server_id}",
+            f"Health: {server.get('health_status')} · remote keys: {server.get('remote_key_count') or 0}",
+            f"Maximum keys: {max_keys or 'not capped'} · protected headroom: {server.get('reserved_keys') or 0}",
+            "Monthly traffic budget: "
+            + (f"{int(traffic) / 1_000_000_000:g} GB" if traffic else "monitor only"),
+            "",
+            "Choose declared server capacity, then allocate each paid plan. Changes apply to new orders; existing keys are never silently moved.",
+        ]
+        rows: list[list[tuple[str, str]]] = [
+            [("Keys 25", f"a:C:{server_id}|keys|25"), ("50", f"a:C:{server_id}|keys|50"), ("100", f"a:C:{server_id}|keys|100")],
+            [("Reserve 1", f"a:C:{server_id}|reserve|1"), ("2", f"a:C:{server_id}|reserve|2"), ("5", f"a:C:{server_id}|reserve|5")],
+            [("Traffic 500GB", f"a:C:{server_id}|traffic|500"), ("1TB", f"a:C:{server_id}|traffic|1000"), ("2TB", f"a:C:{server_id}|traffic|2000")],
+        ]
+        allocations = {item["plan_code"]: item for item in server.get("allocations", [])}
+        for plan in self.commerce.plans():
+            current = int((allocations.get(plan.code) or {}).get("slot_limit") or 0)
+            lines.append(f"{plan.name}: {current} allocated")
+            rows.append(
+                [
+                    (f"{plan.name} 0", f"a:C:{server_id}|{plan.code}|0"),
+                    ("10", f"a:C:{server_id}|{plan.code}|10"),
+                    ("25", f"a:C:{server_id}|{plan.code}|25"),
+                    ("50", f"a:C:{server_id}|{plan.code}|50"),
+                ]
+            )
+        rows.append([("◀ All Servers", "a:n:capacity"), ("🔄 Refresh", f"a:S:{server_id}")])
+        markup = self._inline_keyboard(rows)
+        text = "\n".join(lines)[:4096]
+        if message_id is not None:
+            try:
+                self.edit_message(chat_id, int(message_id), text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+
     def _owner_keyboard(self) -> dict[str, Any]:
         return self._inline_keyboard(
             [
@@ -524,10 +643,14 @@ class TelegramAdminMixin:
                 f"Stored image: {snapshot.get('storage_status') or '-'}",
             ]
             if command == "/verify" and len(args) >= 3:
+                try:
+                    verified_amount = f"{int(str(args[2]).replace(',', '')):,}"
+                except (TypeError, ValueError):
+                    verified_amount = str(args[2])
                 lines.extend(
                     [
                         f"Transaction to verify: {args[1]}",
-                        f"Amount to verify: {args[2]} {snapshot.get('currency') or ''}".strip(),
+                        f"Amount to verify: {verified_amount} {snapshot.get('currency') or ''}".strip(),
                     ]
                 )
                 lines.append("Verify against the receiving account before confirming.")

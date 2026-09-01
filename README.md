@@ -60,6 +60,8 @@ Required variables:
 Optional:
 
 - `DATABASE_PATH` — default `data/bot.db`
+- `OUTLINE_SERVERS_JSON` — optional multi-server array of `{id,label,api_url,cert_sha256}`. It replaces the single-server URL/fingerprint pair; keep it only in the host's secret environment.
+- `OUTLINE_DEFAULT_SERVER_ID` — server used for free/trial keys and legacy records when the array contains multiple servers.
 - `OWNER_TELEGRAM_ID` — preferred immutable owner/recovery Telegram numeric ID
 - `ADMIN_TELEGRAM_IDS` — legacy one-time comma-separated administrator bootstrap
 - `AURIX_CONTROL_GROUP_ID` — optional trusted numeric `-100...` bootstrap override. Normally the owner connects the group from **Owner Controls → Choose Control Group**; Telegram supplies and AuriX persists the numeric ID without invite-link parsing.
@@ -80,7 +82,7 @@ contain the merchant QR, but no visible account names or phone numbers. A QR can
 still reveal its recipient inside the wallet app. Treat replacements as payment
 credentials and scan-compare the source and final payload before deployment.
 
-Do not expose `OUTLINE_API_URL`, bot token, DB, or generated access URLs. Firewall Outline Management API so only bot host can reach it.
+Do not expose `OUTLINE_API_URL`, `OUTLINE_SERVERS_JSON`, bot token, DB, or generated access URLs. Firewall every Outline Management API so only the bot host can reach it.
 
 ## Deploy on Render
 
@@ -392,6 +394,16 @@ for a replacement; rejecting the order itself closes it.
 
 Order, plan, wallet, VPN, and receipt messages include contextual inline buttons. Customers can open an order, request receipt-upload guidance, pay from wallet, refresh status, or return to their order list without copying IDs. Admin queues link directly to order and receipt review; every high-impact admin action requires a fresh, single-use confirmation click after the current state is displayed.
 
+The admin **Capacity** panel reconciles each configured Outline server, counts every
+remote access key (including keys created outside AuriX), and shows observed
+30-day transfer plus experimental current/peak bandwidth when Outline 1.12+
+provides it. Owners set a maximum key count, protected headroom, monthly traffic
+budget, and per-plan slot allocations with inline controls. These are declared
+business limits—Outline does not publish a maximum-user capacity. New paid
+orders reserve a server/plan slot for 24 hours; submitted receipts retain the
+reservation through review, and provisioning/revocation stays pinned to that
+server. Existing keys are never silently migrated when limits change.
+
 Administrative confirmations are stored in the hosted database (with an
 in-memory fallback only for lightweight test doubles), bound to the requesting
 administrator and private chat, expired after five minutes, and rejected when
@@ -440,7 +452,7 @@ customer's key statistics.
 
 Outline key names are operator-readable and use UTC start time: `<username-or-telegram-id>-<tier>-<duration>-YYYYMMDDHHMM`, for example `min_user-FREE300MB-24hr-202608280520`. Telegram usernames are sanitized; accounts without a username fall back to their numeric Telegram ID. Renaming a key does not change its access URL.
 
-Receipt images are evidence, not proof. AuriX stores each new raw image in a private Supabase Storage bucket and stores only its bucket/path, checksum, MIME type, size, extraction result, and review state in the database. Telegram file metadata remains as a compatibility fallback for older evidence. The upload is completed before the order enters `payment_submitted`; failed uploads remain retryable and are never shown in the admin review queue. The optional LLM output is untrusted and never approves a payment or credits a wallet. Staff must verify recipient, amount/currency, timestamp, and unique transaction ID against the receiving account, record that decision with `/verify`, and only then use `/approve`. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.
+Receipt images are evidence, not proof. AuriX stores each new raw image in a private Supabase Storage bucket and stores only its bucket/path, checksum, MIME type, size, extraction result, and review state in the database. Telegram file metadata remains as a compatibility fallback for older evidence. The upload is completed before the order enters `payment_submitted`; failed uploads remain retryable and are never shown in the admin review queue. The optional LLM output is untrusted and never approves a payment or credits a wallet. Staff tap **Verify Payment**, compare the candidate fields with the actual receiving account, and confirm; when extraction is incomplete the bot asks only for the real transaction ID and amount while retaining the selected receipt. **Approve** appears only after verification. The underlying typed commands remain compatibility/recovery tools, not the primary workflow. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.
 Configure the bucket's lifecycle/retention rule separately after confirming the business and payment-record retention policy; the application does not silently delete evidence.
 
 New orders, submitted receipts, and receipt rejections create deduplicated,

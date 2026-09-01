@@ -478,6 +478,32 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["usage"][0]["used_bytes"], 1234)
         self.assertNotIn("access_url", snapshot)
 
+    def test_plan_allocation_reserves_capacity_before_payment_and_releases_on_cancel(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        self.service.configure_server_capacity(
+            "default", 999, max_keys=3, reserved_keys=1,
+            monthly_traffic_bytes=1_000_000_000_000,
+        )
+        self.service.configure_plan_allocation("default", "basic_50gb", 1, 999)
+
+        first = self.service.create_order(101, "One", "basic_50gb", self.now)
+        availability = self.service.plan_availability(self.now)["basic_50gb"]
+        self.assertFalse(availability["available"])
+        self.assertEqual(availability["remaining_slots"], 0)
+        with self.assertRaisesRegex(CommerceError, "temporarily full"):
+            self.service.create_order(202, "Two", "basic_50gb", self.now)
+
+        self.service.cancel_order(101, first.order_id, self.now)
+        second = self.service.create_order(202, "Two", "basic_50gb", self.now)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT server_id, capacity_reserved_until FROM orders WHERE id = ?",
+                (second.order_id,),
+            ).fetchone()
+        self.assertEqual(row["server_id"], "default")
+        self.assertIsNotNone(row["capacity_reserved_until"])
+
 
 class FakeRawPostgresCursor:
     rowcount = 1
@@ -684,15 +710,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "2b5a0fb151d9c287561df6eca4d6c7f510314a546ab06c62228976722bd274fa",
+            "563a9f59f1b050cfec19e2c505cb756acb6452019d1ac4f5e5ca36a435eaf99e",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "9912e95998e79ee6a912dffb70b0428d31f400cc3791233c8369118e1e7b4f06",
+            "1b008477486f0d4dbe3d563563e53c5c0499d1f6a2868972ee43cb29e3ff248f",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "cea710e9437f6ea4126f0ed57438b25c960a37c67680e6a20c6f60e6da78f82d",
+            "2c4e07981ecc7f1a891d997f0b0bd6821094a009cb4cc6ba5e785401a9c99e3a",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

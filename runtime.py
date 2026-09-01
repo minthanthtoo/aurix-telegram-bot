@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -16,7 +17,7 @@ from access_control import StaffAccessControl, StaffAccessError
 from commerce import CommerceDatabase, CommerceService, PostgresCommerceDatabase
 from entitlements import PUBLIC_LIMIT_BYTES, ClaimService, OutlineError
 from free_repository import Database
-from outline_adapter import OutlineClient
+from outline_adapter import OutlineClient, OutlineServerPool
 from supabase_storage import NullReceiptStorage, SupabaseReceiptStorage
 from telegram_transport import DEFAULT_MAINTENANCE_INTERVAL_SECONDS, TelegramBot
 
@@ -25,19 +26,20 @@ def main() -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     api_url = os.environ.get("OUTLINE_API_URL", "")
     fingerprint = os.environ.get("OUTLINE_CERT_SHA256", "")
+    servers_json = os.environ.get("OUTLINE_SERVERS_JSON", "").strip()
     access_url_key = os.environ.get("AURIX_ACCESS_URL_KEY", "")
     missing = [
         name
         for name, value in (
             ("TELEGRAM_BOT_TOKEN", token),
-            ("OUTLINE_API_URL", api_url),
-            ("OUTLINE_CERT_SHA256", fingerprint),
             ("AURIX_ACCESS_URL_KEY", access_url_key),
         )
         if not value
     ]
     if missing:
         raise SystemExit("Missing environment variables: " + ", ".join(missing))
+    if not servers_json and (not api_url or not fingerprint):
+        raise SystemExit("Configure OUTLINE_API_URL and OUTLINE_CERT_SHA256, or OUTLINE_SERVERS_JSON")
     # Validate token with getMe before starting
     request = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/getMe",
@@ -87,7 +89,32 @@ def main() -> None:
             )
         receipt_storage = NullReceiptStorage()
     database.initialize()
-    outline = OutlineClient(api_url, fingerprint)
+    server_labels: dict[str, str] = {}
+    if servers_json:
+        try:
+            configured_servers = json.loads(servers_json)
+            if not isinstance(configured_servers, list) or not configured_servers:
+                raise ValueError
+            clients = {}
+            for item in configured_servers:
+                if not isinstance(item, dict):
+                    raise ValueError
+                server_id = str(item.get("id") or "").strip()
+                if not re.fullmatch(r"[A-Za-z0-9_-]{1,24}", server_id) or server_id in clients:
+                    raise ValueError
+                clients[server_id] = OutlineClient(
+                    str(item.get("api_url") or ""), str(item.get("cert_sha256") or "")
+                )
+                server_labels[server_id] = str(item.get("label") or server_id)[:64]
+            default_server_id = str(
+                os.environ.get("OUTLINE_DEFAULT_SERVER_ID", "").strip() or next(iter(clients))
+            )
+            outline: Any = OutlineServerPool(clients, default_server_id)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise SystemExit("OUTLINE_SERVERS_JSON must be a valid non-empty server array") from exc
+    else:
+        server_labels = {"primary": os.environ.get("OUTLINE_SERVER_LABEL", "Primary")[:64]}
+        outline = OutlineServerPool({"primary": OutlineClient(api_url, fingerprint)}, "primary")
     allow_text_payment = os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").lower() in (
         "1",
         "true",
@@ -102,6 +129,9 @@ def main() -> None:
         receipt_storage_required=receipt_storage_required,
     )
     commerce.initialize()
+    register_servers = getattr(commerce, "register_outline_servers", None)
+    if callable(register_servers):
+        register_servers(server_labels)
     order_reconciliation = commerce.reconcile_duplicate_open_orders()
     if order_reconciliation["cancelled"]:
         print(f"Reconciled {order_reconciliation['cancelled']} empty duplicate open order(s).")
@@ -115,6 +145,11 @@ def main() -> None:
     except OutlineError as exc:
         raise SystemExit(f"Outline readiness check failed: {exc}") from exc
     print(f"Outline connected: version {outline_info.get('version', 'unknown')}")
+    refresh_inventory = getattr(commerce, "refresh_server_inventory", None)
+    if callable(refresh_inventory):
+        inventory = refresh_inventory()
+        healthy_servers = sum(1 for item in inventory if item["status"] == "healthy")
+        print(f"Outline inventory ready: {healthy_servers}/{len(inventory)} server(s) healthy")
     claim_service = ClaimService(database, outline, limit_bytes=PUBLIC_LIMIT_BYTES)
     try:
         promo_limits_reconciled = claim_service.reconcile_giveaway_limits()

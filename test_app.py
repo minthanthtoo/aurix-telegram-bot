@@ -957,6 +957,49 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot._send_receipt_review(999, receipt)
         self.assertTrue(self.bot.media[-1][2].startswith("https://storage.example/"))
 
+    def test_receipt_verify_button_uses_extracted_candidate_without_typed_ids(self):
+        self.bot.handle(self.message(123, "/buy basic_50gb"))
+        order_id = self.commerce.list_pending_orders()[0]["id"]
+        self.commerce.choose_payment_method(123, order_id, "kbzpay")
+        result = self.commerce.submit_receipt(
+            123,
+            order_id,
+            "kbzpay",
+            "receipt-file",
+            "receipt-unique",
+            b"receipt-candidate",
+            "image/jpeg",
+            {"transaction_id": "TX-7788", "amount_minor": 3000},
+        )
+        evidence_id = result["evidence_id"]
+        receipt = self.commerce.get_receipt(evidence_id)
+        self.bot._send_receipt_review(999, receipt)
+        labels = {
+            button["text"]
+            for row in self.bot.media[-1][4]["inline_keyboard"]
+            for button in row
+        }
+        self.assertIn("✅ Verify Payment", labels)
+        self.bot.request = lambda _method, _payload: True
+
+        self.bot.handle_callback(
+            {
+                "id": "verify-receipt",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": f"a:v:{evidence_id}",
+            }
+        )
+
+        self.assertIn("TX-7788", self.bot.sent[-1][1])
+        self.assertIn("3,000 MMK", self.bot.sent[-1][1])
+        confirm_labels = {
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        }
+        self.assertIn("✅ I Checked · Verify", confirm_labels)
+
     def test_repeated_buy_returns_existing_order_and_myorders_tracks_it(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order_id = self.commerce.list_pending_orders()[0]["id"]

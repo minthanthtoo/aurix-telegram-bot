@@ -307,9 +307,64 @@ class TelegramCallbackMixin:
                             entity_id,
                             message_id=message.get("message_id"),
                         )
+                elif entity_id == "capacity":
+                    self._show_capacity(
+                        chat_id, telegram_id, message_id=message.get("message_id")
+                    )
                 else:
                     synthetic["text"] = target
                     self.handle(synthetic)
+            elif action == "S":
+                self._show_server_allocation(
+                    chat_id,
+                    telegram_id,
+                    entity_id,
+                    message_id=message.get("message_id"),
+                )
+            elif action == "C":
+                try:
+                    server_id, field, raw_value = entity_id.split("|", 2)
+                    value = int(raw_value)
+                except (ValueError, TypeError):
+                    self.send(chat_id, "That capacity control is no longer valid.")
+                    return
+                snapshot = self._admin_call(telegram_id, "capacity_snapshot")
+                server = next(
+                    (item for item in snapshot.get("servers", []) if str(item["server_id"]) == server_id),
+                    None,
+                )
+                if server is None:
+                    self.send(chat_id, "That Outline server is unavailable.")
+                    return
+                if field in {"keys", "reserve", "traffic"}:
+                    self._admin_call(
+                        telegram_id,
+                        "configure_server_capacity",
+                        server_id,
+                        telegram_id,
+                        max_keys=value if field == "keys" else server.get("max_keys"),
+                        reserved_keys=value if field == "reserve" else int(server.get("reserved_keys") or 0),
+                        monthly_traffic_bytes=(
+                            value * 1_000_000_000
+                            if field == "traffic"
+                            else server.get("monthly_traffic_bytes")
+                        ),
+                    )
+                else:
+                    self._admin_call(
+                        telegram_id,
+                        "configure_plan_allocation",
+                        server_id,
+                        field,
+                        value,
+                        telegram_id,
+                    )
+                self._show_server_allocation(
+                    chat_id,
+                    telegram_id,
+                    server_id,
+                    message_id=message.get("message_id"),
+                )
             elif action == "m":
                 if entity_id not in {"manual", "assisted"}:
                     self.send(chat_id, "That receipt mode is unavailable.")
@@ -484,8 +539,42 @@ class TelegramCallbackMixin:
                     f"a:o:{entity_id}",
                 )
             elif action == "r":
+                self._receipt_verify_inputs.pop(telegram_id, None)
                 synthetic["text"] = f"/receipt {entity_id}"
                 self.handle(synthetic)
+            elif action == "v":
+                receipt = self._admin_call(telegram_id, "get_receipt", entity_id)
+                if receipt is None or receipt.get("review_status") != "pending":
+                    self.send(chat_id, "This receipt is no longer awaiting verification.")
+                    return
+                extracted = receipt.get("extraction") or {}
+                reference = str(extracted.get("transaction_id") or "").strip()
+                amount_value = extracted.get("amount_minor", extracted.get("amount"))
+                try:
+                    amount = int(str(amount_value).replace(",", ""))
+                except (TypeError, ValueError):
+                    amount = 0
+                if reference and amount > 0:
+                    self._queue_admin_confirmation(
+                        chat_id,
+                        telegram_id,
+                        "/verify",
+                        [entity_id, reference, str(amount)],
+                        "Confirm that these extracted details match the actual receiving account.",
+                        "✅ I Checked · Verify",
+                        f"a:r:{entity_id}",
+                    )
+                else:
+                    self._receipt_verify_inputs[telegram_id] = entity_id
+                    self.send(
+                        chat_id,
+                        "🔎 Check the actual receiving account, then reply with only:\n"
+                        "transaction-ID amount\n\nExample: 123456789 3000\n"
+                        "The receipt/order ID is already selected for you.",
+                        self._inline_keyboard(
+                            [[("Cancel", f"a:r:{entity_id}")]]
+                        ),
+                    )
             elif action == "a":
                 self._queue_admin_confirmation(
                     chat_id,

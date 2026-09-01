@@ -49,6 +49,7 @@ class CommerceService(CommerceWorkerMixin):
         self.allow_legacy_text_approval = bool(allow_legacy_text_approval)
         self.receipt_storage = receipt_storage or NullReceiptStorage()
         self.receipt_storage_required = bool(receipt_storage_required)
+        self._server_metrics_cache: dict[str, dict[str, Any]] = {}
         try:
             self.access_url_cipher = Fernet(access_url_key)
         except (TypeError, ValueError) as exc:
@@ -137,6 +138,257 @@ class CommerceService(CommerceWorkerMixin):
     def initialize(self) -> None:
         self.database.initialize()
 
+    def register_outline_servers(self, labels: dict[str, str] | None = None) -> None:
+        """Persist non-secret metadata for every environment-configured server."""
+        labels = labels or {}
+        server_ids = (
+            self.outline.server_ids()
+            if callable(getattr(self.outline, "server_ids", None))
+            else ("default",)
+        )
+        now_text = _now_text()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            for server_id in server_ids:
+                connection.execute(
+                    """INSERT INTO outline_servers
+                       (server_id, label, created_at, updated_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(server_id) DO UPDATE SET
+                         label = excluded.label, updated_at = excluded.updated_at""",
+                    (server_id, labels.get(server_id, server_id), now_text, now_text),
+                )
+            placeholders = ",".join("?" for _ in server_ids)
+            connection.execute(
+                f"UPDATE outline_servers SET enabled = 0, updated_at = ? WHERE server_id NOT IN ({placeholders})",
+                (now_text, *server_ids),
+            )
+            default_server_id = getattr(self.outline, "default_server_id", server_ids[0])
+            connection.execute(
+                "UPDATE subscriptions SET server_id = ? WHERE server_id IS NULL",
+                (default_server_id,),
+            )
+            connection.execute(
+                "UPDATE paid_vpn_keys SET server_id = ? WHERE server_id IS NULL",
+                (default_server_id,),
+            )
+            connection.execute(
+                """UPDATE orders SET server_id = ?, capacity_reserved_until = COALESCE(capacity_reserved_until, ?)
+                   WHERE server_id IS NULL AND status IN ('awaiting_payment', 'payment_submitted')""",
+                (default_server_id, _now_text(datetime.now(UTC) + timedelta(hours=24))),
+            )
+
+    def _outline_client(self, server_id: str | None = None) -> Any:
+        getter = getattr(self.outline, "client", None)
+        return getter(server_id) if callable(getter) else self.outline
+
+    @staticmethod
+    def _metric_bytes(value: Any) -> int | None:
+        if isinstance(value, dict):
+            value = value.get("bytes", value.get("data"))
+            if isinstance(value, dict):
+                value = value.get("bytes")
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return None
+
+    def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str, Any]]:
+        """Reconcile remote inventory and telemetry without storing access URLs."""
+        observed_at = _now_text(now)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT server_id FROM outline_servers WHERE enabled = 1 ORDER BY server_id"
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            server_id = str(row["server_id"])
+            client = self._outline_client(server_id)
+            try:
+                info = client.server_info()
+                inventory = client.list_keys()
+                keys = inventory.get("accessKeys", []) if isinstance(inventory, dict) else []
+                transfer = client.transfer_metrics()
+                by_key = transfer.get("bytesTransferredByUserId", {}) if isinstance(transfer, dict) else {}
+                total_transfer = 0
+                for value in by_key.values() if isinstance(by_key, dict) else ():
+                    try:
+                        total_transfer += max(0, int(value or 0))
+                    except (TypeError, ValueError):
+                        continue
+                self._server_metrics_cache[server_id] = (
+                    dict(by_key) if isinstance(by_key, dict) else {}
+                )
+                current_bandwidth = peak_bandwidth = None
+                experimental = 0
+                experimental_method = getattr(client, "experimental_metrics", None)
+                if callable(experimental_method):
+                    try:
+                        detailed = experimental_method("30d")
+                        server_metrics = detailed.get("server", {}) if isinstance(detailed, dict) else {}
+                        bandwidth = server_metrics.get("bandwidth", {}) if isinstance(server_metrics, dict) else {}
+                        current_bandwidth = self._metric_bytes(bandwidth.get("current"))
+                        peak_bandwidth = self._metric_bytes(bandwidth.get("peak"))
+                        experimental = 1
+                    except Exception:
+                        pass
+                with self.database.connect() as connection:
+                    self.database.begin_write(connection)
+                    connection.execute(
+                        """UPDATE outline_servers SET remote_key_count = ?, remote_transfer_bytes = ?,
+                                  current_bandwidth_bytes = ?, peak_bandwidth_bytes = ?,
+                                  telemetry_experimental = ?, health_status = 'healthy', last_error = NULL,
+                                  last_synced_at = ?, updated_at = ? WHERE server_id = ?""",
+                        (
+                            len(keys) if isinstance(keys, list) else 0,
+                            total_transfer,
+                            current_bandwidth,
+                            peak_bandwidth,
+                            experimental,
+                            observed_at,
+                            observed_at,
+                            server_id,
+                        ),
+                    )
+                results.append({"server_id": server_id, "status": "healthy", "version": info.get("version")})
+            except Exception as exc:
+                with self.database.connect() as connection:
+                    connection.execute(
+                        """UPDATE outline_servers SET health_status = 'unreachable', last_error = ?,
+                                  last_synced_at = ?, updated_at = ? WHERE server_id = ?""",
+                        (type(exc).__name__[:128], observed_at, observed_at, server_id),
+                    )
+                results.append({"server_id": server_id, "status": "unreachable"})
+        return results
+
+    def configure_server_capacity(
+        self,
+        server_id: str,
+        admin_id: int,
+        *,
+        max_keys: int | None,
+        reserved_keys: int = 2,
+        monthly_traffic_bytes: int | None = None,
+    ) -> None:
+        if max_keys is not None and int(max_keys) <= 0:
+            raise CommerceError("Maximum keys must be positive")
+        if int(reserved_keys) < 0:
+            raise CommerceError("Reserved headroom cannot be negative")
+        if monthly_traffic_bytes is not None and int(monthly_traffic_bytes) <= 0:
+            raise CommerceError("Traffic budget must be positive")
+        now_text = _now_text()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            updated = connection.execute(
+                """UPDATE outline_servers SET max_keys = ?, reserved_keys = ?,
+                          monthly_traffic_bytes = ?, updated_at = ? WHERE server_id = ?""",
+                (max_keys, reserved_keys, monthly_traffic_bytes, now_text, server_id),
+            )
+            if getattr(updated, "rowcount", 1) == 0:
+                raise CommerceError("Outline server is not configured in the environment")
+            self._audit(
+                connection, "server_capacity_changed", "outline_server", server_id,
+                "admin", str(admin_id),
+                {"max_keys": max_keys, "reserved_keys": reserved_keys,
+                 "monthly_traffic_bytes": monthly_traffic_bytes},
+            )
+
+    def configure_plan_allocation(
+        self, server_id: str, plan_code: str, slot_limit: int, admin_id: int
+    ) -> None:
+        if int(slot_limit) < 0:
+            raise CommerceError("Plan slots cannot be negative")
+        now_text = _now_text()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            if connection.execute(
+                "SELECT 1 FROM outline_servers WHERE server_id = ? AND enabled = 1", (server_id,)
+            ).fetchone() is None:
+                raise CommerceError("Outline server is unavailable")
+            if connection.execute("SELECT 1 FROM plans WHERE code = ?", (plan_code,)).fetchone() is None:
+                raise CommerceError("Unknown plan")
+            connection.execute(
+                """INSERT INTO server_plan_allocations
+                   (server_id, plan_code, slot_limit, updated_at) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(server_id, plan_code) DO UPDATE SET
+                     slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
+                (server_id, plan_code, int(slot_limit), now_text),
+            )
+            self._audit(
+                connection, "plan_capacity_changed", "outline_server", server_id,
+                "admin", str(admin_id), {"plan_code": plan_code, "slot_limit": int(slot_limit)},
+            )
+
+    def _select_server_for_plan(self, connection: Any, plan_code: str, now_text: str) -> str:
+        plan = connection.execute(
+            "SELECT quota_bytes FROM plans WHERE code = ? AND active = 1", (plan_code,)
+        ).fetchone()
+        if plan is None:
+            raise CommerceError("Unknown or inactive plan")
+        requested_quota = int(plan["quota_bytes"] or 0)
+        has_plan_allocations = int(
+            connection.execute(
+                "SELECT COUNT(*) AS n FROM server_plan_allocations WHERE plan_code = ?",
+                (plan_code,),
+            ).fetchone()["n"]
+        ) > 0
+        servers = connection.execute(
+            "SELECT * FROM outline_servers WHERE enabled = 1 AND health_status != 'unreachable' ORDER BY server_id"
+        ).fetchall()
+        candidates: list[tuple[float, str]] = []
+        for server in servers:
+            server_id = str(server["server_id"])
+            allocation = connection.execute(
+                "SELECT slot_limit FROM server_plan_allocations WHERE server_id = ? AND plan_code = ?",
+                (server_id, plan_code),
+            ).fetchone()
+            if has_plan_allocations and allocation is None:
+                continue
+            allocated_count = connection.execute(
+                """SELECT
+                     (SELECT COUNT(*) FROM subscriptions WHERE server_id = ? AND plan_code = ?
+                        AND status IN ('pending', 'active')) +
+                     (SELECT COUNT(*) FROM orders WHERE server_id = ? AND plan_code = ?
+                        AND (status = 'payment_submitted' OR
+                             (status = 'awaiting_payment' AND capacity_reserved_until > ?))) AS n""",
+                (server_id, plan_code, server_id, plan_code, now_text),
+            ).fetchone()["n"]
+            if allocation is not None and int(allocated_count) >= int(allocation["slot_limit"]):
+                continue
+            remote_keys = int(server["remote_key_count"] or 0)
+            reservations = connection.execute(
+                """SELECT COUNT(*) AS n FROM orders WHERE server_id = ?
+                   AND (status = 'payment_submitted' OR
+                        (status = 'awaiting_payment' AND capacity_reserved_until > ?))""",
+                (server_id, now_text),
+            ).fetchone()["n"]
+            pending_keys = connection.execute(
+                "SELECT COUNT(*) AS n FROM subscriptions WHERE server_id = ? AND status = 'pending'",
+                (server_id,),
+            ).fetchone()["n"]
+            max_keys = server["max_keys"]
+            usable = None if max_keys is None else max(0, int(max_keys) - int(server["reserved_keys"] or 0))
+            if usable is not None and remote_keys + int(reservations) + int(pending_keys) >= usable:
+                continue
+            traffic_budget = server["monthly_traffic_bytes"]
+            if traffic_budget is not None:
+                committed = connection.execute(
+                    """SELECT
+                       COALESCE((SELECT SUM(COALESCE(quota_bytes, 0)) FROM subscriptions
+                         WHERE server_id = ? AND status IN ('pending', 'active')), 0) +
+                       COALESCE((SELECT SUM(COALESCE(quota_bytes_snapshot, 0)) FROM orders
+                         WHERE server_id = ? AND (status = 'payment_submitted' OR
+                           (status = 'awaiting_payment' AND capacity_reserved_until > ?))), 0) AS n""",
+                    (server_id, server_id, now_text),
+                ).fetchone()["n"]
+                if int(committed or 0) + requested_quota > int(traffic_budget):
+                    continue
+            denominator = int(allocation["slot_limit"]) if allocation is not None and int(allocation["slot_limit"]) else (usable or 1)
+            candidates.append((int(allocated_count) / max(1, denominator), server_id))
+        if not candidates:
+            raise CommerceError("This plan is temporarily full. Please check again later.")
+        return min(candidates)[1]
+
     def plans(self) -> list[Plan]:
         with self.database.connect() as connection:
             rows = connection.execute(
@@ -155,6 +407,53 @@ class CommerceService(CommerceWorkerMixin):
         if row is None:
             raise CommerceError("Unknown or inactive plan")
         return Plan(**dict(row))
+
+    def plan_availability(self, now: datetime | None = None) -> dict[str, dict[str, Any]]:
+        """Return admission availability from configured per-server allocations."""
+        now_text = _now_text(now)
+        result: dict[str, dict[str, Any]] = {}
+        with self.database.connect() as connection:
+            plans = connection.execute("SELECT code FROM plans WHERE active = 1").fetchall()
+            server_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
+                ).fetchone()["n"]
+            )
+            for plan in plans:
+                code = str(plan["code"])
+                allocations = connection.execute(
+                    """SELECT a.server_id, a.slot_limit FROM server_plan_allocations a
+                       JOIN outline_servers s ON s.server_id = a.server_id
+                       WHERE a.plan_code = ? AND s.enabled = 1
+                         AND s.health_status != 'unreachable'""",
+                    (code,),
+                ).fetchall()
+                if not server_count:
+                    result[code] = {"available": True, "remaining_slots": None, "managed": False}
+                    continue
+                if not allocations:
+                    # Total server limits still protect admission; plan-specific
+                    # allocation remains optional until the owner configures it.
+                    try:
+                        self._select_server_for_plan(connection, code, now_text)
+                        result[code] = {"available": True, "remaining_slots": None, "managed": False}
+                    except CommerceError:
+                        result[code] = {"available": False, "remaining_slots": 0, "managed": False}
+                    continue
+                remaining = 0
+                for allocation in allocations:
+                    used = connection.execute(
+                        """SELECT
+                           (SELECT COUNT(*) FROM subscriptions WHERE server_id = ? AND plan_code = ?
+                              AND status IN ('pending', 'active')) +
+                           (SELECT COUNT(*) FROM orders WHERE server_id = ? AND plan_code = ?
+                              AND (status = 'payment_submitted' OR
+                                   (status = 'awaiting_payment' AND capacity_reserved_until > ?))) AS n""",
+                        (allocation["server_id"], code, allocation["server_id"], code, now_text),
+                    ).fetchone()["n"]
+                    remaining += max(0, int(allocation["slot_limit"]) - int(used))
+                result[code] = {"available": remaining > 0, "remaining_slots": remaining, "managed": True}
+        return result
 
     @staticmethod
     def _ensure_user(
@@ -300,11 +599,25 @@ class CommerceService(CommerceWorkerMixin):
                     False,
                     existing_plan.code != plan.code,
                 )
+            registered = connection.execute(
+                "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
+            ).fetchone()["n"]
+            server_id = (
+                self._select_server_for_plan(connection, plan.code, created_at)
+                if int(registered)
+                else None
+            )
+            reserved_until = (
+                ((now or datetime.now(UTC)).astimezone(UTC) + timedelta(hours=24)).isoformat()
+                if server_id
+                else None
+            )
             connection.execute(
                 """INSERT INTO orders
                    (id, telegram_id, plan_code, amount_minor, currency, plan_name,
-                    quota_bytes_snapshot, duration_days_snapshot, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?)""",
+                    quota_bytes_snapshot, duration_days_snapshot, status, created_at,
+                    server_id, capacity_reserved_until)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?, ?, ?)""",
                 (
                     order_id,
                     telegram_id,
@@ -315,6 +628,8 @@ class CommerceService(CommerceWorkerMixin):
                     plan.quota_bytes,
                     plan.duration_days,
                     created_at,
+                    server_id,
+                    reserved_until,
                 ),
             )
             self._audit(
@@ -324,7 +639,7 @@ class CommerceService(CommerceWorkerMixin):
                 order_id,
                 "customer",
                 str(telegram_id),
-                {"plan_code": plan.code, "amount_minor": plan.price_minor},
+                {"plan_code": plan.code, "amount_minor": plan.price_minor, "server_id": server_id},
             )
             self._queue_staff_notification(
                 connection,
@@ -392,6 +707,19 @@ class CommerceService(CommerceWorkerMixin):
                 "UPDATE orders SET status = 'cancelled', rejected_at = ? WHERE id = ?",
                 (created_at, existing["id"]),
             )
+            registered = connection.execute(
+                "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
+            ).fetchone()["n"]
+            server_id = (
+                self._select_server_for_plan(connection, plan.code, created_at)
+                if int(registered)
+                else None
+            )
+            reserved_until = (
+                ((now or datetime.now(UTC)).astimezone(UTC) + timedelta(hours=24)).isoformat()
+                if server_id
+                else None
+            )
             self._audit(
                 connection,
                 "order_replaced",
@@ -404,8 +732,9 @@ class CommerceService(CommerceWorkerMixin):
             connection.execute(
                 """INSERT INTO orders
                    (id, telegram_id, plan_code, amount_minor, currency, plan_name,
-                    quota_bytes_snapshot, duration_days_snapshot, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?)""",
+                    quota_bytes_snapshot, duration_days_snapshot, status, created_at,
+                    server_id, capacity_reserved_until)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?, ?, ?)""",
                 (
                     new_order_id,
                     telegram_id,
@@ -416,6 +745,8 @@ class CommerceService(CommerceWorkerMixin):
                     plan.quota_bytes,
                     plan.duration_days,
                     created_at,
+                    server_id,
+                    reserved_until,
                 ),
             )
             self._audit(
@@ -1968,8 +2299,8 @@ class CommerceService(CommerceWorkerMixin):
             connection.execute(
                 """INSERT INTO subscriptions
                    (id, order_id, telegram_id, plan_code, starts_at, expires_at,
-                    plan_name, quota_bytes, duration_days, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                    plan_name, quota_bytes, duration_days, status, server_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
                 (
                     subscription_id,
                     order_id,
@@ -1980,6 +2311,7 @@ class CommerceService(CommerceWorkerMixin):
                     plan_name,
                     quota_bytes,
                     duration_days,
+                    order["server_id"] if "server_id" in order.keys() else None,
                 ),
             )
             # Record money movement as immutable ledger events. External

@@ -119,6 +119,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 1, "legacy_commerce_schema"),
                     ("commerce", 2, "receipt_control_and_diagnostics"),
                     ("commerce", 3, "receipt_extraction_jobs"),
+                    ("commerce", 4, "outline_server_capacity"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

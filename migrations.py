@@ -322,6 +322,76 @@ COMMERCE_MIGRATIONS = (
                ON receipt_extraction_jobs(status, next_attempt_at)""",
         ),
     ),
+    Migration(
+        4,
+        "outline_server_capacity",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS outline_servers (
+                   server_id TEXT PRIMARY KEY,
+                   label TEXT NOT NULL,
+                   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                   max_keys INTEGER CHECK (max_keys IS NULL OR max_keys > 0),
+                   reserved_keys INTEGER NOT NULL DEFAULT 2 CHECK (reserved_keys >= 0),
+                   monthly_traffic_bytes INTEGER CHECK (monthly_traffic_bytes IS NULL OR monthly_traffic_bytes > 0),
+                   remote_key_count INTEGER,
+                   remote_transfer_bytes INTEGER,
+                   current_bandwidth_bytes INTEGER,
+                   peak_bandwidth_bytes INTEGER,
+                   telemetry_experimental INTEGER NOT NULL DEFAULT 0 CHECK (telemetry_experimental IN (0, 1)),
+                   health_status TEXT NOT NULL DEFAULT 'unknown',
+                   last_error TEXT,
+                   last_synced_at TEXT,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS server_plan_allocations (
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   plan_code TEXT NOT NULL REFERENCES plans(code),
+                   slot_limit INTEGER NOT NULL CHECK (slot_limit >= 0),
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (server_id, plan_code)
+               )""",
+            "ALTER TABLE orders ADD COLUMN server_id TEXT",
+            "ALTER TABLE orders ADD COLUMN capacity_reserved_until TEXT",
+            "ALTER TABLE subscriptions ADD COLUMN server_id TEXT",
+            "ALTER TABLE paid_vpn_keys ADD COLUMN server_id TEXT",
+            "CREATE INDEX IF NOT EXISTS orders_capacity_reservation ON orders(server_id, status, capacity_reserved_until)",
+            "CREATE INDEX IF NOT EXISTS subscriptions_server_status ON subscriptions(server_id, status)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS outline_servers (
+                   server_id TEXT PRIMARY KEY,
+                   label TEXT NOT NULL,
+                   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                   max_keys INTEGER CHECK (max_keys IS NULL OR max_keys > 0),
+                   reserved_keys INTEGER NOT NULL DEFAULT 2 CHECK (reserved_keys >= 0),
+                   monthly_traffic_bytes BIGINT CHECK (monthly_traffic_bytes IS NULL OR monthly_traffic_bytes > 0),
+                   remote_key_count INTEGER,
+                   remote_transfer_bytes BIGINT,
+                   current_bandwidth_bytes BIGINT,
+                   peak_bandwidth_bytes BIGINT,
+                   telemetry_experimental INTEGER NOT NULL DEFAULT 0 CHECK (telemetry_experimental IN (0, 1)),
+                   health_status TEXT NOT NULL DEFAULT 'unknown',
+                   last_error TEXT,
+                   last_synced_at TEXT,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS server_plan_allocations (
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   plan_code TEXT NOT NULL REFERENCES plans(code),
+                   slot_limit INTEGER NOT NULL CHECK (slot_limit >= 0),
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (server_id, plan_code)
+               )""",
+            "ALTER TABLE orders ADD COLUMN IF NOT EXISTS server_id TEXT",
+            "ALTER TABLE orders ADD COLUMN IF NOT EXISTS capacity_reserved_until TEXT",
+            "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS server_id TEXT",
+            "ALTER TABLE paid_vpn_keys ADD COLUMN IF NOT EXISTS server_id TEXT",
+            "CREATE INDEX IF NOT EXISTS orders_capacity_reservation ON orders(server_id, status, capacity_reserved_until)",
+            "CREATE INDEX IF NOT EXISTS subscriptions_server_status ON subscriptions(server_id, status)",
+        ),
+    ),
 )
 
 

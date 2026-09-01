@@ -71,6 +71,35 @@ class TelegramCommandMixin:
         if not isinstance(text, str) or not text.strip():
             return
         raw_text = text.strip()
+        pending_receipt = self._receipt_verify_inputs.get(int(telegram_id))
+        menu_navigation = raw_text in self.CUSTOMER_BUTTON_COMMANDS or raw_text in self.ADMIN_BUTTON_COMMANDS
+        if pending_receipt and (menu_navigation or raw_text.startswith("/")):
+            self._receipt_verify_inputs.pop(int(telegram_id), None)
+            pending_receipt = None
+        if pending_receipt and self._is_admin(telegram_id) and not raw_text.startswith("/"):
+            values = raw_text.rsplit(maxsplit=1)
+            try:
+                amount = int(values[1].replace(",", "")) if len(values) == 2 else 0
+            except ValueError:
+                amount = 0
+            if len(values) != 2 or not values[0].strip() or amount <= 0:
+                self.send(
+                    chat["id"],
+                    "Send the receiving-account transaction ID and amount, for example:\n"
+                    "123456789 3000",
+                )
+                return
+            self._receipt_verify_inputs.pop(int(telegram_id), None)
+            self._queue_admin_confirmation(
+                chat["id"],
+                telegram_id,
+                "/verify",
+                [pending_receipt, values[0].strip(), str(amount)],
+                "Confirm these details match the actual receiving account.",
+                "✅ I Checked · Verify",
+                f"a:r:{pending_receipt}",
+            )
+            return
         text = None
         if self._is_owner(telegram_id) and telegram_id in self._admin_add_waiting:
             self._admin_add_waiting.discard(telegram_id)
@@ -814,9 +843,12 @@ class TelegramCommandMixin:
                 except (CommerceError, ValueError) as exc:
                     self.send(chat["id"], str(exc) or "Verified amount must be an integer.")
                 else:
-                    self.send(
+                    self._send_order_detail(
                         chat["id"],
-                        f"Receipt verified for order {order_id}. Use /approve {order_id} to provision.",
+                        telegram_id,
+                        order_id,
+                        admin_view=True,
+                        heading="✅ Receipt verified · ready for approval",
                     )
         elif command == "/rejectreceipt":
             if not self._is_admin(telegram_id):
@@ -863,31 +895,10 @@ class TelegramCommandMixin:
                 self.send(chat["id"], "Commerce is not configured.")
             else:
                 try:
-                    snapshot = self._admin_call(telegram_id, "capacity_snapshot")
+                    self._show_capacity(chat["id"], telegram_id)
                 except Exception as exc:
                     self.send(chat["id"], "Outline capacity metrics are temporarily unavailable.")
                     print(f"capacity error: {type(exc).__name__}", file=sys.stderr)
-                else:
-                    mapped_usage = sum(item["used_bytes"] for item in snapshot["usage"])
-                    giveaway = self.service.giveaway_status(telegram_id)
-                    self.send(
-                        chat["id"],
-                        "AuriX capacity\n"
-                        f"Outline version: {snapshot['outline_version']}\n"
-                        f"Active subscriptions: {snapshot['active_subscriptions']}\n"
-                        f"Active keys: {snapshot['active_keys']}\n"
-                        f"Mapped transfer (Outline window): {mapped_usage:,} bytes\n"
-                        f"Expiring within 24h: {snapshot['expiring_24h']}\n"
-                        f"Pending jobs: {snapshot['pending_jobs']}\n"
-                        f"Failed jobs: {snapshot['failed_jobs']}\n"
-                        f"Promo: {giveaway['code']} · {giveaway['campaign_state']} · "
-                        f"{self._promo_quota_label(giveaway.get('quota_bytes', 0))}\n"
-                        f"Promo claims: {giveaway['claimed_count']} lifetime · "
-                        f"{giveaway['window_claimed_count']} current window\n"
-                        f"Promo slots remaining: {giveaway['remaining_slots']} / "
-                        f"{giveaway['winner_limit']}",
-                        self._admin_keyboard(telegram_id),
-                    )
         elif command == "/reconcile":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)

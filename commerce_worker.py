@@ -76,6 +76,23 @@ class CommerceWorkerMixin:
                 (next_attempt, safe_error, job_id),
             )
 
+    def _metrics_by_server(self) -> dict[str | None, dict[str, Any]]:
+        server_ids = (
+            self.outline.server_ids()
+            if callable(getattr(self.outline, "server_ids", None))
+            else (None,)
+        )
+        result: dict[str | None, dict[str, Any]] = {}
+        for server_id in server_ids:
+            try:
+                client = self._outline_client(server_id)
+                payload = client.transfer_metrics()
+                by_key = payload.get("bytesTransferredByUserId", {}) if isinstance(payload, dict) else {}
+                result[server_id] = by_key if isinstance(by_key, dict) else {}
+            except Exception:
+                continue
+        return result
+
     def failed_jobs(
         self, limit: int = 20, include_nonterminal: bool = False
     ) -> list[dict[str, Any]]:
@@ -168,8 +185,9 @@ class CommerceWorkerMixin:
             )
         return str(row["operation"])
 
-    def _find_key(self, name: str) -> dict[str, Any] | None:
-        result = self.outline.list_keys()
+    def _find_key(self, name: str, outline: Any | None = None) -> dict[str, Any] | None:
+        outline = outline or self.outline
+        result = outline.list_keys()
         if isinstance(result, dict):
             keys = result.get("accessKeys", [])
         else:
@@ -291,6 +309,8 @@ class CommerceWorkerMixin:
             else subscription["catalog_quota_bytes"]
         )
         desired_plan_name = subscription["plan_name"] or subscription["catalog_plan_name"]
+        server_id = subscription["server_id"] if "server_id" in subscription.keys() else None
+        outline = self._outline_client(server_id)
         current_dt = (now or datetime.now(UTC)).astimezone(UTC)
         starts_dt = datetime.fromisoformat(subscription["starts_at"])
         expires_dt = datetime.fromisoformat(subscription["expires_at"])
@@ -336,24 +356,24 @@ class CommerceWorkerMixin:
         key_name = _paid_outline_key_name(subscription)
         key = None
         deterministic_id = f"aurix-{subscription['id']}"
-        getter = getattr(self.outline, "get_key", None)
+        getter = getattr(outline, "get_key", None)
         if callable(getter):
             try:
                 key = getter(deterministic_id)
             except Exception:
                 key = None
         if key is None:
-            key = self._find_key(key_name)
+            key = self._find_key(key_name, outline)
         if key is None:
-            legacy_key = self._find_key(f"aurix-sub-{subscription['id']}")
+            legacy_key = self._find_key(f"aurix-sub-{subscription['id']}", outline)
             if legacy_key is not None:
                 key = legacy_key
-                rename = getattr(self.outline, "rename_key", None)
+                rename = getattr(outline, "rename_key", None)
                 if callable(rename):
                     rename(str(key["id"]), key_name)
         created_remote = False
         if key is None:
-            deterministic_create = getattr(self.outline, "create_key_with_id", None)
+            deterministic_create = getattr(outline, "create_key_with_id", None)
             if callable(deterministic_create):
                 try:
                     key = deterministic_create(deterministic_id, key_name, desired_quota)
@@ -371,17 +391,17 @@ class CommerceWorkerMixin:
                     if recovered is not None:
                         key = recovered
                     elif getattr(exc, "status", None) in (404, 405, 501):
-                        key = self.outline.create_key(key_name, desired_quota)
+                        key = outline.create_key(key_name, desired_quota)
                     else:
                         raise
             else:
-                key = self.outline.create_key(key_name, desired_quota)
+                key = outline.create_key(key_name, desired_quota)
             created_remote = True
         try:
             if not isinstance(key, dict) or not key.get("id") or not key.get("accessUrl"):
                 raise CommerceError("Outline key response lacks id or accessUrl")
             if desired_quota is not None:
-                self.outline.set_data_limit(str(key["id"]), desired_quota)
+                outline.set_data_limit(str(key["id"]), desired_quota)
             created_at = _now_text(now)
             activated_at = current_dt.isoformat()
             activated_expires_at = (
@@ -392,8 +412,8 @@ class CommerceWorkerMixin:
                 connection.execute(
                     """INSERT INTO paid_vpn_keys
                        (id, subscription_id, telegram_id, outline_key_id, access_url,
-                        quota_bytes, status, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, 'active', ?)""",
+                        quota_bytes, status, created_at, server_id)
+                       VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
                     (
                         _new_id(),
                         subscription["id"],
@@ -402,6 +422,7 @@ class CommerceWorkerMixin:
                         self._encrypt_access_url(str(key["accessUrl"])),
                         desired_quota,
                         created_at,
+                        server_id,
                     ),
                 )
                 connection.execute(
@@ -433,7 +454,8 @@ class CommerceWorkerMixin:
                     subscription["id"],
                     "system",
                     None,
-                    {"outline_key_id": str(key["id"]), "activated_at": activated_at},
+                    {"outline_key_id": str(key["id"]), "activated_at": activated_at,
+                     "server_id": server_id},
                 )
                 connection.execute(
                     """UPDATE provisioning_jobs SET status = 'done', locked_at = NULL, last_error = NULL
@@ -449,7 +471,7 @@ class CommerceWorkerMixin:
         except Exception:
             if created_remote and isinstance(key, dict) and key.get("id"):
                 try:
-                    self.outline.delete_key(str(key["id"]))
+                    outline.delete_key(str(key["id"]))
                 except Exception:
                     pass
             raise
@@ -502,9 +524,11 @@ class CommerceWorkerMixin:
         if key is None or key["status"] == "revoked":
             self._job_done(job["id"])
             return
+        server_id = key["server_id"] if "server_id" in key.keys() else None
+        outline = self._outline_client(server_id)
         try:
-            self.outline.delete_key(key["outline_key_id"])
-            getter = getattr(self.outline, "get_key", None)
+            outline.delete_key(key["outline_key_id"])
+            getter = getattr(outline, "get_key", None)
             remote_state = "delete_accepted"
             if callable(getter):
                 if getter(str(key["outline_key_id"])) is not None:
@@ -631,14 +655,12 @@ class CommerceWorkerMixin:
         metrics: dict[str, Any] | None = None,
     ) -> int:
         """Queue one Telegram warning as each remaining-quota threshold is crossed."""
+        default_server_id = getattr(self.outline, "default_server_id", None)
         if metrics is None:
-            try:
-                metrics = self.outline.transfer_metrics()
-            except Exception:
-                return 0
-        by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
-        if not isinstance(by_key, dict):
-            return 0
+            metrics_by_server = self._metrics_by_server()
+        else:
+            by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+            metrics_by_server = {default_server_id: by_key if isinstance(by_key, dict) else {}}
         current = (now or datetime.now(UTC)).astimezone(UTC)
         now_text = _now_text(current)
         queued = 0
@@ -647,13 +669,15 @@ class CommerceWorkerMixin:
             rows = connection.execute(
                 """SELECT k.id, k.subscription_id, k.telegram_id, k.outline_key_id,
                           k.quota_bytes, k.status, k.quota_warning_percent,
-                          s.plan_code, s.expires_at
+                          k.server_id, s.plan_code, s.expires_at
                    FROM paid_vpn_keys k JOIN subscriptions s ON s.id = k.subscription_id
                    WHERE k.status = 'active' AND s.status = 'active'
                      AND k.quota_bytes IS NOT NULL"""
             ).fetchall()
             for row in rows:
                 try:
+                    server_key = row["server_id"] or default_server_id
+                    by_key = metrics_by_server.get(server_key, {})
                     used = max(0, int(by_key.get(str(row["outline_key_id"]), 0) or 0))
                     quota = int(row["quota_bytes"])
                 except (TypeError, ValueError):
@@ -721,14 +745,12 @@ class CommerceWorkerMixin:
         restore or disable a key.
         """
         current = (now or datetime.now(UTC)).astimezone(UTC)
+        default_server_id = getattr(self.outline, "default_server_id", None)
         if metrics is None:
-            try:
-                metrics = self.outline.transfer_metrics()
-            except Exception:
-                return 0
-        by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
-        if not isinstance(by_key, dict):
-            return 0
+            metrics_by_server = self._metrics_by_server()
+        else:
+            by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+            metrics_by_server = {default_server_id: by_key if isinstance(by_key, dict) else {}}
         try:
             self.queue_quota_warnings(current, metrics)
         except Exception as exc:
@@ -736,7 +758,7 @@ class CommerceWorkerMixin:
             print(f"paid quota warning error: {type(exc).__name__}", file=sys.stderr)
         with self.database.connect() as connection:
             rows = connection.execute(
-                """SELECT k.id, k.subscription_id, k.outline_key_id, k.quota_bytes,
+                """SELECT k.id, k.subscription_id, k.outline_key_id, k.quota_bytes, k.server_id,
                           k.status, s.status AS subscription_status
                    FROM paid_vpn_keys k JOIN subscriptions s ON s.id = k.subscription_id
                    WHERE k.status = 'active' AND s.status = 'active' AND k.quota_bytes IS NOT NULL"""
@@ -744,6 +766,8 @@ class CommerceWorkerMixin:
         scheduled = 0
         for row in rows:
             try:
+                server_key = row["server_id"] or default_server_id
+                by_key = metrics_by_server.get(server_key, {})
                 used = int(by_key.get(str(row["outline_key_id"]), 0) or 0)
             except (TypeError, ValueError):
                 continue
@@ -789,11 +813,13 @@ class CommerceWorkerMixin:
         return scheduled
 
     def capacity_snapshot(self, now: datetime | None = None) -> dict[str, Any]:
-        """Return operator-only counts and mapped transfer usage, never access URLs."""
+        """Return declared capacity beside observed remote inventory/telemetry."""
         current = (now or datetime.now(UTC)).astimezone(UTC)
         expiring_at = _now_text(current + timedelta(hours=24))
-        server = self.outline.server_info()
-        outline_version = str(server.get("version", "unknown"))[:64]
+        try:
+            self.refresh_server_inventory(current)
+        except Exception:
+            pass
         with self.database.connect() as connection:
             counts = connection.execute(
                 """SELECT
@@ -807,15 +833,35 @@ class CommerceWorkerMixin:
                 (expiring_at,),
             ).fetchone()
             key_rows = connection.execute(
-                """SELECT outline_key_id, telegram_id, quota_bytes
+                """SELECT outline_key_id, telegram_id, quota_bytes, server_id
                    FROM paid_vpn_keys WHERE status = 'active'"""
             ).fetchall()
-        metrics = self.outline.transfer_metrics()
-        by_key = metrics.get("bytesTransferredByUserId", {})
-        if not isinstance(by_key, dict):
-            by_key = {}
+            server_rows = connection.execute(
+                "SELECT * FROM outline_servers ORDER BY enabled DESC, label, server_id"
+            ).fetchall()
+            allocation_rows = connection.execute(
+                """SELECT a.server_id, a.plan_code, a.slot_limit, p.name,
+                          (SELECT COUNT(*) FROM subscriptions s
+                            WHERE s.server_id = a.server_id AND s.plan_code = a.plan_code
+                              AND s.status IN ('pending', 'active')) AS active_count,
+                          (SELECT COUNT(*) FROM orders o
+                            WHERE o.server_id = a.server_id AND o.plan_code = a.plan_code
+                              AND (o.status = 'payment_submitted' OR
+                                   (o.status = 'awaiting_payment' AND o.capacity_reserved_until > ?))) AS reserved_count
+                   FROM server_plan_allocations a JOIN plans p ON p.code = a.plan_code
+                   ORDER BY a.server_id, p.price_minor""",
+                (_now_text(current),),
+            ).fetchall()
+        default_server_id = getattr(self.outline, "default_server_id", None)
+        metrics_by_server = (
+            dict(getattr(self, "_server_metrics_cache", {}))
+            if server_rows
+            else self._metrics_by_server()
+        )
         usage = []
         for row in key_rows:
+            server_id = row["server_id"] or default_server_id
+            by_key = metrics_by_server.get(server_id, {})
             raw_used = by_key.get(str(row["outline_key_id"]), 0)
             try:
                 used_bytes = max(0, int(raw_used or 0))
@@ -827,9 +873,80 @@ class CommerceWorkerMixin:
                     "telegram_id": row["telegram_id"],
                     "quota_bytes": row["quota_bytes"],
                     "used_bytes": used_bytes,
+                    "server_id": server_id,
                 }
             )
-        return {**dict(counts), "outline_version": outline_version, "usage": usage}
+        allocations_by_server: dict[str, list[dict[str, Any]]] = {}
+        for row in allocation_rows:
+            item = dict(row)
+            item["remaining_slots"] = max(
+                0,
+                int(item["slot_limit"]) - int(item["active_count"]) - int(item["reserved_count"]),
+            )
+            allocations_by_server.setdefault(str(item["server_id"]), []).append(item)
+        servers = []
+        for row in server_rows:
+            item = dict(row)
+            max_keys = item.get("max_keys")
+            usable = (
+                None
+                if max_keys is None
+                else max(0, int(max_keys) - int(item.get("reserved_keys") or 0))
+            )
+            remote = int(item.get("remote_key_count") or 0)
+            with self.database.connect() as connection:
+                reserved_orders = int(
+                    connection.execute(
+                        """SELECT COUNT(*) AS n FROM orders WHERE server_id = ?
+                           AND (status = 'payment_submitted' OR
+                                (status = 'awaiting_payment' AND capacity_reserved_until > ?))""",
+                        (item["server_id"], _now_text(current)),
+                    ).fetchone()["n"]
+                )
+                pending_keys = int(
+                    connection.execute(
+                        "SELECT COUNT(*) AS n FROM subscriptions WHERE server_id = ? AND status = 'pending'",
+                        (item["server_id"],),
+                    ).fetchone()["n"]
+                )
+                committed_traffic = int(
+                    connection.execute(
+                        """SELECT
+                           COALESCE((SELECT SUM(COALESCE(quota_bytes, 0)) FROM subscriptions
+                             WHERE server_id = ? AND status IN ('pending', 'active')), 0) +
+                           COALESCE((SELECT SUM(COALESCE(quota_bytes_snapshot, 0)) FROM orders
+                             WHERE server_id = ? AND (status = 'payment_submitted' OR
+                               (status = 'awaiting_payment' AND capacity_reserved_until > ?))), 0) AS n""",
+                        (item["server_id"], item["server_id"], _now_text(current)),
+                    ).fetchone()["n"]
+                )
+            item["reserved_order_count"] = reserved_orders
+            item["pending_key_count"] = pending_keys
+            item["committed_traffic_bytes"] = committed_traffic
+            item["remaining_traffic_bytes"] = (
+                None
+                if item.get("monthly_traffic_bytes") is None
+                else max(0, int(item["monthly_traffic_bytes"]) - committed_traffic)
+            )
+            item["remaining_key_slots"] = (
+                None
+                if usable is None
+                else max(0, usable - remote - reserved_orders - pending_keys)
+            )
+            item["allocations"] = allocations_by_server.get(str(item["server_id"]), [])
+            servers.append(item)
+        outline_version = "multi" if len(servers) > 1 else "unknown"
+        if not servers:
+            try:
+                outline_version = str(self.outline.server_info().get("version", "unknown"))[:64]
+            except Exception:
+                pass
+        return {
+            **dict(counts),
+            "outline_version": outline_version,
+            "usage": usage,
+            "servers": servers,
+        }
 
     def pending_notifications(
         self, now: datetime | None = None, limit: int = 20

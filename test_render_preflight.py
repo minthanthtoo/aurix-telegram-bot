@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -72,6 +73,24 @@ class RenderPreflightTest(unittest.TestCase):
         environment["COMMERCE_DATABASE_URL"] = "sqlite:///tmp/bot.db"
         with self.assertRaisesRegex(SystemExit, "must be a PostgreSQL URL"):
             self.run_preflight(environment)
+
+    def test_multi_server_secret_can_replace_legacy_outline_pair(self):
+        environment = valid_environment()
+        environment.pop("OUTLINE_API_URL")
+        environment.pop("OUTLINE_CERT_SHA256")
+        environment["OUTLINE_SERVERS_JSON"] = json.dumps(
+            [
+                {
+                    "id": "sg1",
+                    "label": "Singapore 1",
+                    "api_url": "https://outline.invalid/management-secret",
+                    "cert_sha256": "a" * 64,
+                }
+            ]
+        )
+        environment["OUTLINE_DEFAULT_SERVER_ID"] = "sg1"
+
+        self.assertIn("preflight passed", self.run_preflight(environment).lower())
 
 
 if __name__ == "__main__":

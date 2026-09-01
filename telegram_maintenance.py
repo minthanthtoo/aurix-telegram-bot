@@ -265,8 +265,21 @@ class TelegramMaintenanceMixin:
             run_stage("free_revocation_retry", reconcile_terminations)
         run_stage("termination_notices", self._send_termination_notices)
         if self.commerce is not None:
-            run_stage("paid_quota", lambda: self.commerce.enforce_quotas(metrics=metrics))
+            commerce_outline = getattr(self.commerce, "outline", None)
+            server_ids = getattr(commerce_outline, "server_ids", None)
+            multi_server = callable(server_ids) and len(server_ids()) > 1
+            # Reuse the already-fetched payload for the common single-server
+            # deployment. Multi-server commerce fetches one payload per node.
+            run_stage(
+                "paid_quota",
+                self.commerce.enforce_quotas
+                if multi_server
+                else lambda: self.commerce.enforce_quotas(metrics=metrics),
+            )
             run_stage("paid_expiry", self.commerce.expire_and_process)
+            refresh_inventory = getattr(self.commerce, "refresh_server_inventory", None)
+            if callable(refresh_inventory):
+                run_stage("server_inventory", refresh_inventory)
             run_stage("notifications", self._send_pending_notifications)
             # Slow model calls run last so quota enforcement and customer/staff
             # notifications are never held behind optional assisted extraction.

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -22,8 +23,6 @@ def main() -> None:
 
     required = (
         "TELEGRAM_BOT_TOKEN",
-        "OUTLINE_API_URL",
-        "OUTLINE_CERT_SHA256",
         "AURIX_ACCESS_URL_KEY",
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
@@ -31,6 +30,15 @@ def main() -> None:
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
         fail("missing required environment variables: " + ", ".join(missing))
+    servers_json = os.environ.get("OUTLINE_SERVERS_JSON", "").strip()
+    if not servers_json:
+        outline_missing = [
+            name
+            for name in ("OUTLINE_API_URL", "OUTLINE_CERT_SHA256")
+            if not os.environ.get(name, "").strip()
+        ]
+        if outline_missing:
+            fail("missing required environment variables: " + ", ".join(outline_missing))
 
     for name in ("OWNER_TELEGRAM_ID", "ADMIN_TELEGRAM_IDS"):
         try:
@@ -58,13 +66,39 @@ def main() -> None:
     ):
         fail("configure OWNER_TELEGRAM_ID or the AuriX control group/admin bootstrap")
 
-    parsed = urlsplit(os.environ["OUTLINE_API_URL"].strip())
-    if parsed.scheme != "https" or not parsed.hostname or not parsed.path.strip("/"):
-        fail("OUTLINE_API_URL must be the complete secret HTTPS management URL")
-
-    fingerprint = os.environ["OUTLINE_CERT_SHA256"].lower().replace(":", "")
-    if len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
-        fail("OUTLINE_CERT_SHA256 must contain exactly 64 hexadecimal characters")
+    if servers_json:
+        try:
+            servers = json.loads(servers_json)
+            if not isinstance(servers, list) or not servers:
+                raise ValueError
+            seen = set()
+            for server in servers:
+                server_id = str(server.get("id") or "")
+                parsed = urlsplit(str(server.get("api_url") or ""))
+                fingerprint = str(server.get("cert_sha256") or "").lower().replace(":", "")
+                if (
+                    not re.fullmatch(r"[A-Za-z0-9_-]{1,24}", server_id)
+                    or server_id in seen
+                    or parsed.scheme != "https"
+                    or not parsed.hostname
+                    or not parsed.path.strip("/")
+                    or len(fingerprint) != 64
+                    or any(char not in "0123456789abcdef" for char in fingerprint)
+                ):
+                    raise ValueError
+                seen.add(server_id)
+            default_id = os.environ.get("OUTLINE_DEFAULT_SERVER_ID", "").strip()
+            if default_id and default_id not in seen:
+                fail("OUTLINE_DEFAULT_SERVER_ID is not present in OUTLINE_SERVERS_JSON")
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            fail("OUTLINE_SERVERS_JSON contains an invalid server entry")
+    else:
+        parsed = urlsplit(os.environ["OUTLINE_API_URL"].strip())
+        if parsed.scheme != "https" or not parsed.hostname or not parsed.path.strip("/"):
+            fail("OUTLINE_API_URL must be the complete secret HTTPS management URL")
+        fingerprint = os.environ["OUTLINE_CERT_SHA256"].lower().replace(":", "")
+        if len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
+            fail("OUTLINE_CERT_SHA256 must contain exactly 64 hexadecimal characters")
 
     try:
         Fernet(os.environ["AURIX_ACCESS_URL_KEY"].encode())
