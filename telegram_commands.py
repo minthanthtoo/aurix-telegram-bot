@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import re
+import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -71,6 +72,25 @@ class TelegramCommandMixin:
         if not isinstance(text, str) or not text.strip():
             return
         raw_text = text.strip()
+        customer_text: str | None = None
+        customer_input = self._customer_inputs.get(int(telegram_id))
+        if customer_input:
+            if (
+                float(customer_input.get("expires_at", 0)) <= time.monotonic()
+                or raw_text in self.CUSTOMER_BUTTON_COMMANDS
+                or raw_text.startswith("/")
+            ):
+                self._customer_inputs.pop(int(telegram_id), None)
+            elif customer_input.get("action") == "topup_amount":
+                normalized_amount = raw_text.replace(",", "")
+                if not normalized_amount.isdigit():
+                    self.send(
+                        chat["id"],
+                        "Send a whole MMK amount from 1,000 to 1,000,000. Example: 7500",
+                    )
+                    return
+                self._customer_inputs.pop(int(telegram_id), None)
+                customer_text = f"/topup {normalized_amount}"
         pending_receipt = self._receipt_verify_inputs.get(int(telegram_id))
         menu_navigation = raw_text in self.CUSTOMER_BUTTON_COMMANDS or raw_text in self.ADMIN_BUTTON_COMMANDS
         if pending_receipt and (menu_navigation or raw_text.startswith("/")):
@@ -100,7 +120,7 @@ class TelegramCommandMixin:
                 f"a:r:{pending_receipt}",
             )
             return
-        text = None
+        text = customer_text
         if self._is_owner(telegram_id) and telegram_id in self._admin_add_waiting:
             self._admin_add_waiting.discard(telegram_id)
             if raw_text.isdigit():
@@ -747,11 +767,47 @@ class TelegramCommandMixin:
                     )
                 self.send(
                     chat["id"],
-                    f"Wallet balance: {balance:,} MMK\nWallet credits are posted only after staff verify a receipt.{history_text}",
-                    self._inline_keyboard(
-                        [[("🧾 My Orders", "n:myorders"), ("💎 Upgrade", "n:plans")]]
-                    ),
+                    f"💰 AuriX Wallet\n\nBalance: {balance:,} MMK\n"
+                    f"Top-ups are credited only after receipt verification.{history_text}",
+                    self._inline_keyboard([[("➕ Top up wallet", "t:a:menu")]]),
                 )
+        elif command == "/topup":
+            if self.commerce is None:
+                self.send(chat["id"], "Wallet is not configured.")
+            elif not args:
+                self.send(
+                    chat["id"],
+                    "Choose a wallet top-up amount, or tap Other amount and type your own.",
+                    self._topup_amount_keyboard(),
+                )
+            elif len(args) != 1:
+                self.send(chat["id"], "Choose one top-up amount.", self._topup_amount_keyboard())
+            else:
+                try:
+                    order = self.commerce.create_wallet_topup(
+                        telegram_id,
+                        first_name,
+                        int(args[0].replace(",", "")),
+                        username=username,
+                    )
+                except (ValueError, CommerceError) as exc:
+                    self.send(chat["id"], str(exc) or "Top-up amount is invalid.")
+                else:
+                    if not order.created and order.plan_conflict:
+                        self.send(
+                            chat["id"],
+                            "Finish or cancel your current open order before starting this top-up.",
+                            self._inline_keyboard(
+                                [[("Open current order", f"o:v:{order.order_id}")]]
+                            ),
+                        )
+                    else:
+                        heading = (
+                            "Wallet top-up created" if order.created else "Existing wallet top-up"
+                        )
+                        self._send_payment_method_chooser(
+                            chat["id"], telegram_id, order.order_id, heading=heading
+                        )
         elif command == "/walletpay":
             if self.commerce is None:
                 self.send(chat["id"], "Wallet is not configured.")
@@ -1049,9 +1105,14 @@ class TelegramCommandMixin:
                         result = self._admin_call(
                             telegram_id, "approve_order", args[0], telegram_id
                         )
+                        outcome = (
+                            "Wallet top-up approved and credited."
+                            if result.status in {"wallet_credited", "already_credited"}
+                            else f"Order {result.order_id} approved; provisioning queued."
+                        )
                         self.send(
                             chat["id"],
-                            f"Order {result.order_id} approved; provisioning queued.",
+                            outcome,
                             self._inline_keyboard(
                                 [
                                     [

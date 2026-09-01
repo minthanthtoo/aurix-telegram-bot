@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -396,6 +396,138 @@ class CommerceService(CommerceWorkerMixin):
                    FROM plans WHERE active = 1 ORDER BY price_minor"""
             ).fetchall()
         return [Plan(**dict(row)) for row in rows]
+
+    def create_wallet_topup(
+        self,
+        telegram_id: int,
+        first_name: str,
+        amount_minor: int,
+        now: datetime | None = None,
+        username: str | None = None,
+    ) -> OrderResult:
+        """Create a receipt-backed deposit that credits wallet balance only."""
+        try:
+            amount_minor = int(amount_minor)
+        except (TypeError, ValueError) as exc:
+            raise CommerceError("Top-up amount must be a whole number of MMK") from exc
+        if not 1_000 <= amount_minor <= 1_000_000:
+            raise CommerceError("Wallet top-up must be between 1,000 and 1,000,000 MMK")
+        plan = Plan("wallet_topup", "Wallet Top-up", amount_minor, "MMK", None, 1)
+        order_id = _new_id()
+        created_at = _now_text(now)
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            self._ensure_user(connection, telegram_id, first_name, username)
+            if isinstance(connection, _PostgresConnection):
+                connection.execute(
+                    "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
+                    (telegram_id,),
+                ).fetchone()
+            existing = connection.execute(
+                """SELECT * FROM orders
+                   WHERE telegram_id = ?
+                     AND status IN ('awaiting_payment', 'payment_submitted')
+                     AND COALESCE(refund_status, 'none') != 'refunded'
+                   ORDER BY created_at LIMIT 1""",
+                (telegram_id,),
+            ).fetchone()
+            if existing is not None:
+                existing_plan = Plan(
+                    str(existing["plan_code"]),
+                    str(existing["plan_name"] or existing["plan_code"]),
+                    int(existing["amount_minor"]),
+                    str(existing["currency"]),
+                    existing["quota_bytes_snapshot"],
+                    int(existing["duration_days_snapshot"] or 1),
+                )
+                return OrderResult(
+                    str(existing["id"]),
+                    existing_plan,
+                    str(existing["status"]),
+                    False,
+                    str(existing["plan_code"]) != "wallet_topup"
+                    or int(existing["amount_minor"]) != amount_minor,
+                )
+            connection.execute(
+                """INSERT INTO orders
+                   (id, telegram_id, plan_code, amount_minor, currency, plan_name,
+                    quota_bytes_snapshot, duration_days_snapshot, status, created_at)
+                   VALUES (?, ?, 'wallet_topup', ?, 'MMK', 'Wallet Top-up',
+                           NULL, 1, 'awaiting_payment', ?)""",
+                (order_id, telegram_id, amount_minor, created_at),
+            )
+            self._audit(
+                connection,
+                "wallet_topup_created",
+                "order",
+                order_id,
+                "customer",
+                str(telegram_id),
+                {"amount_minor": amount_minor, "currency": "MMK"},
+            )
+            self._queue_staff_notification(
+                connection,
+                "order_created",
+                order_id,
+                "💰 WALLET TOP-UP\n\n"
+                f"Order: #{order_id[:8]}\nCustomer: tg:{telegram_id}\n"
+                f"Amount: {amount_minor:,} MMK\n\nStatus: waiting for receipt",
+                created_at,
+            )
+        return OrderResult(order_id, plan, "awaiting_payment")
+
+    @staticmethod
+    def _receipt_timestamp(value: Any) -> datetime | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone(timedelta(hours=6, minutes=30)))
+        return parsed.astimezone(UTC)
+
+    def _receipt_risk_flags(
+        self, extraction: dict[str, Any], order: Any, submitted_at: datetime
+    ) -> list[str]:
+        flags = {str(item) for item in extraction.get("flags", []) if item}
+        if not str(extraction.get("transaction_id") or "").strip():
+            flags.add("missing_transaction_id")
+        try:
+            if int(extraction.get("amount_minor")) != int(order["amount_minor"]):
+                flags.add("amount_mismatch")
+        except (TypeError, ValueError):
+            flags.add("missing_or_invalid_amount")
+        currency = str(extraction.get("currency") or "").strip().upper()
+        if not currency:
+            flags.add("missing_currency")
+        elif currency != str(order["currency"]).upper():
+            flags.add("currency_mismatch")
+        selected = str(order["payment_method"] or "").strip()
+        extracted_provider = str(extraction.get("provider") or "").strip()
+        if selected and extracted_provider and (
+            _normalize_reference(selected) != _normalize_reference(extracted_provider)
+        ):
+            flags.add("provider_mismatch")
+        receipt_time = self._receipt_timestamp(extraction.get("timestamp"))
+        if receipt_time is None:
+            flags.add("missing_or_invalid_timestamp")
+        else:
+            age = submitted_at.astimezone(UTC) - receipt_time
+            if age > timedelta(hours=1):
+                flags.add("receipt_older_than_1_hour")
+            elif age < -timedelta(minutes=5):
+                flags.add("receipt_timestamp_in_future")
+        try:
+            if float(extraction.get("confidence", 0)) < 0.85:
+                flags.add("low_extraction_confidence")
+        except (TypeError, ValueError):
+            flags.add("invalid_extraction_confidence")
+        return sorted(flags)
 
     def get_plan(self, code: str) -> Plan:
         with self.database.connect() as connection:
@@ -1127,7 +1259,8 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
-            self._assert_no_active_promo(connection, telegram_id)
+            if str(order["plan_code"]) != "wallet_topup":
+                self._assert_no_active_promo(connection, telegram_id)
             if order["status"] == "approved":
                 raise CommerceError("Order is already approved")
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
@@ -1189,6 +1322,31 @@ class CommerceService(CommerceWorkerMixin):
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def receipt_duplicate_status(
+        self,
+        telegram_id: int,
+        order_id: str,
+        image_bytes: bytes,
+        file_unique_id: str | None = None,
+    ) -> str:
+        """Check immutable receipt identity before any vision-model work."""
+        digest = hashlib.sha256(image_bytes).hexdigest()
+        with self.database.connect() as connection:
+            order = connection.execute(
+                "SELECT telegram_id FROM orders WHERE id = ?", (order_id,)
+            ).fetchone()
+            if order is None or int(order["telegram_id"]) != int(telegram_id):
+                raise CommerceError("Order not found")
+            rows = connection.execute(
+                """SELECT order_id FROM payment_evidence
+                   WHERE image_sha256 = ? OR
+                         (? IS NOT NULL AND telegram_file_unique_id = ?)""",
+                (digest, file_unique_id, file_unique_id),
+            ).fetchall()
+        if any(str(row["order_id"]) != str(order_id) for row in rows):
+            return "different_order"
+        return "same_order" if rows else "new"
+
     def submit_receipt(
         self,
         telegram_id: int,
@@ -1238,11 +1396,21 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
-            self._assert_no_active_promo(connection, telegram_id)
+            if str(order["plan_code"]) != "wallet_topup":
+                self._assert_no_active_promo(connection, telegram_id)
             if order["status"] == "approved":
                 raise CommerceError("Order is already approved")
             if order["status"] not in ("awaiting_payment", "payment_submitted"):
                 raise CommerceError("Order is not open for a receipt")
+            duplicate = connection.execute(
+                """SELECT order_id FROM payment_evidence
+                   WHERE (image_sha256 = ? OR
+                          (? IS NOT NULL AND telegram_file_unique_id = ?))
+                     AND order_id != ? LIMIT 1""",
+                (digest, file_unique_id, file_unique_id, order_id),
+            ).fetchone()
+            if duplicate is not None:
+                raise CommerceError("This receipt was already submitted for another order")
             existing = connection.execute(
                 """SELECT id, extraction_json, extraction_status, review_status,
                           storage_bucket, storage_path, storage_status
@@ -1544,14 +1712,18 @@ class CommerceService(CommerceWorkerMixin):
         """Commit untrusted extraction metadata without changing payment approval state."""
         if not isinstance(extraction, dict):
             raise CommerceError("Receipt extraction result is invalid")
-        completed_at = _now_text(now)
+        completed = now or datetime.now(UTC)
+        completed_at = _now_text(completed)
         result = dict(extraction)
         tx_candidate = str(result.get("transaction_id") or "").strip()[:128]
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             evidence = connection.execute(
-                """SELECT provider, order_id FROM payment_evidence
-                   WHERE id = ? AND review_status = 'pending'""",
+                """SELECT e.provider, e.order_id, o.amount_minor, o.currency,
+                          o.payment_method
+                   FROM payment_evidence e
+                   JOIN orders o ON o.id = e.order_id
+                   WHERE e.id = ? AND e.review_status = 'pending'""",
                 (evidence_id,),
             ).fetchone()
             if evidence is None:
@@ -1583,7 +1755,8 @@ class CommerceService(CommerceWorkerMixin):
                             set(result.get("flags") or []) | {"duplicate_transaction_candidate"}
                         )
                         break
-            status = "parsed" if tx_candidate else "needs_review"
+            result["flags"] = self._receipt_risk_flags(result, evidence, completed)
+            status = "parsed" if tx_candidate and not result["flags"] else "needs_review"
             connection.execute(
                 """UPDATE payment_evidence
                    SET extraction_json = ?, extraction_status = ? WHERE id = ?""",
@@ -1694,7 +1867,8 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             evidence = connection.execute(
-                """SELECT e.*, o.amount_minor, o.currency, o.status AS order_status
+                """SELECT e.*, o.amount_minor, o.currency, o.plan_code,
+                          o.status AS order_status
                    FROM payment_evidence e JOIN orders o ON o.id = e.order_id
                    WHERE e.id = ?""",
                 (evidence_id,),
@@ -1723,6 +1897,11 @@ class CommerceService(CommerceWorkerMixin):
                 raise CommerceError("Verified payment currency does not match the order")
             if verified_amount_minor < int(evidence["amount_minor"]):
                 raise CommerceError("Verified payment amount is below the order total")
+            if (
+                str(evidence["plan_code"]) == "wallet_topup"
+                and verified_amount_minor != int(evidence["amount_minor"])
+            ):
+                raise CommerceError("Wallet top-up receipt amount must match exactly")
             payment = connection.execute(
                 """SELECT id FROM payments
                    WHERE order_id = ? AND status IN ('submitted', 'verified')
@@ -1947,7 +2126,8 @@ class CommerceService(CommerceWorkerMixin):
             approved_missing_subscription = connection.execute(
                 """SELECT COUNT(*) AS n FROM orders o
                    LEFT JOIN subscriptions s ON s.order_id = o.id
-                   WHERE o.status = 'approved' AND s.id IS NULL"""
+                   WHERE o.status = 'approved' AND o.plan_code != 'wallet_topup'
+                     AND s.id IS NULL"""
             ).fetchone()["n"]
             approved_missing_job = connection.execute(
                 """SELECT COUNT(*) AS n FROM subscriptions s
@@ -2074,6 +2254,8 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
+            if str(order["plan_code"]) == "wallet_topup":
+                raise CommerceError("A wallet cannot be topped up from the same wallet")
             self._assert_no_active_promo(connection, telegram_id)
             if order["status"] == "approved":
                 return "already_approved"
@@ -2211,8 +2393,14 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None:
                 raise CommerceError("Order not found")
-            self._assert_no_active_promo(connection, int(order["telegram_id"]))
+            is_wallet_topup = str(order["plan_code"]) == "wallet_topup"
+            if not is_wallet_topup:
+                self._assert_no_active_promo(connection, int(order["telegram_id"]))
             if order["status"] == "approved":
+                if is_wallet_topup:
+                    return ApprovalResult(
+                        order_id, f"wallet:{order['telegram_id']}", "already_credited"
+                    )
                 subscription = connection.execute(
                     "SELECT id FROM subscriptions WHERE order_id = ?", (order_id,)
                 ).fetchone()
@@ -2266,6 +2454,80 @@ class CommerceService(CommerceWorkerMixin):
                 raise CommerceError("Verified receipt evidence is required before approval")
             if evidence is not None and wallet_payment:
                 raise CommerceError("An order cannot combine a wallet payment and receipt evidence")
+            if is_wallet_topup:
+                if wallet_payment:
+                    raise CommerceError("A wallet cannot be topped up from the same wallet")
+                if evidence is None or evidence["review_status"] != "verified":
+                    raise CommerceError("Verified receipt evidence is required for a wallet top-up")
+                if int(evidence["verified_amount_minor"] or 0) != int(order["amount_minor"]):
+                    raise CommerceError("Wallet top-up receipt amount must match exactly")
+                if str(evidence["verified_currency"] or "").upper() != str(
+                    order["currency"]
+                ).upper():
+                    raise CommerceError("Wallet top-up receipt currency does not match")
+                payment_id = str(payment["id"])
+                credit_idem = f"credit:{payment_id}"
+                connection.execute(
+                    """INSERT INTO wallets
+                       (telegram_id, currency, balance_minor, created_at, updated_at)
+                       VALUES (?, ?, 0, ?, ?) ON CONFLICT(telegram_id) DO NOTHING""",
+                    (order["telegram_id"], order["currency"], starts_at, starts_at),
+                )
+                if connection.execute(
+                    "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (credit_idem,)
+                ).fetchone() is None:
+                    connection.execute(
+                        """UPDATE wallets SET balance_minor = balance_minor + ?, updated_at = ?
+                           WHERE telegram_id = ?""",
+                        (order["amount_minor"], starts_at, order["telegram_id"]),
+                    )
+                    connection.execute(
+                        """INSERT INTO wallet_ledger
+                           (id, telegram_id, kind, amount_minor, currency, reference_type,
+                            reference_id, idempotency_key, created_at)
+                           VALUES (?, ?, 'credit', ?, ?, 'payment', ?, ?, ?)""",
+                        (
+                            _new_id(),
+                            order["telegram_id"],
+                            order["amount_minor"],
+                            order["currency"],
+                            payment_id,
+                            credit_idem,
+                            starts_at,
+                        ),
+                    )
+                connection.execute(
+                    "UPDATE orders SET status = 'approved', approved_at = ? WHERE id = ?",
+                    (starts_at, order_id),
+                )
+                connection.execute(
+                    """INSERT INTO notifications
+                       (id, dedupe_key, telegram_id, kind, text, status,
+                        next_attempt_at, created_at)
+                       VALUES (?, ?, ?, 'wallet_topup_approved', ?, 'pending', ?, ?)
+                       ON CONFLICT(dedupe_key) DO NOTHING""",
+                    (
+                        _new_id(),
+                        f"wallet-topup-approved:{order_id}",
+                        order["telegram_id"],
+                        f"✅ Wallet top-up approved: {int(order['amount_minor']):,} "
+                        f"{order['currency']}.",
+                        starts_at,
+                        starts_at,
+                    ),
+                )
+                self._audit(
+                    connection,
+                    "wallet_topup_approved",
+                    "order",
+                    order_id,
+                    "admin",
+                    str(admin_id),
+                    {"amount_minor": int(order["amount_minor"]), "payment_id": payment_id},
+                )
+                return ApprovalResult(
+                    order_id, f"wallet:{order['telegram_id']}", "wallet_credited"
+                )
             plan = connection.execute(
                 "SELECT duration_days, quota_bytes, name FROM plans WHERE code = ?",
                 (order["plan_code"],),
@@ -2599,6 +2861,10 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None:
                 raise CommerceError("Order not found")
+            if str(order["plan_code"]) == "wallet_topup":
+                raise CommerceError(
+                    "Wallet top-up refunds require manual off-platform reconciliation"
+                )
             if str(order["refund_status"] or "none") == "refunded":
                 return "already_refunded"
             payment = connection.execute(

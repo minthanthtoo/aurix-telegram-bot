@@ -974,6 +974,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         evidence_id = result["evidence_id"]
         receipt = self.commerce.get_receipt(evidence_id)
         self.bot._send_receipt_review(999, receipt)
+        self.assertIn("⚠️ Risk flags:", self.bot.media[-1][3])
         labels = {
             button["text"]
             for row in self.bot.media[-1][4]["inline_keyboard"]
@@ -1012,6 +1013,78 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, f"/order {order_id}"))
         self.assertIn("AuriX Order", self.bot.sent[-1][1])
         self.assertIn("Payment: not submitted", self.bot.sent[-1][1])
+
+    def test_wallet_topup_presets_and_manual_amount_use_local_payment_qr(self):
+        self.bot.handle(self.message(123, "/wallet"))
+        self.bot.request = lambda _method, _payload: True
+        self.assertEqual(
+            self.bot.markups[-1]["inline_keyboard"][0][0]["callback_data"],
+            "t:a:menu",
+        )
+
+        self.bot.handle_callback(
+            {
+                "id": "topup-menu",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {"chat": {"id": 123, "type": "private"}},
+                "data": "t:a:menu",
+            }
+        )
+        amount_buttons = {
+            button["callback_data"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        }
+        self.assertIn("t:a:3000", amount_buttons)
+        self.assertIn("t:a:custom", amount_buttons)
+
+        self.bot.handle_callback(
+            {
+                "id": "topup-custom",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {"chat": {"id": 123, "type": "private"}},
+                "data": "t:a:custom",
+            }
+        )
+        self.bot.handle(self.message(123, "7,500"))
+
+        order = self.commerce.list_pending_orders()[0]
+        self.assertEqual(order["plan_code"], "wallet_topup")
+        self.assertEqual(order["amount_minor"], 7500)
+        self.assertEqual(self.bot.media[-1][0], "local_photo")
+        self.assertIn("7,500 MMK", self.bot.media[-1][3])
+        labels = {
+            button["text"]
+            for row in self.bot.media[-1][-1]["inline_keyboard"]
+            for button in row
+        }
+        self.assertNotIn("💰 Pay Wallet", labels)
+
+    def test_order_category_navigation_edits_the_pressed_message(self):
+        self.commerce.create_order(123, "Min", "basic_50gb")
+        self.bot.handle(self.message(123, "/myorders"))
+        sent_count = len(self.bot.sent)
+        calls = []
+        self.bot.request = lambda method, payload: calls.append((method, payload)) or True
+
+        self.bot.handle_callback(
+            {
+                "id": "orders-all",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {
+                    "message_id": 71,
+                    "text": self.bot.sent[-1][1],
+                    "chat": {"id": 123, "type": "private"},
+                },
+                "data": "c:o:all:0",
+            }
+        )
+
+        self.assertEqual(len(self.bot.sent), sent_count)
+        edits = [payload for method, payload in calls if method == "editMessageText"]
+        self.assertEqual(len(edits), 1)
+        self.assertEqual(edits[0]["message_id"], 71)
+        self.assertIn("All · 1 order(s)", edits[0]["text"])
 
     def test_new_order_uses_compact_payment_method_chooser_in_required_order(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
@@ -2068,8 +2141,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
         page_one = self.bot.markups[-1]["inline_keyboard"]
         key_rows = [row for row in page_one if row[0].get("callback_data", "").startswith("k:v:")]
         self.assertEqual(len(key_rows), 5)
-        self.assertTrue(any(button.get("callback_data") == "k:l:1" for row in page_one for button in row))
-        self.assertTrue(any(button.get("callback_data") == "k:l:2" for row in page_one for button in row))
+        self.assertTrue(any(button.get("callback_data") == "k:l:active:1" for row in page_one for button in row))
+        self.assertTrue(any(button.get("callback_data") == "k:l:active:2" for row in page_one for button in row))
 
         sent_count = len(self.bot.sent)
         requests = []
@@ -2083,7 +2156,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                     "text": self.bot.sent[-1][1],
                     "chat": {"id": 123, "type": "private"},
                 },
-                "data": "k:l:2",
+                "data": "k:l:active:2",
             }
         )
         self.assertEqual(len(self.bot.sent), sent_count)
@@ -2092,7 +2165,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("Page 3/3", last_page["text"])
         self.assertTrue(
             any(
-                button.get("callback_data") == "k:l:0"
+                button.get("callback_data") == "k:l:active:0"
                 for row in last_page["reply_markup"]["inline_keyboard"]
                 for button in row
             )
@@ -2163,6 +2236,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "trial",
                 "myvpn",
                 "wallet",
+                "topup",
                 "myorders",
                 "whoami",
                 "help",

@@ -9,7 +9,8 @@ Telegram-first paid-concierge MVP with public free/trial access:
   UTC start/end, campaign/daily/hourly capacity, one claim per account, and
   automatic restoration of regular plans when a gift or season ends;
 - Telegram order creation with a compact KBZPay → WavePay → AYA Pay → UABPay → CB Pay QR chooser, in-place method switching, and receipt-screenshot submission (optional vision LLM extracts candidate transaction IDs);
-- immutable wallet ledger records verified credits and order captures;
+- receipt-backed wallet top-ups with preset/custom amounts, all five local QR
+  methods, exact-amount verification, and immutable ledger credits/captures;
 - Telegram-ID allowlisted staff approval/rejection;
 - idempotent Outline key provisioning, quota application, reconciliation, and revocation;
 - durable SQLite jobs, notifications, and audit events for a single staging process;
@@ -316,8 +317,11 @@ Customer:
 - `/paid <order-id>` — compatibility path for sending a receipt directly
 - `/trial`
 - `/wallet`
+- `/topup` — choose 3,000/6,000/10,000/20,000 MMK or enter a custom
+  1,000–1,000,000 MMK amount, then pay through one of the five QR methods
 - `/walletpay <order-id>`
-- `/myorders` — recent order/payment/review status
+- `/myorders` — in-place Open/Completed/Cancelled/Rejected/All tabs with
+  pagination; buttons refresh the current message instead of adding chat noise
 - `/order <order-id>` — full detail for an order you own
 - `/cancelorder <order-id>` — cancel an untouched order
 - `/status`
@@ -383,7 +387,7 @@ claims, its quota, duration, frequency, and start are immutable; use a new code
 for a materially new season so issued entitlements and audit history stay
 truthful.
 
-Creating an order is idempotent while the customer already has an order in `awaiting_payment` or `payment_submitted`: repeated `/buy`, Upgrade-button, and renewal requests return that open order instead of inserting duplicates. Once an order is approved, another purchase creates an independent entitlement, so a customer may hold multiple paid keys for separate people, devices, or plans at the same time. `/myvpn` stays compact and links to a five-per-page paid-key browser; each key opens a focused quota/expiry view with one-tap copy and **Buy Another** actions. Untouched orders expire after 24 hours and can be cancelled by the customer; orders with payment activity remain protected for staff review. Customers can inspect only their own orders; allowlisted admins can use `/order <order-id>` to inspect any order’s payment, receipt-review, wallet reservation, subscription, and provisioning trail.
+Creating an order is idempotent while the customer already has an order in `awaiting_payment` or `payment_submitted`: repeated `/buy`, Upgrade-button, renewal, and top-up requests return that open order instead of inserting duplicates. Once an order is approved, another purchase creates an independent entitlement, so a customer may hold multiple paid keys for separate people, devices, or plans at the same time. `/myvpn` stays compact and links to an in-place, five-per-page Active/Ended/All paid-key browser; each numbered key opens a focused quota/expiry view with one-tap copy. Untouched orders expire after 24 hours and can be cancelled by the customer; orders with payment activity remain protected for staff review. Customers can inspect only their own orders; allowlisted admins can use `/order <order-id>` to inspect any order’s payment, receipt-review, wallet reservation, subscription, and provisioning trail.
 
 The customer-facing order stage is derived consistently from the underlying records:
 `awaiting_payment`, `review_pending`, `payment_verified`, `wallet_reserved`,
@@ -464,7 +468,7 @@ persistent admin chat history. Telegram distinguishes photos from image document
 so AuriX preserves that media type and retries the alternate review method for
 older evidence. `/receipts` remains the durable recovery queue.
 
-Wallet events are immutable. An external verified receipt records `credit → reserve → capture`; a wallet purchase records `reserve → capture`; rejection releases a reservation exactly once. Capture does not deduct the balance a second time. `/wallet` shows the current projection and recent ledger events, while `/reconcile` reports balance mismatches and impossible order/job combinations.
+Wallet events are immutable. A wallet top-up accepts an exact receipt amount only, credits the balance exactly once after human verification, and never provisions a VPN subscription. A subsequent wallet purchase records `reserve → capture`; rejection releases a reservation exactly once. Capture does not deduct the balance a second time. Receipt SHA-256 and Telegram file identity are rejected across different orders before vision processing; normalized provider transaction IDs remain the authoritative duplicate check at verification. Assisted extraction flags amount/currency/provider mismatches, missing fields, low confidence, timestamps over one hour old, and future timestamps for staff review. `/wallet` shows the current projection and recent ledger events, while `/reconcile` reports balance mismatches and impossible order/job combinations.
 
 The receipt parser uses an OpenAI-compatible `/chat/completions` endpoint with a
 vision-capable model. Configure the three `RECEIPT_LLM_*` variables only after

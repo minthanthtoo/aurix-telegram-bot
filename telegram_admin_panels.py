@@ -847,7 +847,12 @@ class TelegramAdminMixin:
         return "\n".join(lines)
 
     def _payment_method_keyboard(
-        self, order_id: str, *, selected: str | None = None, qr_view: bool = False
+        self,
+        order_id: str,
+        *,
+        selected: str | None = None,
+        qr_view: bool = False,
+        allow_wallet: bool = True,
     ) -> dict[str, Any]:
         buttons = []
         for method in self.PAYMENT_METHOD_ORDER:
@@ -859,12 +864,10 @@ class TelegramAdminMixin:
         rows = [buttons[:2], buttons[2:4], buttons[4:]]
         if qr_view:
             rows.append([("✅ I’ve Paid · Send Receipt", f"o:u:{order_id}")])
-        rows.append(
-            [
-                ("💰 Pay Wallet", f"o:w:{order_id}"),
-                ("🧾 Order", f"o:v:{order_id}"),
-            ]
-        )
+        footer = [("🧾 Order", f"o:v:{order_id}")]
+        if allow_wallet:
+            footer.insert(0, ("💰 Pay Wallet", f"o:w:{order_id}"))
+        rows.append(footer)
         return self._inline_keyboard(rows)
 
     def _send_payment_method_chooser(
@@ -919,7 +922,12 @@ class TelegramAdminMixin:
             "Use the numbered buttons below to switch QR in this same message.\n"
             "Never send your PIN, password or OTP."
         )
-        markup = self._payment_method_keyboard(order_id, selected=method, qr_view=True)
+        markup = self._payment_method_keyboard(
+            order_id,
+            selected=method,
+            qr_view=True,
+            allow_wallet=str(order.get("plan_code") or "") != "wallet_topup",
+        )
         message = query.get("message") or {}
         message_id = message.get("message_id")
         if isinstance(message_id, int) and message.get("photo"):
@@ -943,7 +951,9 @@ class TelegramAdminMixin:
                 rows.append([("🔁 Retry Revocation", f"a:g:{order_id}")])
             if order.get("telegram_id"):
                 rows.append([("💰 View Ledger", f"a:l:{order['telegram_id']}")])
-            if order.get("refund_status") != "refunded" and (
+            if order.get("plan_code") != "wallet_topup" and order.get(
+                "refund_status"
+            ) != "refunded" and (
                 order.get("status") == "approved" or order.get("payment_status") == "verified"
             ):
                 rows.append([("💸 Refund", f"a:f:{order_id}")])
@@ -951,7 +961,12 @@ class TelegramAdminMixin:
                 order.get("receipt_status") == "verified"
                 or order.get("wallet_reservation_status") == "reserved"
             ):
-                rows.append([("✅ Approve", f"a:a:{order_id}")])
+                label = (
+                    "✅ Credit Wallet"
+                    if order.get("plan_code") == "wallet_topup"
+                    else "✅ Approve"
+                )
+                rows.append([(label, f"a:a:{order_id}")])
             if (
                 order.get("status") in ("awaiting_payment", "payment_submitted")
                 and order.get("refund_status") != "refunded"
@@ -970,6 +985,7 @@ class TelegramAdminMixin:
                 ]
             )
         else:
+            allow_wallet = str(order.get("plan_code") or "") != "wallet_topup"
             if (
                 order.get("status") == "awaiting_payment"
                 and not order.get("payment_status")
@@ -982,17 +998,13 @@ class TelegramAdminMixin:
                         [(f"🖼 Open {selected_label} QR", f"m:s:{selected_method}:{order_id}")]
                     )
                     rows.append(
-                        [
-                            ("🔁 Change QR", f"o:p:{order_id}"),
-                            ("💰 Pay Wallet", f"o:w:{order_id}"),
-                        ]
+                        [("🔁 Change QR", f"o:p:{order_id}")]
+                        + ([("💰 Pay Wallet", f"o:w:{order_id}")] if allow_wallet else [])
                     )
                 else:
                     rows.append(
-                        [
-                            ("🏦 Choose Payment QR", f"o:p:{order_id}"),
-                            ("💰 Pay Wallet", f"o:w:{order_id}"),
-                        ]
+                        [("🏦 Choose Payment QR", f"o:p:{order_id}")]
+                        + ([("💰 Pay Wallet", f"o:w:{order_id}")] if allow_wallet else [])
                     )
                 rows.append([("🗑 Cancel Order", f"o:c:{order_id}")])
             elif order.get("receipt_status") == "rejected":

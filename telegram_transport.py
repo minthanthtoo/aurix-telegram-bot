@@ -182,6 +182,7 @@ class TelegramBot(
         self._panels: dict[str, dict[str, Any]] = {}
         self._receipt_test_waiting: set[int] = set()
         self._admin_add_waiting: set[int] = set()
+        self._customer_inputs: dict[int, dict[str, Any]] = {}
         self._maintenance_last_status: dict[str, Any] = {
             "status": "never_run",
             "last_started_at": None,
@@ -542,6 +543,21 @@ class TelegramBot(
         rows.extend([["💰 Wallet", "❓ Help"]])
         return self._reply_keyboard(rows)
 
+    def _topup_amount_keyboard(self) -> dict[str, Any]:
+        return self._inline_keyboard(
+            [
+                [("3,000 MMK", "t:a:3000"), ("6,000 MMK", "t:a:6000")],
+                [("10,000 MMK", "t:a:10000"), ("20,000 MMK", "t:a:20000")],
+                [("✍️ Other amount", "t:a:custom")],
+            ]
+        )
+
+    def _expect_customer_input(self, telegram_id: int, action: str) -> None:
+        self._customer_inputs[int(telegram_id)] = {
+            "action": action,
+            "expires_at": time.monotonic() + 600,
+        }
+
     def configure_commands(self) -> None:
         self._command_menu_configure_attempted = True
         customer_commands = [
@@ -551,6 +567,7 @@ class TelegramBot(
             {"command": "trial", "description": "Claim free 3 GB for 30 days"},
             {"command": "plans", "description": "View current plans and prices"},
             {"command": "wallet", "description": "Show wallet balance"},
+            {"command": "topup", "description": "Add money to your wallet"},
             {"command": "myorders", "description": "Track your recent orders"},
             {"command": "whoami", "description": "Show your Telegram ID"},
             {"command": "help", "description": "Show customer help"},
@@ -703,17 +720,28 @@ class TelegramBot(
     def _receipt_review_caption(receipt: dict[str, Any]) -> str:
         extracted = receipt.get("extraction") or {}
         evidence_id = str(receipt["id"])
+        raw_flags = extracted.get("flags", [])
+        flags = ", ".join(
+            str(item) for item in raw_flags if item
+        ) if isinstance(raw_flags, (list, tuple)) else "invalid extraction flags"
+        amount = extracted.get("amount_minor")
+        if amount is None:
+            amount = extracted.get("amount")
         return (
-            "Receipt awaiting review\n"
+            "🧾 Receipt awaiting review\n"
             f"Evidence: {evidence_id}\n"
             f"Order: {receipt['order_id']}\n"
             f"Customer: {receipt['telegram_id']}\n"
             f"Method: {str(receipt.get('provider') or 'manual').upper()}\n"
             f"Expected: {int(receipt['amount_minor']):,} {receipt['currency']}\n"
             f"Extracted transaction: {extracted.get('transaction_id') or '-'}\n"
-            f"AI amount: {extracted.get('amount_minor') or extracted.get('amount') or '-'}\n\n"
+            f"AI amount: {amount if amount is not None else '-'}\n"
+            f"AI time: {extracted.get('timestamp') or '-'}\n"
+            f"AI recipient: {extracted.get('recipient') or '-'}\n"
+            f"Confidence: {extracted.get('confidence', '-')}\n"
+            f"⚠️ Risk flags: {flags[:180] if flags else 'none reported'}\n\n"
             "AI extraction is a hint—not payment proof. Check the receiving account, "
-            "then tap Verify Payment."
+            "including its transaction time, then tap Verify Payment."
         )
 
     def _send_receipt_review(self, chat_id: int, receipt: dict[str, Any]) -> None:
@@ -962,6 +990,14 @@ class TelegramBot(
             order = self.commerce.order_detail(order_id, telegram_id)
             provider = str((order or {}).get("payment_method") or "manual")
             image, mime = self._download_telegram_file(file_id)
+            duplicate_status = self.commerce.receipt_duplicate_status(
+                telegram_id,
+                order_id,
+                image,
+                str(unique_id) if unique_id else None,
+            )
+            if duplicate_status == "different_order":
+                raise CommerceError("This receipt was already submitted for another order")
             policy = self.commerce.receipt_policy()
             extraction_configured = bool(
                 getattr(self.receipt_extractor, "base_url", "")
@@ -1223,6 +1259,7 @@ class TelegramBot(
         telegram_id: int,
         page: int = 0,
         *,
+        selected: str = "active",
         message_id: int | None = None,
     ) -> None:
         if self.commerce is None:
@@ -1233,10 +1270,19 @@ class TelegramBot(
                 self.send(chat_id, text)
             return
         keys = self.commerce.user_vpns(telegram_id, limit=100)
+        selected = selected if selected in {"active", "ended", "all"} else "active"
+        def matches(item: dict[str, Any], category: str) -> bool:
+            status = str(item.get("key_status") or item.get("status") or "pending")
+            if category == "all":
+                return True
+            if category == "active":
+                return status == "active"
+            return status not in {"active", "pending", "activation pending"}
+        filtered = [item for item in keys if matches(item, selected)]
         page_size = 5
-        page_count = max(1, (len(keys) + page_size - 1) // page_size)
+        page_count = max(1, (len(filtered) + page_size - 1) // page_size)
         page = min(max(0, int(page)), page_count - 1)
-        visible = keys[page * page_size : (page + 1) * page_size]
+        visible = filtered[page * page_size : (page + 1) * page_size]
         active = sum(
             1
             for item in keys
@@ -1244,11 +1290,20 @@ class TelegramBot(
         )
         text = (
             "🔑 Your Paid Keys\n\n"
-            f"{active} active · {len(keys)} total · Page {page + 1}/{page_count}\n\n"
+            f"{active} active · {len(keys)} total · Page {page + 1}/{page_count}\n"
+            f"Filter: {selected.title()} · {len(filtered)} key(s)\n\n"
             "Open one key to see its quota, expiry and one-tap copy control. "
             "Each completed purchase creates a separate Outline key."
         )
-        rows: list[list[dict[str, Any]]] = []
+        rows: list[list[dict[str, Any]]] = [
+            [
+                {"text": f"🟢 Active {sum(matches(item, 'active') for item in keys)}",
+                 "callback_data": "k:l:active:0"},
+                {"text": f"⚫ Ended {sum(matches(item, 'ended') for item in keys)}",
+                 "callback_data": "k:l:ended:0"},
+                {"text": f"📚 All {len(keys)}", "callback_data": "k:l:all:0"},
+            ]
+        ]
         for offset, item in enumerate(visible, start=page * page_size + 1):
             status = str(item.get("key_status") or item.get("status") or "pending")
             icon = "🟢" if status == "active" else "🟡" if "pending" in status else "⚫"
@@ -1264,18 +1319,17 @@ class TelegramBot(
             )
         nav: list[dict[str, Any]] = []
         if page > 1:
-            nav.append({"text": "⏮ First", "callback_data": "k:l:0"})
+            nav.append({"text": "⏮ First", "callback_data": f"k:l:{selected}:0"})
         if page > 0:
-            nav.append({"text": "◀ Previous", "callback_data": f"k:l:{page - 1}"})
+            nav.append({"text": "◀ Previous", "callback_data": f"k:l:{selected}:{page - 1}"})
         if page + 1 < page_count:
-            nav.append({"text": "Next ▶", "callback_data": f"k:l:{page + 1}"})
+            nav.append({"text": "Next ▶", "callback_data": f"k:l:{selected}:{page + 1}"})
         if page + 2 < page_count:
-            nav.append({"text": "Last ⏭", "callback_data": f"k:l:{page_count - 1}"})
+            nav.append({"text": "Last ⏭", "callback_data": f"k:l:{selected}:{page_count - 1}"})
         if nav:
             rows.append(nav)
         rows.extend(
             [
-                [{"text": "➕ Buy Another Key", "callback_data": "n:plans"}],
                 [{"text": "🔐 My VPN", "callback_data": "n:myvpn"}],
             ]
         )
@@ -1285,28 +1339,95 @@ class TelegramBot(
         else:
             self.send(chat_id, text, markup)
 
+    @staticmethod
+    def _order_filter_match(order: dict[str, Any], selected: str) -> bool:
+        status = str(order.get("status") or "")
+        stage = str(order.get("stage") or "")
+        if selected == "all":
+            return True
+        if selected == "open":
+            return status in ("awaiting_payment", "payment_submitted") or stage in {
+                "activation_pending",
+                "activation_failed",
+                "revocation_pending",
+                "revocation_failed",
+            }
+        if selected == "completed":
+            return stage in {"fulfilled", "approved", "refunded"}
+        return status == selected
+
     def _send_my_orders(
-        self, chat_id: int, telegram_id: int, *, message_id: int | None = None
+        self,
+        chat_id: int,
+        telegram_id: int,
+        *,
+        selected: str = "open",
+        page: int = 0,
+        message_id: int | None = None,
     ) -> None:
         if self.commerce is None:
             text = "Order tracking is not configured."
             markup = self._customer_keyboard(telegram_id)
         else:
-            orders = self.commerce.list_user_orders(telegram_id)
-            if not orders:
-                text = "You have no orders yet."
-                markup = self._customer_keyboard(telegram_id)
-            else:
-                text = "Your recent orders\n\n" + "\n\n".join(
-                    self._order_summary(order) for order in orders
+            orders = self.commerce.list_user_orders(telegram_id, limit=50)
+            allowed = {"open", "completed", "cancelled", "rejected", "all"}
+            selected = selected if selected in allowed else "open"
+            filtered = [item for item in orders if self._order_filter_match(item, selected)]
+            page_size = 4
+            pages = max(1, (len(filtered) + page_size - 1) // page_size)
+            page = min(max(0, int(page)), pages - 1)
+            visible = filtered[page * page_size : (page + 1) * page_size]
+            counts = {
+                name: sum(self._order_filter_match(item, name) for item in orders)
+                for name in allowed
+            }
+            title = {
+                "open": "Open",
+                "completed": "Completed",
+                "cancelled": "Cancelled or expired",
+                "rejected": "Rejected by staff",
+                "all": "All",
+            }[selected]
+            blocks = [
+                "🧾 Your recent orders",
+                f"{title} · {len(filtered)} order(s) · Page {page + 1}/{pages}",
+            ]
+            blocks.extend(self._order_summary(order) for order in visible)
+            if not visible:
+                blocks.append("Nothing in this category.")
+            text = "\n\n".join(blocks)
+            rows: list[list[tuple[str, str]]] = [
+                [
+                    (f"🟡 Open {counts['open']}", "c:o:open:0"),
+                    (f"✅ Done {counts['completed']}", "c:o:completed:0"),
+                ],
+                [
+                    (f"🚫 Cancelled {counts['cancelled']}", "c:o:cancelled:0"),
+                    (f"❌ Staff {counts['rejected']}", "c:o:rejected:0"),
+                    (f"📚 All {counts['all']}", "c:o:all:0"),
+                ],
+            ]
+            rows.extend(
+                [(f"Open #{page * page_size + offset + 1} · {str(order['id'])[:8]}",
+                  f"o:v:{order['id']}")]
+                for offset, order in enumerate(visible)
+            )
+            nav: list[tuple[str, str]] = []
+            if page > 0:
+                nav.extend(
+                    [("⏮", f"c:o:{selected}:0"), ("◀", f"c:o:{selected}:{page - 1}")]
                 )
-                rows = [
-                    [(f"View {str(order['id'])[:8]}", f"o:v:{order['id']}")]
-                    for order in orders
-                ]
-                rows.append([("🔄 Refresh", "n:myorders")])
-                rows.append([("💎 Upgrade", "n:plans"), ("💰 Wallet", "n:wallet")])
-                markup = self._inline_keyboard(rows)
+            nav.append((f"{page + 1}/{pages}", f"c:o:{selected}:{page}"))
+            if page + 1 < pages:
+                nav.extend(
+                    [
+                        ("▶", f"c:o:{selected}:{page + 1}"),
+                        ("⏭", f"c:o:{selected}:{pages - 1}"),
+                    ]
+                )
+            rows.append(nav)
+            rows.append([("🔄 Refresh", f"c:o:{selected}:{page}")])
+            markup = self._inline_keyboard(rows)
         if message_id is not None:
             self.edit_message(chat_id, message_id, text, markup)
         else:

@@ -100,12 +100,28 @@ class TelegramCallbackMixin:
             self.send(chat_id, "This button is no longer valid. Refresh the menu.")
             return
         scope, action, entity_id = parts
-        if scope == "g" and action == "c":
+        if scope == "c" and action == "o":
+            selected, _, raw_page = entity_id.partition(":")
+            try:
+                page = max(0, int(raw_page or "0"))
+            except ValueError:
+                page = 0
+            self._send_my_orders(
+                chat_id,
+                telegram_id,
+                selected=selected,
+                page=page,
+                message_id=message_id if can_edit_text else None,
+            )
+        elif scope == "g" and action == "c":
             synthetic["text"] = f"/claimpromo {entity_id.upper()}"
             self.handle(synthetic)
         elif scope == "k" and action == "l":
+            selected, separator, raw_page = entity_id.partition(":")
+            if not separator:
+                selected, raw_page = "active", entity_id
             try:
-                page = max(0, int(entity_id))
+                page = max(0, int(raw_page))
             except ValueError:
                 page = 0
             message_id = message.get("message_id")
@@ -113,6 +129,7 @@ class TelegramCallbackMixin:
                 chat_id,
                 telegram_id,
                 page,
+                selected=selected,
                 message_id=message_id if isinstance(message_id, int) else None,
             )
         elif scope == "k" and action == "v":
@@ -214,6 +231,21 @@ class TelegramCallbackMixin:
                 self.send(chat_id, "This plan action is no longer valid.")
                 return
             self.handle(synthetic)
+        elif scope == "t" and action == "a":
+            if self.commerce is None:
+                self.send(chat_id, "Wallet is not configured.")
+            elif entity_id == "menu":
+                synthetic["text"] = "/topup"
+                self.handle(synthetic)
+            elif entity_id == "custom":
+                self._expect_customer_input(telegram_id, "topup_amount")
+                self.send(
+                    chat_id,
+                    "Type a whole MMK amount from 1,000 to 1,000,000. Example: 7500",
+                )
+            else:
+                synthetic["text"] = f"/topup {entity_id}"
+                self.handle(synthetic)
         elif scope == "a":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat_id, telegram_id)

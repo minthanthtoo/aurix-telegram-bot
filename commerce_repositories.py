@@ -322,6 +322,7 @@ class CommerceDatabase:
         plans = (
             ("basic_50gb", "50 GB", 3000, "MMK", 50 * 1024**3, 30),
             ("standard_100gb", "100 GB", 6000, "MMK", 100 * 1024**3, 30),
+            ("wallet_topup", "Wallet Top-up", 0, "MMK", None, 1),
         )
         for plan in plans:
             connection.execute(
@@ -338,6 +339,10 @@ class CommerceDatabase:
         connection.execute(
             "UPDATE plans SET name = '100 GB', price_minor = 6000, currency = 'MMK', quota_bytes = ?, duration_days = 30, active = 1 WHERE code = 'standard_100gb'",
             (100 * 1024**3,),
+        )
+        connection.execute(
+            "UPDATE plans SET name = 'Wallet Top-up', price_minor = 0, currency = 'MMK', "
+            "quota_bytes = NULL, duration_days = 1, active = 0 WHERE code = 'wallet_topup'"
         )
 
 

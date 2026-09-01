@@ -232,6 +232,128 @@ class MvpFeatureTest(unittest.TestCase):
         self.commerce.approve_order(order.order_id, 999, self.now)
         self.assertEqual(self.commerce.wallet_balance(101), 1000)
 
+    def test_wallet_topup_requires_exact_verified_receipt_and_credits_once(self):
+        order = self.commerce.create_wallet_topup(101, "A", 7500, self.now)
+        self.commerce.choose_payment_method(101, order.order_id, "wavepay")
+        evidence = self.commerce.submit_receipt(
+            101,
+            order.order_id,
+            "wavepay",
+            "topup-file",
+            "topup-unique",
+            b"topup-receipt",
+            "image/jpeg",
+            {
+                "provider": "WavePay",
+                "transaction_id": "TOPUP-7500",
+                "amount_minor": 7500,
+                "currency": "MMK",
+                "timestamp": self.now.isoformat(),
+                "confidence": 0.97,
+            },
+            self.now,
+        )
+        with self.assertRaisesRegex(CommerceError, "match exactly"):
+            self.commerce.verify_receipt(
+                evidence["evidence_id"], 999, "TOPUP-7500", 8000, "MMK", self.now
+            )
+
+        self.commerce.verify_receipt(
+            evidence["evidence_id"], 999, "TOPUP-7500", 7500, "MMK", self.now
+        )
+        first = self.commerce.approve_order(order.order_id, 999, self.now)
+        second = self.commerce.approve_order(
+            order.order_id, 999, self.now + timedelta(minutes=1)
+        )
+
+        self.assertEqual(first.status, "wallet_credited")
+        self.assertEqual(second.status, "already_credited")
+        self.assertEqual(self.commerce.wallet_balance(101), 7500)
+        with self.assertRaisesRegex(CommerceError, "manual off-platform"):
+            self.commerce.refund_order(order.order_id, 999, now=self.now)
+        with self.commerce.database.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM subscriptions WHERE telegram_id = 101"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM provisioning_jobs"
+                ).fetchone()[0],
+                0,
+            )
+
+    def test_same_receipt_image_cannot_fund_two_wallet_topups(self):
+        first = self.commerce.create_wallet_topup(201, "First", 3000, self.now)
+        self.commerce.submit_receipt(
+            201,
+            first.order_id,
+            "kbzpay",
+            "first-file",
+            "same-telegram-file",
+            b"same-receipt-image",
+            "image/jpeg",
+            now=self.now,
+        )
+        second = self.commerce.create_wallet_topup(202, "Second", 3000, self.now)
+
+        self.assertEqual(
+            self.commerce.receipt_duplicate_status(
+                202,
+                second.order_id,
+                b"same-receipt-image",
+                "different-telegram-file",
+            ),
+            "different_order",
+        )
+        with self.assertRaisesRegex(CommerceError, "already submitted"):
+            self.commerce.submit_receipt(
+                202,
+                second.order_id,
+                "kbzpay",
+                "second-file",
+                "different-telegram-file",
+                b"same-receipt-image",
+                "image/jpeg",
+                now=self.now,
+            )
+
+    def test_assisted_topup_extraction_flags_stale_receipt_for_review(self):
+        order = self.commerce.create_wallet_topup(203, "Stale", 6000, self.now)
+        self.commerce.choose_payment_method(203, order.order_id, "kbzpay")
+        submitted = self.commerce.submit_receipt(
+            203,
+            order.order_id,
+            "kbzpay",
+            "stale-file",
+            "stale-unique",
+            b"stale-receipt",
+            "image/jpeg",
+            queue_extraction=True,
+            now=self.now,
+        )
+        job = self.commerce.claim_receipt_extraction_job(self.now)
+        self.commerce.finish_receipt_extraction(
+            job["job_id"],
+            submitted["evidence_id"],
+            {
+                "provider": "KBZPay",
+                "transaction_id": "STALE-6000",
+                "amount_minor": 6000,
+                "currency": "MMK",
+                "timestamp": (self.now - timedelta(hours=2)).isoformat(),
+                "confidence": 0.99,
+                "flags": [],
+            },
+            now=self.now,
+        )
+
+        receipt = self.commerce.get_receipt(submitted["evidence_id"])
+        self.assertEqual(receipt["extraction_status"], "needs_review")
+        self.assertIn("receipt_older_than_1_hour", receipt["extraction"]["flags"])
+
     def test_unparsed_receipt_can_be_human_verified(self):
         order = self.commerce.create_order(101, "A", "basic_50gb", self.now)
         evidence = self.commerce.submit_receipt(
