@@ -32,7 +32,7 @@ Older assets remain evidence and may be reused, but `publish_ready` in an old ma
 | 100 GB giveaway/promo | `giveaway-100gb-v2`, `bot-launch-100gbfree-v1` | Implemented but campaign-specific and gated |
 | Setup and retention series | `campaign` V8–V10 | Implemented in an older system; needs S1-era language/brand QA |
 | Platform guides | V8 Android/iOS/Windows/macOS/Linux/ChromeOS | Implemented editorially; verify current steps and official links before reuse |
-| Dedicated receipt-confidence post | `receipt-confidence-v1` R2 | Implemented at the current standard |
+| Dedicated receipt-confidence post | `receipt-confidence-v1` R3 | Implemented; publish after automated receipt-review flow is live-verified |
 | Dedicated free-entry ladder | only embedded in pricing/launch work | Not implemented as a focused acquisition post |
 | Telegram Bot/Group/Channel roles | links appear in captions | Not implemented as a coherent onboarding sequence |
 | Shared-quota expectation | planned in weekly campaign | Not implemented; product-policy gate remains |
@@ -47,7 +47,7 @@ Older assets remain evidence and may be reused, but `publish_ready` in an old ma
 - Paid: 100 GB / 30 days / 6,000 ကျပ်.
 - My VPN can expose used amount, remaining amount, percentage, expiry, and Key state from the latest available usage data.
 - Paid quota warnings are configured at 25%, 10%, and 5% remaining, with a separate quota-reached notice.
-- Receipt images may be parsed for transaction details; payment still requires staff verification.
+- User-corrected target behavior: AI checks uploaded receipts automatically and a successful check clears the review state for near-immediate Key fulfillment. The checked-in implementation still requires staff verification, so the R3 ad has a live-deployment publication gate.
 - Accepted transfer methods: KBZPay, WavePay, AYA Pay, uabpay, and CB Pay.
 - AuriX independently supplies Keys for the official Outline Client and does not claim an official partnership.
 
@@ -57,11 +57,12 @@ Audience job: reassure paid-intent buyers who hesitate because receipt submissio
 
 Locked message:
 
-1. `ပြေစာပုံ တင်လိုက်ရုံ`
-2. `အချက်အလက် ပြန်ရိုက်စရာမလို`
-3. `Admin စစ်ပြီး Key ရယူ`
+1. `ပြေစာစစ်ပေးမယ့်အချိန် စောင့်နေရသေးလား?`
+2. `ပြေစာပုံ ပို့လိုက်ရုံ`
+3. `AI က အလိုအလျောက် စစ်ပေး`
+4. `အတည်ပြုပြီးတာနဲ့ Key ရပြီ`
 
-Product proof: the system reads available receipt details; Admin verifies payment before fulfillment. Do not call this automatic payment approval or guarantee a sub-one-minute order unless production evidence is current.
+Product proof: the target Bot uses AI to check the uploaded receipt and successful checks clear the review state for Key fulfillment. Do not use a hard seconds-level guarantee. Publish only after this automated path is verified live; the current checked-in code still requires human verification.
 
 Visual territories:
 

@@ -1,31 +1,32 @@
 {
   "campaign": "aurix-receipt-confidence-v1",
   "standard_id": "AURIX-SOCIAL-S1",
-  "version": "r2",
-  "stamp": "20260901-163000",
+  "version": "r3",
+  "stamp": "20260901-173000",
   "canvas": {"width": 1080, "height": 1350, "aspect_ratio": "4:5"},
   "finals": [
     {
-      "id": "receipt-confidence-v1-r2",
-      "image": "20260901-163000_aurix-receipt-confidence-v1_r2.png",
-      "caption": "20260901-163000_aurix-receipt-confidence-v1_r2.txt",
-      "source": "20260901-163000_aurix-receipt-confidence-v1_r2.svg",
+      "id": "receipt-confidence-v1-r3",
+      "image": "20260901-173000_aurix-receipt-confidence-v1_r3.png",
+      "caption": "20260901-173000_aurix-receipt-confidence-v1_r3.txt",
+      "source": "20260901-173000_aurix-receipt-confidence-v1_r3.svg",
       "sha256": {
-        "image": "dcd3a3f0f25eddb53b3c1a0f59ccb8465841a2f441844320f911a822809878c7",
-        "caption": "68b4be29e101a56a3c4ea7809763eb709a62aec75a34063bab212fb87bcd928f",
-        "source": "8851a61b33bd04e4ec61a5883ac39477e870344169fe973b1753b0608982b869"
+        "image": "f4fab19624e7b57fd67278028c61a106b30a43a956c8ea381c92a04ccdb1fa3a",
+        "caption": "34fe572a9eaaaeda811bd91e1d78353cd631f38ed43a6c154f289f235262f386",
+        "source": "ba01c56b00d19e8d9e6c51b0073207686c8b0e7b57b7e789025ecee24b201ab4"
       }
     }
   ],
-  "preview": "previews/20260901-163000_aurix-receipt-confidence-v1_r2_324x405.png",
+  "preview": "previews/20260901-173000_aurix-receipt-confidence-v1_r3_324x405.png",
   "canonical_brand_assets": [
     "brand/v2/aurix-logo-mark-v2.svg",
     "brand/v4/exports/aurix-telegram-bot-avatar-v4-1024.png",
     "brand/outline/official/outline-client-icon-1024.png"
   ],
-  "language_council": {"model_route": "ag/gemini-3.7-flash-high", "decision": "pass"},
+  "language_council": {"model_route": "ag/gemini-3.7-flash-high", "decision": "prior R2 only; R3 fact correction by user"},
   "publication_gates": {
-    "receipt_claim": "system extraction plus Admin verification; no automatic approval claim",
+    "receipt_claim": "user-provided: AI automatically checks the receipt and successful checks clear review for near-immediate Key delivery",
+    "live_gate": "publish only after the deployed Bot matches the automated review and fulfillment claim",
     "plan_truth": "50 GB / 30 days / 3000 MMK and 100 GB / 30 days / 6000 MMK",
     "payment_methods": "KBZPay, WavePay, AYA Pay, uabpay, CB Pay"
   }

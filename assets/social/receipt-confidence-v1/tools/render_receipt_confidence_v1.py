@@ -71,7 +71,7 @@ def telegram_badge(x: int, y: int, radius: int = 38) -> str:
 
 
 def payment_row(round_no: int) -> str:
-    icon = (44, 48, 50)[round_no]
+    icon = (44, 48, 50, 50)[round_no]
     cell = icon + 18
     gap = 24
     x0 = 586
@@ -91,13 +91,13 @@ def payment_row(round_no: int) -> str:
 
 
 def build(round_no: int) -> str:
-    hook_size = (48, 52, 55)[round_no]
-    proof_x = (74, 74, 74)[round_no]
-    proof_y = (640, 624, 612)[round_no]
-    proof_w = (470, 486, 500)[round_no]
-    bot_size = (160, 178, 190)[round_no]
+    hook_size = (48, 52, 55, 52)[round_no]
+    proof_x = (74, 74, 74, 74)[round_no]
+    proof_y = (640, 624, 612, 612)[round_no]
+    proof_w = (470, 486, 500, 500)[round_no]
+    bot_size = (160, 178, 190, 190)[round_no]
     bot_x = 74
-    bot_y = (1008, 944, 928)[round_no]
+    bot_y = (1008, 944, 928, 928)[round_no]
     connector = (
         '' if round_no == 0 else
         f'<path d="M{bot_x + bot_size//2} {proof_y + 252}V{bot_y - 12}" stroke="url(#signal)" stroke-width="7" stroke-linecap="round"/>'
@@ -126,10 +126,10 @@ def build(round_no: int) -> str:
   </g>
 
   <g filter="url(#typeShadow)">
-    {text(72, 228, 'VPN Key ဝယ်ဖို့', hook_size, 900, '#10344C', family='Noto Serif Myanmar, serif', role='display', group='hook')}
+    {text(72, 228, 'Outline VPN Key ဝယ်ပြီး' if round_no == 3 else 'VPN Key ဝယ်ဖို့', hook_size, 900, '#10344C', family='Noto Serif Myanmar, serif', role='display', group='hook')}
     <path d="M68 337C212 354 404 351 520 329" fill="none" stroke="#FFC857" stroke-width="24" stroke-linecap="round" opacity=".70"/>
-    {text(72, 326, 'TxID ပြန်ရိုက်နေရလို့', hook_size + 1, 900, '#0A5A88', family='Noto Sans Myanmar UI, Noto Sans Myanmar, sans-serif', role='display', group='hook')}
-    {text(72, 426, 'အလုပ်ရှုပ်နေလား?', hook_size, 900, '#10344C', family='Noto Serif Myanmar, serif', role='display', group='hook')}
+    {text(72, 326, 'ပြေစာစစ်ပေးမယ့်အချိန်' if round_no == 3 else 'TxID ပြန်ရိုက်နေရလို့', hook_size + 1, 900, '#0A5A88', family='Noto Sans Myanmar UI, Noto Sans Myanmar, sans-serif', role='display', group='hook')}
+    {text(72, 426, 'စောင့်နေရသေးလား?' if round_no == 3 else 'အလုပ်ရှုပ်နေလား?', hook_size, 900, '#10344C', family='Noto Serif Myanmar, serif', role='display', group='hook')}
   </g>
 
   <g transform="translate({proof_x} {proof_y})" filter="url(#shadow)">
@@ -137,8 +137,8 @@ def build(round_no: int) -> str:
     <path d="M{proof_w-52} 0V52H{proof_w}" fill="#DDF8FA" stroke="#B8E3E8" stroke-width="2"/>
     <rect x="0" y="34" width="8" height="174" rx="4" fill="url(#signal)"/>
     {text(34, 64, 'ပြေစာပုံ ပို့လိုက်ရုံ', 35, 850, '#0B5278', role='headline', group='proof')}
-    {text(34, 126, 'TxID ပြန်ရိုက်စရာ မလို', 34, 850, '#183C52', role='headline', group='proof')}
-    {text(34, 190, 'Admin စစ်ပြီးရင် Key ရပြီ', 30, 800, '#183C52', family='Inter, Noto Sans Myanmar UI, Noto Sans Myanmar, sans-serif', role='headline', group='proof')}
+    {text(34, 126, 'AI က အလိုအလျောက် စစ်ပေး' if round_no == 3 else 'TxID ပြန်ရိုက်စရာ မလို', 32 if round_no == 3 else 34, 850, '#183C52', role='headline', group='proof')}
+    {text(34, 190, 'အတည်ပြုပြီးတာနဲ့ Key ရပြီ' if round_no == 3 else 'Admin စစ်ပြီးရင် Key ရပြီ', 29 if round_no == 3 else 30, 800, '#183C52', family='Inter, Noto Sans Myanmar UI, Noto Sans Myanmar, sans-serif', role='headline', group='proof')}
     {text(34, 231, '@aurix_outline_vpn_bot', 20, 800, '#0A6B98', family='Inter, Arial, sans-serif')}
   </g>
 
@@ -152,15 +152,15 @@ def build(round_no: int) -> str:
 
   <path d="M354 1206H1008" stroke="#9EDAE2" stroke-width="2"/>
   <path d="M354 1206H536" stroke="url(#signal)" stroke-width="7" stroke-linecap="round"/>
-  {text(360, 1264, 'Wallet ၅ မျိုး', (24, 26, 27)[round_no], 780, '#183C52', role='headline', group='payments')}
+  {text(360, 1264, 'Wallet ၅ မျိုး', (24, 26, 27, 27)[round_no], 780, '#183C52', role='headline', group='payments')}
   {payment_row(round_no)}
 </svg>'''
 
 
 def caption() -> str:
-    return """VPN Key ဝယ်ဖို့ ပြေစာထဲက TxID နဲ့ ငွေပမာဏကို တစ်ခုချင်း ပြန်ရိုက်နေရတာ အလုပ်ရှုပ်တယ်နော်။
+    return """Outline VPN Key ဝယ်ပြီး ပြေစာပို့ထားပေမယ့် ဆိုင်ဘက်က စစ်ပေးမယ့်အချိန်ကို ထိုင်စောင့်နေရတာမျိုး မလိုတော့ပါဘူး။
 
-AuriX Telegram Bot မှာ ပြေစာပုံတင်လိုက်ရင် စနစ်က ဖတ်လို့ရတဲ့ အချက်အလက်တွေကို ထုတ်ယူပေးပါတယ်။ ပြီးရင် Admin Team က ငွေလွှဲဝင်ကြောင်း စစ်ပြီး အတည်ပြုပေးပြီးမှ Outline VPN Key ကို ထုတ်ပေးပါတယ်။
+AuriX Telegram Bot မှာ ပြေစာပုံတင်လိုက်ရုံပါပဲ။ Bot က AI နဲ့ အလိုအလျောက် စစ်ပေးပြီး စစ်ဆေးမှုအောင်မြင်တာနဲ့ Outline VPN Key ကို ခဏလေးအတွင်း ထုတ်ပေးပါတယ်။ ဆိုင်ဘက်က ပြန်စစ်ပေးမယ့်အချိန်ကို စောင့်စရာမလိုတော့ဘူးနော်။
 
 ဝယ်ယူနိုင်တဲ့ Plan —
 • 50 GB · ရက် 30 · 3,000 ကျပ်
@@ -172,14 +172,14 @@ Bot — https://t.me/aurix_outline_vpn_bot
 Admin နဲ့ Group Chat — https://t.me/+oA18TDWAD9NiNWU1
 Channel — https://t.me/AurixDigitalStore
 
-ပြေစာပုံအရည်အသွေး သို့မဟုတ် အချက်အလက်ဖတ်မရတဲ့အခြေအနေမှာ Admin Team က ဆက်လက်စစ်ဆေးပေးပါမယ်။ AuriX ဟာ Outline Foundation သို့မဟုတ် ဖော်ပြထားတဲ့ ငွေလွှဲဝန်ဆောင်မှုတွေရဲ့ တရားဝင်မိတ်ဖက် မဟုတ်ပါဘူး။
+ပြေစာပုံမရှင်းတာ၊ အချက်အလက်မကိုက်တာလို စစ်ဆေးလို့မရတဲ့ အော်ဒါတွေကိုတော့ Admin Team က ဆက်လက်ကူညီပေးပါမယ်။ AuriX ဟာ Outline Foundation သို့မဟုတ် ဖော်ပြထားတဲ့ ငွေလွှဲဝန်ဆောင်မှုတွေရဲ့ တရားဝင်မိတ်ဖက် မဟုတ်ပါဘူး။
 
 #AuriXVPN #OutlineVPN #TelegramBot #VPNMyanmar"""
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--round", type=int, choices=[0, 1, 2], required=True)
+    parser.add_argument("--round", type=int, choices=[0, 1, 2, 3], required=True)
     parser.add_argument("--stamp", required=True)
     parser.add_argument("--final", action="store_true")
     args = parser.parse_args()

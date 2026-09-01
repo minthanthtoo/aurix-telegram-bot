@@ -40,20 +40,22 @@ Role: highest-priority general ad.
 
 ### Audience and job
 
-Paid-intent Myanmar customers who understand the plan but hesitate at the receipt-submission step. The post should make the process feel clear and controlled without implying instant or automatic payment approval.
+Paid-intent Myanmar customers who understand the plan but do not want to wait for a seller to manually review the uploaded transaction receipt.
 
 ### Locked image copy
 
-1. `ပြေစာပုံ တင်လိုက်ရုံ`
-2. `အချက်အလက် ပြန်ရိုက်စရာမလို`
-3. `Admin စစ်ပြီး Key ရယူ`
-4. `@aurix_outline_vpn_bot`
+1. `Outline VPN Key ဝယ်ပြီး`
+2. `ပြေစာစစ်ပေးမယ့်အချိန် စောင့်နေရသေးလား?`
+3. `ပြေစာပုံ ပို့လိုက်ရုံ`
+4. `AI က အလိုအလျောက် စစ်ပေး`
+5. `အတည်ပြုပြီးတာနဲ့ Key ရပြီ`
+6. `@aurix_outline_vpn_bot`
 
 Payment heading, if used: `Wallet ၅ မျိုးနဲ့ လွှဲနိုင်`
 
 ### Reading path
 
-`receipt-submission friction → no manual retyping → human verification → AuriX Bot destination → accepted wallets`
+`seller-review wait → receipt upload → automatic AI check → successful confirmation → Key fulfillment → AuriX Bot destination → accepted wallets`
 
 ### Selected visual mechanism
 
@@ -63,9 +65,10 @@ The AuriX V4 Bot avatar with its Telegram badge anchors the action path. The off
 
 ### Claim boundary
 
-- Allowed: receipt details can be read from the uploaded image; Admin verifies payment.
-- Not allowed without current live evidence: automatic payment approval, guaranteed seconds-level approval, guaranteed delivery under one minute, or fraud detection claims.
-- If extraction fails, the operational process still supports human review; the caption should not promise perfect image reading.
+- User-provided target behavior: AI automatically checks uploaded receipts; a successful check clears review and allows near-immediate Key fulfillment.
+- Do not promise an exact number of seconds or guaranteed delivery under one minute.
+- The current checked-in implementation still requires human verification. Publishing the corrected R3 creative is gated on live verification of the automated review-and-fulfillment path.
+- If the automatic check cannot confirm an order, the caption may say the Admin Team will help; do not make fraud detection the customer-facing message.
 
 ### Reject
 

@@ -27,3 +27,11 @@
 - Fake UI / decorative CTA: absent.
 - Receipt and speed claim safety: pass.
 - Gemini final exact-copy audit: pass.
+
+## R3 — corrected final
+
+- Removed the false TxID-retyping problem; buyers upload a receipt and wait for review.
+- Rebuilt the reading path around the actual benefit: waiting for receipt review → upload once → AI automatic check → Key after successful confirmation.
+- Removed Admin verification from the primary flow. Manual help appears only in the caption for unclear or mismatched receipts.
+- Avoided a hard stopwatch or guaranteed seconds claim; the caption uses the natural `ခဏလေးအတွင်း` after a successful check.
+- Publication remains gated until the live Bot implements the user-specified automated review-state transition and fulfillment behavior.
