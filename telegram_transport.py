@@ -225,7 +225,11 @@ class TelegramBot(
         finally:
             _latency_log("telegram_request", started_at, method=method)
         if not result.get("ok"):
-            raise RuntimeError("Telegram API request failed")
+            description = "request rejected"
+            candidate = result.get("description") if isinstance(result, dict) else None
+            if isinstance(candidate, str) and candidate.strip():
+                description = " ".join(candidate.split())[:240]
+            raise TelegramAPIError(f"{method} failed status={response.status}: {description}")
         return result["result"]
 
     def _multipart_request(self, method: str, fields: dict[str, Any]) -> Any:

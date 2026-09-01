@@ -1376,6 +1376,18 @@ class TelegramBotCommerceTest(unittest.TestCase):
         with self.assertRaisesRegex(TelegramAPIError, "query is too old"):
             self.bot.request("answerCallbackQuery", {"callback_query_id": "secret-id"})
 
+    def test_telegram_http_200_api_error_keeps_bounded_description(self):
+        self.bot._http = _RecordingTelegramPool(
+            [
+                _TelegramPoolResponse(
+                    200, {"ok": False, "description": "Bad Request: command scope unavailable"}
+                )
+            ]
+        )
+
+        with self.assertRaisesRegex(TelegramAPIError, "command scope unavailable"):
+            self.bot.request("setMyCommands", {"commands": [], "scope": {"type": "default"}})
+
     def test_technical_identifiers_are_masked_with_recognizable_edges(self):
         self.assertEqual(
             self.bot._mask_technical_value("157-245-63-95.sslip.io"),
