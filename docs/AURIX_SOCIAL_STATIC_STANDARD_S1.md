@@ -1,8 +1,11 @@
 # AuriX Social Static Standard S1
 
-Standard ID: `AURIX-SOCIAL-S1`  
-Name: Situation-led Telegram conversion static  
-Canonical reference: `assets/social/online-seller-access-v2/exports/20260901-143000_aurix-online-seller-access-v2_r4.png`  
+Standard ID: `AURIX-SOCIAL-S1`
+
+Name: Situation-led Telegram conversion static
+
+Canonical reference: `assets/social/online-seller-access-v2/exports/20260901-143000_aurix-online-seller-access-v2_r4.png`
+
 Editable reference: `assets/social/online-seller-access-v2/exports/20260901-143000_aurix-online-seller-access-v2_r4.svg`
 
 ## What this standard means

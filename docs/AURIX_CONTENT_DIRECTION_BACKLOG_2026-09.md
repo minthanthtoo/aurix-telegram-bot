@@ -1,6 +1,7 @@
 # AuriX Content Direction Backlog — September 2026
 
-Status: strategy exploration complete; asset production not started for the new directions  
+Status: strategy exploration complete; asset production not started for the new directions
+
 Reference standard: `AURIX-SOCIAL-S1`
 
 ## Audit conclusion
@@ -66,7 +67,8 @@ Visual territories:
 - Alternative: overhead cashier desk with receipt, five wallet tokens, and one prepared Key envelope.
 - Reject: fake Telegram chat, OCR dashboard, green check button, stopwatch, or robotic hand.
 
-Format: S1 static first; 6-second process motion later.  
+Format: S1 static first; 6-second process motion later.
+
 Primary metric: paid orders that progress from creation to valid receipt submission.
 
 ## Priority 2 — Setup rescue and human help
@@ -85,7 +87,8 @@ Visual territories:
 - Alternative: documentary desk moment with the user holding a phone while a clear cyan path reconnects to work.
 - Reject: fake support chat, distressed stock face, floating help cards, or an unsupported response-time promise.
 
-Format: static plus a saved-comment support template.  
+Format: static plus a saved-comment support template.
+
 Primary metric: resolved setup cases and activation after support contact.
 
 ## Priority 3 — Expiry and renewal retention
@@ -104,7 +107,8 @@ Visual territories:
 - Alternative: editorial calendar strip attached to an AuriX Key envelope.
 - Reject: alarm clock, red countdown, broken connection, or fear-heavy warning symbols.
 
-Format: S1 static; later retargeting Story.  
+Format: S1 static; later retargeting Story.
+
 Primary metric: My VPN opens, renewal inquiries, and completed repeat orders.
 
 ## Priority 4 — Free-entry ladder
@@ -123,7 +127,8 @@ Visual territories:
 - Alternative: two routes from one gateway, one short repeating loop and one longer measured path.
 - Reject: gift box, confetti, `FREE` as the only product memory, or mobile-data imagery.
 
-Format: static or an 8-second two-pass motion.  
+Format: static or an 8-second two-pass motion.
+
 Primary metric: successful free claims that later return to the Bot.
 
 ## Priority 5 — Telegram ecosystem onboarding
@@ -140,7 +145,8 @@ Recommended carousel:
 
 Visual mechanism: one cyan route passes through three distinct physical stations. Each slide has one job and one dominant entity avatar. Do not place three equal mini-cards on every slide.
 
-Format: five-slide carousel.  
+Format: five-slide carousel.
+
 Primary metric: qualified joins and fewer messages sent to the wrong destination.
 
 ## Priority 6 — Shared-quota expectation
@@ -159,8 +165,10 @@ Visual territories:
 - Alternative: one punched access pass opens two device gates while one gauge changes.
 - Reject: device-limit numbers, household-sharing promises, or public sharing guidance until abuse and support policy are approved.
 
-Format: education static or three-slide carousel.  
-Publication gate: verify multi-device behavior, acceptable-use wording, and whether public sharing guidance is commercially intended.  
+Format: education static or three-slide carousel.
+
+Publication gate: verify multi-device behavior, acceptable-use wording, and whether public sharing guidance is commercially intended.
+
 Primary metric: reduced quota-confusion support contacts.
 
 ## Upgrade track — existing ideas that deserve S1-era treatment
