@@ -172,7 +172,8 @@ class FleetController:
                 ).fetchone()["n"]
             )
         provider_count = len(provider_inventory or [])
-        return max(database_count, job_count, provider_count)
+        configured_provider_count = len(self._managed_provider_ids())
+        return max(database_count, job_count, provider_count, configured_provider_count)
 
     def reconcile_provider_inventory(self) -> dict[str, int]:
         """Persist a sanitized observation of managed provider Droplets."""

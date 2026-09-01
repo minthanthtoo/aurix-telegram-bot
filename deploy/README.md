@@ -78,6 +78,9 @@ OUTLINE_CERT_SHA256=replace-with-installer-output
 # separately approved droplet:update scope; IDs are the current safe bridge.
 # AURIX_MANAGED_DROPLET_IDS=<sg-a-droplet-id>,<sg-b-droplet-id>
 # AURIX_MANAGED_DROPLET_TAG=aurix-vpn-node
+# Leave off until node-two verification is complete; this only exposes the
+# owner/admin intent button and does not itself create infrastructure.
+# AURIX_INFRASTRUCTURE_QUEUE_ENABLED=0
 AURIX_SERVER_HEALTH_MAX_AGE_SECONDS=900
 AURIX_ACCESS_URL_KEY=replace-with-a-persistent-fernet-key
 DATABASE_PATH=/var/lib/aurix-bot/bot.db
