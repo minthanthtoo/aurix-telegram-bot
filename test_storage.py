@@ -56,6 +56,26 @@ class SupabaseReceiptStorageTest(unittest.TestCase):
         with self.assertRaises(ReceiptStorageError):
             storage.signed_url("../private.jpg")
 
+    def test_delete_uses_supabase_remove_contract(self):
+        storage = SupabaseReceiptStorage(
+            "https://project.supabase.co", "service-role-secret"
+        )
+        with patch(
+            "supabase_storage.urllib.request.urlopen", return_value=_Response(b"[]")
+        ) as opener:
+            storage.delete("orders/order-1/evidence-1.jpg")
+
+        request = opener.call_args.args[0]
+        self.assertEqual(request.method, "DELETE")
+        self.assertEqual(
+            request.full_url,
+            "https://project.supabase.co/storage/v1/object/payment-receipts",
+        )
+        self.assertEqual(
+            json.loads(request.data),
+            {"prefixes": ["orders/order-1/evidence-1.jpg"]},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

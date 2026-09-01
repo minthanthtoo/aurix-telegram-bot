@@ -190,10 +190,10 @@ class SupabaseReceiptStorage:
         normalized_path = str(path or "").strip().lstrip("/")
         if not normalized_path:
             return
-        url = f"{self.project_url}/storage/v1/object/{urllib.parse.quote(self.bucket, safe='')}/remove"
+        url = f"{self.project_url}/storage/v1/object/{urllib.parse.quote(self.bucket, safe='')}"
         payload = json.dumps({"prefixes": [normalized_path]}).encode("utf-8")
         try:
-            self._request("POST", url, payload, "application/json")
+            self._request("DELETE", url, payload, "application/json")
         except ReceiptStorageError:
             # Cleanup is best effort. The evidence row remains the source of
             # truth and an operator can remove an orphaned object later.
