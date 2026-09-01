@@ -7,10 +7,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
+from PIL import Image
 
 from app import ClaimService, Database, PUBLIC_LIMIT_BYTES, TRIAL_LIMIT_BYTES
 from commerce import CommerceDatabase, CommerceError, CommerceService
-from receipt_llm import ReceiptLLMUnavailable, OpenAICompatibleReceiptExtractor, validate_extraction
+from receipt_llm import (
+    FallbackReceiptExtractor,
+    OpenAICompatibleReceiptExtractor,
+    ReceiptExtraction,
+    ReceiptLLMUnavailable,
+    normalize_receipt_image,
+    validate_extraction,
+)
 
 UTC = timezone.utc
 
@@ -391,6 +399,120 @@ class MvpFeatureTest(unittest.TestCase):
 
         request = urlopen.call_args.args[0]
         self.assertIs(json.loads(request.data)["stream"], False)
+
+    def test_receipt_image_normalization_bounds_the_llm_copy(self):
+        source = io.BytesIO()
+        Image.new("RGBA", (1800, 1200), (255, 255, 255, 128)).save(source, "PNG")
+
+        normalized, mime_type = normalize_receipt_image(source.getvalue(), "image/png")
+
+        self.assertEqual(mime_type, "image/jpeg")
+        with Image.open(io.BytesIO(normalized)) as image:
+            self.assertLessEqual(max(image.size), 1100)
+            self.assertEqual(image.mode, "RGB")
+
+    def test_receipt_fallback_uses_second_route_only_for_incomplete_primary(self):
+        class StubExtractor:
+            base_url = "https://gateway.example/v1"
+            api_key = "test-only"
+
+            def __init__(self, model, extraction):
+                self.model = model
+                self.extraction = extraction
+                self.calls = 0
+
+            def extract_with_diagnostics(self, _image, _mime):
+                self.calls += 1
+                if isinstance(self.extraction, Exception):
+                    raise self.extraction
+                return self.extraction, {"model": self.model, "duration_ms": 10}
+
+        incomplete = ReceiptExtraction(
+            "WavePay", None, 150000, "MMK", None, None, 0.5, (), ()
+        )
+        complete = ReceiptExtraction(
+            "WavePay", "564201837", 150000, "MMK", None, "Theingi Wint Aung", 0.93, (), ()
+        )
+        primary = StubExtractor("primary", incomplete)
+        fallback = StubExtractor("fallback", complete)
+        chain = FallbackReceiptExtractor([primary, fallback])
+        image = io.BytesIO()
+        Image.new("RGB", (20, 20), "white").save(image, "PNG")
+
+        result, diagnostics = chain.extract_with_diagnostics(image.getvalue(), "image/png")
+
+        self.assertEqual(result.transaction_id, "564201837")
+        self.assertEqual(diagnostics["selected_model"], "fallback")
+        self.assertEqual(primary.calls, 1)
+        self.assertEqual(fallback.calls, 1)
+
+    def test_receipt_fallback_accepts_qr_negative_without_second_call(self):
+        class StubExtractor:
+            base_url = "https://gateway.example/v1"
+            api_key = "test-only"
+
+            def __init__(self, model, extraction):
+                self.model = model
+                self.extraction = extraction
+                self.calls = 0
+
+            def extract_with_diagnostics(self, _image, _mime):
+                self.calls += 1
+                return self.extraction, {"model": self.model, "duration_ms": 10}
+
+        negative = ReceiptExtraction(
+            "KBZPay", None, None, None, None, "Merchant", 0.0, ("not_a_receipt",), ()
+        )
+        primary = StubExtractor("primary", negative)
+        fallback = StubExtractor(
+            "fallback", ReceiptExtraction(None, None, None, None, None, None, 0, (), ())
+        )
+        chain = FallbackReceiptExtractor([primary, fallback])
+        image = io.BytesIO()
+        Image.new("RGB", (20, 20), "white").save(image, "PNG")
+
+        result = chain.extract(image.getvalue(), "image/png")
+
+        self.assertIsNone(result.transaction_id)
+        self.assertEqual(primary.calls, 1)
+        self.assertEqual(fallback.calls, 0)
+
+    def test_assisted_receipt_extraction_job_is_durable_and_never_approves(self):
+        order = self.commerce.create_order(777, "Queued", "basic_50gb", self.now)
+        result = self.commerce.submit_receipt(
+            777,
+            order.order_id,
+            "kbzpay",
+            "telegram-file",
+            "unique-file",
+            b"receipt-bytes",
+            "image/jpeg",
+            queue_extraction=True,
+            now=self.now,
+        )
+        job = self.commerce.claim_receipt_extraction_job(self.now)
+        self.assertEqual(job["evidence_id"], result["evidence_id"])
+
+        self.commerce.finish_receipt_extraction(
+            job["job_id"],
+            job["evidence_id"],
+            {
+                "provider": "KBZPay",
+                "transaction_id": "TX-QUEUED",
+                "amount_minor": 3000,
+                "currency": "MMK",
+                "confidence": 0.95,
+                "flags": [],
+                "notes": [],
+            },
+            {"selected_model": "vision-primary"},
+            self.now,
+        )
+
+        receipt = self.commerce.get_receipt(result["evidence_id"])
+        self.assertEqual(receipt["extraction"]["transaction_id"], "TX-QUEUED")
+        self.assertEqual(receipt["review_status"], "pending")
+        self.assertEqual(self.commerce.order_detail(order.order_id, 777)["status"], "payment_submitted")
 
     def test_receipt_policy_defaults_manual_and_assisted_never_approves(self):
         self.assertEqual(self.commerce.receipt_policy()["mode"], "manual")

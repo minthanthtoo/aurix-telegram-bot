@@ -288,6 +288,40 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS receipt_diagnostic_recent ON receipt_diagnostic_runs(started_at)",
         ),
     ),
+    Migration(
+        3,
+        "receipt_extraction_jobs",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS receipt_extraction_jobs (
+                   id TEXT PRIMARY KEY,
+                   evidence_id TEXT NOT NULL UNIQUE REFERENCES payment_evidence(id),
+                   status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'done', 'failed')),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   last_error TEXT,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT
+               )""",
+            """CREATE INDEX IF NOT EXISTS receipt_extraction_due
+               ON receipt_extraction_jobs(status, next_attempt_at)""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS receipt_extraction_jobs (
+                   id TEXT PRIMARY KEY,
+                   evidence_id TEXT NOT NULL UNIQUE REFERENCES payment_evidence(id),
+                   status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'done', 'failed')),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   last_error TEXT,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT
+               )""",
+            """CREATE INDEX IF NOT EXISTS receipt_extraction_due
+               ON receipt_extraction_jobs(status, next_attempt_at)""",
+        ),
+    ),
 )
 
 

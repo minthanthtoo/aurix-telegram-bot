@@ -83,6 +83,46 @@ class TelegramMaintenanceMixin:
             else:
                 self.commerce.mark_notification_sent(notification["id"])
 
+    def _process_receipt_extraction(self) -> None:
+        """Process one durable assisted-extraction job outside the Telegram update loop."""
+        if self.commerce is None:
+            return
+        receipt_policy = getattr(self.commerce, "receipt_policy", None)
+        claim_job = getattr(self.commerce, "claim_receipt_extraction_job", None)
+        if not callable(receipt_policy) or not callable(claim_job):
+            return
+        if str(receipt_policy().get("mode") or "manual") != "assisted":
+            return
+        job = claim_job()
+        if job is None:
+            return
+        try:
+            storage = getattr(self.commerce, "receipt_storage", None)
+            download = getattr(storage, "download", None)
+            if (
+                job.get("storage_status") == "stored"
+                and job.get("storage_path")
+                and callable(download)
+            ):
+                image = download(str(job["storage_path"]))
+                mime_type = str(job.get("mime_type") or "image/jpeg")
+            else:
+                image, mime_type = self._download_telegram_file(str(job["telegram_file_id"]))
+            if not isinstance(image, bytes) or not image:
+                raise RuntimeError("Receipt evidence could not be loaded")
+            extraction, diagnostics = self.receipt_extractor.extract_with_diagnostics(
+                image, mime_type
+            )
+            self.commerce.finish_receipt_extraction(
+                str(job["job_id"]),
+                str(job["evidence_id"]),
+                extraction.as_dict(),
+                diagnostics,
+            )
+        except Exception as exc:
+            self.commerce.fail_receipt_extraction_job(str(job["job_id"]), exc)
+            print(f"receipt extraction job error: {type(exc).__name__}", file=sys.stderr)
+
     def _send_termination_notices(self) -> None:
         for event in self.service.pending_termination_notices("user"):
             reason = (
@@ -228,6 +268,9 @@ class TelegramMaintenanceMixin:
             run_stage("paid_quota", lambda: self.commerce.enforce_quotas(metrics=metrics))
             run_stage("paid_expiry", self.commerce.expire_and_process)
             run_stage("notifications", self._send_pending_notifications)
+            # Slow model calls run last so quota enforcement and customer/staff
+            # notifications are never held behind optional assisted extraction.
+            run_stage("receipt_extraction", self._process_receipt_extraction)
         challenge_store = getattr(self.service, "database", None)
         prune = getattr(challenge_store, "prune_admin_challenges", None)
         if callable(prune):

@@ -121,6 +121,15 @@ def main() -> None:
     ]
     if any(llm_values) and not all(llm_values):
         fail("configure all three RECEIPT_LLM_* values together or leave all blank")
+    fallback_models = [
+        item.strip()
+        for item in os.environ.get("RECEIPT_LLM_FALLBACK_MODELS", "").split(",")
+        if item.strip()
+    ]
+    if fallback_models and not all(llm_values):
+        fail("receipt fallback models require the primary RECEIPT_LLM_* configuration")
+    if len(fallback_models) > 3:
+        fail("configure at most three receipt fallback models")
 
     profile = "persistent disk" if storage_mode == "disk" else "hosted PostgreSQL"
     print(f"Render preflight passed: single-worker {profile} configuration is valid")

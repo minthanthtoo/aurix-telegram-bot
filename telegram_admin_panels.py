@@ -757,20 +757,16 @@ class TelegramAdminMixin:
         if order.get("status") != "awaiting_payment":
             self._send_order_detail(chat_id, telegram_id, order_id)
             return
-        short_id = str(order_id)[:8]
-        title = (heading + "\n\n") if heading else ""
-        self.send(
+        method = str(order.get("payment_method") or "").lower()
+        if method not in self.PAYMENT_METHODS:
+            method = self.PAYMENT_METHOD_ORDER[0]
+        self._show_payment_qr(
+            {"message": {}},
             chat_id,
-            title
-            + "🏦 Choose a payment method\n\n"
-            + f"Order #{short_id} · {order.get('plan_name') or order['plan_code']}\n"
-            + f"Order ID: {order_id}\n"
-            + f"Pay exactly {int(order['amount_minor']):,} {order['currency']}.\n\n"
-            + "Tap one method to see its QR. Only one QR card is shown at a time. "
-            + "Confirm the recipient and amount inside your wallet before paying.",
-            self._payment_method_keyboard(
-                order_id, selected=str(order.get("payment_method") or "") or None
-            ),
+            telegram_id,
+            order_id,
+            method,
+            heading=heading,
         )
 
     def _show_payment_qr(
@@ -780,18 +776,24 @@ class TelegramAdminMixin:
         telegram_id: int,
         order_id: str,
         method: str,
+        heading: str | None = None,
     ) -> None:
         order = self.commerce.choose_payment_method(telegram_id, order_id, method)
         item = self.PAYMENT_METHODS[method]
         path = self.PAYMENT_QR_DIR / str(item["asset"])
         if not path.is_file():
             raise RuntimeError("Payment QR asset is unavailable")
+        method_number = self.PAYMENT_METHOD_ORDER.index(method) + 1
+        prefix = f"{heading}\n\n" if heading else ""
         caption = (
-            f"🏦 {item['label']} · Order #{str(order_id)[:8]}\n\n"
+            prefix
+            + f"🏦 Payment QR {method_number}/5 · {item['label']}\n"
+            f"Order #{str(order_id)[:8]}\n\n"
             f"Pay exactly {int(order['amount_minor']):,} {order['currency']}.\n"
             "1. Scan this QR in the selected wallet.\n"
             "2. Verify the recipient and amount before confirming.\n"
             "3. Tap “I’ve Paid” and send the completed receipt screenshot.\n\n"
+            "Use the numbered buttons below to switch QR in this same message.\n"
             "Never send your PIN, password or OTP."
         )
         markup = self._payment_method_keyboard(order_id, selected=method, qr_view=True)
@@ -850,12 +852,25 @@ class TelegramAdminMixin:
                 and not order.get("payment_status")
                 and not order.get("receipt_status")
             ):
-                rows.append(
-                    [
-                        ("🏦 Choose Payment Method", f"o:p:{order_id}"),
-                        ("💰 Pay Wallet", f"o:w:{order_id}"),
-                    ]
-                )
+                selected_method = str(order.get("payment_method") or "").lower()
+                if selected_method in self.PAYMENT_METHODS:
+                    selected_label = str(self.PAYMENT_METHODS[selected_method]["label"])
+                    rows.append(
+                        [(f"🖼 Open {selected_label} QR", f"m:s:{selected_method}:{order_id}")]
+                    )
+                    rows.append(
+                        [
+                            ("🔁 Change QR", f"o:p:{order_id}"),
+                            ("💰 Pay Wallet", f"o:w:{order_id}"),
+                        ]
+                    )
+                else:
+                    rows.append(
+                        [
+                            ("🏦 Choose Payment QR", f"o:p:{order_id}"),
+                            ("💰 Pay Wallet", f"o:w:{order_id}"),
+                        ]
+                    )
                 rows.append([("🗑 Cancel Order", f"o:c:{order_id}")])
             elif order.get("receipt_status") == "rejected":
                 rows.append([("📷 Send Replacement Receipt", f"o:r:{order_id}")])

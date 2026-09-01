@@ -33,6 +33,9 @@ class NullReceiptStorage:
     def signed_url(self, path: str, expires_in: int = 300) -> None:
         return None
 
+    def download(self, path: str) -> None:
+        return None
+
     def delete(self, path: str) -> None:
         return None
 
@@ -175,6 +178,13 @@ class SupabaseReceiptStorage:
         if signed.startswith("/"):
             return f"{self.project_url}{signed}"
         return f"{self.project_url}/{signed}"
+
+    def download(self, path: str) -> bytes:
+        """Read one private evidence object for background-assisted extraction."""
+        result = self._request("GET", self._object_url(path))
+        if not isinstance(result, bytes) or not result or len(result) > self.max_bytes:
+            raise ReceiptStorageError("Supabase Storage returned invalid receipt evidence")
+        return result
 
     def delete(self, path: str) -> None:
         normalized_path = str(path or "").strip().lstrip("/")

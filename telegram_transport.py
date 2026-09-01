@@ -24,11 +24,7 @@ from telegram_admin_panels import TelegramAdminMixin
 from telegram_callbacks import TelegramCallbackMixin
 from telegram_commands import TelegramCommandMixin
 from telegram_maintenance import TelegramMaintenanceMixin
-from receipt_llm import (
-    OpenAICompatibleReceiptExtractor,
-    ReceiptExtractionError,
-    ReceiptLLMUnavailable,
-)
+from receipt_llm import build_receipt_extractor
 
 UTC = timezone.utc
 DEFAULT_MAINTENANCE_INTERVAL_SECONDS = 60.0
@@ -123,11 +119,11 @@ class TelegramBot(
     )
     UNKNOWN_ACTION_TEXT = "Use the menu to choose an AuriX action."
     PAYMENT_METHODS = {
-        "kbzpay": {"label": "KBZPay", "button": "🔵 KBZPay", "asset": "kbzpay.png"},
-        "wavepay": {"label": "WavePay", "button": "🟡 WavePay", "asset": "wavepay.png"},
-        "ayapay": {"label": "AYA Pay", "button": "🔴 AYA Pay", "asset": "ayapay.png"},
-        "uabpay": {"label": "UABPay", "button": "🟣 UABPay", "asset": "uabpay.png"},
-        "cbpay": {"label": "CB Pay", "button": "🔵 CB Pay", "asset": "cbpay.png"},
+        "kbzpay": {"label": "KBZPay", "button": "📷 1 · KBZPay", "asset": "kbzpay.png"},
+        "wavepay": {"label": "WavePay", "button": "📷 2 · WavePay", "asset": "wavepay.png"},
+        "ayapay": {"label": "AYA Pay", "button": "📷 3 · AYA Pay", "asset": "ayapay.png"},
+        "uabpay": {"label": "UABPay", "button": "📷 4 · UABPay", "asset": "uabpay.png"},
+        "cbpay": {"label": "CB Pay", "button": "📷 5 · CB Pay", "asset": "cbpay.png"},
     }
     PAYMENT_METHOD_ORDER = ("kbzpay", "wavepay", "ayapay", "uabpay", "cbpay")
     PAYMENT_QR_DIR = Path(__file__).resolve().parent / "assets" / "payment_qr"
@@ -167,7 +163,7 @@ class TelegramBot(
             self.commerce, self.admin_ids, self.service, staff_access=self.staff_access
         )
         self.trial_ids = trial_ids or set()
-        self.receipt_extractor = receipt_extractor or OpenAICompatibleReceiptExtractor()
+        self.receipt_extractor = receipt_extractor or build_receipt_extractor()
         self.allow_text_payment = bool(allow_text_payment)
         self.maintenance_interval_seconds = max(1.0, float(maintenance_interval_seconds))
         self.command_scope_cleanup_ids = command_scope_cleanup_ids or set()
@@ -963,19 +959,15 @@ class TelegramBot(
             order = self.commerce.order_detail(order_id, telegram_id)
             provider = str((order or {}).get("payment_method") or "manual")
             image, mime = self._download_telegram_file(file_id)
-            extraction = None
             policy = self.commerce.receipt_policy()
-            if str(policy.get("mode") or "manual") == "assisted":
-                try:
-                    extraction = self.receipt_extractor.extract(image, mime)
-                except ReceiptLLMUnavailable:
-                    pass  # retain evidence for a human reviewer
-                except ReceiptExtractionError as exc:
-                    print(f"receipt extraction error: {type(exc).__name__}", file=sys.stderr)
-                except Exception as exc:
-                    # Model/provider output is untrusted; a parser failure must not
-                    # prevent the evidence record from reaching manual review.
-                    print(f"receipt extraction error: {type(exc).__name__}", file=sys.stderr)
+            extraction_configured = bool(
+                getattr(self.receipt_extractor, "base_url", "")
+                and getattr(self.receipt_extractor, "model", "")
+                and getattr(self.receipt_extractor, "api_key", "")
+            )
+            queue_extraction = (
+                str(policy.get("mode") or "manual") == "assisted" and extraction_configured
+            )
             result = self.commerce.submit_receipt(
                 telegram_id,
                 order_id,
@@ -984,16 +976,20 @@ class TelegramBot(
                 file_unique_id=str(unique_id) if unique_id else None,
                 image_bytes=image,
                 mime_type=mime,
-                extraction=extraction.as_dict() if hasattr(extraction, "as_dict") else extraction,
+                extraction=None,
                 telegram_media_type=media_type,
+                queue_extraction=queue_extraction,
             )
         except (CommerceError, RuntimeError, urllib.error.URLError) as exc:
             self.send(chat_id, str(exc) or "Receipt could not be recorded. Try again later.")
             return
-        if result.get("transaction_id"):
+        if queue_extraction:
             self.send(
                 chat_id,
-                "Receipt received. Transaction ID extracted and queued for staff verification.",
+                "✅ Receipt securely received.\n\n"
+                "AI field extraction is queued in the background; staff will still verify the "
+                "recipient, amount and transaction ID against the receiving wallet. The image "
+                "alone never activates a VPN plan.",
             )
         else:
             self.send(

@@ -70,6 +70,7 @@ Optional:
 - `SUPABASE_RECEIPTS_BUCKET` — private bucket name (default `payment-receipts`)
 - `RECEIPT_STORAGE_REQUIRED` — set to `1` in hosted deployments so a receipt cannot enter review until its object is stored
 - `RECEIPT_LLM_BASE_URL`, `RECEIPT_LLM_MODEL`, `RECEIPT_LLM_API_KEY` — optional OpenAI-compatible vision endpoint. If absent/unavailable, receipts stay in manual review.
+- `RECEIPT_LLM_FALLBACK_MODELS` — optional comma-separated routes on the same gateway. A fallback runs only when the primary fails or omits critical receipt fields; QR/payment-request negatives do not waste a fallback call.
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.

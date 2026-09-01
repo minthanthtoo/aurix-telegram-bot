@@ -242,6 +242,16 @@ class CommerceService(CommerceWorkerMixin):
                 ),
             )
 
+    @staticmethod
+    def _queue_receipt_extraction(connection: Any, evidence_id: str, created_at: str) -> None:
+        connection.execute(
+            """INSERT INTO receipt_extraction_jobs
+               (id, evidence_id, status, next_attempt_at, created_at)
+               VALUES (?, ?, 'pending', ?, ?)
+               ON CONFLICT(evidence_id) DO NOTHING""",
+            (_new_id(), evidence_id, created_at, created_at),
+        )
+
     def create_order(
         self,
         telegram_id: int,
@@ -860,6 +870,7 @@ class CommerceService(CommerceWorkerMixin):
         extraction: dict[str, Any] | None = None,
         now: datetime | None = None,
         telegram_media_type: str = "photo",
+        queue_extraction: bool = False,
     ) -> dict[str, Any]:
         """Persist receipt metadata and upload the raw image out-of-band.
 
@@ -1098,6 +1109,8 @@ class CommerceService(CommerceWorkerMixin):
                         "Action: open the receipt and confirm it against the receiving account.",
                         submitted_at,
                     )
+                    if queue_extraction and extraction is None:
+                        self._queue_receipt_extraction(connection, evidence_id, submitted_at)
             except Exception:
                 # Do not leave a billable orphan if the final metadata commit
                 # fails. Deletion is best-effort and the row remains retryable.
@@ -1138,6 +1151,8 @@ class CommerceService(CommerceWorkerMixin):
                     "Action: open the receipt and confirm it against the receiving account.",
                     submitted_at,
                 )
+                if queue_extraction and extraction is None:
+                    self._queue_receipt_extraction(connection, evidence_id, submitted_at)
         result = dict(extraction or {})
         result["evidence_id"] = evidence_id
         result["image_sha256"] = digest
@@ -1145,6 +1160,139 @@ class CommerceService(CommerceWorkerMixin):
         result["storage_status"] = "stored" if storage_configured else "not_configured"
         result["storage_path"] = storage_path
         return result
+
+    def claim_receipt_extraction_job(self, now: datetime | None = None) -> dict[str, Any] | None:
+        """Claim one durable assisted-extraction job for the maintenance worker."""
+        current = now or datetime.now(UTC)
+        current_text = _now_text(current)
+        stale_before = _now_text(current - timedelta(minutes=10))
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """UPDATE receipt_extraction_jobs
+                   SET status = 'pending', locked_at = NULL
+                   WHERE status = 'running' AND locked_at < ?""",
+                (stale_before,),
+            )
+            lock_clause = (
+                " FOR UPDATE SKIP LOCKED" if isinstance(connection, _PostgresConnection) else ""
+            )
+            row = connection.execute(
+                """SELECT j.id AS job_id, j.attempts, e.id AS evidence_id,
+                          e.telegram_file_id, e.mime_type, e.storage_path, e.storage_status
+                   FROM receipt_extraction_jobs j
+                   JOIN payment_evidence e ON e.id = j.evidence_id
+                   WHERE j.status = 'pending' AND j.next_attempt_at <= ?
+                     AND e.review_status = 'pending'
+                   ORDER BY j.created_at LIMIT 1"""
+                + lock_clause,
+                (current_text,),
+            ).fetchone()
+            if row is None:
+                return None
+            updated = connection.execute(
+                """UPDATE receipt_extraction_jobs
+                   SET status = 'running', attempts = attempts + 1, locked_at = ?
+                   WHERE id = ? AND status = 'pending'""",
+                (current_text, row["job_id"]),
+            )
+            if getattr(updated, "rowcount", 1) == 0:
+                return None
+            result = dict(row)
+            result["attempts"] = int(row["attempts"]) + 1
+            return result
+
+    def finish_receipt_extraction(
+        self,
+        job_id: str,
+        evidence_id: str,
+        extraction: dict[str, Any],
+        diagnostics: dict[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Commit untrusted extraction metadata without changing payment approval state."""
+        if not isinstance(extraction, dict):
+            raise CommerceError("Receipt extraction result is invalid")
+        completed_at = _now_text(now)
+        result = dict(extraction)
+        tx_candidate = str(result.get("transaction_id") or "").strip()[:128]
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            evidence = connection.execute(
+                """SELECT provider, order_id FROM payment_evidence
+                   WHERE id = ? AND review_status = 'pending'""",
+                (evidence_id,),
+            ).fetchone()
+            if evidence is None:
+                connection.execute(
+                    """UPDATE receipt_extraction_jobs
+                       SET status = 'done', locked_at = NULL, completed_at = ? WHERE id = ?""",
+                    (completed_at, job_id),
+                )
+                return
+            if tx_candidate:
+                prior_rows = connection.execute(
+                    """SELECT provider, extraction_json FROM payment_evidence
+                       WHERE id != ? AND order_id != ?""",
+                    (evidence_id, evidence["order_id"]),
+                ).fetchall()
+                for prior in prior_rows:
+                    try:
+                        prior_result = json.loads(prior["extraction_json"] or "{}")
+                    except json.JSONDecodeError:
+                        prior_result = {}
+                    prior_tx = prior_result.get("transaction_id") if isinstance(prior_result, dict) else None
+                    if (
+                        _normalize_reference(str(prior["provider"] or ""))
+                        == _normalize_reference(str(result.get("provider") or evidence["provider"]))
+                        and _normalize_reference(str(prior_tx or ""))
+                        == _normalize_reference(tx_candidate)
+                    ):
+                        result["flags"] = sorted(
+                            set(result.get("flags") or []) | {"duplicate_transaction_candidate"}
+                        )
+                        break
+            status = "parsed" if tx_candidate else "needs_review"
+            connection.execute(
+                """UPDATE payment_evidence
+                   SET extraction_json = ?, extraction_status = ? WHERE id = ?""",
+                (json.dumps(result, sort_keys=True), status, evidence_id),
+            )
+            connection.execute(
+                """UPDATE receipt_extraction_jobs
+                   SET status = 'done', locked_at = NULL, last_error = NULL, completed_at = ?
+                   WHERE id = ?""",
+                (completed_at, job_id),
+            )
+            self._audit(
+                connection,
+                "receipt_assisted_extraction_completed",
+                "payment_evidence",
+                evidence_id,
+                "system",
+                None,
+                {
+                    "extraction_status": status,
+                    "selected_model": str((diagnostics or {}).get("selected_model") or "")[:128],
+                },
+            )
+
+    def fail_receipt_extraction_job(
+        self, job_id: str, error: Exception, now: datetime | None = None
+    ) -> None:
+        """Retry bounded provider failures; manual review remains available throughout."""
+        current = now or datetime.now(UTC)
+        next_attempt = _now_text(current + timedelta(minutes=5))
+        safe_error = f"{type(error).__name__}: {str(error)[:240]}"
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """UPDATE receipt_extraction_jobs
+                   SET status = CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END,
+                       next_attempt_at = ?, locked_at = NULL, last_error = ?
+                   WHERE id = ?""",
+                (next_attempt, safe_error, job_id),
+            )
 
     def list_pending_receipts(self, limit: int = 20) -> list[dict[str, Any]]:
         with self.database.connect() as connection:

@@ -61,6 +61,12 @@ class RenderPreflightTest(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "configure all three"):
             self.run_preflight(environment)
 
+    def test_receipt_fallback_requires_primary_configuration(self):
+        environment = valid_environment()
+        environment["RECEIPT_LLM_FALLBACK_MODELS"] = "fallback-model"
+        with self.assertRaisesRegex(SystemExit, "fallback models require"):
+            self.run_preflight(environment)
+
     def test_invalid_postgres_url_is_rejected(self):
         environment = valid_environment()
         environment["COMMERCE_DATABASE_URL"] = "sqlite:///tmp/bot.db"

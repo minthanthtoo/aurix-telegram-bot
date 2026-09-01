@@ -853,7 +853,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
     def test_customer_can_create_and_submit_a_paid_order(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order = self.commerce.list_pending_orders()[0]
-        self.assertIn(order["id"], self.bot.sent[-1][1])
+        self.assertIn(order["id"][:8], self.bot.media[-1][3])
 
         self.bot.handle(self.message(123, f"/paid {order['id']} transfer-123"))
         self.assertEqual(self.commerce.list_pending_orders()[0]["status"], "payment_submitted")
@@ -865,6 +865,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         order_id = self.commerce.list_pending_orders()[0]["id"]
         self.commerce.choose_payment_method(123, order_id, "kbzpay")
         self.bot._download_telegram_file = lambda _file_id: (b"photo-receipt", "image/jpeg")
+        media_count = len(self.bot.media)
 
         self.bot.handle(
             {
@@ -880,7 +881,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
         receipt = self.commerce.list_pending_receipts()[0]
         self.assertEqual(receipt["provider"], "kbzpay")
-        self.assertEqual(self.bot.media, [])
+        self.assertEqual(len(self.bot.media), media_count)
         self.bot._send_pending_notifications()
         self.assertIn(f"<b>Evidence:</b> {receipt['id'][:10]}", self.bot.sent[-1][1])
         markup = self.bot.markups[-1]
@@ -892,6 +893,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order_id = self.commerce.list_pending_orders()[0]["id"]
         self.bot._download_telegram_file = lambda _file_id: (b"document-receipt", "image/png")
+        media_count = len(self.bot.media)
 
         self.bot.handle(
             {
@@ -908,7 +910,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
         receipt = self.commerce.get_receipt(self.commerce.list_pending_receipts()[0]["id"])
         self.assertEqual(receipt["telegram_media_type"], "document")
-        self.assertEqual(self.bot.media, [])
+        self.assertEqual(len(self.bot.media), media_count)
 
         self.bot.handle(self.message(999, f"/receipt {receipt['id']}"))
         self.assertEqual(self.bot.media[-1][:3], ("document", 999, "receipt-document"))
@@ -972,16 +974,26 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order_id = self.commerce.list_pending_orders()[0]["id"]
 
-        self.assertIn("Choose a payment method", self.bot.sent[-1][1])
+        self.assertEqual(self.bot.media[-1][0], "local_photo")
+        self.assertTrue(self.bot.media[-1][2].endswith("assets/payment_qr/kbzpay.png"))
+        self.assertIn("Payment QR 1/5 · KBZPay", self.bot.media[-1][3])
+        self.assertIn("✅ Order created", self.bot.media[-1][3])
+        markup = self.bot.media[-1][-1]
         buttons = [
-            button for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+            button for row in markup["inline_keyboard"] for button in row
         ]
         method_buttons = [
             button["text"] for button in buttons if button.get("callback_data", "").startswith("m:s:")
         ]
         self.assertEqual(
             method_buttons,
-            ["🔵 KBZPay", "🟡 WavePay", "🔴 AYA Pay", "🟣 UABPay", "🔵 CB Pay"],
+            [
+                "✓ 📷 1 · KBZPay",
+                "📷 2 · WavePay",
+                "📷 3 · AYA Pay",
+                "📷 4 · UABPay",
+                "📷 5 · CB Pay",
+            ],
         )
 
         calls = []
@@ -992,6 +1004,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "from": {"id": 123, "first_name": "Min"},
                 "message": {
                     "message_id": 50,
+                    "photo": [{"file_id": "existing-kbz-card"}],
                     "chat": {"id": 123, "type": "private"},
                 },
                 "data": f"m:s:wavepay:{order_id}",
@@ -999,13 +1012,13 @@ class TelegramBotCommerceTest(unittest.TestCase):
         )
 
         self.assertEqual(calls[0][0], "answerCallbackQuery")
-        self.assertEqual(self.bot.media[-1][0], "local_photo")
-        self.assertTrue(self.bot.media[-1][2].endswith("assets/payment_qr/wavepay.png"))
+        self.assertEqual(self.bot.media[-1][0], "edit_local_photo")
+        self.assertTrue(self.bot.media[-1][3].endswith("assets/payment_qr/wavepay.png"))
         detail = self.commerce.order_detail(order_id, 123)
         self.assertEqual(detail["payment_method"], "wavepay")
         qr_markup = self.bot.media[-1][-1]
         qr_labels = [button["text"] for row in qr_markup["inline_keyboard"] for button in row]
-        self.assertIn("✓ 🟡 WavePay", qr_labels)
+        self.assertIn("✓ 📷 2 · WavePay", qr_labels)
         self.assertIn("✅ I’ve Paid · Send Receipt", qr_labels)
 
         self.bot.handle_callback(
@@ -1051,7 +1064,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
         labels = {
             button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
         }
-        self.assertIn("🏦 Choose Payment Method", labels)
+        self.assertIn("🖼 Open KBZPay QR", labels)
+        self.assertIn("🔁 Change QR", labels)
         self.assertIn("💰 Pay Wallet", labels)
         self.assertIn("🔄 Refresh", labels)
 
