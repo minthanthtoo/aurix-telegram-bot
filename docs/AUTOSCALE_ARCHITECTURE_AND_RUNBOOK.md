@@ -438,8 +438,9 @@ stop.
 
 The MVP decisions are no longer open-ended: use assisted scaling, the explicit
 three-node/$18 envelope above, a 24-hour creation cooldown, no automatic destroy,
-and SQLite until a second control-plane writer exists. The current 80% posture
-means prepare node two.
+and SQLite until a second control-plane writer exists. The last recorded live
+observation was 17 remote keys against 20 saleable slots (Prepare posture), so
+node two is the next operator gate.
 
 The scoped DigitalOcean API token is installed only in the separate
 infrastructure-worker environment and provider mutation remains off by default.
