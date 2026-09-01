@@ -32,7 +32,9 @@ engineering estimates, not production traffic or revenue metrics.
 
 ## Honest aggregate view
 
-- Core paid-concierge code: approximately **80%** of the scoped first pilot.
+- Core paid-concierge code: **100% of the current assisted-scaling MVP scope**;
+  automated payment-provider verification, affiliates, resellers, and a second
+  control-plane writer remain explicitly outside this MVP gate.
 - Local test/evidence coverage: **100%** for the current fake-Outline, TLS,
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
