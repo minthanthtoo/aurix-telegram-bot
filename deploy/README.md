@@ -74,7 +74,8 @@ OUTLINE_CERT_SHA256=replace-with-installer-output
 # For the legacy single-server form, optionally record its numeric Droplet ID.
 # OUTLINE_PROVIDER_RESOURCE_ID=<droplet-id>
 # Optional provider identity metadata. Use actual DigitalOcean Droplet IDs,
-# never public IP addresses; tags become the long-term source of truth.
+# never public IP addresses. Attaching tags to existing Droplets requires the
+# separately approved droplet:update scope; IDs are the current safe bridge.
 # AURIX_MANAGED_DROPLET_IDS=<sg-a-droplet-id>,<sg-b-droplet-id>
 # AURIX_MANAGED_DROPLET_TAG=aurix-vpn-node
 AURIX_SERVER_HEALTH_MAX_AGE_SECONDS=900

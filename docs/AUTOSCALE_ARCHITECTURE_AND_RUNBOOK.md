@@ -270,8 +270,9 @@ AURIX_NODE_CREATION_COOLDOWN_SECONDS=86400
 AURIX_MAX_MONTHLY_INFRA_BUDGET_USD=18
 AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD=6
 AURIX_MANAGED_DROPLET_TAG=aurix-vpn-node
-# Until provider tags are verified, set this to the actual DigitalOcean
-# Droplet IDs (not public IP addresses) for the existing AuriX nodes.
+# The current least-privilege worker token cannot attach tags to existing
+# Droplets (that requires droplet:update). Until a separately approved token
+# change, set this to the actual Droplet IDs (not public IP addresses).
 AURIX_MANAGED_DROPLET_IDS=<droplet-id-for-sg-a>,<droplet-id-for-sg-b>
 AURIX_SCALE_PREPARE_UTILIZATION_PERCENT=75
 AURIX_SCALE_URGENT_UTILIZATION_PERCENT=90
