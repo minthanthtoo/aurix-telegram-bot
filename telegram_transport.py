@@ -183,6 +183,7 @@ class TelegramBot(
         self._panel_lock = threading.Lock()
         self._panels: dict[str, dict[str, Any]] = {}
         self._receipt_test_waiting: set[int] = set()
+        self._receipt_test_providers: dict[int, str] = {}
         self._admin_add_waiting: set[int] = set()
         self._customer_inputs: dict[int, dict[str, Any]] = {}
         self._maintenance_last_status: dict[str, Any] = {
@@ -752,9 +753,11 @@ class TelegramBot(
             f"Method: {str(receipt.get('provider') or 'manual').upper()}\n"
             f"Expected: {int(receipt['amount_minor']):,} {receipt['currency']}\n"
             f"Extracted transaction: {extracted.get('transaction_id') or '-'}\n"
+            f"Reference label: {extracted.get('transaction_id_label') or '-'}\n"
             f"AI amount: {amount if amount is not None else '-'}\n"
             f"AI time: {extracted.get('timestamp') or '-'}\n"
             f"AI recipient: {extracted.get('recipient') or '-'}\n"
+            f"AI triage: {str(extracted.get('automation_decision') or 'manual_review').replace('_', ' ')}\n"
             f"Confidence: {extracted.get('confidence', '-')}\n"
             f"⚠️ Risk flags: {flags[:180] if flags else 'none reported'}\n\n"
             "AI extraction is a hint—not payment proof. Check the receiving account, "
@@ -985,13 +988,17 @@ class TelegramBot(
                 storage_started = time.perf_counter()
                 storage.upload(storage_path, image, mime)
                 storage_ms = round((time.perf_counter() - storage_started) * 1000, 1)
-            extraction, technical = self.receipt_extractor.extract_with_diagnostics(image, mime)
+            expected_provider = self._receipt_test_providers.pop(telegram_id, "")
+            extraction, technical = self.receipt_extractor.extract_with_diagnostics(
+                image, mime, expected_provider=expected_provider or None
+            )
             result = {
                 "summary": "LLM extraction and schema validation passed",
                 "image": {"mime_type": mime, "byte_size": len(image), "sha256_prefix": digest[:12]},
                 "storage": {"configured": storage_configured, "upload_ms": storage_ms},
                 "llm": technical,
                 "extraction": extraction.as_dict(),
+                "selected_payment_method": expected_provider or "not selected",
                 "simulated_decision": "ready for assisted human review; automatic approval unavailable",
                 "total_duration_ms": round((time.perf_counter() - started) * 1000, 1),
             }
@@ -1013,6 +1020,7 @@ class TelegramBot(
             except Exception:
                 diagnostic = {"id": run_id, "status": "failed", "result": result}
         finally:
+            self._receipt_test_providers.pop(telegram_id, None)
             if storage_path:
                 try:
                     self.commerce.receipt_storage.delete(storage_path)
@@ -1212,11 +1220,11 @@ class TelegramBot(
                 f"{state}; {giveaway['remaining_slots']} of {giveaway['winner_limit']} "
                 f"slot(s) remain {self._promo_frequency_label(giveaway['frequency'])}"
             )
-        lines.append("free_3gb — free every 30 days — 3 GiB / 30 days (use /trial)")
+        lines.append("free_3gb — free every 30 days — 3 GB / 30 days (use /trial)")
         plans = self.commerce.plans()
         availability = self.commerce.plan_availability()
         for plan in plans:
-            quota = f"{plan.quota_bytes / 1024**3:g} GB" if plan.quota_bytes else "fair-use"
+            quota = f"{plan.quota_bytes / 1_000_000_000:g} GB" if plan.quota_bytes else "fair-use"
             capacity = availability.get(plan.code, {})
             slots = capacity.get("remaining_slots")
             availability_text = (
@@ -1343,12 +1351,12 @@ class TelegramBot(
     @staticmethod
     def _format_bytes(value: int) -> str:
         amount = float(max(0, int(value)))
-        units = ("B", "KiB", "MiB", "GiB", "TiB")
+        units = ("B", "kB", "MB", "GB", "TB")
         unit = units[0]
         for unit in units:
-            if amount < 1024 or unit == units[-1]:
+            if amount < 1000 or unit == units[-1]:
                 break
-            amount /= 1024
+            amount /= 1000
         if unit == "B":
             return f"{int(amount)} {unit}"
         return f"{amount:.2f} {unit}"

@@ -111,7 +111,7 @@ class TelegramMaintenanceMixin:
             if not isinstance(image, bytes) or not image:
                 raise RuntimeError("Receipt evidence could not be loaded")
             extraction, diagnostics = self.receipt_extractor.extract_with_diagnostics(
-                image, mime_type
+                image, mime_type, expected_provider=str(job.get("provider") or "")
             )
             self.commerce.finish_receipt_extraction(
                 str(job["job_id"]),

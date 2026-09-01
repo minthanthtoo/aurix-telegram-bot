@@ -23,13 +23,13 @@ UTC = timezone.utc
 # percentages. Outline itself enforces the hard limit; these messages make the
 # approaching cutoff visible before the key is removed.
 
-PUBLIC_LIMIT_BYTES = 300 * 1024 * 1024
+PUBLIC_LIMIT_BYTES = 300_000_000
 
 
 LIMIT_BYTES = PUBLIC_LIMIT_BYTES
 
 
-TRIAL_LIMIT_BYTES = 3 * 1024**3
+TRIAL_LIMIT_BYTES = 3_000_000_000
 
 
 CLAIM_PERIOD = timedelta(hours=24)
@@ -70,10 +70,10 @@ def _outline_key_name(
 
 def _human_bytes(value: int) -> str:
     amount = float(max(0, int(value)))
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if amount < 1024 or unit == "TiB":
+    for unit in ("B", "kB", "MB", "GB", "TB"):
+        if amount < 1000 or unit == "TB":
             return f"{int(amount)} {unit}" if unit == "B" else f"{amount:.2f} {unit}"
-        amount /= 1024
+        amount /= 1000
 
 
 def _human_decimal_bytes(value: int) -> str:
@@ -720,7 +720,7 @@ class ClaimService:
         now: datetime | None = None,
         username: str | None = None,
     ) -> ClaimResult:
-        """Issue one 3 GiB entitlement per rolling 30 days."""
+        """Issue one 3 GB entitlement per rolling 30 days."""
         now = (now or datetime.now(UTC)).astimezone(UTC)
         now_text = now.isoformat()
         with self.database.connect() as connection:
@@ -936,9 +936,9 @@ class ClaimService:
                         if row["campaign_code"]:
                             tier = f"promo {row['campaign_code']}"
                         elif quota == TRIAL_LIMIT_BYTES:
-                            tier = "monthly 3 GiB"
+                            tier = "monthly 3 GB"
                         elif quota == PUBLIC_LIMIT_BYTES:
-                            tier = "daily 300 MiB"
+                            tier = "daily 300 MB"
                         else:
                             tier = "free"
                         formatter = _human_decimal_bytes if row["campaign_code"] else _human_bytes
@@ -994,8 +994,8 @@ class ClaimService:
                 (telegram_id,),
             ).fetchall()
         tiers = {
-            300 * 1024**2: "Daily Free 300 MiB",
-            3 * 1024**3: "Monthly Free 3 GiB",
+            300_000_000: "Daily Free 300 MB",
+            3_000_000_000: "Monthly Free 3 GB",
         }
         result = []
         for row in rows:

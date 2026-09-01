@@ -357,7 +357,7 @@ class TelegramAdminMixin:
     def _receipt_system_keyboard(self) -> dict[str, Any]:
         return self._inline_keyboard(
             [
-                [("Manual Review", "a:m:manual"), ("AI-Assisted", "a:m:assisted")],
+                [("Manual Only", "a:m:manual"), ("AI Triage", "a:m:assisted")],
                 [("🧪 Test Actual Receipt", "a:t:start"), ("📋 Last Test", "a:t:last")],
                 [("🔬 Technical Details", "a:t:details")],
                 [("🧾 Review Queue", "a:n:receipts"), ("🔄 Refresh", "a:n:receiptsystem")],
@@ -380,7 +380,8 @@ class TelegramAdminMixin:
             "Automatic approval Locked\n"
             f"Pending review     {snapshot.get('pending_receipts', 0)}\n"
             f"Last safe test     {last.get('status') or 'not run'}\n\n"
-            "AI-Assisted mode extracts fields only. Staff must still verify the receiving account."
+            "AI Triage applies provider, amount, time, recipient and reference-label rules. "
+            "It never credits or approves from a screenshot; staff must confirm the receiving account."
         )
         markup = self._receipt_system_keyboard()
         if message_id is not None:
@@ -410,8 +411,13 @@ class TelegramAdminMixin:
             f"LLM host: {self._mask_technical_value(llm.get('endpoint_host'))}",
             f"Model: {llm.get('model') or '-'}",
             f"HTTP: {llm.get('http_status') or '-'} · {llm.get('duration_ms') or '-'} ms",
+            f"Selected method: {result.get('selected_payment_method') or '-'}",
+            f"Document: {extraction.get('document_type') or '-'} · {extraction.get('completion_status') or '-'}",
             f"Transaction: {extraction.get('transaction_id') or '-'}",
+            f"Transaction label: {extraction.get('transaction_id_label') or '-'}",
             f"Amount: {extraction.get('amount_minor') or '-'} {extraction.get('currency') or ''}".strip(),
+            f"Timestamp: {extraction.get('timestamp') or '-'}",
+            f"Recipient: {extraction.get('recipient') or '-'}",
             f"Confidence: {extraction.get('confidence') if extraction else '-'}",
             "",
             str(result.get("simulated_decision") or "No financial action was taken."),

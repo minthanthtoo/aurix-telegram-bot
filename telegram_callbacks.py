@@ -442,7 +442,21 @@ class TelegramCallbackMixin:
                     cancel_data="a:n:receiptsystem",
                 )
             elif action == "t":
-                if entity_id == "start":
+                if entity_id.startswith("method:"):
+                    provider = entity_id.split(":", 1)[1]
+                    if provider not in self.PAYMENT_METHODS:
+                        self.send(chat_id, "That payment method is unavailable.")
+                        return
+                    self._receipt_test_providers[telegram_id] = provider
+                    self._receipt_test_waiting.add(telegram_id)
+                    self.send(
+                        chat_id,
+                        f"🧪 {self.PAYMENT_METHODS[provider]['label']} test ready\n\n"
+                        "Send one actual completed receipt image now. The original is used only "
+                        "for this isolated diagnostic and temporary storage is deleted afterward.",
+                        self._inline_keyboard([[("Cancel Test", "a:t:cancel")]]),
+                    )
+                elif entity_id == "start":
                     synthetic["text"] = "/receipttest"
                     self.handle(synthetic)
                 elif entity_id == "last":
@@ -473,6 +487,7 @@ class TelegramCallbackMixin:
                     )
                 elif entity_id == "cancel":
                     self._receipt_test_waiting.discard(telegram_id)
+                    self._receipt_test_providers.pop(telegram_id, None)
                     self.send(chat_id, "Receipt test cancelled.", self._receipt_system_keyboard())
                 else:
                     self.send(chat_id, "That diagnostic action is no longer valid.")

@@ -300,7 +300,7 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(len(usage), 1)
         self.assertEqual(usage[0]["tier"], "50 GB")
         self.assertEqual(usage[0]["used_bytes"], used)
-        self.assertEqual(usage[0]["remaining_bytes"], 38 * 1024**3)
+        self.assertEqual(usage[0]["remaining_bytes"], 50_000_000_000 - used)
         self.assertEqual(self.service.user_usage(456, self.outline.transfer), [])
 
     def test_user_and_admin_can_track_order_review_state(self):

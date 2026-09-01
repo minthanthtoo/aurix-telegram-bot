@@ -25,6 +25,7 @@ from commerce_repositories import _PostgresConnection
 from ports import OutlineGateway, ReceiptStorageGateway
 from repositories import RepositoryDatabase
 from commerce_worker import CommerceWorkerMixin
+from receipt_rules import evaluate_receipt_candidate, load_recipient_profiles
 from supabase_storage import NullReceiptStorage
 
 LOCAL_PAYMENT_METHODS = frozenset({"kbzpay", "wavepay", "ayapay", "uabpay", "cbpay"})
@@ -49,6 +50,7 @@ class CommerceService(CommerceWorkerMixin):
         self.allow_legacy_text_approval = bool(allow_legacy_text_approval)
         self.receipt_storage = receipt_storage or NullReceiptStorage()
         self.receipt_storage_required = bool(receipt_storage_required)
+        self.receipt_recipient_profiles = load_recipient_profiles()
         self._server_metrics_cache: dict[str, dict[str, Any]] = {}
         try:
             self.access_url_cipher = Fernet(access_url_key)
@@ -494,40 +496,23 @@ class CommerceService(CommerceWorkerMixin):
     def _receipt_risk_flags(
         self, extraction: dict[str, Any], order: Any, submitted_at: datetime
     ) -> list[str]:
-        flags = {str(item) for item in extraction.get("flags", []) if item}
-        if not str(extraction.get("transaction_id") or "").strip():
-            flags.add("missing_transaction_id")
-        try:
-            if int(extraction.get("amount_minor")) != int(order["amount_minor"]):
-                flags.add("amount_mismatch")
-        except (TypeError, ValueError):
-            flags.add("missing_or_invalid_amount")
-        currency = str(extraction.get("currency") or "").strip().upper()
-        if not currency:
-            flags.add("missing_currency")
-        elif currency != str(order["currency"]).upper():
-            flags.add("currency_mismatch")
-        selected = str(order["payment_method"] or "").strip()
-        extracted_provider = str(extraction.get("provider") or "").strip()
-        if selected and extracted_provider and (
-            _normalize_reference(selected) != _normalize_reference(extracted_provider)
-        ):
-            flags.add("provider_mismatch")
-        receipt_time = self._receipt_timestamp(extraction.get("timestamp"))
-        if receipt_time is None:
-            flags.add("missing_or_invalid_timestamp")
-        else:
-            age = submitted_at.astimezone(UTC) - receipt_time
-            if age > timedelta(hours=1):
-                flags.add("receipt_older_than_1_hour")
-            elif age < -timedelta(minutes=5):
-                flags.add("receipt_timestamp_in_future")
-        try:
-            if float(extraction.get("confidence", 0)) < 0.85:
-                flags.add("low_extraction_confidence")
-        except (TypeError, ValueError):
-            flags.add("invalid_extraction_confidence")
-        return sorted(flags)
+        selected_provider = str(order["payment_method"] or "")
+        if not selected_provider:
+            try:
+                selected_provider = str(order["provider"] or "")
+            except (KeyError, IndexError):
+                selected_provider = ""
+        evaluated = evaluate_receipt_candidate(
+            extraction,
+            selected_provider=selected_provider,
+            expected_amount_minor=int(order["amount_minor"]),
+            expected_currency=str(order["currency"]),
+            submitted_at=submitted_at,
+            recipient_profiles=self.receipt_recipient_profiles,
+        )
+        extraction["automation_decision"] = evaluated["automation_decision"]
+        extraction["rule_checks"] = evaluated["rule_checks"]
+        return list(evaluated["flags"])
 
     def get_plan(self, code: str) -> Plan:
         with self.database.connect() as connection:
@@ -1378,7 +1363,9 @@ class CommerceService(CommerceWorkerMixin):
         digest = hashlib.sha256(image_bytes).hexdigest()
         extraction = extraction if isinstance(extraction, dict) else None
         tx_id = extraction.get("transaction_id") if extraction else None
-        provider_name = str((extraction or {}).get("provider") or provider).strip()[:64]
+        # The customer-selected method is authoritative workflow state. Model
+        # output may describe a different provider, but must never overwrite it.
+        provider_name = str(provider).strip().lower()[:64]
         tx_candidate = str(tx_id).strip()[:128] if tx_id else ""
         status = "parsed" if tx_id else "needs_review"
         submitted_at = _now_text(now)
@@ -1678,7 +1665,8 @@ class CommerceService(CommerceWorkerMixin):
             )
             row = connection.execute(
                 """SELECT j.id AS job_id, j.attempts, e.id AS evidence_id,
-                          e.telegram_file_id, e.mime_type, e.storage_path, e.storage_status
+                          e.provider, e.telegram_file_id, e.mime_type,
+                          e.storage_path, e.storage_status
                    FROM receipt_extraction_jobs j
                    JOIN payment_evidence e ON e.id = j.evidence_id
                    WHERE j.status = 'pending' AND j.next_attempt_at <= ?
@@ -1719,8 +1707,8 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             evidence = connection.execute(
-                """SELECT e.provider, e.order_id, o.amount_minor, o.currency,
-                          o.payment_method
+                """SELECT e.provider, e.order_id, e.submitted_at,
+                          o.amount_minor, o.currency, o.payment_method
                    FROM payment_evidence e
                    JOIN orders o ON o.id = e.order_id
                    WHERE e.id = ? AND e.review_status = 'pending'""",
@@ -1755,8 +1743,21 @@ class CommerceService(CommerceWorkerMixin):
                             set(result.get("flags") or []) | {"duplicate_transaction_candidate"}
                         )
                         break
-            result["flags"] = self._receipt_risk_flags(result, evidence, completed)
-            status = "parsed" if tx_candidate and not result["flags"] else "needs_review"
+            try:
+                submitted = datetime.fromisoformat(str(evidence["submitted_at"]))
+            except (TypeError, ValueError):
+                submitted = completed
+            if submitted.tzinfo is None:
+                submitted = submitted.replace(tzinfo=UTC)
+            result["flags"] = self._receipt_risk_flags(result, evidence, submitted)
+            # Preserve the existing storage enum: `parsed` means all triage
+            # checks passed, while every mismatch/ambiguity stays reviewable.
+            # The detailed three-way decision lives in extraction_json.
+            status = (
+                "parsed"
+                if result.get("automation_decision") == "candidate_pass"
+                else "needs_review"
+            )
             connection.execute(
                 """UPDATE payment_evidence
                    SET extraction_json = ?, extraction_status = ? WHERE id = ?""",

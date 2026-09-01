@@ -497,11 +497,17 @@ class TelegramCommandMixin:
                         self._receipt_system_keyboard(),
                     )
         elif command == "/receipttest":
-            self._receipt_test_waiting.add(telegram_id)
             self.send(
                 chat["id"],
-                "🧪 Safe Receipt Test\n\nSend one actual receipt image now. It will be processed as a diagnostic only—no order, payment, wallet credit, subscription or VPN key can be created. Temporary storage is deleted after the test.",
-                self._inline_keyboard([[("Cancel Test", "a:t:cancel"), ("Last Test", "a:t:last")]]),
+                "🧪 Safe Receipt Test\n\nFirst choose the payment method shown on the receipt. This activates its provider-specific labels; the test cannot create an order, credit, subscription or VPN key.",
+                self._inline_keyboard(
+                    [
+                        [("1 · KBZPay", "a:t:method:kbzpay"), ("2 · WavePay", "a:t:method:wavepay")],
+                        [("3 · AYA Pay", "a:t:method:ayapay"), ("4 · UABPay", "a:t:method:uabpay")],
+                        [("5 · CB Pay", "a:t:method:cbpay")],
+                        [("Cancel Test", "a:t:cancel"), ("Last Test", "a:t:last")],
+                    ]
+                ),
             )
         elif command == "/promo":
             promo = self._admin_service_call(telegram_id, "giveaway_status", telegram_id)
@@ -765,7 +771,7 @@ class TelegramCommandMixin:
             elif result.access_url:
                 self.send(
                     chat["id"],
-                    f"Your monthly 3 GiB key:\n\n{result.access_url}\n\nExpires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}",
+                    f"Your monthly 3 GB key:\n\n{result.access_url}\n\nExpires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}",
                     self._key_delivery_keyboard(str(result.access_url)),
                 )
             else:
@@ -774,7 +780,7 @@ class TelegramCommandMixin:
                     if result.next_claim_at
                     else "later"
                 )
-                self.send(chat["id"], f"Monthly 3 GiB already claimed. Come back after {retry}.")
+                self.send(chat["id"], f"Monthly 3 GB already claimed. Come back after {retry}.")
         elif command == "/wallet":
             if self.commerce is None:
                 self.send(chat["id"], "Wallet is not configured.")
@@ -1187,10 +1193,10 @@ class TelegramCommandMixin:
                 )
             elif result.access_url:
                 expiry = result.expires_at.strftime("%Y-%m-%d %H:%M UTC")
-                amount = self.service.limit_bytes / 1024**2
+                amount = self.service.limit_bytes / 1_000_000
                 self.send(
                     chat["id"],
-                    f"Your {amount:g} MiB Outline key:\n\n{result.access_url}\n\nExpires: {expiry}",
+                    f"Your {amount:g} MB Outline key:\n\n{result.access_url}\n\nExpires: {expiry}",
                     self._key_delivery_keyboard(str(result.access_url)),
                 )
             elif result.next_claim_at:

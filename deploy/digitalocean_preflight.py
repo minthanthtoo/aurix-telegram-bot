@@ -127,6 +127,18 @@ def _validate_configuration() -> dict[str, str]:
         fail("RECEIPT_LLM_BASE_URL must use HTTPS")
     if len(llm_key) < 12 or len(llm_model) > 200:
         fail("receipt vision credentials or model are invalid")
+    recipients_raw = _required("PAYMENT_RECIPIENTS_JSON")
+    try:
+        recipients = json.loads(recipients_raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        fail("PAYMENT_RECIPIENTS_JSON must be valid JSON")
+    required_methods = {"kbzpay", "wavepay", "ayapay", "uabpay", "cbpay"}
+    if not isinstance(recipients, dict) or not required_methods.issubset(recipients):
+        fail("PAYMENT_RECIPIENTS_JSON must configure all five payment methods")
+    for method in required_methods:
+        profile = recipients.get(method)
+        if not isinstance(profile, dict) or not (profile.get("names") or profile.get("accounts")):
+            fail(f"PAYMENT_RECIPIENTS_JSON profile is empty for {method}")
 
     return {
         "telegram_token": token,

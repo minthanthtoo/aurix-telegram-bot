@@ -2,9 +2,9 @@
 
 Telegram-first paid-concierge MVP with public free/trial access:
 
-- catalog-backed 30-day plans: 50 GiB for 3,000 MMK and 100 GiB for 6,000 MMK;
-- every tracked Telegram account can claim a 300 MiB key once per rolling 24 hours;
-- 3 GiB / 30-day free entitlement, renewable every rolling 30 days;
+- catalog-backed 30-day plans: 50 GB for 3,000 MMK and 100 GB for 6,000 MMK;
+- every tracked Telegram account can claim a 300 MB key once per rolling 24 hours;
+- 3 GB / 30-day free entitlement, renewable every rolling 30 days;
 - owner-configurable promo seasons with decimal-GB quota, gift duration,
   UTC start/end, campaign/daily/hourly capacity, one claim per account, and
   automatic restoration of regular plans when a gift or season ends;
@@ -67,13 +67,14 @@ Optional:
 - `ADMIN_TELEGRAM_IDS` — legacy one-time comma-separated administrator bootstrap
 - `AURIX_CONTROL_GROUP_ID` — optional trusted numeric `-100...` bootstrap override. Normally the owner connects the group from **Owner Controls → Choose Control Group**; Telegram supplies and AuriX persists the numeric ID without invite-link parsing.
 - `ADMIN_SCOPE_CLEANUP_IDS` — optional one-time comma-separated IDs whose old Telegram admin command scopes must be deleted after an administrator is removed
-- `TRIAL_TELEGRAM_IDS` — legacy allowlist; leave empty for public daily 300 MiB and monthly 3 GiB claims
+- `TRIAL_TELEGRAM_IDS` — legacy allowlist; leave empty for public daily 300 MB and monthly 3 GB claims
 - `COMMERCE_DATABASE_URL` — PostgreSQL URL for all bot state when using the hosted PostgreSQL profile; empty uses SQLite
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — server-side credentials for the private receipt-evidence bucket. Never use the publishable/anon key here.
 - `SUPABASE_RECEIPTS_BUCKET` — private bucket name (default `payment-receipts`)
 - `RECEIPT_STORAGE_REQUIRED` — set to `1` in hosted deployments so a receipt cannot enter review until its object is stored
 - `RECEIPT_LLM_BASE_URL`, `RECEIPT_LLM_MODEL`, `RECEIPT_LLM_API_KEY` — optional OpenAI-compatible vision endpoint. If absent/unavailable, receipts stay in manual review.
 - `RECEIPT_LLM_FALLBACK_MODELS` — optional comma-separated routes on the same gateway. A fallback runs only when the primary fails or omits critical receipt fields; QR/payment-request negatives do not waste a fallback call.
+- `PAYMENT_RECIPIENTS_JSON` — required server-side merchant profiles for all five payment methods. Each profile contains accepted recipient `names` and/or account/phone `accounts`; values are never shown in customer messages or diagnostics.
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
@@ -161,6 +162,10 @@ authenticated `/v1` endpoint, use a model ID returned by `/v1/models`, and use
 the gateway API key—not a Google/OAuth access or refresh token. Keep the gateway
 behind TLS and authentication. Bot diagnostics mask infrastructure hosts and
 request IDs with retained prefixes/suffixes.
+
+`PAYMENT_RECIPIENTS_JSON` must contain the real receiving identities before AI
+triage is enabled. Example shape (real values belong only in the private host
+environment): `{"kbzpay":{"names":["MERCHANT NAME"],"accounts":["1234"]},...}`.
 
 ### 3A. Recommended: paid Background Worker with persistent disk
 
@@ -456,7 +461,7 @@ customer's key statistics.
 
 Outline key names are operator-readable and use UTC start time: `<username-or-telegram-id>-<tier>-<duration>-YYYYMMDDHHMM`, for example `min_user-FREE300MB-24hr-202608280520`. Telegram usernames are sanitized; accounts without a username fall back to their numeric Telegram ID. Renaming a key does not change its access URL.
 
-Receipt images are evidence, not proof. AuriX stores each new raw image in a private Supabase Storage bucket and stores only its bucket/path, checksum, MIME type, size, extraction result, and review state in the database. Telegram file metadata remains as a compatibility fallback for older evidence. The upload is completed before the order enters `payment_submitted`; failed uploads remain retryable and are never shown in the admin review queue. The optional LLM output is untrusted and never approves a payment or credits a wallet. Staff tap **Verify Payment**, compare the candidate fields with the actual receiving account, and confirm; when extraction is incomplete the bot asks only for the real transaction ID and amount while retaining the selected receipt. **Approve** appears only after verification. The underlying typed commands remain compatibility/recovery tools, not the primary workflow. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.
+Receipt images are evidence, not proof. AuriX stores each new raw image in a private Supabase Storage bucket and stores only its bucket/path, checksum, MIME type, size, extraction result, and review state in the database. Telegram file metadata remains as a compatibility fallback for older evidence. The upload is completed before the order enters `payment_submitted`; failed uploads remain retryable and are never shown in the admin review queue. Provider-aware AI triage checks completion, selected provider, exact amount/currency, the provider's visible reference label, timestamp relative to the original upload, and the configured merchant recipient. Clear mismatches are reject candidates; missing or ambiguous fields remain manual review. The LLM never approves a payment or credits a wallet. Staff tap **Verify Payment**, compare the candidate fields with the actual receiving account, and confirm; **Approve** appears only after verification. The underlying typed commands remain compatibility/recovery tools, not the primary workflow. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.
 Configure the bucket's lifecycle/retention rule separately after confirming the business and payment-record retention policy; the application does not silently delete evidence.
 
 New orders, submitted receipts, and receipt rejections create deduplicated,
@@ -468,7 +473,7 @@ persistent admin chat history. Telegram distinguishes photos from image document
 so AuriX preserves that media type and retries the alternate review method for
 older evidence. `/receipts` remains the durable recovery queue.
 
-Wallet events are immutable. A wallet top-up accepts an exact receipt amount only, credits the balance exactly once after human verification, and never provisions a VPN subscription. A subsequent wallet purchase records `reserve → capture`; rejection releases a reservation exactly once. Capture does not deduct the balance a second time. Receipt SHA-256 and Telegram file identity are rejected across different orders before vision processing; normalized provider transaction IDs remain the authoritative duplicate check at verification. Assisted extraction flags amount/currency/provider mismatches, missing fields, low confidence, timestamps over one hour old, and future timestamps for staff review. `/wallet` shows the current projection and recent ledger events, while `/reconcile` reports balance mismatches and impossible order/job combinations.
+Wallet events are immutable. A wallet top-up accepts an exact receipt amount only, credits the balance exactly once after human verification, and never provisions a VPN subscription. A subsequent wallet purchase records `reserve → capture`; rejection releases a reservation exactly once. Capture does not deduct the balance a second time. Receipt SHA-256 and Telegram file identity are rejected across different orders before vision processing; normalized provider transaction IDs remain the authoritative duplicate check at verification. AI triage fails closed when a merchant profile is missing and always leaves financial approval to staff. `/wallet` shows the current projection and recent ledger events, while `/reconcile` reports balance mismatches and impossible order/job combinations.
 
 The receipt parser uses an OpenAI-compatible `/chat/completions` endpoint with a
 vision-capable model. Configure the three `RECEIPT_LLM_*` variables only after
@@ -476,9 +481,9 @@ testing that endpoint with a synthetic receipt. If they are unset, unreachable,
 or return invalid JSON, the bot records the screenshot for manual review and
 does not guess a transaction ID.
 
-For `https://157-245-63-95.sslip.io`, obtain the gateway API key from the proxy
-owner, query its authenticated `/v1/models` endpoint, choose a vision-capable
-route, and configure `RECEIPT_LLM_BASE_URL=https://157-245-63-95.sslip.io/v1`.
+For an OpenAI-compatible vision gateway, obtain the gateway API key from the
+proxy owner, query its authenticated `/v1/models` endpoint, choose a
+vision-capable route, and configure a private authenticated `/v1` base URL.
 The public dashboard URL alone is insufficient: unauthenticated model requests
 correctly return HTTP 401. Never put OAuth tokens in the bot environment.
 

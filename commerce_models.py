@@ -22,10 +22,10 @@ QUOTA_WARNING_THRESHOLDS = ((25, 0.25), (10, 0.10), (5, 0.05))
 
 def _human_bytes(value: int) -> str:
     amount = float(max(0, int(value)))
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if amount < 1024 or unit == "TiB":
+    for unit in ("B", "kB", "MB", "GB", "TB"):
+        if amount < 1000 or unit == "TB":
             return f"{int(amount)} {unit}" if unit == "B" else f"{amount:.2f} {unit}"
-        amount /= 1024
+        amount /= 1000
 
 
 def _paid_outline_key_name(subscription: Any) -> str:
@@ -33,9 +33,13 @@ def _paid_outline_key_name(subscription: Any) -> str:
     identity = re.sub(r"[^A-Za-z0-9_-]+", "-", str(raw_identity).lstrip("@")).strip("-_")[
         :48
     ] or str(subscription["telegram_id"])
+    plan_name = str(subscription["plan_name"] or "")
+    named_gb = re.search(r"\b(\d+)\s*GB\b", plan_name, re.IGNORECASE)
     quota = subscription["quota_bytes"]
-    if quota is not None and int(quota) % (1024**3) == 0:
-        tier = f"PAID{int(quota) // (1024**3)}GB"
+    if named_gb:
+        tier = f"PAID{named_gb.group(1)}GB"
+    elif quota is not None and int(quota) % 1_000_000_000 == 0:
+        tier = f"PAID{int(quota) // 1_000_000_000}GB"
     else:
         tier = str(subscription["plan_code"]).upper().replace("_", "-")
     duration = f"{int(subscription['duration_days'])}day"

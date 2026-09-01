@@ -98,7 +98,7 @@ class ClaimServiceTest(unittest.TestCase):
         result = self.service.claim(123, "Min", self.now)
         self.assertEqual(result.access_url, "ss://secret")
         self.assertEqual(result.expires_at, self.now + timedelta(hours=24))
-        self.assertEqual(self.outline.created[0][1], 300 * 1024 * 1024)
+        self.assertEqual(self.outline.created[0][1], 300_000_000)
         self.assertEqual(self.outline.created[0][0], "123-FREE300MB-24hr-202608270307")
 
     def test_claim_key_name_prefers_sanitized_telegram_username(self):
@@ -143,18 +143,18 @@ class ClaimServiceTest(unittest.TestCase):
 
     def test_quota_revokes_before_expiry_and_records_observed_usage(self):
         self.service.claim(123, "Min", self.now)
-        self.outline.transfer = {"1": 300 * 1024 * 1024}
+        self.outline.transfer = {"1": 300_000_000}
 
         self.assertEqual(self.service.enforce_quota(self.now + timedelta(hours=1)), 1)
 
         event = self.service.termination_summary()[0]
         self.assertEqual(event["reason"], "quota")
-        self.assertEqual(event["used_bytes"], 300 * 1024 * 1024)
+        self.assertEqual(event["used_bytes"], 300_000_000)
         self.assertEqual(event["remote_state"], "deleted_verified")
 
     def test_quota_warning_notifications_are_thresholded_and_deduplicated(self):
         self.service.claim(123, "Min", self.now)
-        self.outline.transfer = {"1": 240 * 1024 * 1024}
+        self.outline.transfer = {"1": 240_000_000}
         self.assertEqual(self.service.enforce_quota(self.now + timedelta(hours=1)), 0)
         with self.db.connect() as connection:
             rows = connection.execute(
@@ -173,7 +173,7 @@ class ClaimServiceTest(unittest.TestCase):
             )
 
         # A deeper crossing advances to the next threshold exactly once.
-        self.outline.transfer = {"1": 276 * 1024 * 1024}
+        self.outline.transfer = {"1": 276_000_000}
         self.assertEqual(self.service.enforce_quota(self.now + timedelta(hours=3)), 0)
         with self.db.connect() as connection:
             self.assertEqual(
@@ -209,12 +209,12 @@ class ClaimServiceTest(unittest.TestCase):
     def test_user_usage_reports_only_owned_free_keys(self):
         self.service.claim(123, "Min", self.now)
         self.service.claim(456, "Other", self.now)
-        self.outline.transfer = {"1": 75 * 1024 * 1024, "2": 200 * 1024 * 1024}
+        self.outline.transfer = {"1": 75_000_000, "2": 200_000_000}
         usage = self.service.user_usage(123, self.outline.transfer)
         self.assertEqual(len(usage), 1)
-        self.assertEqual(usage[0]["tier"], "Daily Free 300 MiB")
-        self.assertEqual(usage[0]["used_bytes"], 75 * 1024 * 1024)
-        self.assertEqual(usage[0]["remaining_bytes"], 225 * 1024 * 1024)
+        self.assertEqual(usage[0]["tier"], "Daily Free 300 MB")
+        self.assertEqual(usage[0]["used_bytes"], 75_000_000)
+        self.assertEqual(usage[0]["remaining_bytes"], 225_000_000)
         self.assertTrue(usage[0]["usage_observed"])
 
     def test_database_enforces_one_claim_timestamp_per_user(self):
@@ -1540,7 +1540,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
     def test_maintenance_delivers_free_quota_warning_through_telegram(self):
         now = datetime(2026, 8, 27, 3, 7, tzinfo=UTC)
         self.bot.service.claim(123, "Min", now)
-        self.outline.transfer = {"1": 240 * 1024 * 1024}
+        self.outline.transfer = {"1": 240_000_000}
 
         self.bot._run_maintenance()
 
@@ -2059,12 +2059,12 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
     def test_usage_button_shows_free_key_stats_and_refresh_action(self):
         self.bot.handle(self.message(123, "/claim"))
-        self.outline.transfer = {"1": 150 * 1024 * 1024}
+        self.outline.transfer = {"1": 150_000_000}
         self.bot.handle(self.message(123, "📶 Usage"))
         text = self.bot.sent[-1][1]
-        self.assertIn("Daily Free 300 MiB", text)
-        self.assertIn("Used 150.00 MiB", text)
-        self.assertIn("Remaining 150.00 MiB / 300.00 MiB", text)
+        self.assertIn("Daily Free 300 MB", text)
+        self.assertIn("Used 150.00 MB", text)
+        self.assertIn("Remaining 150.00 MB / 300.00 MB", text)
         self.assertIn("50.0%", text)
         buttons = [button for row in self.bot.markups[-1]["inline_keyboard"] for button in row]
         self.assertIn("🔄 Refresh", {button["text"] for button in buttons})

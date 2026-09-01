@@ -33,6 +33,7 @@ class DigitalOceanPreflightTest(unittest.TestCase):
             "RECEIPT_LLM_BASE_URL": "https://vision.example/v1",
             "RECEIPT_LLM_MODEL": "vision-model",
             "RECEIPT_LLM_API_KEY": "test-key-long-enough",
+            "PAYMENT_RECIPIENTS_JSON": '{"kbzpay":{"names":["merchant"]},"wavepay":{"names":["merchant"]},"ayapay":{"names":["merchant"]},"uabpay":{"names":["merchant"]},"cbpay":{"names":["merchant"]}}',
         }
 
     def tearDown(self):

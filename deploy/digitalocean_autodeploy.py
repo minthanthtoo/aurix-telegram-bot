@@ -40,6 +40,7 @@ RELEASE_GATE_VARIABLES = (
     "RECEIPT_LLM_BASE_URL",
     "RECEIPT_LLM_MODEL",
     "RECEIPT_LLM_API_KEY",
+    "PAYMENT_RECIPIENTS_JSON",
 )
 
 
@@ -158,6 +159,7 @@ def _test_environment() -> dict[str, str]:
             "RECEIPT_LLM_MODEL",
             "RECEIPT_LLM_API_KEY",
             "RECEIPT_LLM_FALLBACK_MODELS",
+            "PAYMENT_RECIPIENTS_JSON",
         }:
             result.pop(name, None)
     result["PYTHONDONTWRITEBYTECODE"] = "1"

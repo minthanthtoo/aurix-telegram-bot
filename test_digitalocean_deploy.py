@@ -56,6 +56,7 @@ class DigitalOceanDeployTest(unittest.TestCase):
             "RECEIPT_LLM_BASE_URL": "https://vision.example/v1",
             "RECEIPT_LLM_MODEL": "vision-model",
             "RECEIPT_LLM_API_KEY": "vision-secret",
+            "PAYMENT_RECIPIENTS_JSON": "configured-secret",
             "RECEIPT_STORAGE_REQUIRED": "1",
         }
         self.assertEqual(missing_release_configuration(environment), [])

@@ -105,9 +105,9 @@ class MvpFeatureTest(unittest.TestCase):
     def test_paid_catalog_contains_50gb_and_100gb_monthly(self):
         plans = {plan.code: plan for plan in self.commerce.plans()}
         self.assertEqual(plans["basic_50gb"].price_minor, 3000)
-        self.assertEqual(plans["basic_50gb"].quota_bytes, 50 * 1024**3)
+        self.assertEqual(plans["basic_50gb"].quota_bytes, 50_000_000_000)
         self.assertEqual(plans["standard_100gb"].price_minor, 6000)
-        self.assertEqual(plans["standard_100gb"].quota_bytes, 100 * 1024**3)
+        self.assertEqual(plans["standard_100gb"].quota_bytes, 100_000_000_000)
 
     def test_receipt_submission_is_idempotent_and_extracts_transaction(self):
         order = self.commerce.create_order(101, "A", "basic_50gb", self.now)
@@ -459,6 +459,59 @@ class MvpFeatureTest(unittest.TestCase):
         self.assertEqual(receipt["extraction_status"], "needs_review")
         self.assertIn("receipt_older_than_1_hour", receipt["extraction"]["flags"])
 
+    def test_async_receipt_age_uses_upload_time_not_late_model_completion(self):
+        order = self.commerce.create_wallet_topup(204, "Delayed", 6000, self.now)
+        self.commerce.choose_payment_method(204, order.order_id, "kbzpay")
+        submitted = self.commerce.submit_receipt(
+            204,
+            order.order_id,
+            "kbzpay",
+            "delayed-file",
+            "delayed-unique",
+            b"delayed-receipt",
+            "image/jpeg",
+            queue_extraction=True,
+            now=self.now,
+        )
+        job = self.commerce.claim_receipt_extraction_job(self.now)
+        self.commerce.finish_receipt_extraction(
+            job["job_id"],
+            submitted["evidence_id"],
+            {
+                "provider": "KBZPay",
+                "completion_status": "completed",
+                "transaction_id": "DELAY-6000",
+                "transaction_id_label": "Transaction ID",
+                "amount_minor": 6000,
+                "currency": "MMK",
+                "timestamp": (self.now - timedelta(minutes=30)).isoformat(),
+                "confidence": 0.99,
+                "flags": [],
+            },
+            now=self.now + timedelta(hours=3),
+        )
+
+        receipt = self.commerce.get_receipt(submitted["evidence_id"])
+        self.assertNotIn("receipt_older_than_1_hour", receipt["extraction"]["flags"])
+
+    def test_selected_payment_method_cannot_be_overwritten_by_model_output(self):
+        order = self.commerce.create_wallet_topup(205, "Provider", 6000, self.now)
+        self.commerce.choose_payment_method(205, order.order_id, "kbzpay")
+        result = self.commerce.submit_receipt(
+            205,
+            order.order_id,
+            "kbzpay",
+            "provider-file",
+            "provider-unique",
+            b"provider-receipt",
+            "image/jpeg",
+            extraction={"provider": "wavepay", "transaction_id": "WRONG-PROVIDER"},
+            now=self.now,
+        )
+
+        receipt = self.commerce.get_receipt(result["evidence_id"])
+        self.assertEqual(receipt["provider"], "kbzpay")
+
     def test_unparsed_receipt_can_be_human_verified(self):
         order = self.commerce.create_order(101, "A", "basic_50gb", self.now)
         evidence = self.commerce.submit_receipt(
@@ -583,7 +636,7 @@ class MvpFeatureTest(unittest.TestCase):
         self.commerce.submit_payment(101, order.order_id, "manual", "TX-2", self.now)
         approval = self.commerce.approve_order(order.order_id, 999, self.now)
         self.commerce.process_jobs(self.now)
-        self.outline.transfer["1"] = 50 * 1024**3
+        self.outline.transfer["1"] = 50_000_000_000
         self.assertEqual(self.commerce.enforce_quotas(self.now), 1)
         self.assertEqual(self.commerce.enforce_quotas(self.now), 0)
         self.commerce.process_jobs(self.now)
@@ -596,7 +649,7 @@ class MvpFeatureTest(unittest.TestCase):
         self.commerce.submit_payment(101, order.order_id, "manual", "TX-WARN", self.now)
         self.commerce.approve_order(order.order_id, 999, self.now)
         self.commerce.process_jobs(self.now)
-        self.outline.transfer["1"] = int(50 * 1024**3 * 0.8)
+        self.outline.transfer["1"] = int(50_000_000_000 * 0.8)
 
         self.assertEqual(self.commerce.enforce_quotas(self.now), 0)
         pending = self.commerce.pending_notifications(self.now)
