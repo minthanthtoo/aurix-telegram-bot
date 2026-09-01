@@ -16,6 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Support both ``python -m deploy.infrastructure_worker`` (systemd) and the
+# direct path form used by operators during a controlled dry run.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from commerce import CommerceDatabase, PostgresCommerceDatabase
 from infrastructure import DigitalOceanClient, FleetController, InfrastructureError
 
@@ -91,6 +96,9 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", help="run one bounded pass (default)")
     args = parser.parse_args()
     del args
+    if not os.environ.get("DIGITALOCEAN_API_TOKEN", "").strip():
+        print("infrastructure_worker: DIGITALOCEAN_API_TOKEN is not configured", file=sys.stderr)
+        return 1
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("w") as lock_file:
         try:
