@@ -1,0 +1,75 @@
+services:
+  - type: worker
+    name: aurix-telegram-bot
+    runtime: python
+    region: singapore
+    plan: starter
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: python deploy/render_preflight.py && python -u app.py
+    maxShutdownDelaySeconds: 30
+    disk:
+      name: aurix-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.4
+      - key: DATABASE_PATH
+        value: /var/data/bot.db
+      - key: AURIX_STORAGE_MODE
+        value: disk
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      - key: TRIAL_TELEGRAM_IDS
+        value: ""
+      - key: OUTLINE_API_URL
+        sync: false
+      - key: OUTLINE_CERT_SHA256
+        sync: false
+      - key: AURIX_ACCESS_URL_KEY
+        sync: false
+      - key: COMMERCE_DATABASE_URL
+        value: ""
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_RECEIPTS_BUCKET
+        value: payment-receipts
+      - key: RECEIPT_STORAGE_REQUIRED
+        value: "1"
+      - key: RECEIPT_LLM_BASE_URL
+        value: ""
+      - key: RECEIPT_LLM_MODEL
+        value: ""
+      - key: RECEIPT_LLM_API_KEY
+        value: ""
+      - key: PAYMENT_QR_KPAY
+        value: ""
+      - key: PAYMENT_RECIPIENT_KPAY
+        value: ""
+      - key: PAYMENT_QR_WAVEPAY
+        value: ""
+      - key: PAYMENT_RECIPIENT_WAVEPAY
+        value: ""
+      - key: PAYMENT_QR_AYAPAY
+        value: ""
+      - key: PAYMENT_RECIPIENT_AYAPAY
+        value: ""
+      - key: PAYMENT_QR_UABPAY
+        value: ""
+      - key: PAYMENT_RECIPIENT_UABPAY
+        value: ""
+      - key: PAYMENT_QR_CBPAY
+        value: ""
+      - key: PAYMENT_RECIPIENT_CBPAY
+        value: ""
+      - key: ALLOW_TEXT_PAYMENT_REFERENCES
+        value: "0"
+      - key: AURIX_MAINTENANCE_INTERVAL_SECONDS
+        value: "60"
+      - key: AURIX_LATENCY_LOG
+        value: "0"
