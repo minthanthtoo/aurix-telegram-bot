@@ -1,29 +1,29 @@
 {
   "campaign": "aurix-tg-bot-quota-control-v2",
   "standard_id": "AURIX-SOCIAL-S1",
-  "version": "r2",
-  "stamp": "20260901-163000",
+  "version": "r3",
+  "stamp": "20260901-183000",
   "canvas": {"width": 1080, "height": 1350, "aspect_ratio": "4:5"},
   "finals": [
     {
-      "id": "tg-bot-quota-control-v2-r2",
-      "image": "20260901-163000_aurix-tg-bot-quota-control-v2_r2.png",
-      "caption": "20260901-163000_aurix-tg-bot-quota-control-v2_r2.txt",
-      "source": "20260901-163000_aurix-tg-bot-quota-control-v2_r2.svg",
+      "id": "tg-bot-quota-control-v2-r3",
+      "image": "20260901-183000_aurix-tg-bot-quota-control-v2_r3.png",
+      "caption": "20260901-183000_aurix-tg-bot-quota-control-v2_r3.txt",
+      "source": "20260901-183000_aurix-tg-bot-quota-control-v2_r3.svg",
       "sha256": {
-        "image": "5a326eb2140be0a1a5c0621fffded68f08bab298537629c0dfc511b1ea2b7053",
-        "caption": "f766ce4ede423461cd878a445476b6d666dbc054c3f68ac282fb30934f145b19",
-        "source": "24cfc2f3d2db56bb5d22671acb71150dddd766dca4e4d06438f0c4814317cea0"
+        "image": "ff3fcec7b2447483988ab58adb293ac2ac43fc3d8b40dd5466b2838516174270",
+        "caption": "06a8309f4ffa64cfc07eb441f1f0549af3a66bb973fab71a3a4ff76df8cb1ad8",
+        "source": "a5fa37c5cbfc206008fd8e588dfca42cc0fed5d9258b3c0b0301680c337072e7"
       }
     }
   ],
-  "preview": "previews/20260901-163000_aurix-tg-bot-quota-control-v2_r2_324x405.png",
+  "preview": "previews/20260901-183000_aurix-tg-bot-quota-control-v2_r3_324x405.png",
   "canonical_brand_assets": [
     "brand/v2/aurix-logo-mark-v2.svg",
     "brand/v4/exports/aurix-telegram-bot-avatar-v4-1024.png",
     "brand/outline/official/outline-client-icon-1024.png"
   ],
-  "language_council": {"model_route": "ag/gemini-3.7-flash-high", "decision": "pass"},
+  "language_council": {"model_route": "ag/gemini-3.7-flash-high", "decision": "final exact copy approved", "score_10": 9.5},
   "publication_gates": {
     "eligibility": "quota controls apply to VPN Keys bought through AuriX",
     "thresholds_remaining": [25, 10, 5],

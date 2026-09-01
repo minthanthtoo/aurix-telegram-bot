@@ -1,6 +1,6 @@
 # AuriX Content Direction Backlog — September 2026
 
-Status: strategy exploration complete; the selected receipt-confidence and quota-control ads are implemented at R2
+Status: strategy exploration complete; the selected receipt-confidence and quota-control ads are implemented at R3
 
 Reference standard: `AURIX-SOCIAL-S1`
 
@@ -28,7 +28,7 @@ Older assets remain evidence and may be reused, but `publish_ready` in an old ma
 | Situation-led seller conversion | `online-seller-access-v2` R4 | Canonical S1 standard |
 | Public Bot launch | `bot-launch-v3` R8 | Implemented; re-audit receipt-speed claim before reuse |
 | Plan and payment comparison | `plan-selector-v1`, `pricing-v2` | Implemented; migrate Telegram modifier and current typography before a new campaign |
-| Quota lookup and warnings | `tg-bot-quota-control-v2` R2 | Implemented in the current identity and typography system |
+| Quota lookup and warnings | `tg-bot-quota-control-v2` R3 | Implemented in the current identity and typography system |
 | 100 GB giveaway/promo | `giveaway-100gb-v2`, `bot-launch-100gbfree-v1` | Implemented but campaign-specific and gated |
 | Setup and retention series | `campaign` V8–V10 | Implemented in an older system; needs S1-era language/brand QA |
 | Platform guides | V8 Android/iOS/Windows/macOS/Linux/ChromeOS | Implemented editorially; verify current steps and official links before reuse |

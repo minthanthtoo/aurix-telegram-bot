@@ -18,3 +18,26 @@ Decision: **PASS**
 - Product plans, five wallets, and all three Telegram destinations are present without crowding the image.
 
 No mandatory language correction was returned for R2.
+
+## R3 exact-copy audit
+
+Score: **8.8/10 — pass with minor polish**
+
+Accepted:
+
+- `စိတ်မချရဘူးနော်` → `စိတ်မအေးရဘူးလား` for a more natural question-led hook in the caption.
+- `ကြိုအသိပေး` → `ကြိုသတိပေး` for clearer warning behavior.
+- `Quota ပြည့်သွားရင်` → `Quota ကုန်သွားရင်`; the noun `Quota` keeps this distinct from mobile-data-package language.
+
+Independently preserved:
+
+- exactly 25%, 10%, and 5% remaining;
+- AuriX-purchased-Key eligibility;
+- My VPN as the lookup destination;
+- no reliability, speed, or uninterrupted-access promise.
+
+## Final exported-copy audit
+
+Decision: **APPROVED · 9.5/10**
+
+Gemini proposed replacing `စိတ်မအေးရဘူးလား` with the more formal `စိတ်မချဖြစ်နေရပါသလား`. The replacement was rejected because it is less conversational and conflicts with AuriX's warm consumer register. No factual, grammatical, or ambiguity issue required changing the exported R3 copy.
