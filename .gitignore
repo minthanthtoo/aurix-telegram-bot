@@ -1,0 +1,62 @@
+.env
+.venv/
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+.coverage
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.DS_Store
+dist/
+.codex/config.toml
+
+# Social/brand media policy: generated and superseded media stays local.
+# Keep only the explicit canonical allowlist below in Git; update this list
+# when a new final replaces an existing campaign or brand master.
+assets/social/**/*.png
+assets/social/**/*.jpg
+assets/social/**/*.jpeg
+assets/social/**/*.webp
+assets/social/**/*.gif
+assets/social/**/*.svg
+brand/**/*.png
+brand/**/*.jpg
+brand/**/*.jpeg
+brand/**/*.webp
+brand/**/*.gif
+brand/**/*.svg
+
+# Major approved social finals and current editable sources.
+!assets/social/bot-launch-v3/exports/20260830-220230_aurix-public-launch-v3_r8.png
+!assets/social/giveaway-100gb-v2/exports/20260830-220230_aurix-100gb-giveaway-v2_r4.png
+!assets/social/online-seller-access-v2/exports/20260901-143000_aurix-online-seller-access-v2_r4.png
+!assets/social/plan-selector-v1/exports/20260830-014129_aurix-three-plans-payment-methods_r3.png
+!assets/social/receipt-confidence-v1/exports/20260901-173000_aurix-receipt-confidence-v1_r3.png
+!assets/social/receipt-confidence-v1/exports/20260901-173000_aurix-receipt-confidence-v1_r3.svg
+!assets/social/setup-rescue-v1/exports/20260901-172500_aurix-setup-rescue-v1_r2.png
+!assets/social/setup-rescue-v1/setup-rescue-v1-r2.svg
+!assets/social/tg-bot-quota-control-v2/exports/20260901-183000_aurix-tg-bot-quota-control-v2_r3.png
+!assets/social/tg-bot-quota-control-v2/exports/20260901-183000_aurix-tg-bot-quota-control-v2_r3.svg
+
+# Canonical AuriX, Outline, and accepted-payment assets.
+!brand/v2/aurix-logo-horizontal-reverse-v2.svg
+!brand/v2/aurix-logo-horizontal-v2.svg
+!brand/v2/aurix-logo-mark-v2.svg
+!brand/v2/aurix-profile-facebook-clean.svg
+!brand/v2/exports/aurix-profile-facebook-clean-1080.png
+!brand/v3/facebook-cover-mobile-safe-v3.svg
+!brand/v3/exports/aurix-facebook-cover-mobile-safe-v3-1640x624.png
+!brand/v4/aurix-telegram-bot-avatar-v4.svg
+!brand/v4/aurix-telegram-channel-avatar-v4.svg
+!brand/v4/aurix-telegram-group-avatar-v4.svg
+!brand/v4/exports/aurix-telegram-bot-avatar-v4-1024.png
+!brand/v4/exports/aurix-telegram-channel-avatar-v4-1024.png
+!brand/v4/exports/aurix-telegram-group-avatar-v4-1024.png
+!brand/outline/official/outline-client-icon-1024.png
+!brand/payments/official/ayapay-app-icon.png
+!brand/payments/official/cbpay-app-icon.jpg
+!brand/payments/official/kbzpay-app-icon.png
+!brand/payments/official/uabpay-app-icon.jpg
+!brand/payments/official/wavepay-app-icon.png

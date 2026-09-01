@@ -1,5 +1,7 @@
 # AuriX Facebook Static Posts
 
+Media tracking follows [MEDIA_TRACKING_POLICY.md](MEDIA_TRACKING_POLICY.md): Git keeps only canonical brand assets and a small set of approved campaign finals. Iterations, previews, generated plates, and superseded exports remain local-only so application deployments stay small.
+
 ## Current standard and roadmap
 
 - `../../docs/AURIX_SOCIAL_STATIC_STANDARD_S1.md` — canonical situation-led Facebook-to-Telegram static standard, based on `online-seller-access-v2` R4.
