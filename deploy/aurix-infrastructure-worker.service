@@ -1,0 +1,27 @@
+[Unit]
+Description=AuriX guarded DigitalOcean infrastructure worker
+After=network-online.target aurix-bot.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/aurix-current
+EnvironmentFile=/etc/aurix-infrastructure/worker.env
+ExecStart=/opt/aurix-current/.venv/bin/python /opt/aurix-current/deploy/infrastructure_worker.py --once
+TimeoutStartSec=90s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/aurix-bot /var/lib/aurix-infrastructure
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+MemoryHigh=256M
+MemoryMax=384M

@@ -13,9 +13,10 @@ UTC = timezone.utc
 
 
 class FakeProvider:
-    def __init__(self, usage="1"):
+    def __init__(self, usage="1", droplets=None):
         self.usage = usage
         self.specifications = []
+        self.droplets = list(droplets or [])
 
     def billing_balance(self):
         return {"month_to_date_usage": self.usage}
@@ -23,6 +24,9 @@ class FakeProvider:
     def create_droplet(self, specification):
         self.specifications.append(specification)
         return {"id": 42, "action_ids": [77]}
+
+    def list_droplets(self):
+        return list(self.droplets)
 
     def action(self, _action_id):
         return {"status": "completed"}
@@ -109,6 +113,72 @@ class FleetControllerTest(unittest.TestCase):
                 "SELECT status FROM infrastructure_jobs WHERE id = ?", (job_id,)
             ).fetchone()["status"]
         self.assertEqual(status, "awaiting_verification")
+
+    def test_existing_managed_provider_nodes_count_toward_limit(self):
+        provider = FakeProvider(
+            droplets=[
+                {"id": 101, "status": "active", "tags": ["aurix-vpn-node"]},
+                {"id": 102, "status": "active", "tags": ["aurix-vpn-node"]},
+                {"id": 999, "status": "active", "tags": ["unrelated"]},
+            ]
+        )
+        controller = FleetController(self.database, provider)
+        with patch.dict(os.environ, {"AURIX_MAX_VPN_NODES": "2"}, clear=False):
+            with self.assertRaisesRegex(InfrastructureError, "node limit"):
+                controller.queue_provision(
+                    region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+                    requested_by=123, now=self.now,
+                )
+
+    def test_budget_uses_existing_nodes_not_only_month_to_date_usage(self):
+        provider = FakeProvider(
+            usage="0.10",
+            droplets=[
+                {"id": 101, "status": "active", "tags": ["aurix-vpn-node"]},
+                {"id": 102, "status": "active", "tags": ["aurix-vpn-node"]},
+            ],
+        )
+        controller = FleetController(self.database, provider)
+        job_id = controller.queue_provision(
+            region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+            requested_by=123, now=self.now,
+        )
+        environment = {
+            "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "17",
+            "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(InfrastructureError, "budget"):
+                controller.execute_provision(job_id)
+
+    def test_provider_inventory_persists_status_without_secret_metadata(self):
+        provider = FakeProvider(
+            droplets=[
+                {
+                    "id": 101,
+                    "status": "active",
+                    "region": {"slug": "sgp1"},
+                    "size_slug": "s-1vcpu-1gb",
+                    "tags": ["aurix-vpn-node"],
+                }
+            ]
+        )
+        controller = FleetController(self.database, provider)
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO outline_servers (server_id, label, provider_resource_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                ("sg-a", "Singapore A", "101", self.now.isoformat(), self.now.isoformat()),
+            )
+        result = controller.reconcile_provider_inventory()
+        self.assertEqual(result, {"managed": 1, "matched": 1, "unmatched": 0})
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT provider_status, provider_last_seen_at FROM outline_servers WHERE server_id = ?",
+                ("sg-a",),
+            ).fetchone()
+        self.assertEqual(row["provider_status"], "active")
+        self.assertTrue(row["provider_last_seen_at"])
 
 
 if __name__ == "__main__":

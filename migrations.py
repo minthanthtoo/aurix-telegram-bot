@@ -622,6 +622,22 @@ COMMERCE_MIGRATIONS = (
         ),
         sqlite_hook=_rebuild_paid_keys_for_server_identity,
     ),
+    Migration(
+        6,
+        "provider_inventory_and_node_identity",
+        sqlite_statements=(
+            "ALTER TABLE outline_servers ADD COLUMN provider_resource_id TEXT",
+            "ALTER TABLE outline_servers ADD COLUMN provider_status TEXT",
+            "ALTER TABLE outline_servers ADD COLUMN provider_last_seen_at TEXT",
+            "CREATE UNIQUE INDEX IF NOT EXISTS outline_servers_provider_resource ON outline_servers(provider_resource_id) WHERE provider_resource_id IS NOT NULL",
+        ),
+        postgres_statements=(
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS provider_resource_id TEXT",
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS provider_status TEXT",
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS provider_last_seen_at TEXT",
+            "CREATE UNIQUE INDEX IF NOT EXISTS outline_servers_provider_resource ON outline_servers(provider_resource_id) WHERE provider_resource_id IS NOT NULL",
+        ),
+    ),
 )
 
 

@@ -70,6 +70,29 @@ class DigitalOceanClient:
             raise InfrastructureError("DigitalOcean create response lacks a Droplet ID")
         return droplet
 
+    def list_droplets(self, *, tag_name: str | None = None) -> list[dict[str, Any]]:
+        """Return all Droplets, following provider pagination safely."""
+        droplets: list[dict[str, Any]] = []
+        page = 1
+        per_page = 100
+        while page <= 100:
+            query = urllib.parse.urlencode({"page": page, "per_page": per_page})
+            if tag_name:
+                query += "&" + urllib.parse.urlencode({"tag_name": tag_name})
+            payload = self._request("GET", f"/droplets?{query}")
+            batch = payload.get("droplets") if isinstance(payload, dict) else None
+            if not isinstance(batch, list):
+                raise InfrastructureError("DigitalOcean response lacks Droplets")
+            droplets.extend(item for item in batch if isinstance(item, dict) and item.get("id"))
+            meta = payload.get("meta") if isinstance(payload, dict) else None
+            total = meta.get("total") if isinstance(meta, dict) else None
+            if not batch or (isinstance(total, int) and len(droplets) >= total) or len(batch) < per_page:
+                break
+            page += 1
+        if page > 100:
+            raise InfrastructureError("DigitalOcean pagination exceeded safety limit")
+        return droplets
+
     def droplet(self, droplet_id: str) -> dict[str, Any]:
         payload = self._request("GET", f"/droplets/{urllib.parse.quote(droplet_id, safe='')}")
         droplet = payload.get("droplet") if isinstance(payload, dict) else None
@@ -102,6 +125,99 @@ class FleetController:
     def _allowlist(name: str, default: str) -> set[str]:
         return {item.strip() for item in os.environ.get(name, default).split(",") if item.strip()}
 
+    @staticmethod
+    def _managed_provider_ids() -> set[str]:
+        raw = os.environ.get("AURIX_MANAGED_DROPLET_IDS", "")
+        return {item.strip() for item in raw.split(",") if item.strip()}
+
+    def _provider_inventory(self) -> list[dict[str, Any]]:
+        """Return provider nodes explicitly owned by AuriX.
+
+        Tags are preferred, with explicit IDs covering pre-existing nodes while
+        an operator is applying tags. A provider inventory failure is allowed to
+        abort admission so a hidden node cannot make the budget unsafe.
+        """
+        if self.provider is None:
+            return []
+        listing = getattr(self.provider, "list_droplets", None)
+        if not callable(listing):
+            return []
+        droplets = listing()
+        managed_ids = self._managed_provider_ids()
+        with self.database.connect() as connection:
+            configured_ids = connection.execute(
+                "SELECT provider_resource_id FROM outline_servers WHERE provider_resource_id IS NOT NULL"
+            ).fetchall()
+        managed_ids.update(str(row["provider_resource_id"]) for row in configured_ids)
+        managed_tag = os.environ.get("AURIX_MANAGED_DROPLET_TAG", "aurix-vpn-node").strip()
+        result: list[dict[str, Any]] = []
+        for droplet in droplets:
+            tags = {str(tag) for tag in (droplet.get("tags") or [])}
+            if str(droplet.get("id")) in managed_ids or managed_tag in tags:
+                result.append(droplet)
+        return result
+
+    def _known_node_count(self, provider_inventory: list[dict[str, Any]] | None = None) -> int:
+        with self.database.connect() as connection:
+            database_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
+                ).fetchone()["n"]
+            )
+            job_count = int(
+                connection.execute(
+                    """SELECT COUNT(*) AS n FROM infrastructure_jobs
+                       WHERE operation = 'provision' AND status IN
+                       ('running', 'awaiting_verification', 'completed')"""
+                ).fetchone()["n"]
+            )
+        provider_count = len(provider_inventory or [])
+        return max(database_count, job_count, provider_count)
+
+    def reconcile_provider_inventory(self) -> dict[str, int]:
+        """Persist a sanitized observation of managed provider Droplets."""
+        if self.provider is None:
+            raise InfrastructureError("DigitalOcean provider is not configured")
+        inventory = self._provider_inventory()
+        now_text = datetime.now(UTC).isoformat()
+        matched = 0
+        unmatched = 0
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            for droplet in inventory:
+                provider_id = str(droplet["id"])
+                status = str(droplet.get("status") or "unknown")[:32]
+                region = droplet.get("region") if isinstance(droplet.get("region"), dict) else {}
+                updated = connection.execute(
+                    """UPDATE outline_servers
+                       SET provider_status = ?, provider_last_seen_at = ?, updated_at = ?
+                       WHERE provider_resource_id = ?""",
+                    (status, now_text, now_text, provider_id),
+                ).rowcount
+                if updated:
+                    matched += 1
+                else:
+                    unmatched += 1
+                connection.execute(
+                    """INSERT INTO infrastructure_events
+                       (id, event_type, metadata_json, created_at)
+                       VALUES (?, 'provider_inventory_observed', ?, ?)""",
+                    (
+                        uuid.uuid4().hex,
+                        json.dumps(
+                            {
+                                "provider_resource_id": provider_id,
+                                "status": status,
+                                "region": str(region.get("slug") or "")[:32],
+                                "size": str(droplet.get("size_slug") or "")[:64],
+                            },
+                            sort_keys=True,
+                        ),
+                        now_text,
+                    ),
+                )
+        return {"managed": len(inventory), "matched": matched, "unmatched": unmatched}
+
     def queue_provision(
         self,
         *,
@@ -129,6 +245,17 @@ class FleetController:
             json.dumps({**request, "window": window}, sort_keys=True).encode()
         ).hexdigest()
         now_text = current.isoformat()
+        # Preserve idempotency during a provider outage: an already-created
+        # request must be returned without requiring a fresh inventory call.
+        with self.database.connect() as connection:
+            existing = connection.execute(
+                "SELECT id FROM infrastructure_jobs WHERE request_fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+        if existing is not None:
+            return str(existing["id"])
+        provider_inventory = self._provider_inventory()
+        node_count = self._known_node_count(provider_inventory)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             existing = connection.execute(
@@ -137,11 +264,6 @@ class FleetController:
             ).fetchone()
             if existing is not None:
                 return str(existing["id"])
-            node_count = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
-                ).fetchone()["n"]
-            )
             if node_count >= max(1, int(os.environ.get("AURIX_MAX_VPN_NODES", "3"))):
                 raise InfrastructureError("Configured VPN node limit has been reached")
             day_start = current.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -186,7 +308,7 @@ class FleetController:
             )
         return job_id
 
-    def _budget_guard(self) -> None:
+    def _budget_guard(self, *, existing_nodes: int = 0) -> None:
         maximum = os.environ.get("AURIX_MAX_MONTHLY_INFRA_BUDGET_USD", "").strip()
         if not maximum:
             raise InfrastructureError("A monthly infrastructure budget must be configured")
@@ -198,13 +320,28 @@ class FleetController:
             usage = Decimal(str(self.provider.billing_balance().get("month_to_date_usage", "")))
         except (InvalidOperation, ValueError, TypeError, AttributeError) as exc:
             raise InfrastructureError("DigitalOcean budget data is invalid") from exc
-        if budget <= 0 or estimate <= 0 or usage < 0 or usage + estimate > budget:
+        committed = Decimal(max(0, int(existing_nodes))) * estimate
+        if (
+            budget <= 0
+            or estimate <= 0
+            or usage < 0
+            or committed + estimate > budget
+            or usage + estimate > budget
+        ):
             raise InfrastructureError("Configured monthly infrastructure budget would be exceeded")
 
     def execute_provision(self, job_id: str) -> dict[str, Any]:
         if not _enabled("AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED"):
             raise InfrastructureError("Infrastructure mutations are disabled")
-        self._budget_guard()
+        with self.database.connect() as connection:
+            pending = connection.execute(
+                "SELECT id FROM infrastructure_jobs WHERE id = ? AND status = 'pending'",
+                (job_id,),
+            ).fetchone()
+        if pending is None:
+            raise InfrastructureError("Provisioning job is not pending")
+        provider_inventory = self._provider_inventory()
+        self._budget_guard(existing_nodes=self._known_node_count(provider_inventory))
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             job = connection.execute(

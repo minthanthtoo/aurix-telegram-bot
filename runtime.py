@@ -90,6 +90,7 @@ def main() -> None:
         receipt_storage = NullReceiptStorage()
     database.initialize()
     server_labels: dict[str, str] = {}
+    server_provider_ids: dict[str, str] = {}
     if servers_json:
         try:
             configured_servers = json.loads(servers_json)
@@ -106,6 +107,11 @@ def main() -> None:
                     str(item.get("api_url") or ""), str(item.get("cert_sha256") or "")
                 )
                 server_labels[server_id] = str(item.get("label") or server_id)[:64]
+                provider_resource_id = str(item.get("provider_resource_id") or "").strip()
+                if provider_resource_id:
+                    if not re.fullmatch(r"\d{1,20}", provider_resource_id):
+                        raise ValueError("provider_resource_id must be a numeric Droplet ID")
+                    server_provider_ids[server_id] = provider_resource_id
             default_server_id = str(
                 os.environ.get("OUTLINE_DEFAULT_SERVER_ID", "").strip() or next(iter(clients))
             )
@@ -131,7 +137,7 @@ def main() -> None:
     commerce.initialize()
     register_servers = getattr(commerce, "register_outline_servers", None)
     if callable(register_servers):
-        register_servers(server_labels)
+        register_servers(server_labels, provider_resource_ids=server_provider_ids)
     order_reconciliation = commerce.reconcile_duplicate_open_orders()
     if order_reconciliation["cancelled"]:
         print(f"Reconciled {order_reconciliation['cancelled']} empty duplicate open order(s).")

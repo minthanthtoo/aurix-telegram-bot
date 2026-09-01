@@ -66,7 +66,11 @@ Not implemented or intentionally not automatic:
 - no automatic activation from a merely `active` Droplet state;
 - no automatic migration of existing customer keys between servers.
 
-These are safety boundaries, not missing wiring.
+The provider worker now has a bounded, lock-protected one-pass entrypoint and
+systemd timer. It reconciles existing tagged/explicitly managed Droplets before
+enforcing node and budget limits. Provider inventory and committed monthly
+run-rate are safety inputs; month-to-date billing alone is not treated as the
+monthly commitment.
 
 ## 3. Runtime topology
 
@@ -265,13 +269,19 @@ AURIX_MAX_NODE_CREATIONS_PER_DAY=1
 AURIX_NODE_CREATION_COOLDOWN_SECONDS=86400
 AURIX_MAX_MONTHLY_INFRA_BUDGET_USD=18
 AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD=6
+AURIX_MANAGED_DROPLET_TAG=aurix-vpn-node
+# Until provider tags are verified, set this to the actual DigitalOcean
+# Droplet IDs (not public IP addresses) for the existing AuriX nodes.
+AURIX_MANAGED_DROPLET_IDS=<droplet-id-for-sg-a>,<droplet-id-for-sg-b>
 AURIX_SCALE_PREPARE_UTILIZATION_PERCENT=75
 AURIX_SCALE_URGENT_UTILIZATION_PERCENT=90
 ```
 
 Safe default is disabled. The budget is mandatory when mutation is enabled and
-fails closed on invalid/unavailable billing data. `user_data` is not accepted;
-new nodes require an operator verification step.
+fails closed on invalid/unavailable billing data. Existing managed Droplets are
+counted by provider inventory and the configured ID bridge until tags are
+verified. `user_data` is not accepted; new nodes require an operator verification
+step.
 
 ## 13. Scale-out decision
 
@@ -287,7 +297,7 @@ new nodes require an operator verification step.
 - Database: persistent SQLite remains valid for the one-host control plane;
   PostgreSQL is mandatory before a second writer/control host.
 
-The live fleet reported 16 remote keys against 20 saleable slots on 2 September
+The live fleet reported 17 remote keys against 20 saleable slots on 2 September
 2026, so its posture is **Prepare**. Provisioning and verifying the second node
 is the next operator action; raising the first node's declared limit merely to
 silence the warning is not acceptable capacity planning.
@@ -349,7 +359,7 @@ OUTLINE_CERT_SHA256=64-hex-fingerprint
 Fleet configuration replaces those variables:
 
 ```dotenv
-OUTLINE_SERVERS_JSON=[{"id":"sg-a","label":"Singapore A","api_url":"https://host:port/secret","cert_sha256":"64hex"},{"id":"sg-b","label":"Singapore B","api_url":"https://host:port/secret","cert_sha256":"64hex"}]
+OUTLINE_SERVERS_JSON=[{"id":"sg-a","label":"Singapore A","provider_resource_id":"<droplet-id>","api_url":"https://host:port/secret","cert_sha256":"64hex"},{"id":"sg-b","label":"Singapore B","provider_resource_id":"<droplet-id>","api_url":"https://host:port/secret","cert_sha256":"64hex"}]
 OUTLINE_DEFAULT_SERVER_ID=sg-a
 AURIX_SERVER_HEALTH_MAX_AGE_SECONDS=900
 ```
@@ -371,6 +381,23 @@ Before merging/deploying a fleet change:
 8. create one test key on the intended server;
 9. verify `/myvpn`, usage, quota delete, and expiry use that server;
 10. confirm no Management URL/access URL appears in logs or database metadata.
+
+The infrastructure worker is installed separately from the bot:
+
+```sh
+install -d -o root -g root -m 0700 /etc/aurix-infrastructure /var/lib/aurix-infrastructure
+install -o root -g root -m 0644 deploy/aurix-infrastructure-worker.service /etc/systemd/system/
+install -o root -g root -m 0644 deploy/aurix-infrastructure-worker.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now aurix-infrastructure-worker.timer
+systemctl start aurix-infrastructure-worker.service
+systemctl --no-pager --full status aurix-infrastructure-worker.timer
+```
+
+Keep `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=0` during installation and canary
+verification. A worker pass may reconcile an already-created provider action,
+but it never makes a Droplet customer-eligible. Only the owner-approved,
+post-verification procedure may enable new admission.
 
 ## 18. Failure matrix
 
@@ -399,9 +426,10 @@ three-node/$18 envelope above, a 24-hour creation cooldown, no automatic destroy
 and SQLite until a second control-plane writer exists. The current 80% posture
 means prepare node two.
 
-One external prerequisite cannot be invented by code: a scoped DigitalOcean API
-token is not configured. Until the owner creates and installs that credential in
-the separate infrastructure-worker environment, provider mutation remains off
-and node two is created manually. This is an unavailable credential, not an
-architectural uncertainty. A future non-Outline transport must prove replicated
-identity/quota state before any load-balanced design is reconsidered.
+The scoped DigitalOcean API token is installed only in the separate
+infrastructure-worker environment and provider mutation remains off by default.
+The existing second Droplet is not yet customer-eligible until Outline is
+installed, its pinned Management API endpoint is registered, inventory is
+healthy, and the owner declares allocations. A future non-Outline transport
+must prove replicated identity/quota state before any load-balanced design is
+reconsidered.

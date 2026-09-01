@@ -141,9 +141,15 @@ class CommerceService(CommerceWorkerMixin):
     def initialize(self) -> None:
         self.database.initialize()
 
-    def register_outline_servers(self, labels: dict[str, str] | None = None) -> None:
+    def register_outline_servers(
+        self,
+        labels: dict[str, str] | None = None,
+        *,
+        provider_resource_ids: dict[str, str] | None = None,
+    ) -> None:
         """Persist non-secret metadata for every environment-configured server."""
         labels = labels or {}
+        provider_resource_ids = provider_resource_ids or {}
         server_ids = (
             self.outline.server_ids()
             if callable(getattr(self.outline, "server_ids", None))
@@ -155,11 +161,20 @@ class CommerceService(CommerceWorkerMixin):
             for server_id in server_ids:
                 connection.execute(
                     """INSERT INTO outline_servers
-                       (server_id, label, created_at, updated_at)
-                       VALUES (?, ?, ?, ?)
+                       (server_id, label, provider_resource_id, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?)
                        ON CONFLICT(server_id) DO UPDATE SET
-                         label = excluded.label, updated_at = excluded.updated_at""",
-                    (server_id, labels.get(server_id, server_id), now_text, now_text),
+                         label = excluded.label,
+                         provider_resource_id = COALESCE(excluded.provider_resource_id,
+                                                         outline_servers.provider_resource_id),
+                         updated_at = excluded.updated_at""",
+                    (
+                        server_id,
+                        labels.get(server_id, server_id),
+                        provider_resource_ids.get(server_id),
+                        now_text,
+                        now_text,
+                    ),
                 )
             placeholders = ",".join("?" for _ in server_ids)
             connection.execute(

@@ -66,7 +66,7 @@ Required variables:
 Optional:
 
 - `DATABASE_PATH` — default `data/bot.db`
-- `OUTLINE_SERVERS_JSON` — optional multi-server array of `{id,label,api_url,cert_sha256}`. It replaces the single-server URL/fingerprint pair; keep it only in the host's secret environment.
+- `OUTLINE_SERVERS_JSON` — optional multi-server array of `{id,label,provider_resource_id,api_url,cert_sha256}`. `provider_resource_id` is the numeric DigitalOcean Droplet ID (never an IP address); keep the complete value only in the host's secret environment.
 - `OUTLINE_DEFAULT_SERVER_ID` — fallback for legacy records; new free, promo,
   and paid issuance uses fresh health and declared capacity across the pool.
 - `AURIX_SERVER_HEALTH_MAX_AGE_SECONDS` — maximum age of inventory telemetry

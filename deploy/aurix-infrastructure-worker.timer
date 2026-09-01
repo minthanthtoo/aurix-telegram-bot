@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll guarded AuriX infrastructure jobs
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=aurix-infrastructure-worker.service
+
+[Install]
+WantedBy=timers.target

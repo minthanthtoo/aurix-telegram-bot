@@ -74,6 +74,7 @@ def main() -> None:
             seen = set()
             for server in servers:
                 server_id = str(server.get("id") or "")
+                provider_resource_id = str(server.get("provider_resource_id") or "").strip()
                 parsed = urlsplit(str(server.get("api_url") or ""))
                 fingerprint = str(server.get("cert_sha256") or "").lower().replace(":", "")
                 if (
@@ -84,6 +85,7 @@ def main() -> None:
                     or not parsed.path.strip("/")
                     or len(fingerprint) != 64
                     or any(char not in "0123456789abcdef" for char in fingerprint)
+                    or (provider_resource_id and not re.fullmatch(r"\d{1,20}", provider_resource_id))
                 ):
                     raise ValueError
                 seen.add(server_id)

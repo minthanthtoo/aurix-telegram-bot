@@ -65,6 +65,7 @@ def _validate_configuration() -> dict[str, str]:
                 raise ValueError
             for server in servers:
                 parsed = urlsplit(str(server.get("api_url") or ""))
+                provider_resource_id = str(server.get("provider_resource_id") or "").strip()
                 fingerprint = str(server.get("cert_sha256") or "").replace(":", "")
                 if (
                     not str(server.get("id") or "").strip()
@@ -72,6 +73,7 @@ def _validate_configuration() -> dict[str, str]:
                     or not parsed.hostname
                     or not parsed.path.strip("/")
                     or not re.fullmatch(r"[0-9a-fA-F]{64}", fingerprint)
+                    or (provider_resource_id and not re.fullmatch(r"\d{1,20}", provider_resource_id))
                 ):
                     raise ValueError
         except (AttributeError, TypeError, ValueError, json.JSONDecodeError):

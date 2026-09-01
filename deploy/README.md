@@ -69,8 +69,12 @@ OUTLINE_API_URL=replace-with-installer-output
 OUTLINE_CERT_SHA256=replace-with-installer-output
 # For multiple servers, replace the two lines above with root-only
 # OUTLINE_SERVERS_JSON and choose a legacy fallback ID.
-# OUTLINE_SERVERS_JSON=[{"id":"sg-a","label":"Singapore A","api_url":"https://host:port/secret","cert_sha256":"64hex"}]
+# OUTLINE_SERVERS_JSON=[{"id":"sg-a","label":"Singapore A","provider_resource_id":"<droplet-id>","api_url":"https://host:port/secret","cert_sha256":"64hex"}]
 # OUTLINE_DEFAULT_SERVER_ID=sg-a
+# Optional provider identity metadata. Use actual DigitalOcean Droplet IDs,
+# never public IP addresses; tags become the long-term source of truth.
+# AURIX_MANAGED_DROPLET_IDS=<sg-a-droplet-id>,<sg-b-droplet-id>
+# AURIX_MANAGED_DROPLET_TAG=aurix-vpn-node
 AURIX_SERVER_HEALTH_MAX_AGE_SECONDS=900
 AURIX_ACCESS_URL_KEY=replace-with-a-persistent-fernet-key
 DATABASE_PATH=/var/lib/aurix-bot/bot.db
@@ -140,6 +144,22 @@ systemctl enable --now aurix-bot
 systemctl --no-pager --full status aurix-bot
 journalctl -u aurix-bot -n 100 --no-pager
 ```
+
+Install the guarded infrastructure worker separately. It has its own root-only
+environment containing the scoped DigitalOcean token and defaults to no
+provider mutations:
+
+```sh
+install -d -o root -g root -m 0700 /etc/aurix-infrastructure /var/lib/aurix-infrastructure
+install -o root -g root -m 0644 deploy/aurix-infrastructure-worker.service /etc/systemd/system/
+install -o root -g root -m 0644 deploy/aurix-infrastructure-worker.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now aurix-infrastructure-worker.timer
+```
+
+The worker only processes durable jobs and stops at `awaiting_verification`.
+Do not set `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1` until provider inventory,
+budget, Outline installation, firewall restrictions and canary tests have passed.
 
 Use `/start`, `/claim`, `/trial`, `/plans`, `/buy`, send a receipt screenshot,
 `/receipts`, `/receipt`, `/verify`, `/approve`, `/myvpn`, and `/capacity` with an owner test
