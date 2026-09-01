@@ -276,6 +276,8 @@ AURIX_MANAGED_DROPLET_TAG=aurix-vpn-node
 AURIX_MANAGED_DROPLET_IDS=<droplet-id-for-sg-a>,<droplet-id-for-sg-b>
 AURIX_SCALE_PREPARE_UTILIZATION_PERCENT=75
 AURIX_SCALE_URGENT_UTILIZATION_PERCENT=90
+AURIX_SCALE_PREPARE_TRAFFIC_PERCENT=75
+AURIX_SCALE_URGENT_TRAFFIC_PERCENT=90
 ```
 
 Safe default is disabled. The budget is mandatory when mutation is enabled and
@@ -303,7 +305,7 @@ The live fleet reported 17 remote keys against 20 saleable slots on 2 September
 is the next operator action; raising the first node's declared limit merely to
 silence the warning is not acceptable capacity planning.
 
-Do not scale on one CPU spike. The admin panel may show the current posture
+Do not scale on one CPU spike or one transient traffic observation. The admin panel may show the current posture
 immediately; before a provider job is approved, confirm two or more consecutive
 fresh observation windows show a real admission problem, such as:
 

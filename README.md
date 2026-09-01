@@ -92,7 +92,8 @@ Optional:
 
 Optional DigitalOcean fleet creation belongs to a separate operator worker.
 It is off by default and requires explicit allowlists, node/day/cooldown limits,
-and a monthly budget. The final MVP envelope is assisted scaling at 75%/90%,
+and a monthly budget. The final MVP envelope is assisted scaling at 75%/90%
+key or declared-traffic utilization,
 up to three Singapore 1 GB nodes, one creation per 24 hours, and an $18/month
 node ceiling. Do not put `DIGITALOCEAN_API_TOKEN` in the normal bot
 service. The exact gates and manual Outline verification step are documented in

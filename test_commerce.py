@@ -508,6 +508,22 @@ class CommerceServiceTest(unittest.TestCase):
                 0,
             )
 
+    def test_scale_advice_considers_declared_traffic_commitment(self):
+        advice = CommerceService._scale_advice(
+            [
+                {
+                    "enabled": 1,
+                    "health_status": "healthy",
+                    "saleable_key_capacity": 20,
+                    "key_demand": 2,
+                    "monthly_traffic_bytes": 1_000,
+                    "committed_traffic_bytes": 800,
+                }
+            ]
+        )
+        self.assertEqual(advice["status"], "prepare")
+        self.assertEqual(advice["traffic_utilization_percent"], 80.0)
+
     def test_plan_allocation_reserves_capacity_before_payment_and_releases_on_cancel(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)

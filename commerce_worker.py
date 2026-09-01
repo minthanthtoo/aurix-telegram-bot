@@ -1031,15 +1031,33 @@ class CommerceWorkerMixin:
         utilization = (
             100.0 if total_capacity <= 0 else min(100.0, total_demand / total_capacity * 100)
         )
+        traffic_ratios = [
+            min(
+                100.0,
+                max(0, int(item.get("committed_traffic_bytes") or 0))
+                / max(1, int(item["monthly_traffic_bytes"]))
+                * 100,
+            )
+            for item in healthy
+            if item.get("monthly_traffic_bytes") is not None
+        ]
+        traffic_utilization = max(traffic_ratios, default=None)
         prepare_at = threshold("AURIX_SCALE_PREPARE_UTILIZATION_PERCENT", 75)
         urgent_at = max(
             prepare_at,
             threshold("AURIX_SCALE_URGENT_UTILIZATION_PERCENT", 90),
         )
-        if utilization >= urgent_at or remaining <= 1:
+        traffic_prepare_at = threshold("AURIX_SCALE_PREPARE_TRAFFIC_PERCENT", prepare_at)
+        traffic_urgent_at = max(
+            traffic_prepare_at,
+            threshold("AURIX_SCALE_URGENT_TRAFFIC_PERCENT", urgent_at),
+        )
+        urgent_traffic = traffic_utilization is not None and traffic_utilization >= traffic_urgent_at
+        prepare_traffic = traffic_utilization is not None and traffic_utilization >= traffic_prepare_at
+        if utilization >= urgent_at or urgent_traffic or remaining <= 1:
             status = "urgent"
             message = "Add and verify another Outline node before accepting more demand."
-        elif utilization >= prepare_at:
+        elif utilization >= prepare_at or prepare_traffic:
             status = "prepare"
             message = "Prepare and verify the next Outline node now."
         else:
@@ -1050,6 +1068,9 @@ class CommerceWorkerMixin:
             "utilization_percent": round(utilization, 1),
             "remaining_slots": remaining,
             "saleable_capacity": total_capacity,
+            "traffic_utilization_percent": (
+                None if traffic_utilization is None else round(traffic_utilization, 1)
+            ),
             "message": message,
         }
 
