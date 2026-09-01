@@ -1,13 +1,26 @@
+import stat
+import tempfile
 import unittest
+from pathlib import Path
 
 from deploy.digitalocean_autodeploy import (
     ci_conclusion,
     github_slug,
+    make_release_traversable,
     missing_release_configuration,
 )
 
 
 class DigitalOceanDeployTest(unittest.TestCase):
+    def test_root_built_release_is_traversable_by_service_user(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary) / "release"
+            release.mkdir(mode=0o700)
+
+            make_release_traversable(release)
+
+            self.assertEqual(stat.S_IMODE(release.stat().st_mode), 0o755)
+
     def test_release_gate_reports_names_without_secret_values(self):
         environment = {
             "SUPABASE_URL": "https://project.supabase.co",

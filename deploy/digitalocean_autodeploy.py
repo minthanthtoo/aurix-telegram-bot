@@ -163,6 +163,11 @@ def _test_environment() -> dict[str, str]:
     return result
 
 
+def make_release_traversable(release: Path) -> None:
+    """Allow the unprivileged bot service to enter a root-built release."""
+    release.chmod(0o755)
+
+
 def build_release(repository: Path, sha: str) -> Path:
     RELEASES_DIR.mkdir(parents=True, exist_ok=True)
     target = RELEASES_DIR / sha
@@ -206,6 +211,7 @@ def build_release(repository: Path, sha: str) -> Path:
             cwd=build,
             timeout=120,
         )
+        make_release_traversable(build)
         build.rename(target)
         return target
     except Exception:
