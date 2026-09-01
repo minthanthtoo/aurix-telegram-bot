@@ -92,7 +92,9 @@ class TelegramCommandMixin:
                 self._customer_inputs.pop(int(telegram_id), None)
                 customer_text = f"/topup {normalized_amount}"
         pending_receipt = self._receipt_verify_inputs.get(int(telegram_id))
-        menu_navigation = raw_text in self.CUSTOMER_BUTTON_COMMANDS or raw_text in self.ADMIN_BUTTON_COMMANDS
+        menu_navigation = (
+            raw_text in self.CUSTOMER_BUTTON_COMMANDS or raw_text in self.ADMIN_BUTTON_COMMANDS
+        )
         if pending_receipt and (menu_navigation or raw_text.startswith("/")):
             self._receipt_verify_inputs.pop(int(telegram_id), None)
             pending_receipt = None
@@ -337,11 +339,14 @@ class TelegramCommandMixin:
             elif result.outcome == "ineligible":
                 self.send(chat["id"], f"This account is not eligible: {result.reason}")
             elif result.outcome == "scheduled":
-                self.send(chat["id"], "This promo has not started yet. Open Plans later to refresh.")
+                self.send(
+                    chat["id"], "This promo has not started yet. Open Plans later to refresh."
+                )
             elif result.outcome in {"ended", "paused", "unavailable"}:
                 self.send(
                     chat["id"],
-                    result.reason or "This promo is not active. Your regular plans remain available.",
+                    result.reason
+                    or "This promo is not active. Your regular plans remain available.",
                     self._customer_keyboard(telegram_id),
                 )
             else:
@@ -377,7 +382,9 @@ class TelegramCommandMixin:
         elif command == "/owner":
             staff = self.staff_access.list_staff() if self.staff_access is not None else []
             admins = sum(1 for item in staff if item.get("role") == "admin")
-            control_group = self.staff_access.control_group() if self.staff_access is not None else None
+            control_group = (
+                self.staff_access.control_group() if self.staff_access is not None else None
+            )
             snapshot = self._admin_call(telegram_id, "receipt_system_snapshot")
             mode = str((snapshot.get("policy") or {}).get("mode") or "manual")
             self.send(
@@ -409,7 +416,9 @@ class TelegramCommandMixin:
                     rows.append([(f"Remove {str(name)[:24]}", f"a:s:remove:{staff_id}")])
             lines.extend(["", "To add someone, ask them to open this bot and use /whoami first."])
             rows.append([("➕ Add Administrator", "a:s:add")])
-            rows.append([("🏢 Choose Control Group", "a:s:group"), ("🔄 Sync Preview", "a:n:groupsync")])
+            rows.append(
+                [("🏢 Choose Control Group", "a:s:group"), ("🔄 Sync Preview", "a:n:groupsync")]
+            )
             rows.append([("⬅ Owner Home", "a:n:owner")])
             self.send(chat["id"], "\n".join(lines), self._inline_keyboard(rows))
         elif command == "/notifications":
@@ -424,7 +433,11 @@ class TelegramCommandMixin:
                     self.send(chat["id"], str(exc) or "Administrator could not be added.")
                 else:
                     self._refresh_staff_scopes()
-                    self.send(chat["id"], f"Administrator added: {staff.get('effective_username') or staff['telegram_id']}", self._owner_keyboard())
+                    self.send(
+                        chat["id"],
+                        f"Administrator added: {staff.get('effective_username') or staff['telegram_id']}",
+                        self._owner_keyboard(),
+                    )
         elif command == "/removeadmin":
             if len(args) != 1:
                 self.send(chat["id"], "Usage: /removeadmin <Telegram numeric ID>")
@@ -436,7 +449,11 @@ class TelegramCommandMixin:
                     self.send(chat["id"], str(exc) or "Administrator could not be removed.")
                 else:
                     self._refresh_staff_scopes()
-                    self.send(chat["id"], f"Administrator {target_id} was revoked immediately.", self._owner_keyboard())
+                    self.send(
+                        chat["id"],
+                        f"Administrator {target_id} was revoked immediately.",
+                        self._owner_keyboard(),
+                    )
         elif command == "/groupsync":
             if self.control_group_id is None:
                 self._send_control_group_picker(chat["id"])
@@ -447,7 +464,11 @@ class TelegramCommandMixin:
                         self.control_group_id, telegram_id, group_owner, group_admins
                     )
                 except Exception as exc:
-                    self.send(chat["id"], f"Group sync preview unavailable: {str(exc)[:240]}", self._owner_keyboard())
+                    self.send(
+                        chat["id"],
+                        f"Group sync preview unavailable: {str(exc)[:240]}",
+                        self._owner_keyboard(),
+                    )
                 else:
                     self.send(
                         chat["id"],
@@ -470,26 +491,25 @@ class TelegramCommandMixin:
                 except Exception as exc:
                     self.send(chat["id"], str(exc) or "Receipt mode could not be changed.")
                 else:
-                    self.send(chat["id"], f"Receipt workflow changed to {policy['mode'].title()}. Financial approval remains human-verified.", self._receipt_system_keyboard())
+                    self.send(
+                        chat["id"],
+                        f"Receipt workflow changed to {policy['mode'].title()}. Financial approval remains human-verified.",
+                        self._receipt_system_keyboard(),
+                    )
         elif command == "/receipttest":
             self._receipt_test_waiting.add(telegram_id)
             self.send(
                 chat["id"],
                 "🧪 Safe Receipt Test\n\nSend one actual receipt image now. It will be processed as a diagnostic only—no order, payment, wallet credit, subscription or VPN key can be created. Temporary storage is deleted after the test.",
-                self._inline_keyboard([[('Cancel Test', 'a:t:cancel'), ('Last Test', 'a:t:last')]]),
+                self._inline_keyboard([[("Cancel Test", "a:t:cancel"), ("Last Test", "a:t:last")]]),
             )
         elif command == "/promo":
-            promo = self._admin_service_call(
-                telegram_id, "giveaway_status", telegram_id
-            )
+            promo = self._admin_service_call(telegram_id, "giveaway_status", telegram_id)
             if not promo["exists"]:
                 self.send(chat["id"], "No promo campaign is configured.")
             else:
                 quota = self._promo_quota_label(promo["quota_bytes"])
-                example = (
-                    "/setpromo NEWCODE 100 30 5 campaign "
-                    "2026-09-01T00:00Z 2026-09-30T23:59Z"
-                )
+                example = "/setpromo NEWCODE 100 30 5 campaign 2026-09-01T00:00Z 2026-09-30T23:59Z"
                 buttons = self._promo_code_buttons(str(promo["code"]), include_copy=True)
                 rows: list[list[dict[str, Any]]] = []
                 if buttons:
@@ -675,6 +695,8 @@ class TelegramCommandMixin:
             # /status and /usage remain safe aliases for links and old Telegram
             # keyboards, but My VPN is the single customer-facing dashboard.
             self._send_my_vpn(chat["id"], telegram_id)
+        elif command == "/alerts":
+            self._send_quota_alert_settings(chat["id"], telegram_id)
         elif command == "/keysastext":
             self._send_my_vpn(chat["id"], telegram_id, show_key_text=True)
         elif command == "/renew":
@@ -880,8 +902,15 @@ class TelegramCommandMixin:
                         print(f"receipt review media error: {type(exc).__name__}", file=sys.stderr)
                         self.send(
                             chat["id"],
-                            "Receipt metadata exists, but Telegram no longer accepts its stored "
-                            "file ID. Ask the customer to submit the screenshot again.",
+                            "⚠️ Receipt evidence is recorded, but its image could not be loaded "
+                            "from private storage or Telegram right now. Retry first; request a new "
+                            "screenshot only if it remains unavailable.",
+                            self._inline_keyboard(
+                                [
+                                    [("🔄 Retry Receipt", f"a:r:{receipt['id']}")],
+                                    [("View Order", f"a:o:{receipt['order_id']}")],
+                                ]
+                            ),
                         )
         elif command == "/verify":
             if not self._is_admin(telegram_id):
@@ -1230,9 +1259,7 @@ class TelegramCommandMixin:
             chat_info = self.request("getChat", {"chat_id": group_id})
             member_count = self.request("getChatMemberCount", {"chat_id": group_id})
             title = (
-                str(chat_info.get("title") or "").strip()
-                if isinstance(chat_info, dict)
-                else ""
+                str(chat_info.get("title") or "").strip() if isinstance(chat_info, dict) else ""
             ) or str(shared.get("title") or "").strip()
             self.staff_access.bind_control_group(group_id, telegram_id, title=title)
             self.control_group_id = group_id
@@ -1251,9 +1278,7 @@ class TelegramCommandMixin:
             )
             return
         active_admins = sum(
-            1
-            for item in self.staff_access.list_staff()
-            if item.get("role") == "admin"
+            1 for item in self.staff_access.list_staff() if item.get("role") == "admin"
         )
         self.send(
             chat_id,

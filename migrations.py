@@ -235,6 +235,34 @@ FREE_ACCESS_MIGRATIONS = (
                )""",
         ),
     ),
+    Migration(
+        7,
+        "customer_quota_alert_preferences",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS user_quota_alert_preferences (
+                   telegram_id INTEGER PRIMARY KEY,
+                   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                   mode TEXT NOT NULL DEFAULT 'percent'
+                       CHECK (mode IN ('percent', 'mb', 'gb')),
+                   alert_count INTEGER NOT NULL DEFAULT 3 CHECK (alert_count BETWEEN 1 AND 3),
+                   step_value INTEGER NOT NULL DEFAULT 25 CHECK (step_value > 0),
+                   version INTEGER NOT NULL DEFAULT 1,
+                   updated_at TEXT NOT NULL
+               )""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS user_quota_alert_preferences (
+                   telegram_id BIGINT PRIMARY KEY,
+                   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                   mode TEXT NOT NULL DEFAULT 'percent'
+                       CHECK (mode IN ('percent', 'mb', 'gb')),
+                   alert_count INTEGER NOT NULL DEFAULT 3 CHECK (alert_count BETWEEN 1 AND 3),
+                   step_value INTEGER NOT NULL DEFAULT 25 CHECK (step_value > 0),
+                   version INTEGER NOT NULL DEFAULT 1,
+                   updated_at TEXT NOT NULL
+               )""",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (
@@ -436,9 +464,7 @@ def apply_migrations(
     unknown_versions = sorted(set(recorded) - known_versions)
     if unknown_versions:
         versions = ", ".join(str(version) for version in unknown_versions)
-        raise MigrationError(
-            f"Database has unknown {component} migration version(s): {versions}"
-        )
+        raise MigrationError(f"Database has unknown {component} migration version(s): {versions}")
     timestamp = applied_at or datetime.now(UTC).isoformat()
     for migration in ordered:
         existing_name = recorded.get(migration.version)

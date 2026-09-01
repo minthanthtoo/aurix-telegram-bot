@@ -183,7 +183,9 @@ class TelegramAdminMixin:
             remaining = item.get("remaining_key_slots")
             key_limit = "not capped" if max_keys is None else f"{remaining}/{max_keys} headroom"
             traffic = item.get("remote_transfer_bytes")
-            traffic_text = "-" if traffic is None else f"{int(traffic) / 1_000_000_000:.1f} GB / 30d"
+            traffic_text = (
+                "-" if traffic is None else f"{int(traffic) / 1_000_000_000:.1f} GB / 30d"
+            )
             budget = item.get("monthly_traffic_bytes")
             commitment = int(item.get("committed_traffic_bytes") or 0)
             lines.extend(
@@ -215,9 +217,7 @@ class TelegramAdminMixin:
             lines.extend(["", "No environment-configured Outline servers were registered."])
         return "\n".join(lines)[:4096]
 
-    def _show_capacity(
-        self, chat_id: int, telegram_id: int, message_id: int | None = None
-    ) -> None:
+    def _show_capacity(self, chat_id: int, telegram_id: int, message_id: int | None = None) -> None:
         snapshot = self._admin_call(telegram_id, "capacity_snapshot")
         rows = [
             [(f"⚙️ {str(item.get('label') or item['server_id'])[:24]}", f"a:S:{item['server_id']}")]
@@ -261,9 +261,21 @@ class TelegramAdminMixin:
             "Choose declared server capacity, then allocate each paid plan. Changes apply to new orders; existing keys are never silently moved.",
         ]
         rows: list[list[tuple[str, str]]] = [
-            [("Keys 25", f"a:C:{server_id}|keys|25"), ("50", f"a:C:{server_id}|keys|50"), ("100", f"a:C:{server_id}|keys|100")],
-            [("Reserve 1", f"a:C:{server_id}|reserve|1"), ("2", f"a:C:{server_id}|reserve|2"), ("5", f"a:C:{server_id}|reserve|5")],
-            [("Traffic 500GB", f"a:C:{server_id}|traffic|500"), ("1TB", f"a:C:{server_id}|traffic|1000"), ("2TB", f"a:C:{server_id}|traffic|2000")],
+            [
+                ("Keys 25", f"a:C:{server_id}|keys|25"),
+                ("50", f"a:C:{server_id}|keys|50"),
+                ("100", f"a:C:{server_id}|keys|100"),
+            ],
+            [
+                ("Reserve 1", f"a:C:{server_id}|reserve|1"),
+                ("2", f"a:C:{server_id}|reserve|2"),
+                ("5", f"a:C:{server_id}|reserve|5"),
+            ],
+            [
+                ("Traffic 500GB", f"a:C:{server_id}|traffic|500"),
+                ("1TB", f"a:C:{server_id}|traffic|1000"),
+                ("2TB", f"a:C:{server_id}|traffic|2000"),
+            ],
         ]
         allocations = {item["plan_code"]: item for item in server.get("allocations", [])}
         for plan in self.commerce.plans():
@@ -318,6 +330,7 @@ class TelegramAdminMixin:
             "🔔 My Operational Alerts",
             "",
             "These settings apply only to your Telegram account.",
+            "These are staff-only order and receipt operations. They never control your personal VPN usage alerts.",
             "Customer confirmations and critical VPN enforcement notices are unaffected.",
             "",
         ]
@@ -379,7 +392,11 @@ class TelegramAdminMixin:
         self, chat_id: int, telegram_id: int, diagnostic: dict[str, Any] | None
     ) -> None:
         if not diagnostic:
-            self.send(chat_id, "No completed receipt test is available yet.", self._receipt_system_keyboard())
+            self.send(
+                chat_id,
+                "No completed receipt test is available yet.",
+                self._receipt_system_keyboard(),
+            )
             return
         result = diagnostic.get("result") or {}
         llm = result.get("llm") or {}
@@ -912,8 +929,7 @@ class TelegramAdminMixin:
         method_number = self.PAYMENT_METHOD_ORDER.index(method) + 1
         prefix = f"{heading}\n\n" if heading else ""
         caption = (
-            prefix
-            + f"🏦 Payment QR {method_number}/5 · {item['label']}\n"
+            prefix + f"🏦 Payment QR {method_number}/5 · {item['label']}\n"
             f"Order #{str(order_id)[:8]}\n\n"
             f"Pay exactly {int(order['amount_minor']):,} {order['currency']}.\n"
             "1. Scan this QR in the selected wallet.\n"
@@ -951,10 +967,10 @@ class TelegramAdminMixin:
                 rows.append([("🔁 Retry Revocation", f"a:g:{order_id}")])
             if order.get("telegram_id"):
                 rows.append([("💰 View Ledger", f"a:l:{order['telegram_id']}")])
-            if order.get("plan_code") != "wallet_topup" and order.get(
-                "refund_status"
-            ) != "refunded" and (
-                order.get("status") == "approved" or order.get("payment_status") == "verified"
+            if (
+                order.get("plan_code") != "wallet_topup"
+                and order.get("refund_status") != "refunded"
+                and (order.get("status") == "approved" or order.get("payment_status") == "verified")
             ):
                 rows.append([("💸 Refund", f"a:f:{order_id}")])
             if order.get("status") == "payment_submitted" and (
@@ -962,9 +978,7 @@ class TelegramAdminMixin:
                 or order.get("wallet_reservation_status") == "reserved"
             ):
                 label = (
-                    "✅ Credit Wallet"
-                    if order.get("plan_code") == "wallet_topup"
-                    else "✅ Approve"
+                    "✅ Credit Wallet" if order.get("plan_code") == "wallet_topup" else "✅ Approve"
                 )
                 rows.append([(label, f"a:a:{order_id}")])
             if (

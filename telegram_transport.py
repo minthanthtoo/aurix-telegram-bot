@@ -19,6 +19,7 @@ from commerce import CommerceError, CommerceService
 from entitlements import ClaimService
 from observability import latency_log as _latency_log
 from ports import ReceiptExtractorGateway
+from quota_alerts import MODE_STEPS, alert_level_labels
 from telegram_admin import AdminOperations
 from telegram_admin_panels import TelegramAdminMixin
 from telegram_callbacks import TelegramCallbackMixin
@@ -48,6 +49,7 @@ class TelegramBot(
         "💠 Upgrade 100GB": "/buy standard_100gb",
         "💎 Plans & Upgrade": "/plans",
         "🔐 My VPN": "/myvpn",
+        "🔔 Usage Alerts": "/alerts",
         # Compatibility mappings for reply keyboards already present in old
         # Telegram messages. New menus use the unified My VPN dashboard.
         "📊 Status": "/status",
@@ -209,22 +211,16 @@ class TelegramBot(
             try:
                 result = json.loads(response.data.decode("utf-8"))
             except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
-                raise TelegramAPIError(
-                    f"{method} returned an invalid JSON response"
-                ) from exc
+                raise TelegramAPIError(f"{method} returned an invalid JSON response") from exc
             if response.status >= 400:
                 description = "request rejected"
                 candidate = result.get("description") if isinstance(result, dict) else None
                 if isinstance(candidate, str) and candidate.strip():
                     description = " ".join(candidate.split())[:240]
-                raise TelegramAPIError(
-                    f"{method} failed status={response.status}: {description}"
-                )
+                raise TelegramAPIError(f"{method} failed status={response.status}: {description}")
         except urllib3.exceptions.HTTPError as exc:
             description = "request rejected"
-            raise TelegramAPIError(
-                f"{method} transport failed: {description}"
-            ) from exc
+            raise TelegramAPIError(f"{method} transport failed: {description}") from exc
         finally:
             _latency_log("telegram_request", started_at, method=method)
         if not result.get("ok"):
@@ -527,9 +523,7 @@ class TelegramBot(
 
     def _customer_keyboard(self, telegram_id: int) -> dict[str, Any]:
         try:
-            promo_locked = bool(
-                self.service.giveaway_status(telegram_id)["access_lock_active"]
-            )
+            promo_locked = bool(self.service.giveaway_status(telegram_id)["access_lock_active"])
         except Exception:
             promo_locked = False
         rows = [["🔐 My VPN"]]
@@ -540,7 +534,7 @@ class TelegramBot(
             rows.append(["💎 Plans & Upgrade", "🧾 My Orders"])
         else:
             rows.append(["🧾 My Orders"])
-        rows.extend([["💰 Wallet", "❓ Help"]])
+        rows.extend([["💰 Wallet", "🔔 Usage Alerts"], ["❓ Help"]])
         return self._reply_keyboard(rows)
 
     def _topup_amount_keyboard(self) -> dict[str, Any]:
@@ -563,6 +557,7 @@ class TelegramBot(
         customer_commands = [
             {"command": "start", "description": "Open the AuriX menu"},
             {"command": "myvpn", "description": "Keys, status and data usage"},
+            {"command": "alerts", "description": "Configure personal usage alerts"},
             {"command": "claim", "description": "Claim free 300 MB for 24 hours"},
             {"command": "trial", "description": "Claim free 3 GB for 30 days"},
             {"command": "plans", "description": "View current plans and prices"},
@@ -716,14 +711,36 @@ class TelegramBot(
             payload["reply_markup"] = reply_markup
         self.request("sendDocument", payload)
 
+    def send_receipt_bytes(
+        self,
+        chat_id: int,
+        data: bytes,
+        mime_type: str,
+        caption: str,
+        reply_markup: dict[str, Any],
+        *,
+        as_document: bool = False,
+    ) -> Any:
+        extension = "png" if mime_type == "image/png" else "jpg"
+        field = "document" if as_document else "photo"
+        fields: dict[str, Any] = {
+            "chat_id": str(chat_id),
+            "caption": caption[:1024],
+            field: (f"receipt.{extension}", data, mime_type),
+            "reply_markup": json.dumps(reply_markup, separators=(",", ":")),
+        }
+        return self._multipart_request("sendDocument" if as_document else "sendPhoto", fields)
+
     @staticmethod
     def _receipt_review_caption(receipt: dict[str, Any]) -> str:
         extracted = receipt.get("extraction") or {}
         evidence_id = str(receipt["id"])
         raw_flags = extracted.get("flags", [])
-        flags = ", ".join(
-            str(item) for item in raw_flags if item
-        ) if isinstance(raw_flags, (list, tuple)) else "invalid extraction flags"
+        flags = (
+            ", ".join(str(item) for item in raw_flags if item)
+            if isinstance(raw_flags, (list, tuple))
+            else "invalid extraction flags"
+        )
         amount = extracted.get("amount_minor")
         if amount is None:
             amount = extracted.get("amount")
@@ -745,7 +762,7 @@ class TelegramBot(
         )
 
     def _send_receipt_review(self, chat_id: int, receipt: dict[str, Any]) -> None:
-        """Send stored evidence, preferring a private Storage signed URL."""
+        """Send evidence, preferring durable private storage over Telegram IDs."""
         evidence_id = str(receipt["id"])
         markup = self._inline_keyboard(
             [
@@ -759,9 +776,17 @@ class TelegramBot(
         storage_path = receipt.get("storage_path")
         if storage is not None and storage_path and receipt.get("storage_status") == "stored":
             try:
-                signed = storage.signed_url(str(storage_path), expires_in=300)
-                if signed:
-                    file_id = str(signed)
+                image = storage.download(str(storage_path))
+                if image:
+                    self.send_receipt_bytes(
+                        chat_id,
+                        image,
+                        str(receipt.get("mime_type") or "image/jpeg"),
+                        self._receipt_review_caption(receipt),
+                        markup,
+                        as_document=receipt.get("telegram_media_type") == "document",
+                    )
+                    return
             except Exception as exc:
                 # Telegram's original file ID remains a compatibility fallback
                 # for legacy rows or a temporary Storage outage.
@@ -778,7 +803,75 @@ class TelegramBot(
         except (RuntimeError, urllib.error.HTTPError):
             # Older rows predate telegram_media_type, and Telegram file IDs can
             # only be reused by the API method matching their original type.
-            fallback(chat_id, file_id, caption, markup)
+            try:
+                fallback(chat_id, file_id, caption, markup)
+            except (RuntimeError, urllib.error.HTTPError):
+                # A reusable file ID may be rejected even while getFile still
+                # permits downloading the underlying object. Re-upload the
+                # bytes as a last recovery path for legacy receipts.
+                image, mime_type = self._download_telegram_file(file_id)
+                self.send_receipt_bytes(
+                    chat_id,
+                    image,
+                    mime_type,
+                    caption,
+                    markup,
+                    as_document=media_type == "document",
+                )
+
+    def _send_quota_alert_settings(
+        self, chat_id: int, telegram_id: int, *, message_id: int | None = None
+    ) -> None:
+        preferences = self.service.quota_alert_preferences(telegram_id)
+        mode = str(preferences["mode"])
+        count = int(preferences["alert_count"])
+        step = int(preferences["step_value"])
+        suffix = "%" if mode == "percent" else f" {mode.upper()}"
+        levels = alert_level_labels(preferences)
+        text = (
+            "📶 Your VPN Usage Alerts\n\n"
+            f"Status: {'On ✅' if preferences['enabled'] else 'Off 🔕'}\n"
+            f"Basis: {'Percent remaining' if mode == 'percent' else mode.upper() + ' remaining'}\n"
+            f"Alerts per key: {count}\n"
+            f"Levels: {', '.join(levels)} remaining\n\n"
+            "These alerts are sent only to you for your own free, promo, and paid keys. "
+            "Owner/admin operational alerts are configured separately under Admin → My Alerts. "
+            "Levels larger than a key's total quota are skipped. A key is still stopped "
+            "at its hard quota even when alerts are off."
+        )
+        mode_rows = [
+            [
+                (f"{'✓ ' if mode == item else ''}{label}", f"q:m:{item}")
+                for item, label in (("percent", "%"), ("mb", "MB"), ("gb", "GB"))
+            ]
+        ]
+        count_rows = [
+            [
+                (
+                    f"{'✓ ' if count == value else ''}{value} alert{'s' if value > 1 else ''}",
+                    f"q:c:{value}",
+                )
+                for value in (1, 2, 3)
+            ]
+        ]
+        step_rows = [
+            [
+                (f"{'✓ ' if step == value else ''}{value}{suffix}", f"q:v:{value}")
+                for value in MODE_STEPS[mode]
+            ]
+        ]
+        rows = [
+            [("🔕 Turn off" if preferences["enabled"] else "🔔 Turn on", "q:e:toggle")],
+            *mode_rows,
+            *count_rows,
+            *step_rows,
+            [("🔄 Refresh", "n:alerts"), ("⬅ My VPN", "n:myvpn")],
+        ]
+        markup = self._inline_keyboard(rows)
+        if message_id is not None:
+            self.edit_message(chat_id, message_id, text, markup)
+        else:
+            self.send(chat_id, text, markup)
 
     def _download_telegram_file(self, file_id: str) -> tuple[bytes, str]:
         info = self.request("getFile", {"file_id": file_id})
@@ -795,9 +888,7 @@ class TelegramBot(
                 retries=False,
             )
             if response.status >= 400:
-                raise TelegramAPIError(
-                    f"getFile download failed status={response.status}"
-                )
+                raise TelegramAPIError(f"getFile download failed status={response.status}")
             data = response.data
         except urllib3.exceptions.HTTPError as exc:
             raise TelegramAPIError("getFile download transport failed") from exc
@@ -824,7 +915,11 @@ class TelegramBot(
         administrators = []
         for member in members:
             user = member.get("user") if isinstance(member, dict) else None
-            if not isinstance(user, dict) or user.get("is_bot") or not isinstance(user.get("id"), int):
+            if (
+                not isinstance(user, dict)
+                or user.get("is_bot")
+                or not isinstance(user.get("id"), int)
+            ):
                 continue
             profile = {
                 "id": int(user["id"]),
@@ -1138,8 +1233,14 @@ class TelegramBot(
         )
         markup = self._inline_keyboard(
             [
-                [(f"{'💎' if availability.get(plan.code, {}).get('available', True) else '⏳'} {plan.name} · {plan.price_minor:,} {plan.currency}",
-                  f"p:b:{plan.code}" if availability.get(plan.code, {}).get("available", True) else "n:plans")]
+                [
+                    (
+                        f"{'💎' if availability.get(plan.code, {}).get('available', True) else '⏳'} {plan.name} · {plan.price_minor:,} {plan.currency}",
+                        f"p:b:{plan.code}"
+                        if availability.get(plan.code, {}).get("available", True)
+                        else "n:plans",
+                    )
+                ]
                 for plan in plans
             ]
             + [[("🚀 Free Monthly 3GB", "p:t:trial")]]
@@ -1168,7 +1269,11 @@ class TelegramBot(
                 f"Key status: {giveaway_key_status}\n"
                 f"Expires: {giveaway['expires_at']}\n"
                 "Regular plans: "
-                + ("paused until gift or season ends" if giveaway["access_lock_active"] else "available")
+                + (
+                    "paused until gift or season ends"
+                    if giveaway["access_lock_active"]
+                    else "available"
+                )
             )
         elif giveaway["exists"]:
             giveaway_text = (
@@ -1189,20 +1294,26 @@ class TelegramBot(
         if not subscriptions:
             self.send(
                 chat_id,
-                giveaway_text + (
+                giveaway_text
+                + (
                     "\n\nThe access URL is shown only when the giveaway is first claimed. "
-                    "Use /usage to track quota." if giveaway["winner"] else
-                    "\n\nNo subscription found. Use /plans to see available plans."
+                    "Use /usage to track quota."
+                    if giveaway["winner"]
+                    else "\n\nNo subscription found. Use /plans to see available plans."
                 ),
                 self._customer_keyboard(telegram_id),
             )
             return
         subscription = subscriptions[0]
-        text = giveaway_text + "\n\n" + (
-            f"Status: {subscription['status']}\n"
-            f"Plan: {subscription['plan_code']}\n"
-            f"Expires: {subscription['expires_at']}\n"
-            f"Paid keys: {sum(1 for item in subscriptions if item.get('key_status') == 'active')}"
+        text = (
+            giveaway_text
+            + "\n\n"
+            + (
+                f"Status: {subscription['status']}\n"
+                f"Plan: {subscription['plan_code']}\n"
+                f"Expires: {subscription['expires_at']}\n"
+                f"Paid keys: {sum(1 for item in subscriptions if item.get('key_status') == 'active')}"
+            )
         )
         if include_key:
             key_blocks = []
@@ -1271,6 +1382,7 @@ class TelegramBot(
             return
         keys = self.commerce.user_vpns(telegram_id, limit=100)
         selected = selected if selected in {"active", "ended", "all"} else "active"
+
         def matches(item: dict[str, Any], category: str) -> bool:
             status = str(item.get("key_status") or item.get("status") or "pending")
             if category == "all":
@@ -1278,6 +1390,7 @@ class TelegramBot(
             if category == "active":
                 return status == "active"
             return status not in {"active", "pending", "activation pending"}
+
         filtered = [item for item in keys if matches(item, selected)]
         page_size = 5
         page_count = max(1, (len(filtered) + page_size - 1) // page_size)
@@ -1297,10 +1410,14 @@ class TelegramBot(
         )
         rows: list[list[dict[str, Any]]] = [
             [
-                {"text": f"🟢 Active {sum(matches(item, 'active') for item in keys)}",
-                 "callback_data": "k:l:active:0"},
-                {"text": f"⚫ Ended {sum(matches(item, 'ended') for item in keys)}",
-                 "callback_data": "k:l:ended:0"},
+                {
+                    "text": f"🟢 Active {sum(matches(item, 'active') for item in keys)}",
+                    "callback_data": "k:l:active:0",
+                },
+                {
+                    "text": f"⚫ Ended {sum(matches(item, 'ended') for item in keys)}",
+                    "callback_data": "k:l:ended:0",
+                },
                 {"text": f"📚 All {len(keys)}", "callback_data": "k:l:all:0"},
             ]
         ]
@@ -1408,15 +1525,17 @@ class TelegramBot(
                 ],
             ]
             rows.extend(
-                [(f"Open #{page * page_size + offset + 1} · {str(order['id'])[:8]}",
-                  f"o:v:{order['id']}")]
+                [
+                    (
+                        f"Open #{page * page_size + offset + 1} · {str(order['id'])[:8]}",
+                        f"o:v:{order['id']}",
+                    )
+                ]
                 for offset, order in enumerate(visible)
             )
             nav: list[tuple[str, str]] = []
             if page > 0:
-                nav.extend(
-                    [("⏮", f"c:o:{selected}:0"), ("◀", f"c:o:{selected}:{page - 1}")]
-                )
+                nav.extend([("⏮", f"c:o:{selected}:0"), ("◀", f"c:o:{selected}:{page - 1}")])
             nav.append((f"{page + 1}/{pages}", f"c:o:{selected}:{page}"))
             if page + 1 < pages:
                 nav.extend(
@@ -1489,7 +1608,9 @@ class TelegramBot(
             if copy is not None:
                 rows.append([copy])
             else:
-                lines.append("The key is too long for Telegram's copy button. Use Show Keys as Text.")
+                lines.append(
+                    "The key is too long for Telegram's copy button. Use Show Keys as Text."
+                )
         elif status == "active":
             lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
         elif "pending" in status:
@@ -1599,8 +1720,7 @@ class TelegramBot(
                 (
                     order
                     for order in orders
-                    if order.get("stage")
-                    not in ("fulfilled", "rejected", "cancelled", "refunded")
+                    if order.get("stage") not in ("fulfilled", "rejected", "cancelled", "refunded")
                 ),
                 None,
             )
@@ -1630,9 +1750,7 @@ class TelegramBot(
             ]
             if quota > 0:
                 formatter = (
-                    self._format_decimal_bytes
-                    if entry.get("decimal_quota")
-                    else self._format_bytes
+                    self._format_decimal_bytes if entry.get("decimal_quota") else self._format_bytes
                 )
                 percent = min(100.0, used * 100 / quota)
                 filled = min(10, max(0, int(percent / 10)))
@@ -1656,7 +1774,9 @@ class TelegramBot(
                     if copy_button is not None:
                         copy_rows.append([copy_button])
                     else:
-                        lines.append("Open Show Keys as Text, then press and hold the key to copy it.")
+                        lines.append(
+                            "Open Show Keys as Text, then press and hold the key to copy it."
+                        )
                 elif entry.get("subscription_id"):
                     copy_rows.append(
                         [
@@ -1701,7 +1821,9 @@ class TelegramBot(
                 f"{self._promo_frequency_label(giveaway['frequency'])}."
             )
         if not usage_available:
-            blocks.append("Usage is temporarily unavailable; keys and lifecycle status are still shown.")
+            blocks.append(
+                "Usage is temporarily unavailable; keys and lifecycle status are still shown."
+            )
         else:
             blocks.append("Usage is Outline's rolling 30-day transfer total, not live speed.")
 
@@ -1712,9 +1834,7 @@ class TelegramBot(
             for entry in displayed
         )
         if has_copyable_free and not show_key_text:
-            action_rows.append(
-                [{"text": "👁 Show Keys as Text", "callback_data": "n:keytext"}]
-            )
+            action_rows.append([{"text": "👁 Show Keys as Text", "callback_data": "n:keytext"}])
         if subscriptions:
             active_paid_count = sum(
                 1
@@ -1730,7 +1850,10 @@ class TelegramBot(
                 ]
             )
         action_rows.append(
-            [{"text": "🔄 Refresh", "callback_data": "n:myvpn"}]
+            [
+                {"text": "🔄 Refresh", "callback_data": "n:myvpn"},
+                {"text": "🔔 Usage Alerts", "callback_data": "n:alerts"},
+            ]
         )
         if open_order is not None:
             action_rows.append(

@@ -10,7 +10,6 @@ from typing import Any
 from commerce_models import (
     JOB_RETRY_DELAY,
     NOTIFICATION_RETRY_DELAY,
-    QUOTA_WARNING_THRESHOLDS,
     UTC,
     CommerceError,
     _human_bytes,
@@ -19,6 +18,7 @@ from commerce_models import (
     _paid_outline_key_name,
 )
 from commerce_repositories import _PostgresConnection
+from quota_alerts import get_quota_alert_preferences, reached_alert
 
 
 class CommerceWorkerMixin:
@@ -87,7 +87,9 @@ class CommerceWorkerMixin:
             try:
                 client = self._outline_client(server_id)
                 payload = client.transfer_metrics()
-                by_key = payload.get("bytesTransferredByUserId", {}) if isinstance(payload, dict) else {}
+                by_key = (
+                    payload.get("bytesTransferredByUserId", {}) if isinstance(payload, dict) else {}
+                )
                 result[server_id] = by_key if isinstance(by_key, dict) else {}
             except Exception:
                 continue
@@ -454,8 +456,11 @@ class CommerceWorkerMixin:
                     subscription["id"],
                     "system",
                     None,
-                    {"outline_key_id": str(key["id"]), "activated_at": activated_at,
-                     "server_id": server_id},
+                    {
+                        "outline_key_id": str(key["id"]),
+                        "activated_at": activated_at,
+                        "server_id": server_id,
+                    },
                 )
                 connection.execute(
                     """UPDATE provisioning_jobs SET status = 'done', locked_at = NULL, last_error = NULL
@@ -659,7 +664,9 @@ class CommerceWorkerMixin:
         if metrics is None:
             metrics_by_server = self._metrics_by_server()
         else:
-            by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+            by_key = (
+                metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+            )
             metrics_by_server = {default_server_id: by_key if isinstance(by_key, dict) else {}}
         current = (now or datetime.now(UTC)).astimezone(UTC)
         now_text = _now_text(current)
@@ -685,31 +692,27 @@ class CommerceWorkerMixin:
                 if quota <= 0 or used >= quota:
                     continue
                 remaining = quota - used
-                reached = next(
-                    (
-                        percent
-                        for percent, fraction in reversed(QUOTA_WARNING_THRESHOLDS)
-                        if remaining <= quota * fraction
-                    ),
-                    None,
-                )
+                preferences = get_quota_alert_preferences(self.database, int(row["telegram_id"]))
+                reached = reached_alert(preferences, quota, remaining)
                 if reached is None:
                     continue
-                previous = row["quota_warning_percent"]
-                if previous is not None and int(previous) <= reached:
-                    continue
-                dedupe_key = f"quota-warning:paid:{row['subscription_id']}:{reached}"
+                threshold_bytes, threshold_label = reached
+                remaining_percent = remaining * 100 / quota
+                dedupe_key = (
+                    f"quota-warning:paid:{row['subscription_id']}:"
+                    f"v{preferences.get('version', 1)}:{threshold_bytes}"
+                )
                 try:
                     existing = connection.execute(
                         "SELECT id FROM notifications WHERE dedupe_key = ?",
                         (dedupe_key,),
                     ).fetchone()
                     if existing is None:
-                        remaining_percent = remaining * 100 / quota
                         text = (
-                            f"Quota warning: your AuriX {row['plan_code']} key has "
+                            f"📶 VPN usage alert: your AuriX {row['plan_code']} key has "
                             f"{_human_bytes(remaining)} remaining "
                             f"({remaining_percent:.1f}% of {_human_bytes(quota)}).\n"
+                            f"Your configured alert level: {threshold_label} remaining.\n"
                             "This is based on Outline's trailing-30-day usage. "
                             "When no quota remains, the key will be blocked and deleted. "
                             f"Expires: {row['expires_at']}"
@@ -724,7 +727,7 @@ class CommerceWorkerMixin:
                         queued += 1
                     connection.execute(
                         "UPDATE paid_vpn_keys SET quota_warning_percent = ? WHERE id = ?",
-                        (reached, row["id"]),
+                        (int(remaining_percent), row["id"]),
                     )
                 except Exception as exc:
                     if self.database.is_integrity_error(exc):
@@ -749,7 +752,9 @@ class CommerceWorkerMixin:
         if metrics is None:
             metrics_by_server = self._metrics_by_server()
         else:
-            by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+            by_key = (
+                metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+            )
             metrics_by_server = {default_server_id: by_key if isinstance(by_key, dict) else {}}
         try:
             self.queue_quota_warnings(current, metrics)
@@ -929,9 +934,7 @@ class CommerceWorkerMixin:
                 else max(0, int(item["monthly_traffic_bytes"]) - committed_traffic)
             )
             item["remaining_key_slots"] = (
-                None
-                if usable is None
-                else max(0, usable - remote - reserved_orders - pending_keys)
+                None if usable is None else max(0, usable - remote - reserved_orders - pending_keys)
             )
             item["allocations"] = allocations_by_server.get(str(item["server_id"]), [])
             servers.append(item)

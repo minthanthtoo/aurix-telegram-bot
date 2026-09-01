@@ -16,9 +16,7 @@ class MigrationRegistryTest(unittest.TestCase):
             migration = Migration(
                 1,
                 "create_sample",
-                sqlite_statements=(
-                    "CREATE TABLE IF NOT EXISTS sample (id INTEGER PRIMARY KEY)",
-                ),
+                sqlite_statements=("CREATE TABLE IF NOT EXISTS sample (id INTEGER PRIMARY KEY)",),
             )
             with open_sqlite_connection(path) as connection:
                 apply_migrations(
@@ -97,9 +95,7 @@ class MigrationRegistryTest(unittest.TestCase):
                         dialect="oracle",
                         migrations=(Migration(1, "first"),),
                     )
-                count = connection.execute(
-                    "SELECT COUNT(*) FROM schema_migrations"
-                ).fetchone()[0]
+                count = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
             self.assertEqual(count, 0)
 
     def test_existing_initializers_adopt_component_scoped_version_one(self):
@@ -109,8 +105,7 @@ class MigrationRegistryTest(unittest.TestCase):
             CommerceDatabase(path).initialize()
             with open_sqlite_connection(path) as connection:
                 rows = connection.execute(
-                    "SELECT component, version, name FROM schema_migrations "
-                    "ORDER BY component"
+                    "SELECT component, version, name FROM schema_migrations ORDER BY component"
                 ).fetchall()
 
             self.assertEqual(
@@ -126,6 +121,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("free_access", 4, "staff_access_control"),
                     ("free_access", 5, "staff_control_group_binding"),
                     ("free_access", 6, "staff_notification_preferences"),
+                    ("free_access", 7, "customer_quota_alert_preferences"),
                 ],
             )
 

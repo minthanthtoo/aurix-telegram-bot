@@ -65,6 +65,7 @@ class TelegramCallbackMixin:
             "n:start": "/start",
             "n:menu": "/help",
             "n:keytext": "/keysastext",
+            "n:alerts": "/alerts",
         }
         # Legacy admin navigation buttons may still exist in Telegram message
         # history. Keep them safe and role-gated while no longer generating
@@ -77,12 +78,14 @@ class TelegramCallbackMixin:
                 self.handle(synthetic)
             return
         message_id = message.get("message_id")
-        can_edit_text = isinstance(message_id, int) and not message.get("photo") and not message.get(
-            "document"
+        can_edit_text = (
+            isinstance(message_id, int) and not message.get("photo") and not message.get("document")
         )
-        if can_edit_text and data in {"n:myvpn", "n:usage", "n:keytext", "n:myorders"}:
+        if can_edit_text and data in {"n:myvpn", "n:usage", "n:keytext", "n:myorders", "n:alerts"}:
             if data == "n:myorders":
                 self._send_my_orders(chat_id, telegram_id, message_id=message_id)
+            elif data == "n:alerts":
+                self._send_quota_alert_settings(chat_id, telegram_id, message_id=message_id)
             else:
                 self._send_my_vpn(
                     chat_id,
@@ -100,6 +103,30 @@ class TelegramCallbackMixin:
             self.send(chat_id, "This button is no longer valid. Refresh the menu.")
             return
         scope, action, entity_id = parts
+        if scope == "q":
+            try:
+                current = self.service.quota_alert_preferences(telegram_id)
+                changes: dict[str, Any] = {}
+                if action == "e" and entity_id == "toggle":
+                    changes["enabled"] = not current["enabled"]
+                elif action == "m" and entity_id in {"percent", "mb", "gb"}:
+                    changes["mode"] = entity_id
+                elif action == "c" and entity_id in {"1", "2", "3"}:
+                    changes["alert_count"] = int(entity_id)
+                elif action == "v" and entity_id.isdigit():
+                    changes["step_value"] = int(entity_id)
+                else:
+                    raise ValueError
+                self.service.set_quota_alert_preferences(telegram_id, **changes)
+            except ValueError:
+                self.send(chat_id, "That usage-alert setting is no longer valid.")
+                return
+            self._send_quota_alert_settings(
+                chat_id,
+                telegram_id,
+                message_id=message_id if can_edit_text else None,
+            )
+            return
         if scope == "c" and action == "o":
             selected, _, raw_page = entity_id.partition(":")
             try:
@@ -189,7 +216,7 @@ class TelegramCallbackMixin:
                     f"📷 Send the completed receipt screenshot for order #{str(entity_id)[:8]} now.\n\n"
                     "No caption is needed. AuriX records the image for staff verification; "
                     "the screenshot alone never activates payment.",
-                    self._inline_keyboard([[('🧾 View Order', f"o:v:{entity_id}")]]),
+                    self._inline_keyboard([[("🧾 View Order", f"o:v:{entity_id}")]]),
                 )
         elif scope == "o" and action == "w":
             synthetic["text"] = f"/walletpay {entity_id}"
@@ -340,9 +367,7 @@ class TelegramCallbackMixin:
                             message_id=message.get("message_id"),
                         )
                 elif entity_id == "capacity":
-                    self._show_capacity(
-                        chat_id, telegram_id, message_id=message.get("message_id")
-                    )
+                    self._show_capacity(chat_id, telegram_id, message_id=message.get("message_id"))
                 else:
                     synthetic["text"] = target
                     self.handle(synthetic)
@@ -362,7 +387,11 @@ class TelegramCallbackMixin:
                     return
                 snapshot = self._admin_call(telegram_id, "capacity_snapshot")
                 server = next(
-                    (item for item in snapshot.get("servers", []) if str(item["server_id"]) == server_id),
+                    (
+                        item
+                        for item in snapshot.get("servers", [])
+                        if str(item["server_id"]) == server_id
+                    ),
                     None,
                 )
                 if server is None:
@@ -375,7 +404,9 @@ class TelegramCallbackMixin:
                         server_id,
                         telegram_id,
                         max_keys=value if field == "keys" else server.get("max_keys"),
-                        reserved_keys=value if field == "reserve" else int(server.get("reserved_keys") or 0),
+                        reserved_keys=value
+                        if field == "reserve"
+                        else int(server.get("reserved_keys") or 0),
                         monthly_traffic_bytes=(
                             value * 1_000_000_000
                             if field == "traffic"
@@ -603,9 +634,7 @@ class TelegramCallbackMixin:
                         "🔎 Check the actual receiving account, then reply with only:\n"
                         "transaction-ID amount\n\nExample: 123456789 3000\n"
                         "The receipt/order ID is already selected for you.",
-                        self._inline_keyboard(
-                            [[("Cancel", f"a:r:{entity_id}")]]
-                        ),
+                        self._inline_keyboard([[("Cancel", f"a:r:{entity_id}")]]),
                     )
             elif action == "a":
                 self._queue_admin_confirmation(

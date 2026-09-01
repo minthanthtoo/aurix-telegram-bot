@@ -10,6 +10,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ports import OutlineGateway
+from quota_alerts import (
+    get_quota_alert_preferences,
+    reached_alert,
+    set_quota_alert_preferences,
+)
 from repositories import RepositoryDatabase
 
 UTC = timezone.utc
@@ -132,9 +137,7 @@ class ClaimService:
             ).fetchone()
 
     @staticmethod
-    def _has_active_promo_gift(
-        connection: Any, telegram_id: int, now: datetime
-    ) -> bool:
+    def _has_active_promo_gift(connection: Any, telegram_id: int, now: datetime) -> bool:
         """Return whether a live campaign and usable gift currently pause other plans."""
         now_text = now.astimezone(UTC).isoformat()
         return (
@@ -180,9 +183,7 @@ class ClaimService:
     @staticmethod
     def _commerce_tables_exist(connection: Any) -> bool:
         if connection.__class__.__name__ == "_PostgresConnection":
-            row = connection.execute(
-                "SELECT to_regclass('public.orders') AS table_name"
-            ).fetchone()
+            row = connection.execute("SELECT to_regclass('public.orders') AS table_name").fetchone()
             return bool(row and row["table_name"])
         row = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'orders'"
@@ -916,20 +917,16 @@ class ClaimService:
                 if quota <= 0 or used >= quota:
                     continue
                 remaining = quota - used
-                reached = next(
-                    (
-                        percent
-                        for percent, fraction in reversed(QUOTA_WARNING_THRESHOLDS)
-                        if remaining <= quota * fraction
-                    ),
-                    None,
-                )
+                preferences = get_quota_alert_preferences(self.database, int(row["telegram_id"]))
+                reached = reached_alert(preferences, quota, remaining)
                 if reached is None:
                     continue
-                previous = row["quota_warning_percent"]
-                if previous is not None and int(previous) <= reached:
-                    continue
-                dedupe_key = f"quota-warning:free:{row['id']}:{reached}"
+                threshold_bytes, threshold_label = reached
+                remaining_percent = remaining * 100 / quota
+                dedupe_key = (
+                    f"quota-warning:free:{row['id']}:v{preferences.get('version', 1)}:"
+                    f"{threshold_bytes}"
+                )
                 try:
                     existing = connection.execute(
                         "SELECT id FROM notifications WHERE dedupe_key = ?",
@@ -944,12 +941,12 @@ class ClaimService:
                             tier = "daily 300 MiB"
                         else:
                             tier = "free"
-                        remaining_percent = remaining * 100 / quota
                         formatter = _human_decimal_bytes if row["campaign_code"] else _human_bytes
                         text = (
-                            f"Quota warning: your AuriX {tier} key has "
+                            f"📶 VPN usage alert: your AuriX {tier} key has "
                             f"{formatter(remaining)} remaining "
                             f"({remaining_percent:.1f}% of {formatter(quota)}).\n"
+                            f"Your configured alert level: {threshold_label} remaining.\n"
                             "This is based on Outline's trailing-30-day usage. "
                             "When no quota remains, the key will be blocked and deleted. "
                             f"Expires: {row['expires_at']}"
@@ -964,7 +961,7 @@ class ClaimService:
                         queued += 1
                     connection.execute(
                         "UPDATE keys SET quota_warning_percent = ? WHERE id = ?",
-                        (reached, row["id"]),
+                        (int(remaining_percent), row["id"]),
                     )
                 except Exception as exc:
                     if self.database.is_integrity_error(exc):
@@ -1116,3 +1113,9 @@ class ClaimService:
                     (limit,),
                 ).fetchall()
             ]
+
+    def quota_alert_preferences(self, telegram_id: int) -> dict[str, Any]:
+        return get_quota_alert_preferences(self.database, telegram_id)
+
+    def set_quota_alert_preferences(self, telegram_id: int, **changes: Any) -> dict[str, Any]:
+        return set_quota_alert_preferences(self.database, telegram_id, **changes)

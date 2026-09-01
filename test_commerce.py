@@ -81,7 +81,9 @@ class CommerceServiceTest(unittest.TestCase):
         # Existing fixture exercises the pre-screenshot migration path. Public
         # deployments leave this option disabled (the default).
         self.service = CommerceService(
-            self.database, self.outline, Fernet.generate_key(),
+            self.database,
+            self.outline,
+            Fernet.generate_key(),
             allow_legacy_text_approval=True,
         )
         self.service.initialize()
@@ -92,7 +94,9 @@ class CommerceServiceTest(unittest.TestCase):
 
     def _paid_order(self, telegram_id=123):
         order = self.service.create_order(telegram_id, "Min", "basic_50gb", self.now)
-        self.service.submit_payment(telegram_id, order.order_id, "manual", f"ref-{order.order_id}", self.now)
+        self.service.submit_payment(
+            telegram_id, order.order_id, "manual", f"ref-{order.order_id}", self.now
+        )
         return order
 
     def test_existing_database_adds_reference_column_before_index(self):
@@ -105,9 +109,7 @@ class CommerceServiceTest(unittest.TestCase):
                        provider_reference TEXT NOT NULL
                    )"""
             )
-            connection.execute(
-                "INSERT INTO payments VALUES ('payment-1', 'Manual', ' Tx 123 ')"
-            )
+            connection.execute("INSERT INTO payments VALUES ('payment-1', 'Manual', ' Tx 123 ')")
 
         CommerceDatabase(legacy_path).initialize()
 
@@ -115,9 +117,7 @@ class CommerceServiceTest(unittest.TestCase):
             normalized = connection.execute(
                 "SELECT normalized_reference FROM payments WHERE id = 'payment-1'"
             ).fetchone()[0]
-            indexes = {
-                row[1] for row in connection.execute("PRAGMA index_list(payments)")
-            }
+            indexes = {row[1] for row in connection.execute("PRAGMA index_list(payments)")}
         self.assertEqual(normalized, "tx123")
         self.assertIn("payments_reference_lookup", indexes)
 
@@ -126,17 +126,12 @@ class CommerceServiceTest(unittest.TestCase):
         database = CommerceDatabase(legacy_path)
         database.initialize()
         with open_sqlite_connection(legacy_path) as connection:
-            connection.execute(
-                "ALTER TABLE payment_evidence DROP COLUMN telegram_media_type"
-            )
+            connection.execute("ALTER TABLE payment_evidence DROP COLUMN telegram_media_type")
 
         database.initialize()
 
         with open_sqlite_connection(legacy_path) as connection:
-            columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(payment_evidence)")
-            }
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(payment_evidence)")}
         self.assertIn("telegram_media_type", columns)
         self.assertIn("storage_bucket", columns)
         self.assertIn("storage_path", columns)
@@ -163,8 +158,12 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(repeated.status, "already_approved")
 
         with self.database.connect() as connection:
-            self.assertEqual(connection.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT COUNT(*) FROM provisioning_jobs").fetchone()[0], 1)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0], 1
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM provisioning_jobs").fetchone()[0], 1
+            )
 
     def test_create_order_reuses_existing_open_order(self):
         first = self.service.create_order(123, "Min", "basic_50gb", self.now)
@@ -184,7 +183,9 @@ class CommerceServiceTest(unittest.TestCase):
 
     def test_different_plan_requires_explicit_replacement(self):
         first = self.service.create_order(123, "Min", "basic_50gb", self.now)
-        conflict = self.service.create_order(123, "Min", "standard_100gb", self.now + timedelta(minutes=1))
+        conflict = self.service.create_order(
+            123, "Min", "standard_100gb", self.now + timedelta(minutes=1)
+        )
         self.assertFalse(conflict.created)
         self.assertTrue(conflict.plan_conflict)
         self.assertEqual(conflict.order_id, first.order_id)
@@ -193,7 +194,9 @@ class CommerceServiceTest(unittest.TestCase):
         )
         self.assertNotEqual(replacement.order_id, first.order_id)
         self.assertEqual(self.service.order_detail(first.order_id, 123)["stage"], "cancelled")
-        self.assertEqual(self.service.order_detail(replacement.order_id, 123)["plan_code"], "standard_100gb")
+        self.assertEqual(
+            self.service.order_detail(replacement.order_id, 123)["plan_code"], "standard_100gb"
+        )
 
     def test_plan_replacement_is_blocked_after_payment_activity(self):
         first = self.service.create_order(124, "Min", "basic_50gb", self.now)
@@ -245,8 +248,13 @@ class CommerceServiceTest(unittest.TestCase):
         order = self._paid_order(126)
         self.service.approve_order(order.order_id, 999, self.now)
         self.service.process_jobs(self.now)
-        self.assertEqual(self.service.refund_order(order.order_id, 999, "customer request", self.now), "refunded")
-        self.assertEqual(self.service.refund_order(order.order_id, 999, "customer request", self.now), "already_refunded")
+        self.assertEqual(
+            self.service.refund_order(order.order_id, 999, "customer request", self.now), "refunded"
+        )
+        self.assertEqual(
+            self.service.refund_order(order.order_id, 999, "customer request", self.now),
+            "already_refunded",
+        )
         self.assertEqual(self.service.wallet_balance(126), 3000)
         detail = self.service.order_detail(order.order_id, 126)
         self.assertEqual(detail["refund_status"], "refunded")
@@ -275,13 +283,9 @@ class CommerceServiceTest(unittest.TestCase):
                 notification["id"], self.now + timedelta(minutes=attempt)
             )
 
+        self.assertEqual(self.service.pending_notifications(self.now + timedelta(days=1)), [])
         self.assertEqual(
-            self.service.pending_notifications(self.now + timedelta(days=1)), []
-        )
-        self.assertEqual(
-            self.service.consistency_report(self.now + timedelta(days=1))[
-                "dead_notifications"
-            ],
+            self.service.consistency_report(self.now + timedelta(days=1))["dead_notifications"],
             1,
         )
 
@@ -302,23 +306,35 @@ class CommerceServiceTest(unittest.TestCase):
     def test_user_and_admin_can_track_order_review_state(self):
         order = self.service.create_order(123, "Min", "basic_50gb", self.now)
         self.service.submit_receipt(
-            123, order.order_id, "manual", "track-file", "track-unique",
-            b"track-receipt", "image/jpeg", None, self.now,
+            123,
+            order.order_id,
+            "manual",
+            "track-file",
+            "track-unique",
+            b"track-receipt",
+            "image/jpeg",
+            None,
+            self.now,
         )
         history = self.service.list_user_orders(123)
         self.assertEqual(history[0]["id"], order.order_id)
         self.assertEqual(history[0]["receipt_status"], "pending")
         self.assertIsNotNone(self.service.order_detail(order.order_id, 123))
         self.assertIsNone(self.service.order_detail(order.order_id, 456))
-        self.assertIsNotNone(
-            self.service.order_detail(order.order_id, 999, is_admin=True)
-        )
+        self.assertIsNotNone(self.service.order_detail(order.order_id, 999, is_admin=True))
 
     def test_reconcile_cancels_only_empty_historical_duplicates(self):
         order = self.service.create_order(123, "Min", "basic_50gb", self.now)
         self.service.submit_receipt(
-            123, order.order_id, "manual", "keeper-file", "keeper-unique",
-            b"keeper-evidence", "image/jpeg", None, self.now,
+            123,
+            order.order_id,
+            "manual",
+            "keeper-file",
+            "keeper-unique",
+            b"keeper-evidence",
+            "image/jpeg",
+            None,
+            self.now,
         )
         with self.database.connect() as connection:
             connection.execute(
@@ -334,9 +350,7 @@ class CommerceServiceTest(unittest.TestCase):
         result = self.service.reconcile_duplicate_open_orders()
         self.assertEqual(result, {"cancelled": 1, "manual_conflicts": 0})
         with self.database.connect() as connection:
-            statuses = dict(
-                connection.execute("SELECT id, status FROM orders").fetchall()
-            )
+            statuses = dict(connection.execute("SELECT id, status FROM orders").fetchall())
         self.assertEqual(statuses[order.order_id], "payment_submitted")
         self.assertEqual(statuses["empty-duplicate"], "cancelled")
 
@@ -362,9 +376,7 @@ class CommerceServiceTest(unittest.TestCase):
 
         self.assertEqual(self.service.process_jobs(self.now), 1)
         self.assertEqual(len(self.outline.created), 1)
-        self.assertTrue(
-            self.outline.created[0][0].startswith("123-PAID50GB-30day-202608270307-")
-        )
+        self.assertTrue(self.outline.created[0][0].startswith("123-PAID50GB-30day-202608270307-"))
         subscription = self.service.user_vpn(123)
         self.assertEqual(subscription["status"], "active")
         self.assertEqual(subscription["access_url"], "ss://paid-1")
@@ -382,18 +394,12 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(len(self.outline.created), 1)
 
     def test_paid_key_name_prefers_tracked_username(self):
-        order = self.service.create_order(
-            321, "Min", "basic_50gb", self.now, username="@min_vpn"
-        )
-        self.service.submit_payment(
-            321, order.order_id, "manual", "username-name-ref", self.now
-        )
+        order = self.service.create_order(321, "Min", "basic_50gb", self.now, username="@min_vpn")
+        self.service.submit_payment(321, order.order_id, "manual", "username-name-ref", self.now)
         self.service.approve_order(order.order_id, 999, self.now)
         self.service.process_jobs(self.now)
         self.assertTrue(
-            self.outline.created[0][0].startswith(
-                "min_vpn-PAID50GB-30day-202608270307-"
-            )
+            self.outline.created[0][0].startswith("min_vpn-PAID50GB-30day-202608270307-")
         )
 
     def test_user_can_buy_multiple_paid_keys(self):
@@ -482,7 +488,10 @@ class CommerceServiceTest(unittest.TestCase):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)
         self.service.configure_server_capacity(
-            "default", 999, max_keys=3, reserved_keys=1,
+            "default",
+            999,
+            max_keys=3,
+            reserved_keys=1,
             monthly_traffic_bytes=1_000_000_000_000,
         )
         self.service.configure_plan_allocation("default", "basic_50gb", 1, 999)
@@ -584,8 +593,7 @@ def sqlite_schema_contract(path):
         )
         tables = {
             table_name: sorted(
-                row[1]
-                for row in connection.execute(f"PRAGMA table_info({table_name})")
+                row[1] for row in connection.execute(f"PRAGMA table_info({table_name})")
             )
             for table_name in table_names
         }
@@ -629,9 +637,7 @@ def sqlite_schema_metadata(path):
                             "on_delete": row[6],
                             "match": row[7],
                         }
-                        for row in connection.execute(
-                            f"PRAGMA foreign_key_list({table_name})"
-                        )
+                        for row in connection.execute(f"PRAGMA foreign_key_list({table_name})")
                     ],
                     key=lambda item: json.dumps(item, sort_keys=True),
                 ),
@@ -643,9 +649,7 @@ def sqlite_schema_metadata(path):
         ):
             indexes[name] = {
                 "table": table_name,
-                "columns": [
-                    row[2] for row in connection.execute(f"PRAGMA index_info({name})")
-                ],
+                "columns": [row[2] for row in connection.execute(f"PRAGMA index_info({name})")],
                 "sql": re.sub(r"\s+", " ", sql.strip()) if sql else None,
             }
     return {"tables": tables, "indexes": indexes}
@@ -703,29 +707,29 @@ class PostgresAdapterTest(unittest.TestCase):
         raw = FakeRawPostgresConnection()
         database.connect = lambda: _PostgresConnection(raw)
         database.initialize()
-        postgres_contract = postgres_schema_contract(
-            [query for query, _params in raw.calls]
-        )
+        postgres_contract = postgres_schema_contract([query for query, _params in raw.calls])
 
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "563a9f59f1b050cfec19e2c505cb756acb6452019d1ac4f5e5ca36a435eaf99e",
+            "0975d90cb899cb2b6c0ea581885e597050853b48da96879bff510618a61fcb46",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "1b008477486f0d4dbe3d563563e53c5c0499d1f6a2868972ee43cb29e3ff248f",
+            "aaf0ce711291e2f618519d741206928ca236c7b017a505bb51dce8e94ca12f61",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "2c4e07981ecc7f1a891d997f0b0bd6821094a009cb4cc6ba5e785401a9c99e3a",
+            "07271b97d0511c572d2d205dbb9679cda87509289096ceca3534901b0d8e98c4",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):
         raw = FakeRawPostgresConnection()
         connection = _PostgresConnection(raw)
         connection.execute("SELECT * FROM plans WHERE code = ? LIMIT ?", ("basic_50gb", 1))
-        self.assertEqual(raw.calls[0], ("SELECT * FROM plans WHERE code = %s LIMIT %s", ("basic_50gb", 1)))
+        self.assertEqual(
+            raw.calls[0], ("SELECT * FROM plans WHERE code = %s LIMIT %s", ("basic_50gb", 1))
+        )
 
     def test_postgres_update_dedupe_insert_is_available_to_polling_loop(self):
         raw = FakeRawPostgresConnection()
