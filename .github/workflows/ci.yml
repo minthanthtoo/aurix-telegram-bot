@@ -29,7 +29,7 @@ jobs:
           python -m py_compile
           app.py commerce.py commerce_models.py commerce_repositories.py commerce_service.py
           commerce_worker.py observability.py outline_adapter.py ports.py
-          entitlements.py free_repository.py runtime.py telegram_transport.py
+          entitlements.py free_repository.py infrastructure.py runtime.py telegram_transport.py
           telegram_admin.py telegram_admin_panels.py telegram_callbacks.py
           telegram_commands.py telegram_maintenance.py
           migrations.py persistence.py repositories.py
@@ -43,12 +43,12 @@ jobs:
           ruff check
           app.py commerce.py commerce_models.py commerce_repositories.py commerce_service.py
           commerce_worker.py observability.py outline_adapter.py ports.py
-          entitlements.py free_repository.py runtime.py telegram_transport.py
+          entitlements.py free_repository.py infrastructure.py runtime.py telegram_transport.py
           telegram_admin.py telegram_admin_panels.py telegram_callbacks.py
           telegram_commands.py telegram_maintenance.py
           migrations.py persistence.py repositories.py
           receipt_llm.py supabase_storage.py deploy
-          test_app.py test_commerce.py test_free_profile.py test_migrations.py
+          test_app.py test_commerce.py test_free_profile.py test_infrastructure.py test_migrations.py
           test_mvp.py test_observability.py test_persistence.py
           test_refactor_boundaries.py test_render_preflight.py test_runtime.py test_storage.py
 

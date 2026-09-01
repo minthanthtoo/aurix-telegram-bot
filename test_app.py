@@ -70,6 +70,21 @@ class FakeOutline:
     def transfer_metrics(self):
         return {"bytesTransferredByUserId": self.transfer}
 
+    def server_info(self):
+        return {"version": "test"}
+
+
+class FakeOutlinePool:
+    def __init__(self):
+        self.clients = {"sg-a": FakeOutline(), "sg-b": FakeOutline()}
+        self.default_server_id = "sg-a"
+
+    def server_ids(self):
+        return tuple(self.clients)
+
+    def client(self, server_id=None):
+        return self.clients[str(server_id or self.default_server_id)]
+
 
 class FakeReceiptStorage:
     configured = True
@@ -376,17 +391,59 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(reconciled, 1)
         self.assertEqual(self.outline.data_limits, [("1", 100_000_000_000)])
 
-    def test_outline_key_id_conflict_rejected(self):
-        # Verify UNIQUE constraint on outline_key_id exists in schema
+    def test_outline_key_identity_is_unique_within_each_server(self):
         with open_sqlite_connection(self.db.path) as conn:
-            info = conn.execute("PRAGMA table_info(keys)").fetchall()
             indexes = conn.execute("PRAGMA index_list(keys)").fetchall()
-        outline_key_id_col = next(c for c in info if c[1] == "outline_key_id")
-        # Column info: (cid, name, type, notnull, dflt_value, pk)
-        # UNIQUE constraint shows up in index_list, not table_info
-        # Index info: (seq, name, unique, origin, partial)
-        unique_indexes = [idx for idx in indexes if idx[2] == 1 and idx[3] == "u"]
-        self.assertGreater(len(unique_indexes), 0)
+            unique = next(index for index in indexes if index[1] == "free_keys_server_external")
+            columns = [
+                row[2]
+                for row in conn.execute("PRAGMA index_info(free_keys_server_external)").fetchall()
+            ]
+        self.assertEqual(unique[2], 1)
+        self.assertEqual(columns, ["server_id", "outline_key_id"])
+
+    def test_free_keys_are_capacity_routed_and_remote_ids_are_server_scoped(self):
+        pool = FakeOutlinePool()
+        commerce = CommerceService(CommerceDatabase(self.db.path), pool, Fernet.generate_key())
+        commerce.initialize()
+        commerce.register_outline_servers({"sg-a": "Singapore A", "sg-b": "Singapore B"})
+        commerce.refresh_server_inventory(self.now)
+        commerce.configure_tier_allocation("sg-a", "FREE300MB", 1, 999)
+        commerce.configure_tier_allocation("sg-b", "FREE300MB", 1, 999)
+        service = ClaimService(self.db, pool)
+
+        service.claim(101, "One", self.now)
+        service.claim(202, "Two", self.now)
+
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                "SELECT server_id, outline_key_id FROM keys ORDER BY telegram_id"
+            ).fetchall()
+        self.assertEqual(
+            [(row["server_id"], row["outline_key_id"]) for row in rows],
+            [("sg-a", "1"), ("sg-b", "1")],
+        )
+
+    def test_partial_fleet_metrics_never_treat_missing_server_as_zero(self):
+        pool = FakeOutlinePool()
+        commerce = CommerceService(CommerceDatabase(self.db.path), pool, Fernet.generate_key())
+        commerce.initialize()
+        commerce.register_outline_servers()
+        commerce.refresh_server_inventory(self.now)
+        commerce.configure_tier_allocation("sg-a", "FREE300MB", 1, 999)
+        commerce.configure_tier_allocation("sg-b", "FREE300MB", 1, 999)
+        service = ClaimService(self.db, pool)
+        service.claim(101, "One", self.now)
+        service.claim(202, "Two", self.now)
+
+        revoked = service.enforce_quota(
+            self.now + timedelta(hours=1),
+            metrics={"byServer": {"sg-b": {"1": 300_000_000}}, "errors": {"sg-a": "down"}},
+        )
+
+        self.assertEqual(revoked, 1)
+        self.assertEqual(pool.clients["sg-a"].deleted, [])
+        self.assertEqual(pool.clients["sg-b"].deleted, ["1"])
 
     def test_outline_get_key_uses_encoded_key_id(self):
         client = OutlineClient.__new__(OutlineClient)

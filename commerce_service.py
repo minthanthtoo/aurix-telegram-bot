@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -174,6 +175,16 @@ class CommerceService(CommerceWorkerMixin):
                 "UPDATE paid_vpn_keys SET server_id = ? WHERE server_id IS NULL",
                 (default_server_id,),
             )
+            if self._table_exists(connection, "keys"):
+                connection.execute(
+                    "UPDATE keys SET server_id = ? WHERE server_id IS NULL",
+                    (default_server_id,),
+                )
+                if "primary" not in server_ids:
+                    connection.execute(
+                        "UPDATE keys SET server_id = ? WHERE server_id = 'primary'",
+                        (default_server_id,),
+                    )
             connection.execute(
                 """UPDATE orders SET server_id = ?, capacity_reserved_until = COALESCE(capacity_reserved_until, ?)
                    WHERE server_id IS NULL AND status IN ('awaiting_payment', 'payment_submitted')""",
@@ -183,6 +194,15 @@ class CommerceService(CommerceWorkerMixin):
     def _outline_client(self, server_id: str | None = None) -> Any:
         getter = getattr(self.outline, "client", None)
         return getter(server_id) if callable(getter) else self.outline
+
+    @staticmethod
+    def _table_exists(connection: Any, name: str) -> bool:
+        if connection.__class__.__name__ == "_PostgresConnection":
+            row = connection.execute("SELECT to_regclass(?) AS table_name", (f"public.{name}",)).fetchone()
+            return bool(row and row["table_name"])
+        return connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone() is not None
 
     @staticmethod
     def _metric_bytes(value: Any) -> int | None:
@@ -321,6 +341,39 @@ class CommerceService(CommerceWorkerMixin):
                 "admin", str(admin_id), {"plan_code": plan_code, "slot_limit": int(slot_limit)},
             )
 
+    def configure_tier_allocation(
+        self, server_id: str, tier_code: str, slot_limit: int, admin_id: int
+    ) -> None:
+        """Allocate free/promo issuance slots without moving existing keys."""
+        normalized = str(tier_code).upper()
+        if normalized not in {"FREE300MB", "FREE3GB", "PROMO"}:
+            raise CommerceError("Unknown free or promotional tier")
+        if int(slot_limit) < 0:
+            raise CommerceError("Tier slots cannot be negative")
+        now_text = _now_text()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            if connection.execute(
+                "SELECT 1 FROM outline_servers WHERE server_id = ? AND enabled = 1", (server_id,)
+            ).fetchone() is None:
+                raise CommerceError("Outline server is unavailable")
+            connection.execute(
+                """INSERT INTO server_tier_allocations
+                   (server_id, tier_code, slot_limit, updated_at) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(server_id, tier_code) DO UPDATE SET
+                     slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
+                (server_id, normalized, int(slot_limit), now_text),
+            )
+            self._audit(
+                connection,
+                "tier_capacity_changed",
+                "outline_server",
+                server_id,
+                "admin",
+                str(admin_id),
+                {"tier_code": normalized, "slot_limit": int(slot_limit)},
+            )
+
     def _select_server_for_plan(self, connection: Any, plan_code: str, now_text: str) -> str:
         plan = connection.execute(
             "SELECT quota_bytes FROM plans WHERE code = ? AND active = 1", (plan_code,)
@@ -334,8 +387,17 @@ class CommerceService(CommerceWorkerMixin):
                 (plan_code,),
             ).fetchone()["n"]
         ) > 0
+        health_max_age = max(
+            30, int(os.environ.get("AURIX_SERVER_HEALTH_MAX_AGE_SECONDS", "900"))
+        )
+        selection_time = datetime.fromisoformat(now_text).astimezone(UTC)
+        fresh_after = _now_text(selection_time - timedelta(seconds=health_max_age))
         servers = connection.execute(
-            "SELECT * FROM outline_servers WHERE enabled = 1 AND health_status != 'unreachable' ORDER BY server_id"
+            """SELECT * FROM outline_servers
+               WHERE enabled = 1 AND health_status = 'healthy'
+                 AND last_synced_at IS NOT NULL AND last_synced_at >= ?
+               ORDER BY server_id""",
+            (fresh_after,),
         ).fetchall()
         candidates: list[tuple[float, str]] = []
         for server in servers:
@@ -529,6 +591,10 @@ class CommerceService(CommerceWorkerMixin):
         """Return admission availability from configured per-server allocations."""
         now_text = _now_text(now)
         result: dict[str, dict[str, Any]] = {}
+        health_max_age = max(
+            30, int(os.environ.get("AURIX_SERVER_HEALTH_MAX_AGE_SECONDS", "900"))
+        )
+        fresh_after = _now_text((now or datetime.now(UTC)) - timedelta(seconds=health_max_age))
         with self.database.connect() as connection:
             plans = connection.execute("SELECT code FROM plans WHERE active = 1").fetchall()
             server_count = int(
@@ -542,8 +608,9 @@ class CommerceService(CommerceWorkerMixin):
                     """SELECT a.server_id, a.slot_limit FROM server_plan_allocations a
                        JOIN outline_servers s ON s.server_id = a.server_id
                        WHERE a.plan_code = ? AND s.enabled = 1
-                         AND s.health_status != 'unreachable'""",
-                    (code,),
+                         AND s.health_status = 'healthy'
+                         AND s.last_synced_at IS NOT NULL AND s.last_synced_at >= ?""",
+                    (code, fresh_after),
                 ).fetchall()
                 if not server_count:
                     result[code] = {"available": True, "remaining_slots": None, "managed": False}
@@ -2988,7 +3055,7 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT s.plan_code, s.plan_name, s.status AS subscription_status, s.expires_at, s.starts_at,
-                          k.outline_key_id, k.quota_bytes, k.status,
+                          k.server_id, k.outline_key_id, k.quota_bytes, k.status,
                           k.last_usage_bytes, k.quota_reason, k.created_at,
                           (SELECT j.status FROM provisioning_jobs j WHERE j.subscription_id = s.id
                            AND j.operation = 'revoke' LIMIT 1) AS revocation_status
@@ -3001,9 +3068,20 @@ class CommerceService(CommerceWorkerMixin):
             ).fetchall()
         result = []
         for row in rows:
+            server_id = str(
+                row["server_id"] or getattr(self.outline, "default_server_id", "default")
+            )
             key_id = str(row["outline_key_id"])
-            observed = key_id in usage_by_key
-            raw_used = usage_by_key.get(key_id, row["last_usage_bytes"] or 0)
+            scoped = usage_by_key.get("byServer") if isinstance(usage_by_key, dict) else None
+            if isinstance(scoped, dict):
+                server_usage = scoped.get(server_id)
+                server_usage = server_usage if isinstance(server_usage, dict) else {}
+                server_observed = server_id in scoped
+            else:
+                server_usage = usage_by_key if isinstance(usage_by_key, dict) else {}
+                server_observed = True
+            observed = server_observed and key_id in server_usage
+            raw_used = server_usage.get(key_id, row["last_usage_bytes"] or 0)
             try:
                 used = max(0, int(raw_used or 0))
             except (TypeError, ValueError):
@@ -3015,6 +3093,7 @@ class CommerceService(CommerceWorkerMixin):
             result.append(
                 {
                     "outline_key_id": key_id,
+                    "server_id": server_id,
                     "tier": row["plan_name"] or row["plan_code"],
                     "used_bytes": used,
                     "quota_bytes": quota,
@@ -3050,7 +3129,7 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
-                          s.expires_at, s.starts_at, k.outline_key_id, k.access_url,
+                          s.expires_at, s.starts_at, k.server_id, k.outline_key_id, k.access_url,
                           COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
                           k.status AS key_status, k.created_at, k.quota_reason
                    FROM subscriptions s LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
@@ -3085,7 +3164,7 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             row = connection.execute(
                 """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
-                          s.expires_at, s.starts_at, k.outline_key_id, k.access_url,
+                          s.expires_at, s.starts_at, k.server_id, k.outline_key_id, k.access_url,
                           COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
                           k.status AS key_status, k.created_at, k.quota_reason,
                           k.last_usage_bytes, k.last_usage_observed_at

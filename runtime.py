@@ -140,21 +140,41 @@ def main() -> None:
             "WARNING: duplicate open orders with payment evidence require manual review.",
             file=sys.stderr,
         )
-    try:
-        outline_info = outline.server_info()
-    except OutlineError as exc:
-        raise SystemExit(f"Outline readiness check failed: {exc}") from exc
-    print(f"Outline connected: version {outline_info.get('version', 'unknown')}")
     refresh_inventory = getattr(commerce, "refresh_server_inventory", None)
+    inventory: list[dict[str, Any]] = []
     if callable(refresh_inventory):
         inventory = refresh_inventory()
         healthy_servers = sum(1 for item in inventory if item["status"] == "healthy")
         print(f"Outline inventory ready: {healthy_servers}/{len(inventory)} server(s) healthy")
+        if healthy_servers:
+            versions = sorted(
+                {str(item.get("version") or "unknown") for item in inventory if item["status"] == "healthy"}
+            )
+            print(f"Outline connected: version {','.join(versions)}")
+        else:
+            print(
+                "WARNING: no Outline endpoint is currently healthy; customer issuance is paused "
+                "while Telegram/admin recovery remains available.",
+                file=sys.stderr,
+            )
+    else:
+        try:
+            outline_info = outline.server_info()
+            print(f"Outline connected: version {outline_info.get('version', 'unknown')}")
+        except OutlineError:
+            print(
+                "WARNING: Outline endpoint is unavailable; Telegram/admin recovery remains available.",
+                file=sys.stderr,
+            )
     claim_service = ClaimService(database, outline, limit_bytes=PUBLIC_LIMIT_BYTES)
     try:
         promo_limits_reconciled = claim_service.reconcile_giveaway_limits()
     except OutlineError as exc:
-        raise SystemExit(f"Promo quota readiness check failed: {exc}") from exc
+        promo_limits_reconciled = 0
+        print(
+            f"WARNING: promo quota reconciliation deferred: {type(exc).__name__}",
+            file=sys.stderr,
+        )
     if promo_limits_reconciled:
         print(f"Promo quotas reconciled: {promo_limits_reconciled} active key(s)")
 

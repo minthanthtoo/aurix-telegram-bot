@@ -67,6 +67,11 @@ ADMIN_SCOPE_CLEANUP_IDS=
 TRIAL_TELEGRAM_IDS=
 OUTLINE_API_URL=replace-with-installer-output
 OUTLINE_CERT_SHA256=replace-with-installer-output
+# For multiple servers, replace the two lines above with root-only
+# OUTLINE_SERVERS_JSON and choose a legacy fallback ID.
+# OUTLINE_SERVERS_JSON=[{"id":"sg-a","label":"Singapore A","api_url":"https://host:port/secret","cert_sha256":"64hex"}]
+# OUTLINE_DEFAULT_SERVER_ID=sg-a
+AURIX_SERVER_HEALTH_MAX_AGE_SECONDS=900
 AURIX_ACCESS_URL_KEY=replace-with-a-persistent-fernet-key
 DATABASE_PATH=/var/lib/aurix-bot/bot.db
 # Optional: set a reachable PostgreSQL URL for hosted commercial state.
@@ -213,3 +218,10 @@ cat /var/lib/aurix-deploy/deployed-sha
 Do not run a Render service, a local bot, or a second VPS with the same Telegram
 token. Git auto-deployment changes code delivery; it does not make Telegram
 long polling multi-instance safe.
+
+For multi-server admission, per-tier/per-plan capacity, partial-outage behavior,
+and the separately gated DigitalOcean provisioning controller, follow
+[`docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`](../docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md).
+Provider mutation must not run inside `aurix-bot`; keep its token in a distinct
+operator worker environment and leave it disabled until the documented budget
+and verification gates are approved.

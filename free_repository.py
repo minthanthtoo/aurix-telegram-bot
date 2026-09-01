@@ -41,7 +41,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS keys (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
-                    outline_key_id TEXT NOT NULL UNIQUE,
+                    outline_key_id TEXT NOT NULL,
                     key_type TEXT NOT NULL DEFAULT 'daily_free'
                         CHECK (key_type IN ('daily_free', 'monthly_trial', 'paid')),
                     created_at TEXT NOT NULL,

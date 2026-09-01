@@ -111,7 +111,7 @@ class CommerceDatabase:
                     id TEXT PRIMARY KEY,
                     subscription_id TEXT NOT NULL UNIQUE REFERENCES subscriptions(id),
                     telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
-                    outline_key_id TEXT NOT NULL UNIQUE,
+                    outline_key_id TEXT NOT NULL,
                     access_url TEXT NOT NULL,
                     quota_bytes INTEGER,
                     status TEXT NOT NULL CHECK (status IN (
@@ -633,7 +633,7 @@ class PostgresCommerceDatabase:
         CREATE TABLE IF NOT EXISTS keys (
             id BIGSERIAL PRIMARY KEY,
             telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
-            outline_key_id TEXT NOT NULL UNIQUE,
+            outline_key_id TEXT NOT NULL,
             key_type TEXT NOT NULL DEFAULT 'daily_free'
                 CHECK (key_type IN ('daily_free', 'monthly_trial', 'paid')),
             created_at TEXT NOT NULL,
@@ -741,7 +741,7 @@ class PostgresCommerceDatabase:
             id TEXT PRIMARY KEY,
             subscription_id TEXT NOT NULL UNIQUE REFERENCES subscriptions(id),
             telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
-            outline_key_id TEXT NOT NULL UNIQUE,
+            outline_key_id TEXT NOT NULL,
             access_url TEXT NOT NULL,
             quota_bytes BIGINT,
             status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'revoke_failed')),

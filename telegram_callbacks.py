@@ -413,6 +413,15 @@ class TelegramCallbackMixin:
                             else server.get("monthly_traffic_bytes")
                         ),
                     )
+                elif field in {"FREE300MB", "FREE3GB", "PROMO"}:
+                    self._admin_call(
+                        telegram_id,
+                        "configure_tier_allocation",
+                        server_id,
+                        field,
+                        value,
+                        telegram_id,
+                    )
                 else:
                     self._admin_call(
                         telegram_id,

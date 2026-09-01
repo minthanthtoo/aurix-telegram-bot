@@ -857,6 +857,20 @@ class CommerceWorkerMixin:
                    ORDER BY a.server_id, p.price_minor""",
                 (_now_text(current),),
             ).fetchall()
+            tier_allocation_rows = connection.execute(
+                """SELECT server_id, tier_code, slot_limit
+                   FROM server_tier_allocations ORDER BY server_id, tier_code"""
+            ).fetchall()
+            free_key_rows = (
+                connection.execute(
+                    """SELECT k.server_id, k.key_type,
+                              CASE WHEN g.key_id IS NULL THEN 0 ELSE 1 END AS is_promo
+                       FROM keys k LEFT JOIN giveaway_claims g ON g.key_id = k.id
+                       WHERE k.status IN ('active', 'revoke_failed')"""
+                ).fetchall()
+                if self._table_exists(connection, "keys")
+                else []
+            )
         default_server_id = getattr(self.outline, "default_server_id", None)
         metrics_by_server = (
             dict(getattr(self, "_server_metrics_cache", {}))
@@ -889,6 +903,24 @@ class CommerceWorkerMixin:
                 int(item["slot_limit"]) - int(item["active_count"]) - int(item["reserved_count"]),
             )
             allocations_by_server.setdefault(str(item["server_id"]), []).append(item)
+        free_counts: dict[tuple[str, str], int] = {}
+        for row in free_key_rows:
+            tier_code = (
+                "PROMO"
+                if int(row["is_promo"])
+                else "FREE300MB"
+                if row["key_type"] == "daily_free"
+                else "FREE3GB"
+            )
+            identity = (str(row["server_id"] or default_server_id), tier_code)
+            free_counts[identity] = free_counts.get(identity, 0) + 1
+        tier_allocations_by_server: dict[str, list[dict[str, Any]]] = {}
+        for row in tier_allocation_rows:
+            item = dict(row)
+            active_count = free_counts.get((str(item["server_id"]), str(item["tier_code"])), 0)
+            item["active_count"] = active_count
+            item["remaining_slots"] = max(0, int(item["slot_limit"]) - active_count)
+            tier_allocations_by_server.setdefault(str(item["server_id"]), []).append(item)
         servers = []
         for row in server_rows:
             item = dict(row)
@@ -937,6 +969,9 @@ class CommerceWorkerMixin:
                 None if usable is None else max(0, usable - remote - reserved_orders - pending_keys)
             )
             item["allocations"] = allocations_by_server.get(str(item["server_id"]), [])
+            item["tier_allocations"] = tier_allocations_by_server.get(
+                str(item["server_id"]), []
+            )
             servers.append(item)
         outline_version = "multi" if len(servers) > 1 else "unknown"
         if not servers:

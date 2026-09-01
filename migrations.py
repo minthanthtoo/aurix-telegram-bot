@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 
 UTC = timezone.utc
@@ -20,6 +20,7 @@ class Migration:
     name: str
     sqlite_statements: tuple[str, ...] = ()
     postgres_statements: tuple[str, ...] = ()
+    sqlite_hook: Callable[[Any], None] | None = None
 
     def statements_for(self, dialect: str) -> tuple[str, ...]:
         if dialect == "sqlite":
@@ -27,6 +28,123 @@ class Migration:
         if dialect == "postgres":
             return self.postgres_statements
         raise MigrationError(f"Unsupported migration dialect: {dialect}")
+
+
+def _has_legacy_global_unique(connection: Any, table: str, column: str) -> bool:
+    for index in connection.execute(f"PRAGMA index_list({table})").fetchall():
+        if not bool(index[2]):
+            continue
+        columns = [
+            row[2]
+            for row in connection.execute(f"PRAGMA index_info({index[1]})").fetchall()
+        ]
+        if columns == [column]:
+            return True
+    return False
+
+
+def _rebuild_free_keys_for_server_identity(connection: Any) -> None:
+    """Remove a legacy SQLite global Outline-ID unique constraint safely."""
+    if not _has_legacy_global_unique(connection, "keys", "outline_key_id"):
+        return
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """CREATE TABLE keys_server_scoped (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   outline_key_id TEXT NOT NULL,
+                   key_type TEXT NOT NULL DEFAULT 'daily_free'
+                     CHECK (key_type IN ('daily_free', 'monthly_trial', 'paid')),
+                   created_at TEXT NOT NULL,
+                   expires_at TEXT NOT NULL,
+                   data_limit_bytes INTEGER NOT NULL,
+                   status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'revoke_failed')),
+                   last_usage_bytes INTEGER,
+                   quota_reason TEXT,
+                   quota_warning_percent INTEGER,
+                   server_id TEXT NOT NULL DEFAULT 'primary'
+               )"""
+        )
+        connection.execute(
+            """INSERT INTO keys_server_scoped
+               (id, telegram_id, outline_key_id, key_type, created_at, expires_at,
+                data_limit_bytes, status, last_usage_bytes, quota_reason,
+                quota_warning_percent, server_id)
+               SELECT id, telegram_id, outline_key_id, key_type, created_at, expires_at,
+                      data_limit_bytes, status, last_usage_bytes, quota_reason,
+                      quota_warning_percent, server_id FROM keys"""
+        )
+        connection.execute("DROP TABLE keys")
+        connection.execute("ALTER TABLE keys_server_scoped RENAME TO keys")
+        connection.execute("CREATE INDEX keys_expiry ON keys(status, expires_at)")
+        connection.execute(
+            "CREATE UNIQUE INDEX free_keys_server_external ON keys(server_id, outline_key_id)"
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+        raise MigrationError("Free key identity migration broke a foreign-key reference")
+
+
+def _rebuild_paid_keys_for_server_identity(connection: Any) -> None:
+    """Remove a legacy SQLite global paid Outline-ID unique constraint safely."""
+    if not _has_legacy_global_unique(connection, "paid_vpn_keys", "outline_key_id"):
+        return
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """CREATE TABLE paid_vpn_keys_server_scoped (
+                   id TEXT PRIMARY KEY,
+                   subscription_id TEXT NOT NULL UNIQUE REFERENCES subscriptions(id),
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   outline_key_id TEXT NOT NULL,
+                   access_url TEXT NOT NULL,
+                   quota_bytes INTEGER,
+                   status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'revoke_failed')),
+                   quota_warning_percent INTEGER,
+                   created_at TEXT NOT NULL,
+                   revoked_at TEXT,
+                   last_usage_bytes INTEGER,
+                   last_usage_observed_at TEXT,
+                   quota_reason TEXT,
+                   server_id TEXT
+               )"""
+        )
+        connection.execute(
+            """INSERT INTO paid_vpn_keys_server_scoped
+               (id, subscription_id, telegram_id, outline_key_id, access_url,
+                quota_bytes, status, quota_warning_percent, created_at, revoked_at,
+                last_usage_bytes, last_usage_observed_at, quota_reason, server_id)
+               SELECT id, subscription_id, telegram_id, outline_key_id, access_url,
+                      quota_bytes, status, quota_warning_percent, created_at, revoked_at,
+                      last_usage_bytes, last_usage_observed_at, quota_reason, server_id
+               FROM paid_vpn_keys"""
+        )
+        connection.execute("DROP TABLE paid_vpn_keys")
+        connection.execute(
+            "ALTER TABLE paid_vpn_keys_server_scoped RENAME TO paid_vpn_keys"
+        )
+        connection.execute(
+            """CREATE UNIQUE INDEX paid_keys_server_external
+               ON paid_vpn_keys(server_id, outline_key_id)"""
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+        raise MigrationError("Paid key identity migration broke a foreign-key reference")
 
 
 FREE_ACCESS_MIGRATIONS = (
@@ -263,6 +381,20 @@ FREE_ACCESS_MIGRATIONS = (
                )""",
         ),
     ),
+    Migration(
+        8,
+        "free_key_server_identity",
+        sqlite_statements=(
+            "ALTER TABLE keys ADD COLUMN server_id TEXT NOT NULL DEFAULT 'primary'",
+            "CREATE UNIQUE INDEX IF NOT EXISTS free_keys_server_external ON keys(server_id, outline_key_id)",
+        ),
+        sqlite_hook=_rebuild_free_keys_for_server_identity,
+        postgres_statements=(
+            "ALTER TABLE keys ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'primary'",
+            "ALTER TABLE keys DROP CONSTRAINT IF EXISTS keys_outline_key_id_key",
+            "CREATE UNIQUE INDEX IF NOT EXISTS free_keys_server_external ON keys(server_id, outline_key_id)",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (
@@ -420,6 +552,76 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS subscriptions_server_status ON subscriptions(server_id, status)",
         ),
     ),
+    Migration(
+        5,
+        "fleet_lifecycle_and_tier_capacity",
+        sqlite_statements=(
+            "CREATE UNIQUE INDEX IF NOT EXISTS paid_keys_server_external ON paid_vpn_keys(server_id, outline_key_id)",
+            """CREATE TABLE IF NOT EXISTS server_tier_allocations (
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   tier_code TEXT NOT NULL,
+                   slot_limit INTEGER NOT NULL CHECK (slot_limit >= 0),
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (server_id, tier_code)
+               )""",
+            """CREATE TABLE IF NOT EXISTS infrastructure_jobs (
+                   id TEXT PRIMARY KEY,
+                   operation TEXT NOT NULL,
+                   status TEXT NOT NULL,
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   provider_resource_id TEXT,
+                   provider_action_id TEXT,
+                   request_fingerprint TEXT NOT NULL UNIQUE,
+                   last_error TEXT,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT
+               )""",
+            """CREATE TABLE IF NOT EXISTS infrastructure_events (
+                   id TEXT PRIMARY KEY,
+                   infrastructure_job_id TEXT,
+                   server_id TEXT,
+                   event_type TEXT NOT NULL,
+                   metadata_json TEXT NOT NULL DEFAULT '{}',
+                   created_at TEXT NOT NULL
+               )""",
+        ),
+        postgres_statements=(
+            "ALTER TABLE paid_vpn_keys DROP CONSTRAINT IF EXISTS paid_vpn_keys_outline_key_id_key",
+            "CREATE UNIQUE INDEX IF NOT EXISTS paid_keys_server_external ON paid_vpn_keys(server_id, outline_key_id)",
+            """CREATE TABLE IF NOT EXISTS server_tier_allocations (
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   tier_code TEXT NOT NULL,
+                   slot_limit INTEGER NOT NULL CHECK (slot_limit >= 0),
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (server_id, tier_code)
+               )""",
+            """CREATE TABLE IF NOT EXISTS infrastructure_jobs (
+                   id TEXT PRIMARY KEY,
+                   operation TEXT NOT NULL,
+                   status TEXT NOT NULL,
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   provider_resource_id TEXT,
+                   provider_action_id TEXT,
+                   request_fingerprint TEXT NOT NULL UNIQUE,
+                   last_error TEXT,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT
+               )""",
+            """CREATE TABLE IF NOT EXISTS infrastructure_events (
+                   id TEXT PRIMARY KEY,
+                   infrastructure_job_id TEXT,
+                   server_id TEXT,
+                   event_type TEXT NOT NULL,
+                   metadata_json TEXT NOT NULL DEFAULT '{}',
+                   created_at TEXT NOT NULL
+               )""",
+        ),
+        sqlite_hook=_rebuild_paid_keys_for_server_identity,
+    ),
 )
 
 
@@ -477,6 +679,8 @@ def apply_migrations(
             continue
         for statement in migration.statements_for(dialect):
             connection.execute(statement)
+        if dialect == "sqlite" and migration.sqlite_hook is not None:
+            migration.sqlite_hook(connection)
         connection.execute(
             """INSERT INTO schema_migrations
                (component, version, name, applied_at)

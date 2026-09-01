@@ -14,6 +14,8 @@ Telegram-first paid-concierge MVP with public free/trial access:
 - Telegram-ID allowlisted staff approval/rejection;
 - idempotent Outline key provisioning, quota application, reconciliation, and revocation;
 - durable SQLite jobs, notifications, and audit events for a single staging process;
+- multi-server, server-scoped free/promo/paid allocation with admin-declared
+  key, traffic, tier, and plan capacity;
 - admin-only transfer/capacity summary from Outline metrics;
 - quota observations fail closed and queue a hard Outline key deletion at `used >= limit`;
 - TLS certificate fingerprint pinning for the Outline Management API;
@@ -23,11 +25,14 @@ The bot is designed to run as one persistent process. The recommended Render
 topology is one paid Background Worker with persistent-disk SQLite; the
 controlled free profile stores all bot state in Supabase PostgreSQL instead.
 Neither profile is safe to scale beyond one instance. Independent worker
-processes, automated payment-provider verification, referrals, affiliates,
-resellers, and multi-node allocation are intentionally not enabled until their
-deployment or evidence gates pass. See
+processes, automated payment-provider verification, referrals, affiliates, and
+resellers are intentionally not enabled until their deployment or evidence
+gates pass. Multi-server allocation is supported, but provider mutation remains
+disabled by default and separate from the Telegram runtime. See
 [`docs/MVP_STATUS.md`](docs/MVP_STATUS.md) for the current comparison with the
-final architecture.
+final architecture and
+[`docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`](docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md)
+for the canonical fleet design and operations guide.
 
 ## Configure
 
@@ -62,7 +67,10 @@ Optional:
 
 - `DATABASE_PATH` — default `data/bot.db`
 - `OUTLINE_SERVERS_JSON` — optional multi-server array of `{id,label,api_url,cert_sha256}`. It replaces the single-server URL/fingerprint pair; keep it only in the host's secret environment.
-- `OUTLINE_DEFAULT_SERVER_ID` — server used for free/trial keys and legacy records when the array contains multiple servers.
+- `OUTLINE_DEFAULT_SERVER_ID` — fallback for legacy records; new free, promo,
+  and paid issuance uses fresh health and declared capacity across the pool.
+- `AURIX_SERVER_HEALTH_MAX_AGE_SECONDS` — maximum age of inventory telemetry
+  accepted for new admission (default `900`).
 - `OWNER_TELEGRAM_ID` — preferred immutable owner/recovery Telegram numeric ID
 - `ADMIN_TELEGRAM_IDS` — legacy one-time comma-separated administrator bootstrap
 - `AURIX_CONTROL_GROUP_ID` — optional trusted numeric `-100...` bootstrap override. Normally the owner connects the group from **Owner Controls → Choose Control Group**; Telegram supplies and AuriX persists the numeric ID without invite-link parsing.
@@ -78,6 +86,12 @@ Optional:
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
+
+Optional DigitalOcean fleet creation belongs to a separate operator worker.
+It is off by default and requires explicit allowlists, node/day/cooldown limits,
+and a monthly budget. Do not put `DIGITALOCEAN_API_TOKEN` in the normal bot
+service. The exact gates and manual Outline verification step are documented in
+the [fleet runbook](docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md).
 
 Customer-facing payment cards live in `assets/payment_qr/`. They intentionally
 contain the merchant QR, but no visible account names or phone numbers. A QR can

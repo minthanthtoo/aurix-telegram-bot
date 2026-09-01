@@ -513,6 +513,19 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(row["server_id"], "default")
         self.assertIsNotNone(row["capacity_reserved_until"])
 
+    def test_stale_server_telemetry_is_not_eligible_for_new_orders(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        self.service.configure_plan_allocation("default", "basic_50gb", 10, 999)
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE outline_servers SET last_synced_at = ? WHERE server_id = 'default'",
+                ((self.now - timedelta(hours=1)).isoformat(),),
+            )
+
+        with self.assertRaisesRegex(CommerceError, "temporarily full"):
+            self.service.create_order(101, "One", "basic_50gb", self.now)
+
 
 class FakeRawPostgresCursor:
     rowcount = 1
@@ -569,7 +582,7 @@ def postgres_schema_contract(statements):
             tables.setdefault(table_name.lower(), set()).add(column_name.lower())
             continue
         index_match = re.match(
-            r"CREATE INDEX IF NOT EXISTS\s+([a-z_]+)",
+            r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS\s+([a-z_]+)",
             statement.strip(),
             re.IGNORECASE,
         )
@@ -712,15 +725,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "0975d90cb899cb2b6c0ea581885e597050853b48da96879bff510618a61fcb46",
+            "6ca98fceecb10527d984bd3046158d450b4b40696a933723f0571ad7aa6fb693",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "aaf0ce711291e2f618519d741206928ca236c7b017a505bb51dce8e94ca12f61",
+            "259008698c072c0bfffe2bc87cf206271e8199797c48c9e059d3d4b4eb44196a",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "07271b97d0511c572d2d205dbb9679cda87509289096ceca3534901b0d8e98c4",
+            "55afb0fdaf01326a027607e3b34db143e7f94b1a0bd4effb0d66456352f8d31f",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

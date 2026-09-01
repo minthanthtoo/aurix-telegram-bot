@@ -213,6 +213,17 @@ class TelegramAdminMixin:
                 )
             else:
                 lines.append("Plan slots: not allocated (server headroom only)")
+            tier_allocations = item.get("tier_allocations") or []
+            if tier_allocations:
+                labels = {"FREE300MB": "Daily", "FREE3GB": "Monthly", "PROMO": "Promo"}
+                lines.append(
+                    "Free/promo slots: "
+                    + " · ".join(
+                        f"{labels.get(allocation['tier_code'], allocation['tier_code'])} "
+                        f"{allocation['remaining_slots']}/{allocation['slot_limit']}"
+                        for allocation in tier_allocations
+                    )
+                )
         if not servers:
             lines.extend(["", "No environment-configured Outline servers were registered."])
         return "\n".join(lines)[:4096]
@@ -258,7 +269,7 @@ class TelegramAdminMixin:
             "Monthly traffic budget: "
             + (f"{int(traffic) / 1_000_000_000:g} GB" if traffic else "monitor only"),
             "",
-            "Choose declared server capacity, then allocate each paid plan. Changes apply to new orders; existing keys are never silently moved.",
+            "Choose declared server capacity, then allocate paid and free/promo tiers. Changes apply to new issuance; existing keys are never silently moved.",
         ]
         rows: list[list[tuple[str, str]]] = [
             [
@@ -287,6 +298,19 @@ class TelegramAdminMixin:
                     ("10", f"a:C:{server_id}|{plan.code}|10"),
                     ("25", f"a:C:{server_id}|{plan.code}|25"),
                     ("50", f"a:C:{server_id}|{plan.code}|50"),
+                ]
+            )
+        tier_labels = {"FREE300MB": "Daily 300 MB", "FREE3GB": "Monthly 3 GB", "PROMO": "Promo"}
+        tier_allocations = {item["tier_code"]: item for item in server.get("tier_allocations", [])}
+        for tier_code, label in tier_labels.items():
+            current = int((tier_allocations.get(tier_code) or {}).get("slot_limit") or 0)
+            lines.append(f"{label}: {current} allocated")
+            rows.append(
+                [
+                    (f"{label} 0", f"a:C:{server_id}|{tier_code}|0"),
+                    ("10", f"a:C:{server_id}|{tier_code}|10"),
+                    ("25", f"a:C:{server_id}|{tier_code}|25"),
+                    ("50", f"a:C:{server_id}|{tier_code}|50"),
                 ]
             )
         rows.append([("◀ All Servers", "a:n:capacity"), ("🔄 Refresh", f"a:S:{server_id}")])

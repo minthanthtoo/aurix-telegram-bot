@@ -252,7 +252,8 @@ class TelegramMaintenanceMixin:
         ):
             run_stage("command_menu", self.configure_commands)
 
-        metrics_result = run_stage("metrics", self.service.outline.transfer_metrics)
+        collect_metrics = getattr(self.service, "collect_metrics", self.service.outline.transfer_metrics)
+        metrics_result = run_stage("metrics", collect_metrics)
         metrics = metrics_result if isinstance(metrics_result, dict) else {}
         if metrics_result is None:
             _latency_log("maintenance_metrics", started_at, status="error")
@@ -265,15 +266,13 @@ class TelegramMaintenanceMixin:
             run_stage("free_revocation_retry", reconcile_terminations)
         run_stage("termination_notices", self._send_termination_notices)
         if self.commerce is not None:
-            commerce_outline = getattr(self.commerce, "outline", None)
-            server_ids = getattr(commerce_outline, "server_ids", None)
-            multi_server = callable(server_ids) and len(server_ids()) > 1
-            # Reuse the already-fetched payload for the common single-server
-            # deployment. Multi-server commerce fetches one payload per node.
+            # Structured fleet snapshots are scoped by server; commerce
+            # collects its own in that mode. Preserve the legacy single-server
+            # snapshot reuse contract for standalone adapters and tests.
             run_stage(
                 "paid_quota",
                 self.commerce.enforce_quotas
-                if multi_server
+                if isinstance(metrics.get("byServer"), dict)
                 else lambda: self.commerce.enforce_quotas(metrics=metrics),
             )
             run_stage("paid_expiry", self.commerce.expire_and_process)

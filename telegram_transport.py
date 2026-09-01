@@ -1560,6 +1560,47 @@ class TelegramBot(
         else:
             self.send(chat_id, text, markup)
 
+    def _collect_outline_state(self, *, include_access: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Collect collision-safe state from every configured Outline endpoint."""
+        outline = self.service.outline
+        server_ids = (
+            outline.server_ids()
+            if callable(getattr(outline, "server_ids", None))
+            else (str(getattr(outline, "default_server_id", "primary")),)
+        )
+        metrics_by_server: dict[str, dict[str, Any]] = {}
+        access_by_server: dict[str, dict[str, str]] = {}
+        for server_id in server_ids:
+            client_getter = getattr(outline, "client", None)
+            client = client_getter(server_id) if callable(client_getter) else outline
+            try:
+                payload = client.transfer_metrics()
+                usage = payload.get("bytesTransferredByUserId", {}) if isinstance(payload, dict) else {}
+                if not isinstance(usage, dict):
+                    raise ValueError("invalid Outline metrics response")
+                metrics_by_server[str(server_id)] = dict(usage)
+                if include_access:
+                    remote = client.list_keys()
+                    items = remote.get("accessKeys", []) if isinstance(remote, dict) else []
+                    if not isinstance(items, list):
+                        raise ValueError("invalid Outline key response")
+                    access: dict[str, str] = {}
+                    for item in items:
+                        if not isinstance(item, dict) or not item.get("id") or not item.get("accessUrl"):
+                            continue
+                        value = str(item["accessUrl"]).replace("\r", "").replace("\n", "").strip()
+                        if value:
+                            access[str(item["id"])] = value
+                    access_by_server[str(server_id)] = access
+            except Exception as exc:
+                print(
+                    f"Outline state unavailable server={server_id}: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
+        if not metrics_by_server:
+            raise ValueError("all Outline endpoints are unavailable")
+        return {"byServer": metrics_by_server}, {"byServer": access_by_server}
+
     def _send_paid_key_detail(
         self,
         chat_id: int,
@@ -1579,8 +1620,9 @@ class TelegramBot(
         used = int(item.get("last_usage_bytes") or 0)
         observed = False
         try:
-            metrics = self.service.outline.transfer_metrics()
-            usage = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
+            metrics, _ = self._collect_outline_state()
+            server_id = str(item.get("server_id") or getattr(self.service.outline, "default_server_id", "primary"))
+            usage = metrics.get("byServer", {}).get(server_id, {})
             if isinstance(usage, dict) and key_id in usage:
                 used = max(0, int(usage[key_id] or 0))
                 observed = True
@@ -1653,33 +1695,16 @@ class TelegramBot(
         giveaway = self.service.giveaway_status(telegram_id)
         usage_available = True
         try:
-            metrics = self.service.outline.transfer_metrics()
-            usage_by_key = (
-                metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
-            )
-            if not isinstance(usage_by_key, dict):
-                raise ValueError("invalid Outline metrics response")
+            usage_by_key, access_by_key = self._collect_outline_state(include_access=True)
         except Exception as exc:
             usage_available = False
             usage_by_key = {}
             print(f"myvpn usage error: {type(exc).__name__}", file=sys.stderr)
 
-        access_available = True
-        access_by_key: dict[str, str] = {}
-        try:
-            remote = self.service.outline.list_keys()
-            remote_keys = remote.get("accessKeys", []) if isinstance(remote, dict) else []
-            if not isinstance(remote_keys, list):
-                raise ValueError("invalid Outline key response")
-            for item in remote_keys:
-                if not isinstance(item, dict) or not item.get("id") or not item.get("accessUrl"):
-                    continue
-                value = str(item["accessUrl"]).replace("\r", "").replace("\n", "").strip()
-                if value:
-                    access_by_key[str(item["id"])] = value
-        except Exception as exc:
+        access_available = usage_available
+        if not usage_available:
+            access_by_key = {}
             access_available = False
-            print(f"myvpn key retrieval error: {type(exc).__name__}", file=sys.stderr)
 
         entries = self.service.user_usage(telegram_id, usage_by_key, access_by_key)
         subscriptions: list[dict[str, Any]] = []
@@ -1881,12 +1906,7 @@ class TelegramBot(
 
     def _send_usage(self, chat_id: int, telegram_id: int) -> None:
         try:
-            metrics = self.service.outline.transfer_metrics()
-            by_key = (
-                metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
-            )
-            if not isinstance(by_key, dict):
-                raise ValueError("invalid Outline metrics response")
+            by_key, _ = self._collect_outline_state()
         except Exception as exc:
             self.send(chat_id, "VPN usage is temporarily unavailable. Please try again shortly.")
             print(f"usage metrics error: {type(exc).__name__}", file=sys.stderr)

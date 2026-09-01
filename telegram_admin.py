@@ -34,6 +34,7 @@ class AdminOperations:
             "refresh_server_inventory",
             "configure_server_capacity",
             "configure_plan_allocation",
+            "configure_tier_allocation",
             "wallet_balance",
             "wallet_history",
             "receipt_policy",
