@@ -6,6 +6,8 @@
 - `../../docs/AURIX_CONTENT_DIRECTION_BACKLOG_2026-09.md` — audited coverage, missing directions, creative territories, priority order, and publication gates.
 - `../../docs/AURIX_NEXT_TWO_CONTENT_SELECTION.md` — full opportunity ranking and locked briefs for the receipt-confidence post and Telegram Bot quota-control ad.
 - Canonical S1 reference: `online-seller-access-v2/exports/20260901-143000_aurix-online-seller-access-v2_r4.png`.
+- Receipt-confidence conversion ad: `receipt-confidence-v1/exports/20260901-163000_aurix-receipt-confidence-v1_r2.png`.
+- Telegram Bot quota-control ad: `tg-bot-quota-control-v2/exports/20260901-163000_aurix-tg-bot-quota-control-v2_r2.png`.
 
 S1 is a reusable visual and production grammar, not a requirement to clone the seller composition for pricing, guides, giveaways, or service notices.
 
