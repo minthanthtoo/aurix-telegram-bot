@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -164,8 +165,13 @@ def _test_environment() -> dict[str, str]:
 
 
 def make_release_traversable(release: Path) -> None:
-    """Allow the unprivileged bot service to enter a root-built release."""
-    release.chmod(0o755)
+    """Make a root-built release readable by the unprivileged bot service."""
+    for path in (release, *release.rglob("*")):
+        if path.is_symlink():
+            continue
+        mode = stat.S_IMODE(path.stat().st_mode)
+        readable = 0o055 if path.is_dir() or mode & 0o111 else 0o044
+        path.chmod(mode | readable)
 
 
 def build_release(repository: Path, sha: str) -> Path:

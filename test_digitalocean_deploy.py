@@ -16,10 +16,21 @@ class DigitalOceanDeployTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             release = Path(temporary) / "release"
             release.mkdir(mode=0o700)
+            private_directory = release / ".venv" / "bin"
+            private_directory.mkdir(parents=True, mode=0o700)
+            private_file = private_directory / "config"
+            private_file.write_text("configuration")
+            private_file.chmod(0o600)
+            executable = private_directory / "python"
+            executable.write_text("executable")
+            executable.chmod(0o700)
 
             make_release_traversable(release)
 
             self.assertEqual(stat.S_IMODE(release.stat().st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE(private_directory.stat().st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE(private_file.stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE(executable.stat().st_mode), 0o755)
 
     def test_release_gate_reports_names_without_secret_values(self):
         environment = {
