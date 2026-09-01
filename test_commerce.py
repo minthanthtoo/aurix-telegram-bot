@@ -1,10 +1,12 @@
 import hashlib
 import json
+import os
 import re
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
@@ -523,6 +525,21 @@ class CommerceServiceTest(unittest.TestCase):
         )
         self.assertEqual(advice["status"], "prepare")
         self.assertEqual(advice["traffic_utilization_percent"], 80.0)
+
+    def test_infrastructure_request_records_intent_only(self):
+        environment = {
+            "AURIX_INFRASTRUCTURE_QUEUE_ENABLED": "1",
+            "AURIX_SCALE_REGION": "sgp1",
+            "AURIX_SCALE_DROPLET_SIZE": "s-1vcpu-1gb",
+            "AURIX_SCALE_DROPLET_IMAGE": "ubuntu-24-04-x64",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            job_id = self.service.queue_infrastructure_provision(999, self.now)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT operation, status FROM infrastructure_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        self.assertEqual(tuple(row), ("provision", "pending"))
 
     def test_plan_allocation_reserves_capacity_before_payment_and_releases_on_cancel(self):
         self.service.register_outline_servers({"default": "Singapore"})

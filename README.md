@@ -98,6 +98,11 @@ up to three Singapore 1 GB nodes, one creation per 24 hours, and an $18/month
 node ceiling. Do not put `DIGITALOCEAN_API_TOKEN` in the normal bot
 service. The exact gates and manual Outline verification step are documented in
 the [fleet runbook](docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md).
+After node-two verification, `AURIX_INFRASTRUCTURE_QUEUE_ENABLED=1` exposes a
+single idempotent **Prepare next node** action in the admin Capacity panel. That
+button records intent only; the separate worker and its mutation gate remain the
+final authority. Configure `AURIX_SCALE_REGION`, `AURIX_SCALE_DROPLET_SIZE` and
+`AURIX_SCALE_DROPLET_IMAGE` only with values inside the worker allowlists.
 
 Customer-facing payment cards live in `assets/payment_qr/`. They intentionally
 contain the merchant QR, but no visible account names or phone numbers. A QR can

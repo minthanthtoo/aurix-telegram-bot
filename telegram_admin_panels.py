@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import sys
 import time
@@ -256,6 +257,15 @@ class TelegramAdminMixin:
             [(f"⚙️ {str(item.get('label') or item['server_id'])[:24]}", f"a:S:{item['server_id']}")]
             for item in snapshot.get("servers", [])
         ]
+        advice_status = str((snapshot.get("scale_advice") or {}).get("status") or "")
+        queue_enabled = os.environ.get("AURIX_INFRASTRUCTURE_QUEUE_ENABLED", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if queue_enabled and advice_status in {"prepare", "urgent"}:
+            rows.append([("🛠 Prepare next node", "a:n:prepare")])
         rows.append([("🔄 Reconcile", "a:n:capacity"), ("🏠 Admin Home", "a:n:admin")])
         text = self._capacity_text(snapshot)
         markup = self._inline_keyboard(rows)

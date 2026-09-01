@@ -141,6 +141,30 @@ class CommerceService(CommerceWorkerMixin):
     def initialize(self) -> None:
         self.database.initialize()
 
+    def queue_infrastructure_provision(self, requested_by: int, now: datetime | None = None) -> str:
+        """Queue an owner-approved, allowlisted node request for the worker.
+
+        This method records intent only. The separate infrastructure worker
+        still enforces the provider token, budget, node limit and mutation gate.
+        """
+        if os.environ.get("AURIX_INFRASTRUCTURE_QUEUE_ENABLED", "0").strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            raise CommerceError("Infrastructure provisioning is not enabled for this deployment.")
+        from infrastructure import FleetController
+
+        controller = FleetController(self.database)
+        return controller.queue_provision(
+            region=os.environ.get("AURIX_SCALE_REGION", "sgp1").strip(),
+            size=os.environ.get("AURIX_SCALE_DROPLET_SIZE", "s-1vcpu-1gb").strip(),
+            image=os.environ.get("AURIX_SCALE_DROPLET_IMAGE", "ubuntu-24-04-x64").strip(),
+            requested_by=int(requested_by),
+            now=now,
+        )
+
     def register_outline_servers(
         self,
         labels: dict[str, str] | None = None,

@@ -43,6 +43,7 @@ class AdminOperations:
             "finish_receipt_diagnostic",
             "last_receipt_diagnostic",
             "receipt_system_snapshot",
+            "queue_infrastructure_provision",
         }
     )
     SERVICE_OPERATIONS = frozenset(

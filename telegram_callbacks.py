@@ -336,6 +336,7 @@ class TelegramCallbackMixin:
                     "orders": "/orders",
                     "receipts": "/receipts",
                     "capacity": "/capacity",
+                    "prepare": "/capacity",
                     "reconcile": "/reconcile",
                     "failed": "/failed",
                     "enforcement": "/enforcement",
@@ -368,6 +369,26 @@ class TelegramCallbackMixin:
                         )
                 elif entity_id == "capacity":
                     self._show_capacity(chat_id, telegram_id, message_id=message.get("message_id"))
+                elif entity_id == "prepare":
+                    try:
+                        job_id = self._admin_call(
+                            telegram_id,
+                            "queue_infrastructure_provision",
+                            telegram_id,
+                        )
+                        self.send(
+                            chat_id,
+                            "✅ Provisioning request queued. The infrastructure worker will "
+                            "re-check capacity, budget and provider state before any change.",
+                            self._inline_keyboard([[('📈 Capacity', 'a:n:capacity')]]),
+                        )
+                        self._show_capacity(
+                            chat_id,
+                            telegram_id,
+                            message_id=message.get("message_id"),
+                        )
+                    except (CommerceError, ValueError, RuntimeError) as exc:
+                        self.send(chat_id, str(exc) or "Provisioning request was not queued.")
                 else:
                     synthetic["text"] = target
                     self.handle(synthetic)

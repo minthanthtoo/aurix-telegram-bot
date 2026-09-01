@@ -278,6 +278,10 @@ AURIX_SCALE_PREPARE_UTILIZATION_PERCENT=75
 AURIX_SCALE_URGENT_UTILIZATION_PERCENT=90
 AURIX_SCALE_PREPARE_TRAFFIC_PERCENT=75
 AURIX_SCALE_URGENT_TRAFFIC_PERCENT=90
+AURIX_INFRASTRUCTURE_QUEUE_ENABLED=0
+AURIX_SCALE_REGION=sgp1
+AURIX_SCALE_DROPLET_SIZE=s-1vcpu-1gb
+AURIX_SCALE_DROPLET_IMAGE=ubuntu-24-04-x64
 ```
 
 Safe default is disabled. The budget is mandatory when mutation is enabled and
@@ -346,6 +350,13 @@ Telegram owner/admins use **Capacity**:
 - set maximum keys, reserved headroom, and monthly traffic policy;
 - allocate paid plans and Daily 300 MB / Monthly 3 GB / Promo slots;
 - refresh the same message in place.
+
+When the owner has completed node verification and intentionally enables
+`AURIX_INFRASTRUCTURE_QUEUE_ENABLED=1`, a **Prepare next node** button appears
+only for Prepare/Urgent posture. The click creates one idempotent pending intent
+using the configured Singapore region, Droplet size and image. It does not call
+DigitalOcean; the separate worker still checks provider inventory, budget,
+cooldown, node count and `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED`.
 
 Capacity changes affect only new issuance. A separate audit event records the
 actor, server, old/current domain state, and selected limit.
