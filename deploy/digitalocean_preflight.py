@@ -58,6 +58,9 @@ def _validate_configuration() -> dict[str, str]:
             fail("AURIX_CONTROL_GROUP_ID must be a negative Telegram group ID")
 
     servers_json = os.environ.get("OUTLINE_SERVERS_JSON", "").strip()
+    provider_resource_id = os.environ.get("OUTLINE_PROVIDER_RESOURCE_ID", "").strip()
+    if provider_resource_id and not re.fullmatch(r"\d{1,20}", provider_resource_id):
+        fail("OUTLINE_PROVIDER_RESOURCE_ID must be a numeric Droplet ID")
     if servers_json:
         try:
             servers = json.loads(servers_json)

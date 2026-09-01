@@ -71,6 +71,8 @@ OUTLINE_CERT_SHA256=replace-with-installer-output
 # OUTLINE_SERVERS_JSON and choose a legacy fallback ID.
 # OUTLINE_SERVERS_JSON=[{"id":"sg-a","label":"Singapore A","provider_resource_id":"<droplet-id>","api_url":"https://host:port/secret","cert_sha256":"64hex"}]
 # OUTLINE_DEFAULT_SERVER_ID=sg-a
+# For the legacy single-server form, optionally record its numeric Droplet ID.
+# OUTLINE_PROVIDER_RESOURCE_ID=<droplet-id>
 # Optional provider identity metadata. Use actual DigitalOcean Droplet IDs,
 # never public IP addresses; tags become the long-term source of truth.
 # AURIX_MANAGED_DROPLET_IDS=<sg-a-droplet-id>,<sg-b-droplet-id>

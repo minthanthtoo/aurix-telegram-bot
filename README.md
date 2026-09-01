@@ -69,6 +69,9 @@ Optional:
 - `OUTLINE_SERVERS_JSON` — optional multi-server array of `{id,label,provider_resource_id,api_url,cert_sha256}`. `provider_resource_id` is the numeric DigitalOcean Droplet ID (never an IP address); keep the complete value only in the host's secret environment.
 - `OUTLINE_DEFAULT_SERVER_ID` — fallback for legacy records; new free, promo,
   and paid issuance uses fresh health and declared capacity across the pool.
+- `OUTLINE_PROVIDER_RESOURCE_ID` — optional numeric DigitalOcean Droplet ID for
+  the legacy single-server configuration; use `provider_resource_id` inside
+  `OUTLINE_SERVERS_JSON` after switching to a fleet.
 - `AURIX_SERVER_HEALTH_MAX_AGE_SECONDS` — maximum age of inventory telemetry
   accepted for new admission (default `900`).
 - `OWNER_TELEGRAM_ID` — preferred immutable owner/recovery Telegram numeric ID

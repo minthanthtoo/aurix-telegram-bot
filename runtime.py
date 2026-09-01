@@ -120,6 +120,11 @@ def main() -> None:
             raise SystemExit("OUTLINE_SERVERS_JSON must be a valid non-empty server array") from exc
     else:
         server_labels = {"primary": os.environ.get("OUTLINE_SERVER_LABEL", "Primary")[:64]}
+        provider_resource_id = os.environ.get("OUTLINE_PROVIDER_RESOURCE_ID", "").strip()
+        if provider_resource_id:
+            if not re.fullmatch(r"\d{1,20}", provider_resource_id):
+                raise SystemExit("OUTLINE_PROVIDER_RESOURCE_ID must be a numeric Droplet ID")
+            server_provider_ids["primary"] = provider_resource_id
         outline = OutlineServerPool({"primary": OutlineClient(api_url, fingerprint)}, "primary")
     allow_text_payment = os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").lower() in (
         "1",

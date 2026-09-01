@@ -354,6 +354,7 @@ Single endpoint remains supported:
 ```dotenv
 OUTLINE_API_URL=https://host:port/secret-path
 OUTLINE_CERT_SHA256=64-hex-fingerprint
+OUTLINE_PROVIDER_RESOURCE_ID=<numeric-droplet-id>
 ```
 
 Fleet configuration replaces those variables:
