@@ -1,5 +1,8 @@
 # AuriX အများပြည်သူသုံး စတင်မိတ်ဆက်ပို့စ်
 
+> **Legacy creative — do not publish.** Superseded by `ACTUAL_LAUNCH_POST_COPY_MM_V2.md`,
+> which reflects the current 300 MB daily, 3 GB monthly, and paid-plan offer.
+
 Version: MM 1.0  
 Language: Burmese (Myanmar Unicode)  
 Purpose: Actual public launch—not tester recruitment
@@ -7,7 +10,7 @@ Purpose: Actual public launch—not tester recruitment
 ## Creative lock
 
 - Core promise: VPN သုံးစွဲမှုကို ရိုးရှင်းပြီး အသုံးပြုခွင့်အတိုင်းအတာ ရှင်းလင်းစေခြင်း။
-- Product memory: AuriX ကို Telegram မှာ စတင်အသုံးပြုနိုင်ပြီဖြစ်ပြီး 200 MiB အခမဲ့ starter access ရှိသည်။
+- Product memory: AuriX ကို Telegram မှာ စတင်အသုံးပြုနိုင်ပြီဖြစ်ပြီး နေ့စဉ် 300 MB နှင့် လစဉ် 3 GB အခမဲ့ access ရှိသည်။
 - Visual mechanism: အလင်းဖွင့်ထားသော A-shaped gateway တစ်ခုနှင့် ရှေ့သို့ ဆက်သွားသော signal path တစ်ခု။
 - CTA: Telegram မှာ `/start` ဖြင့် စတင်ရန်။
 
@@ -24,7 +27,7 @@ Headline:
 
 Offer:
 
-> 200 MiB အခမဲ့ စတင်အသုံးပြုခွင့်
+> နေ့စဉ် 300 MB · လစဉ် 3 GB အခမဲ့
 
 Support:
 
@@ -42,7 +45,7 @@ Terms:
 
 VPN သုံးရတာ ရှုပ်မနေသင့်ပါဘူး။
 
-AuriX ကို ယနေ့မှစပြီး Telegram မှာ စတင်အသုံးပြုနိုင်ပါပြီ။ ပထမဆုံး စမ်းကြည့်ချင်သူတွေအတွက် **200 MiB အခမဲ့ စတင်အသုံးပြုခွင့်** ရှိပါတယ်။
+AuriX ကို ယနေ့မှစပြီး Telegram မှာ စတင်အသုံးပြုနိုင်ပါပြီ။ ပထမဆုံး စမ်းကြည့်ချင်သူတွေအတွက် **နေ့စဉ် 300 MB နှင့် လစဉ် 3 GB အခမဲ့ access** ရှိပါတယ်။
 
 AuriX မှာ—
 
@@ -58,11 +61,10 @@ Starter access ကို ၂၄ နာရီပြည့်တိုင်း �
 
 ## Short caption
 
-AuriX ကို စတင်အသုံးပြုနိုင်ပါပြီ။ 200 MiB အခမဲ့ starter access နဲ့ ရိုးရိုးရှင်းရှင်း စမ်းသုံးကြည့်ပါ။ Telegram bot ကိုဖွင့်ပြီး `/start` ကိုနှိပ်ပါ။ ရရှိနိုင်မှုအပေါ် မူတည်ပါတယ်။
+AuriX ကို စတင်အသုံးပြုနိုင်ပါပြီ။ နေ့စဉ် 300 MB နှင့် လစဉ် 3 GB အခမဲ့ access နဲ့ ရိုးရိုးရှင်းရှင်း စမ်းသုံးကြည့်ပါ။ Telegram bot ကိုဖွင့်ပြီး `/start` ကိုနှိပ်ပါ။ ရရှိနိုင်မှုအပေါ် မူတည်ပါတယ်။
 
 ## Publication gate
 
 ဤ post ကို public starter issuance၊ Telegram delivery၊ support staffing နှင့် Outline capacity တို့ကို live environment တွင် စစ်ဆေးပြီးမှ ထုတ်ဝေရပါမယ်။ 50 GiB paid plan ကို ဤ hero post တွင် မထည့်ထားပါ။ ဈေးနှုန်း၊ receipt review နှင့် paid provisioning တို့ကို production တွင် သီးခြားအတည်ပြုပြီးမှ offer post အဖြစ် ထုတ်ဝေရပါမယ်။
 
 နောက်ဆုံးထုတ်ဝေမည့် မြန်မာစာကို မိခင်ဘာသာစကားကျွမ်းကျင်သူတစ်ဦးက tone နှင့် အသုံးအနှုန်းအတွက် အတည်ပြုရန် လိုပါတယ်။
-

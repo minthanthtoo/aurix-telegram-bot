@@ -1,7 +1,7 @@
 # AuriX အများပြည်သူသုံး စတင်မိတ်ဆက်ပို့စ် — Offer V2
 
 Version: MM 2.0  
-Status: Creative approved terms; implementation verification required before publication
+Status: Creative approved terms; live capacity and support verification required before publication
 
 ## Offer interpretation
 
@@ -73,10 +73,9 @@ VPN သုံးဖို့ ရွေးချယ်ရာမှာ ဒေတ�
 
 ## Publication gate
 
-လက်ရှိ repository implementation သည် ဤ V2 offer နှင့် မကိုက်ညီသေးပါ။ လက်ရှိ code က 200 MiB rolling-24-hour claim၊ one-time 3 GiB trial နှင့် active 50 GB plan ကိုသာ ပံ့ပိုးထားပြီး 100 GB plan ကို disabled လုပ်ထားပါတယ်။ အောက်ပါအချက်များပြီးမှ ဤ post ကို public ထုတ်ဝေရပါမယ်။
+လက်ရှိ repository implementation သည် ဤ V2 offer ကို ပံ့ပိုးထားပါသည်။ Public launch မပြုမီ live capacity၊ support coverage နှင့် payment-review canary ကို အောက်ပါအတိုင်း အတည်ပြုရပါမယ်။
 
-1. Daily allowance ကို 300 MB သို့ update လုပ်ပြီး live claim test အောင်မြင်ရန်။
-2. Monthly 3 GB entitlement semantics၊ reset date နှင့် abuse controls ကို implementation နှင့် terms တွင် တိတိကျကျ သတ်မှတ်ရန်။
-3. 100 GB / 6,000 ကျပ် plan ကို enable လုပ်ပြီး order, payment review, provisioning နှင့် quota test ပြီးရန်။
-4. 50 GB နှင့် 100 GB နှစ်မျိုးစလုံးအတွက် capacity နှင့် support ownership အတည်ပြုရန်။
-
+1. Daily 300 MB နှင့် monthly 3 GB entitlement ကို live canary ဖြင့် အတည်ပြုရန်။
+2. 100 GB / 6,000 ကျပ် plan အပါအဝင် order, payment review, provisioning နှင့် quota test ပြီးရန်။
+3. 50 GB နှင့် 100 GB နှစ်မျိုးစလုံးအတွက် capacity နှင့် support ownership အတည်ပြုရန်။
+4. Promo/paid users အတွက် eligibility terms၊ rollback နှင့် transparent support notice ကို စစ်ဆေးရန်။
