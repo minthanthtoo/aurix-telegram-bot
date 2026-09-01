@@ -177,6 +177,7 @@ class TelegramBot(
         self._receipt_verify_inputs: dict[int, str] = {}
         self._admin_confirmation_lock = threading.Lock()
         self._command_menu_ready = False
+        self._command_menu_lock = threading.Lock()
         self._command_menu_retry_enabled = hasattr(self.service, "database")
         self._command_menu_configure_attempted = False
         self._maintenance_lock = threading.Lock()
@@ -558,6 +559,13 @@ class TelegramBot(
         }
 
     def configure_commands(self) -> None:
+        # Startup configures scopes asynchronously while maintenance starts
+        # immediately. Serialize the whole set-and-verify sequence so a retry
+        # cannot rewrite a scope between its setMyCommands/getMyCommands calls.
+        with self._command_menu_lock:
+            self._configure_commands_locked()
+
+    def _configure_commands_locked(self) -> None:
         self._command_menu_configure_attempted = True
         customer_commands = [
             {"command": "start", "description": "Open the AuriX menu"},

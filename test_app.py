@@ -2372,6 +2372,42 @@ class TelegramBotCommerceTest(unittest.TestCase):
             },
         )
 
+    def test_concurrent_command_menu_retry_is_serialized(self):
+        active = 0
+        maximum_active = 0
+        expected = {}
+        state_lock = threading.Lock()
+
+        def request(method, payload):
+            nonlocal active, maximum_active
+            scope_key = json.dumps(payload["scope"], sort_keys=True)
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            try:
+                time.sleep(0.005)
+                if method == "setMyCommands":
+                    expected[scope_key] = payload["commands"]
+                    return True
+                if method == "getMyCommands":
+                    return expected.get(scope_key, [])
+                return True
+            finally:
+                with state_lock:
+                    active -= 1
+
+        self.bot.request = request
+        first = threading.Thread(target=self.bot.configure_commands)
+        second = threading.Thread(target=self.bot.configure_commands)
+        first.start()
+        second.start()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(maximum_active, 1)
+
     def test_free_staging_claim_is_fail_closed_for_non_test_accounts(self):
         self.bot.handle(self.message(456, "/claim"))
         self.assertIn("limited to the configured test accounts", self.bot.sent[-1][1])
