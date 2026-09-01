@@ -17,6 +17,20 @@ This report lists media currently present in the Git index (`git ls-files`). It 
 
 No local media file was deleted. Ignored production media remains available in this workspace but will not enter deployment checkouts.
 
+## Historical rewrite result
+
+The active repository history was rewritten after the index cleanup:
+
+| Measurement | Result |
+|---|---:|
+| Media paths reachable in all active history | 29 |
+| Active packed Git objects | 8.79 MiB |
+| Active `.git` directory | 9.0 MiB |
+| HEAD checkout archive | 10.6 MiB |
+| Compressed HEAD archive | 8.7 MiB |
+
+The full pre-rewrite repository is retained separately at `/Users/min/projects/tg-AuriX-bot-pre-media-rewrite-20260901-202449.git`. No remote was configured or force-pushed.
+
 ## Summary by role
 
 | Role | Files | Size | Bytes |
