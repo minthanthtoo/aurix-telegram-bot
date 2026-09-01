@@ -10,9 +10,9 @@ engineering estimates, not production traffic or revenue metrics.
 | Goal area | Status | Evidence / remaining gate |
 |---|---|---|
 | Telegram customer entry and help | Implemented locally | `/start`, `/help`, button menus, plans, purchase, receipt submission, order tracking, status, key delivery, renewal, wallet, and free entitlements |
-| Daily free entitlement | Implemented locally | 300 MiB Outline key, renewable once per rolling 24 hours; all private-chat users are tracked |
-| Monthly free entitlement | Implemented locally | 3 GiB key for 30 days, renewable every rolling 30 days, with expiry/revocation pass |
-| Plan catalog and commercial snapshots | Implemented locally | Public catalog exposes 50 GiB / 30 days at 3,000 MMK and 100 GiB / 30 days at 6,000 MMK; orders snapshot amount, name, quota, and duration |
+| Daily free entitlement | Implemented locally | 300 MB Outline key, renewable once per rolling 24 hours; all private-chat users are tracked |
+| Monthly free entitlement | Implemented locally | 3 GB key for 30 days, renewable every rolling 30 days, with expiry/revocation pass |
+| Plan catalog and commercial snapshots | Implemented locally | Public catalog exposes 50 GB / 30 days at 3,000 MMK and 100 GB / 30 days at 6,000 MMK; orders snapshot amount, name, quota, and duration |
 | Staff-assisted payment review | Implemented locally | Receipt photos/documents are uploaded to a private Supabase Storage bucket, while the database keeps only immutable object metadata/checksum and review state; optional vision LLM extracts candidate fields; `/receipts`, `/receipt`, `/verify`, and `/rejectreceipt` expose a review queue; staff verification remains authoritative and required before screenshot-paid approval |
 | Wallet ledger | Implemented locally | Immutable credit/reserve/capture/release ledger and balance projection; external receipts use credit→reserve→capture while wallet purchases use reserve→capture without double deduction |
 | Subscription lifecycle | Implemented locally | UTC start/expiry, active/pending/expired states, and independent paid entitlements (multiple simultaneous keys per customer); untouched orders expire after 24 hours |
@@ -24,10 +24,11 @@ engineering estimates, not production traffic or revenue metrics.
 | Auditability | Implemented locally | Order, payment, approval, rejection, provision, revoke events |
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
 | Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; hosted DB provisioning and live migration remain gates |
-| Independent worker / web control plane | Partial | One process now keeps Telegram long polling responsive with a dedicated maintenance thread; separate Render worker/web services remain a later scale-out step |
-| Live Telegram and Outline smoke test | Blocked externally | Credentials and installed Outline output are not available; SSH to the supplied IP timed out |
+| Independent worker / web control plane | Worker implemented; web separation pending | The guarded DigitalOcean worker/timer is installed on the primary host; an independently hosted Render web/control service remains a later gate |
+| Live Telegram and Outline smoke test | Primary verified; node two pending | Bot, primary Outline endpoint, database backup, and worker are live; node-two installation and endpoint registration still require host access |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
-| Referrals, affiliates, resellers, multi-node scale-out | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
+| Referrals, affiliates, and resellers | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
+| Multi-node allocation and guarded scale-out | Implemented; live node-two gate open | Server-scoped allocation, provider inventory, capacity posture, idempotent intents, and worker safety gates are implemented; node two must pass the live canary |
 
 ## Honest aggregate view
 
@@ -51,7 +52,7 @@ engineering estimates, not production traffic or revenue metrics.
    certificate fingerprint without committing them.
 3. Create a staging Telegram bot and set `ADMIN_TELEGRAM_IDS`.
 4. Apply firewall rules and persistent `/var/lib/aurix-bot` storage.
-5. Run daily 300 MiB → monthly 3 GiB → buy both 50 GiB and 100 GiB plans → receipt photo
+5. Run daily 300 MB → monthly 3 GB → buy both 50 GB and 100 GB plans → receipt photo
    → LLM/manual review → approve → provision → quota-hit DELETE → `/myvpn` smoke
    tests, with before/after key inventories and a receiving-account transaction
    comparison. Confirm whether active sessions stop within the promised window.

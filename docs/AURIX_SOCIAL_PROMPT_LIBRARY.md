@@ -80,11 +80,11 @@ A small glowing data capsule emerging from an A-shaped gateway into a clean mobi
 Overlay copy:
 
 - Headline: `Start small. See how it feels.`
-- Offer: `300 MiB daily starter access`
+- Offer: `300 MB daily starter access`
 - Terms: `Once per rolling 24 hours. Availability applies.`
 - CTA: `Start on Telegram`
 
-## 5. Prompt `ST-04` — Monthly 3 GiB free access
+## 5. Prompt `ST-04` — Monthly 3 GB free access
 
 Status: Gated; publish only after live trial verification and capacity approval
 
@@ -97,10 +97,10 @@ Three luminous rounded data forms moving in sequence through one A-shaped gatewa
 Overlay copy:
 
 - Headline: `Your monthly AuriX allowance.`
-- Offer: `3 GiB · 30 days · free every month`
+- Offer: `3 GB · 30 days · free every month`
 - CTA: `Claim in Telegram`
 
-## 6. Prompt `ST-05` — Basic 50 GiB plan
+## 6. Prompt `ST-05` — Basic 50 GB plan
 
 Status: Gated; publish only when the plan, price, payment channel, and capacity are live
 
@@ -113,7 +113,7 @@ A substantial transparent data vessel filled with organized cyan light, passing 
 Overlay copy:
 
 - Headline: `One clear plan.`
-- Offer: `50 GiB · 30 days · 3,000 MMK`
+- Offer: `50 GB · 30 days · 3,000 MMK`
 - Support: `Receipt reviewed by AuriX staff.`
 - CTA: `Buy in Telegram`
 

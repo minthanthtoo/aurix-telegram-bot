@@ -11,10 +11,10 @@ free instance, multiple instances, or ephemeral storage.
 
 ## 1. What this release contains
 
-- Public 300 MiB claim once per rolling 24 hours.
-- Public 3 GiB claim once per rolling 30 days.
-- Paid 50 GiB / 30-day plan for 3,000 MMK.
-- Paid 100 GiB / 30-day plan for 6,000 MMK.
+- Public 300 MB claim once per rolling 24 hours.
+- Public 3 GB claim once per rolling 30 days.
+- Paid 50 GB / 30-day plan for 3,000 MMK.
+- Paid 100 GB / 30-day plan for 6,000 MMK.
 - Screenshot-only payment submission, optional LLM field extraction, and
   mandatory human verification against the receiving account.
 - Private Supabase Storage receipt objects with database-only metadata and
@@ -244,7 +244,7 @@ real customers until every expected state is visible.
 4. Send `/claim`; verify a human-readable `FREE300MB-24hr` Outline key is
    created and `/usage` shows limit, used, remaining, expiry, and state.
 5. Send `/trial`; verify a `TRIAL3GB-30d` key and no second monthly claim.
-6. Open Plans, select 50 GiB, and press the same upgrade action twice. Verify
+6. Open Plans, select 50 GB, and press the same upgrade action twice. Verify
    `/myorders` shows one open order, not duplicates.
 7. Send a synthetic receipt screenshot. Verify the order becomes
    `review_pending`. If LLM parsing is enabled, treat its transaction ID as a
@@ -262,7 +262,7 @@ real customers until every expected state is visible.
     reversal occurred.
 
 For quota enforcement acceptance, use a disposable small test key rather than
-burning 300 MiB merely to test the boundary. Confirm the bot records the reason,
+burning 300 MB merely to test the boundary. Confirm the bot records the reason,
 hides the URL immediately, deletes the remote key, reports the result to the
 customer/admin, and never resurrects the key after a lower rolling metric.
 
@@ -289,7 +289,7 @@ visible to admins for manual recovery; they are not silently retried forever.
 Before broad public launch, separately validate provider/payment/legal rules,
 support ownership, privacy/retention, real backup restoration, measured Myanmar
 network quality, actual quota cutoff timing on Outline 1.12.3, and server cost
-per transferred GiB.
+per transferred GB.
 
 ## 11. Optional $0 pilot profile (Supabase + UptimeRobot)
 

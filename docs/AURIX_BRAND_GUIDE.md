@@ -42,9 +42,9 @@ Brand communication must follow the product, not outrun it.
 
 ### Facts currently represented in the application
 
-- Public starter access: 300 MiB, renewable once per rolling 24 hours.
-- Monthly free access: 3 GiB for 30 days, renewable every rolling 30 days.
-- Paid plans: 50 GiB for 30 days at 3,000 MMK; 100 GiB for 30 days at 6,000 MMK.
+- Public starter access: 300 MB, renewable once per rolling 24 hours.
+- Monthly free access: 3 GB for 30 days, renewable every rolling 30 days.
+- Paid plans: 50 GB for 30 days at 3,000 MMK; 100 GB for 30 days at 6,000 MMK.
 - Payment review: receipt submission followed by staff verification.
 - Delivery and support: Telegram-first.
 - Entitlement: time plus pooled bandwidth per key; not a physical-device identity.
@@ -107,7 +107,7 @@ Four territories were considered:
 
 Example:
 
-> 50 GiB for 30 days. Clear limits, simple Telegram activation. Message AuriX to start.
+> 50 GB for 30 days. Clear limits, simple Telegram activation. Message AuriX to start.
 
 Avoid:
 
@@ -409,8 +409,8 @@ Use generated motion for picture only. Add exact offer copy, Burmese text, logo,
 | 6 | Human help in Telegram | Static | Build support confidence | Support staffed |
 | 7 | How payment review works | Carousel | Set honest expectations | Payment process live |
 | 8 | Signal Check | Static/story | Establish operational transparency | Status verified |
-| 9 | Monthly 3 GiB free access | Static/motion | Drive monthly claims | Public entitlement approved |
-| 10 | Basic 50 GiB plan | Static | Drive paid orders | Price/capacity/payment live |
+| 9 | Monthly 3 GB free access | Static/motion | Drive monthly claims | Public entitlement approved |
+| 10 | Basic 50 GB plan | Static | Drive paid orders | Price/capacity/payment live |
 | 11 | Ask AuriX FAQ | Static | Reduce support friction | Answer verified |
 | 12 | Real tester outcome | Static/video | Add evidence and trust | Consent and results verified |
 
@@ -443,7 +443,7 @@ These strings are drafts, not approved Burmese. Record the native reviewer, exac
 
 ### Number and offer style
 
-- Use `300 MiB`, `3 GiB`, `50 GiB`, and `100 GiB` when describing the implemented binary limits.
+- Use decimal `300 MB`, `3 GB`, `50 GB`, and `100 GB` when describing the implemented limits; the code stores 300,000,000 / 3,000,000,000 / 50,000,000,000 / 100,000,000,000 bytes.
 - Use `24 hours` and `30 days`; do not call a rolling 30-day Outline limit a calendar-month reset.
 - Format prices as `3,000 MMK` and `6,000 MMK` in English and approved local equivalents in Burmese.
 - Keep price, quota, duration, and eligibility together.

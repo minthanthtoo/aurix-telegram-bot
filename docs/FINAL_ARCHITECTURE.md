@@ -519,8 +519,8 @@ Multi-node allocation, capacity protection, and additional regions/providers onl
 
 The repository now contains a runnable paid-concierge staging slice in
 [`app.py`](../app.py) and [`commerce.py`](../commerce.py): public tracked-user
-300 MiB rolling-24-hour claims, rolling-30-day 3 GiB free entitlements, and
-50 GiB/30-day and 100 GiB/30-day paid catalog items, receipt-photo evidence
+300 MB rolling-24-hour claims, rolling-30-day 3 GB free entitlements, and
+50 GB/30-day and 100 GB/30-day paid catalog items, receipt-photo evidence
 stored in a private Supabase Storage bucket with only object metadata in the
 database, optional untrusted vision extraction, staff payment approval, an immutable wallet ledger, encrypted credential
 delivery, SQLite jobs/notifications/audit state, an optional PostgreSQL
