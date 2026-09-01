@@ -1989,6 +1989,23 @@ class TelegramBotCommerceTest(unittest.TestCase):
         }
         self.assertIn("💰 View Ledger", labels)
 
+    def test_capacity_panel_explains_assisted_scale_posture(self):
+        text = self.bot._capacity_text(
+            {
+                "active_keys": 0,
+                "pending_jobs": 0,
+                "servers": [],
+                "scale_advice": {
+                    "status": "prepare",
+                    "utilization_percent": 80.0,
+                    "message": "Prepare and verify the next Outline node now.",
+                },
+            }
+        )
+
+        self.assertIn("Scale posture: Prepare · 80% allocated", text)
+        self.assertIn("no automatic purchase or server deletion", text)
+
     def test_customer_buttons_and_admin_panel_are_separated(self):
         self.bot.handle(self.message(123, "/help"))
         help_text = self.bot.sent[-1][1]

@@ -484,6 +484,30 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["usage"][0]["used_bytes"], 1234)
         self.assertNotIn("access_url", snapshot)
 
+    def test_capacity_snapshot_recommends_assisted_scale_out_without_mutation(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        for key_id in range(1, 9):
+            self.outline.add_key(str(key_id), f"existing-{key_id}")
+        self.service.refresh_server_inventory(self.now)
+        self.service.configure_server_capacity(
+            "default",
+            999,
+            max_keys=12,
+            reserved_keys=2,
+            monthly_traffic_bytes=1_000_000_000_000,
+        )
+
+        snapshot = self.service.capacity_snapshot(self.now)
+
+        self.assertEqual(snapshot["scale_advice"]["status"], "prepare")
+        self.assertEqual(snapshot["scale_advice"]["utilization_percent"], 80.0)
+        self.assertEqual(snapshot["scale_advice"]["remaining_slots"], 2)
+        with self.database.connect() as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) AS n FROM infrastructure_jobs").fetchone()["n"],
+                0,
+            )
+
     def test_plan_allocation_reserves_capacity_before_payment_and_releases_on_cancel(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)

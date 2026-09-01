@@ -2,7 +2,7 @@
 
 The Telegram runtime never imports or executes this module. Infrastructure
 mutation requires an explicit worker, a scoped provider token, durable job
-state, allowlists, budget limits, and two independent feature gates.
+state, allowlists, budget limits, and an explicit mutation feature gate.
 """
 
 from __future__ import annotations
@@ -153,14 +153,14 @@ class FleetController:
                 ).fetchone()["n"]
             )
             if created_today >= max(
-                1, int(os.environ.get("AURIX_MAX_NODE_CREATIONS_PER_DAY", "2"))
+                1, int(os.environ.get("AURIX_MAX_NODE_CREATIONS_PER_DAY", "1"))
             ):
                 raise InfrastructureError("Daily VPN node creation limit has been reached")
             latest = connection.execute(
                 """SELECT created_at FROM infrastructure_jobs
                    WHERE operation = 'provision' ORDER BY created_at DESC LIMIT 1"""
             ).fetchone()
-            cooldown = max(0, int(os.environ.get("AURIX_NODE_CREATION_COOLDOWN_SECONDS", "1800")))
+            cooldown = max(0, int(os.environ.get("AURIX_NODE_CREATION_COOLDOWN_SECONDS", "86400")))
             if latest is not None:
                 latest_at = datetime.fromisoformat(str(latest["created_at"])).astimezone(UTC)
                 if current < latest_at + timedelta(seconds=cooldown):
@@ -304,4 +304,3 @@ class FleetController:
                 (uuid.uuid4().hex, job_id, json.dumps({"public_ip": public_ip}), now_text),
             )
         return {"job_id": job_id, "status": "awaiting_verification", "public_ip": public_ip}
-

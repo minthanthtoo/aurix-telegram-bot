@@ -1,7 +1,7 @@
 # AuriX Outline Fleet Architecture and Operations Runbook
 
-Status: production design baseline, 2 September 2026  
-Scope: Telegram control plane, Supabase/PostgreSQL state, individually managed
+Status: final MVP production decision, 2 September 2026
+Scope: Telegram control plane, current single-host SQLite state, future PostgreSQL, individually managed
 Outline servers on DigitalOcean, and guarded future node provisioning.
 
 ## 1. Decision
@@ -74,16 +74,16 @@ These are safety boundaries, not missing wiring.
 Telegram customers/admins
           |
           v
-single AuriX bot process
+single AuriX bot process on the current Singapore Droplet
   |       |                  |
   |       |                  +--> receipt storage / vision triage
-  |       +--> Supabase PostgreSQL (authority and audit)
+  |       +--> persistent SQLite (current authority and audit)
   +--> OutlineServerPool
           |--> sg-a Management API (pinned TLS)
           |--> sg-b Management API (pinned TLS)
           +--> future verified endpoint
 
-separate operator infrastructure worker
+future separate operator infrastructure worker on the same trusted host
   |--> infrastructure_jobs/events
   +--> scoped DigitalOcean API token
 ```
@@ -91,10 +91,21 @@ separate operator infrastructure worker
 Telegram long polling remains single-process. Multiple bot replicas using one
 token are not a scaling mechanism.
 
+### Final MVP database decision
+
+Keep the current persistent SQLite database while there is exactly one bot and
+one operator worker host. Supabase remains private receipt-object storage; its
+PostgreSQL product is not required merely because the Outline data plane gains
+more servers. Move business state to hosted PostgreSQL before adding a second
+bot/control-plane host, failover writer, or independently hosted infrastructure
+worker. Never run two SQLite writers on different machines or copy a live file
+between them.
+
 ## 4. Authority and secrets
 
-PostgreSQL is authoritative for customer/business lifecycle and capacity
-policy. Outline is authoritative for remote key existence and measured traffic.
+The configured AuriX database (persistent SQLite today; PostgreSQL after the
+multi-writer migration gate) is authoritative for customer/business lifecycle
+and capacity policy. Outline is authoritative for remote key existence and measured traffic.
 DigitalOcean is authoritative for VM/action state. Each observation is
 reconciled into AuriX; none is guessed.
 
@@ -251,9 +262,11 @@ AURIX_ALLOWED_DROPLET_SIZES=s-1vcpu-1gb
 AURIX_ALLOWED_DROPLET_IMAGES=ubuntu-24-04-x64
 AURIX_MAX_VPN_NODES=3
 AURIX_MAX_NODE_CREATIONS_PER_DAY=1
-AURIX_NODE_CREATION_COOLDOWN_SECONDS=3600
-AURIX_MAX_MONTHLY_INFRA_BUDGET_USD=
+AURIX_NODE_CREATION_COOLDOWN_SECONDS=86400
+AURIX_MAX_MONTHLY_INFRA_BUDGET_USD=18
 AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD=6
+AURIX_SCALE_PREPARE_UTILIZATION_PERCENT=75
+AURIX_SCALE_URGENT_UTILIZATION_PERCENT=90
 ```
 
 Safe default is disabled. The budget is mandatory when mutation is enabled and
@@ -262,7 +275,25 @@ new nodes require an operator verification step.
 
 ## 13. Scale-out decision
 
-Do not scale on one CPU spike. Recommend a node only after two or more consecutive
+### Final MVP policy
+
+- Mode: **assisted scaling**. AuriX calculates and displays fleet posture, but
+  does not purchase or delete infrastructure from the Telegram process.
+- Prepare threshold: 75% of declared saleable key capacity.
+- Urgent threshold: 90%, one remaining saleable slot, or no healthy capacity.
+- Envelope: Singapore `s-1vcpu-1gb`, maximum three VPN nodes, maximum one new
+  node per 24 hours, and an $18/month node ceiling based on the current $6 plan.
+- Scale-in: manual drain and verified-empty destruction only.
+- Database: persistent SQLite remains valid for the one-host control plane;
+  PostgreSQL is mandatory before a second writer/control host.
+
+The live fleet reported 16 remote keys against 20 saleable slots on 2 September
+2026, so its posture is **Prepare**. Provisioning and verifying the second node
+is the next operator action; raising the first node's declared limit merely to
+silence the warning is not acceptable capacity planning.
+
+Do not scale on one CPU spike. The admin panel may show the current posture
+immediately; before a provider job is approved, confirm two or more consecutive
 fresh observation windows show a real admission problem, such as:
 
 - remaining declared key slots below protected headroom;
@@ -356,22 +387,21 @@ Before merging/deploying a fleet change:
 | Stale health snapshot | Endpoint excluded from new admission |
 | Duplicate callback/job execution | Database uniqueness/idempotency returns existing state |
 
-## 19. Evidence and remaining external decisions
+## 19. Evidence and closed decisions
 
 Code-level uncertainty is closed by regression coverage for multi-server key-ID
 collisions, server-scoped usage/deletion, partial outages, stale health, capacity
 reservations, provider feature gates, budget failure, and the manual verification
 stop.
 
-Business/external decisions remain deliberately outside autonomous code:
+The MVP decisions are no longer open-ended: use assisted scaling, the explicit
+three-node/$18 envelope above, a 24-hour creation cooldown, no automatic destroy,
+and SQLite until a second control-plane writer exists. The current 80% posture
+means prepare node two.
 
-- the approved monthly DigitalOcean budget;
-- the maximum production node count and exact allowed sizes/images;
-- who holds the scoped provider token and second-operator destroy authority;
-- when real demand justifies enabling provider mutation;
-- whether a future non-Outline transport supports a genuinely interchangeable
-  load-balanced data plane.
-
-Until those are approved, keep infrastructure mutation disabled and add verified
-Outline servers manually. That is the correct production posture for the current
-MVP.
+One external prerequisite cannot be invented by code: a scoped DigitalOcean API
+token is not configured. Until the owner creates and installs that credential in
+the separate infrastructure-worker environment, provider mutation remains off
+and node two is created manually. This is an unavailable credential, not an
+architectural uncertainty. A future non-Outline transport must prove replicated
+identity/quota state before any load-balanced design is reconsidered.

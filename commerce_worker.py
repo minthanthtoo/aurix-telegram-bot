@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from datetime import datetime, timedelta
@@ -968,6 +969,13 @@ class CommerceWorkerMixin:
             item["remaining_key_slots"] = (
                 None if usable is None else max(0, usable - remote - reserved_orders - pending_keys)
             )
+            item["saleable_key_capacity"] = usable
+            item["key_demand"] = remote + reserved_orders + pending_keys
+            item["key_utilization_percent"] = (
+                None
+                if usable is None or usable <= 0
+                else min(100.0, (item["key_demand"] / usable) * 100.0)
+            )
             item["allocations"] = allocations_by_server.get(str(item["server_id"]), [])
             item["tier_allocations"] = tier_allocations_by_server.get(
                 str(item["server_id"]), []
@@ -984,6 +992,65 @@ class CommerceWorkerMixin:
             "outline_version": outline_version,
             "usage": usage,
             "servers": servers,
+            "scale_advice": self._scale_advice(servers),
+        }
+
+    @staticmethod
+    def _scale_advice(servers: list[dict[str, Any]]) -> dict[str, Any]:
+        """Return a non-mutating fleet posture from declared saleable capacity."""
+
+        def threshold(name: str, default: int) -> int:
+            try:
+                return max(1, min(100, int(os.environ.get(name, str(default)))))
+            except (TypeError, ValueError):
+                return default
+
+        configured = [
+            item
+            for item in servers
+            if item.get("enabled") and item.get("saleable_key_capacity") is not None
+        ]
+        healthy = [item for item in configured if item.get("health_status") == "healthy"]
+        if not configured:
+            return {
+                "status": "unconfigured",
+                "utilization_percent": None,
+                "remaining_slots": None,
+                "message": "Declare key capacity before making a scaling decision.",
+            }
+        if not healthy:
+            return {
+                "status": "blocked",
+                "utilization_percent": None,
+                "remaining_slots": 0,
+                "message": "No healthy declared server can accept new keys.",
+            }
+        total_capacity = sum(max(0, int(item["saleable_key_capacity"])) for item in healthy)
+        total_demand = sum(max(0, int(item.get("key_demand") or 0)) for item in healthy)
+        remaining = max(0, total_capacity - total_demand)
+        utilization = (
+            100.0 if total_capacity <= 0 else min(100.0, total_demand / total_capacity * 100)
+        )
+        prepare_at = threshold("AURIX_SCALE_PREPARE_UTILIZATION_PERCENT", 75)
+        urgent_at = max(
+            prepare_at,
+            threshold("AURIX_SCALE_URGENT_UTILIZATION_PERCENT", 90),
+        )
+        if utilization >= urgent_at or remaining <= 1:
+            status = "urgent"
+            message = "Add and verify another Outline node before accepting more demand."
+        elif utilization >= prepare_at:
+            status = "prepare"
+            message = "Prepare and verify the next Outline node now."
+        else:
+            status = "stable"
+            message = "Current declared fleet headroom is sufficient."
+        return {
+            "status": status,
+            "utilization_percent": round(utilization, 1),
+            "remaining_slots": remaining,
+            "saleable_capacity": total_capacity,
+            "message": message,
         }
 
     def pending_notifications(

@@ -178,10 +178,32 @@ class TelegramAdminMixin:
             f"Active paid keys: {snapshot.get('active_keys', 0)} · pending jobs: {snapshot.get('pending_jobs', 0)}",
             "Observed values come from Outline; limits and plan slots are owner policy.",
         ]
+        advice = snapshot.get("scale_advice") or {}
+        advice_icon = {
+            "stable": "🟢",
+            "prepare": "🟡",
+            "urgent": "🔴",
+            "blocked": "🔴",
+            "unconfigured": "⚪️",
+        }.get(str(advice.get("status")), "⚪️")
+        utilization = advice.get("utilization_percent")
+        utilization_text = "" if utilization is None else f" · {float(utilization):g}% allocated"
+        lines.extend(
+            [
+                "",
+                f"{advice_icon} Scale posture: {str(advice.get('status') or 'unknown').title()}{utilization_text}",
+                str(advice.get("message") or "Capacity recommendation unavailable."),
+                "Scaling mode: assisted · no automatic purchase or server deletion.",
+            ]
+        )
         for item in servers:
             max_keys = item.get("max_keys")
             remaining = item.get("remaining_key_slots")
-            key_limit = "not capped" if max_keys is None else f"{remaining}/{max_keys} headroom"
+            key_limit = (
+                "not capped"
+                if max_keys is None
+                else f"{remaining} saleable left · max {max_keys}, reserve {item.get('reserved_keys') or 0}"
+            )
             traffic = item.get("remote_transfer_bytes")
             traffic_text = (
                 "-" if traffic is None else f"{int(traffic) / 1_000_000_000:.1f} GB / 30d"
