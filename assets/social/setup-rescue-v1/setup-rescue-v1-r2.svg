@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AuriX Setup Rescue v1 r2 — improved composition
+  Canvas: 1080 × 1350 px  (4:5 portrait, Facebook feed)
+  Standard: AURIX-SOCIAL-S1
+  Reading path: ပြဿနာ → Screenshot ပို့ → AuriX Group → @aurix_outline_vpn_bot
+  Changes from r1:
+  - Tightened dead zone: scene moved up to y≈480, gives more visual density
+  - Laptop screen: brighter error state, more contrast
+  - Proof card: enlarged text, better leading
+  - Bot cluster at bottom: simplified, cleaner, larger handle
+  - Gold underline aligned precisely under hook line 2
+  - Headline hierarchy: supporting line repositioned closer to hook
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1080 1350"
+     width="1080" height="1350"
+     role="img"
+     aria-labelledby="post-title post-desc">
+
+  <title id="post-title">AuriX Setup Rescue — Outline Key ထည့်မရဘူးလား?</title>
+  <desc id="post-desc">S1 standard. Reading path: problem → screenshot → Group → bot handle.</desc>
+
+  <defs>
+    <linearGradient id="g-gold" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#FF982F"/><stop offset="1" stop-color="#FFD36A"/>
+    </linearGradient>
+    <linearGradient id="g-shared" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFD36A"/>
+      <stop offset="0.46" stop-color="#FFC254"/>
+      <stop offset="0.64" stop-color="#46D9F5"/>
+      <stop offset="1" stop-color="#7667F5"/>
+    </linearGradient>
+    <linearGradient id="g-signal" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#31D9F5"/><stop offset="1" stop-color="#7862F2"/>
+    </linearGradient>
+    <linearGradient id="g-cv" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#36E2FF"/><stop offset="1" stop-color="#7765FF"/>
+    </linearGradient>
+    <linearGradient id="g-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#071421"/><stop offset="1" stop-color="#0D2235"/>
+    </linearGradient>
+
+    <filter id="f-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="f-warmglow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="20" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="f-shadow" x="-8%" y="-4%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+    <filter id="f-card" x="-4%" y="-3%" width="112%" height="118%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <!-- ─── BACKGROUND ─────────────────────────────── -->
+  <rect width="1080" height="1350" fill="url(#g-bg)"/>
+  <!-- Aurora bloom -->
+  <ellipse cx="880" cy="200" rx="360" ry="210" fill="#36E2FF" fill-opacity="0.035"/>
+  <ellipse cx="840" cy="250" rx="180" ry="110" fill="#7765FF" fill-opacity="0.045"/>
+
+  <!-- ─── BRAND HEADER ──────────────────────────── -->
+
+  <!-- AuriX V2 horizontal reverse — mark -->
+  <g transform="translate(72 52) scale(0.29)">
+    <rect width="272" height="272" rx="72" fill="#071521"/>
+    <rect x="1" y="1" width="270" height="270" rx="71" fill="none" stroke="#18334A" stroke-width="2"/>
+    <path d="M53 224 124 66" fill="none" stroke="url(#g-gold)" stroke-width="28" stroke-linecap="round"/>
+    <path d="m124 66 81 158" fill="none" stroke="url(#g-shared)" stroke-width="28" stroke-linecap="round"/>
+    <path d="M84 172h74" fill="none" stroke="#E7EEF5" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="172" cy="159" r="19" fill="#071521"/>
+    <path d="M218 72 137 224" fill="none" stroke="url(#g-signal)" stroke-width="24" stroke-linecap="round"/>
+  </g>
+  <text x="156" y="122" fill="#F6F8FC"
+        font-family="Inter, Avenir Next, Arial, sans-serif"
+        font-size="50" font-weight="750" letter-spacing="-2">Auri<tspan dx="-1" fill="url(#g-signal)">X</tspan></text>
+  <text x="157" y="145" fill="#526273"
+        font-family="Inter, Arial, sans-serif"
+        font-size="15" font-weight="600" letter-spacing="0.4">Clear access. Human help.</text>
+
+  <!-- Outline secondary mark — top right -->
+  <rect x="898" y="52" width="110" height="110" rx="20" fill="#0D2F1E" filter="url(#f-shadow)"/>
+  <circle cx="953" cy="100" r="32" fill="none" stroke="#00BF72" stroke-width="8"/>
+  <circle cx="953" cy="100" r="13" fill="#00BF72"/>
+  <text x="953" y="178" text-anchor="middle" fill="#52736A"
+        font-family="Inter, Arial, sans-serif" font-size="17" font-weight="600">Outline VPN</text>
+
+  <!-- ─── HEADLINE ───────────────────────────────── -->
+
+  <!-- Hook line 1 -->
+  <text x="72" y="266" fill="#F6F8FC"
+        font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif"
+        font-size="56" font-weight="700"
+        xml:lang="my" style="font-kerning:normal;font-feature-settings:'mark' 1,'mkmk' 1;">Outline Key</text>
+
+  <!-- Gold underline — under hook line 2 -->
+  <rect x="72" y="316" width="600" height="14" rx="7" fill="#FFC857" fill-opacity="0.75"/>
+
+  <!-- Hook line 2 — tension, aurora cyan -->
+  <text x="72" y="348" fill="#36E2FF"
+        font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif"
+        font-size="68" font-weight="800"
+        xml:lang="my" style="font-kerning:normal;font-feature-settings:'mark' 1,'mkmk' 1;">ထည့်မရဘူးလား?</text>
+
+  <!-- Supporting line — just below, same rhythm -->
+  <text x="72" y="402" fill="#7B92A8"
+        font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif"
+        font-size="32" font-weight="400"
+        xml:lang="my" style="font-kerning:normal;font-feature-settings:'mark' 1,'mkmk' 1;">ဒီ Step ၂ ခုပဲ လိုတာပါ</text>
+
+  <!-- ─── SCENE — map + laptop + phone ───────────── -->
+
+  <!-- === LAPTOP === (left mid, y≈470) -->
+  <rect x="152" y="472" width="306" height="198" rx="14" fill="#0D2235" filter="url(#f-shadow)"/>
+  <rect x="164" y="483" width="282" height="176" rx="6" fill="#071A2E"/>
+  <!-- Laptop hinge + base -->
+  <rect x="122" y="668" width="366" height="18" rx="9" fill="#132840"/>
+  <ellipse cx="305" cy="676" rx="183" ry="11" fill="#0D2235"/>
+
+  <!-- Screen: bright error dots — visible even at thumbnail -->
+  <circle cx="208" cy="540" r="9" fill="#FF6B6B" filter="url(#f-glow)"/>
+  <circle cx="260" cy="520" r="7" fill="#FFB547" filter="url(#f-glow)"/>
+  <circle cx="320" cy="552" r="8" fill="#FF6B6B" filter="url(#f-glow)"/>
+  <!-- Error lines on screen -->
+  <path d="M185 580 Q220 558 260 578 Q300 598 340 568 Q370 550 410 568"
+        fill="none" stroke="#FF6B6B" stroke-width="3" stroke-dasharray="9 7" stroke-opacity="0.6"/>
+  <!-- Error text lines -->
+  <rect x="184" y="600" width="116" height="7" rx="3" fill="#FF6B6B" fill-opacity="0.4"/>
+  <rect x="184" y="613" width="78" height="7" rx="3" fill="#526273" fill-opacity="0.4"/>
+  <!-- Small warning label -->
+  <rect x="184" y="630" width="200" height="22" rx="6" fill="#FF6B6B" fill-opacity="0.12"/>
+  <text x="192" y="645" fill="#FF6B6B" fill-opacity="0.8"
+        font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600">Connection failed</text>
+
+  <!-- === FOLDED MAP bridging the two devices === -->
+  <g transform="translate(352 470) rotate(-3)">
+    <!-- Map sheet -->
+    <rect width="296" height="204" rx="10" fill="#EDF2F7" filter="url(#f-card)"/>
+    <!-- Fold crease -->
+    <line x1="148" y1="0" x2="148" y2="204" stroke="#C9D6E2" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <!-- Grid -->
+    <line x1="0" y1="68" x2="296" y2="68" stroke="#C9D6E2" stroke-width="0.8"/>
+    <line x1="0" y1="136" x2="296" y2="136" stroke="#C9D6E2" stroke-width="0.8"/>
+    <line x1="99" y1="0" x2="99" y2="204" stroke="#C9D6E2" stroke-width="0.8"/>
+    <line x1="198" y1="0" x2="198" y2="204" stroke="#C9D6E2" stroke-width="0.8"/>
+    <!-- Tangled route — the wrong path (orange dashed) -->
+    <path d="M22 175 Q55 112 82 152 Q110 192 138 122 Q158 78 143 48"
+          fill="none" stroke="#FFB547" stroke-width="4" stroke-linecap="round"
+          stroke-opacity="0.65" stroke-dasharray="10 7"/>
+    <!-- Clear cyan path — the AuriX guided route -->
+    <path d="M22 175 Q62 152 100 160 Q155 170 196 134 Q234 100 268 76"
+          fill="none" stroke="#36E2FF" stroke-width="5.5" stroke-linecap="round"
+          filter="url(#f-glow)"/>
+    <!-- Gold marker = human help point -->
+    <circle cx="268" cy="76" r="18" fill="#FFC857" filter="url(#f-warmglow)"/>
+    <text x="268" y="83" text-anchor="middle" fill="#071421"
+          font-family="Inter, Arial, sans-serif" font-size="17" font-weight="900">★</text>
+    <!-- Start dot -->
+    <circle cx="22" cy="175" r="9" fill="#7765FF"/>
+  </g>
+
+  <!-- === PHONE === (right mid) -->
+  <rect x="640" y="452" width="216" height="394" rx="32" fill="#0D2235" filter="url(#f-shadow)"/>
+  <rect x="652" y="466" width="192" height="366" rx="24" fill="#071A2E"/>
+  <!-- Notch -->
+  <rect x="702" y="466" width="72" height="21" rx="10" fill="#0D2235"/>
+
+  <!-- Chat bubbles — abstract, no fake UI -->
+  <!-- User message: screenshot thumbnail -->
+  <rect x="664" y="506" width="154" height="74" rx="14" fill="#1A3550"/>
+  <rect x="672" y="514" width="58" height="52" rx="8" fill="#0D2235"/>
+  <text x="701" y="546" text-anchor="middle" fill="#36E2FF"
+        font-family="Inter, Arial, sans-serif" font-size="24">📷</text>
+  <rect x="736" y="520" width="72" height="7" rx="3" fill="#526273" fill-opacity="0.8"/>
+  <rect x="736" y="533" width="52" height="7" rx="3" fill="#526273" fill-opacity="0.6"/>
+  <rect x="736" y="546" width="62" height="7" rx="3" fill="#526273" fill-opacity="0.5"/>
+  <text x="792" y="572" fill="#526273" fill-opacity="0.7"
+        font-family="Inter, Arial, sans-serif" font-size="12">12:04</text>
+
+  <!-- AuriX Admin reply bubble -->
+  <rect x="662" y="592" width="170" height="82" rx="14" fill="#0D2F1E"/>
+  <!-- AuriX mini wordmark -->
+  <text x="674" y="614" fill="#36E2FF"
+        font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">AuriX Admin</text>
+  <rect x="674" y="622" width="120" height="7" rx="3" fill="#42D392" fill-opacity="0.7"/>
+  <rect x="674" y="635" width="140" height="7" rx="3" fill="#42D392" fill-opacity="0.55"/>
+  <rect x="674" y="648" width="96" height="7" rx="3" fill="#42D392" fill-opacity="0.45"/>
+  <text x="674" y="666" fill="#42D392"
+        font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif"
+        font-size="12" font-weight="600"
+        xml:lang="my" style="font-kerning:normal;font-feature-settings:'mark' 1,'mkmk' 1;">✓ ဖြေပေးနေပါပြီ</text>
+
+  <!-- Green tick / resolved -->
+  <rect x="662" y="686" width="170" height="40" rx="14" fill="#0D2235"/>
+  <text x="748" y="711" text-anchor="middle" fill="#42D392"
+        font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700">✓</text>
+
+  <!-- Thin cyan connecting line: map corner → phone -->
+  <line x1="642" y1="560" x2="654" y2="560" stroke="#36E2FF" stroke-width="2" stroke-opacity="0.5"/>
+
+  <!-- ─── PROOF CARD ─────────────────────────────── -->
+
+  <rect x="72" y="870" width="640" height="244" rx="22" fill="#0D2235" filter="url(#f-card)"/>
+  <!-- Left cyan bar -->
+  <rect x="72" y="870" width="7" height="244" rx="3.5" fill="url(#g-cv)"/>
+
+  <!-- Step 1 -->
+  <circle cx="128" cy="930" r="24" fill="#071421"/>
+  <text x="128" y="937" text-anchor="middle" fill="#36E2FF"
+        font-family="Inter, Arial, sans-serif" font-size="22" font-weight="800">1</text>
+
+  <text x="168" y="920" fill="#F6F8FC"
+        font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif"
+        font-size="36" font-weight="700"
+        xml:lang="my" style="font-kerning:normal;font-feature-settings:'mark' 1,'mkmk' 1;">Screenshot တစ်ခုပို့</text>
+  <text x="168" y="953" fill="#7B92A8"
+        font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif"
+        font-size="23" font-weight="400"
+        xml:lang="my" style="font-kerning:normal;font-feature-settings:'mark' 1,'mkmk' 1;">ဖြစ်နေတဲ့ Screen ကို Capture လုပ်ပြီး ပို့</text>
+
+  <!-- Divider -->
+  <line x1="104" y1="978" x2="692" y2="978" stroke="#18334A" stroke-width="1"/>
+
+  <!-- Step 2 -->
+  <circle cx="128" cy="1040" r="24" fill="#071421"/>
+  <text x="128" y="1047" text-anchor="middle" fill="#FFC857"
+        font-family="Inter, Arial, sans-serif" font-size="22" font-weight="800">2</text>
+
+  <text x="168" y="1030" fill="#F6F8FC"
+        font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif"
+        font-size="36" font-weight="700"
+        xml:lang="my" style="font-kerning:normal;font-feature-settings:'mark' 1,'mkmk' 1;">AuriX Group မှာ မေးပါ</text>
+  <text x="168" y="1063" fill="#7B92A8"
+        font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif"
+        font-size="23" font-weight="400"
+        xml:lang="my" style="font-kerning:normal;font-feature-settings:'mark' 1,'mkmk' 1;">Admin က ကိုယ်တိုင် ကူညီပေးမယ်</text>
+
+  <!-- Sub note -->
+  <text x="104" y="1095" fill="#526273"
+        font-family="Noto Sans Myanmar, Myanmar Sangam MN, sans-serif"
+        font-size="19" font-weight="400"
+        xml:lang="my" style="font-kerning:normal;font-feature-settings:'mark' 1,'mkmk' 1;">ဘာ App ကိုသုံးမလဲ ဒါမှမဟုတ် ဘာ Error ဆိုတာ မသိသေးရင်လဲ မေးနိုင်တယ်</text>
+
+  <!-- ─── BOTTOM — Bot identity + handle ────────── -->
+
+  <!-- Separator line -->
+  <rect x="72" y="1148" width="936" height="2" rx="1" fill="url(#g-cv)" fill-opacity="0.25"/>
+
+  <!-- AuriX Bot avatar — clean circle with mark -->
+  <circle cx="130" cy="1232" r="58" fill="#071521" stroke="#18334A" stroke-width="2" stroke-dasharray="6 4"/>
+  <!-- AuriX V2 mark at readable size -->
+  <g transform="translate(88 1190) scale(0.31)">
+    <rect width="272" height="272" rx="72" fill="#071521"/>
+    <path d="M53 224 124 66" fill="none" stroke="url(#g-gold)" stroke-width="28" stroke-linecap="round"/>
+    <path d="m124 66 81 158" fill="none" stroke="url(#g-shared)" stroke-width="28" stroke-linecap="round"/>
+    <path d="M84 172h74" fill="none" stroke="#E7EEF5" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="172" cy="159" r="19" fill="#071521"/>
+    <path d="M218 72 137 224" fill="none" stroke="url(#g-signal)" stroke-width="24" stroke-linecap="round"/>
+  </g>
+  <!-- Telegram badge -->
+  <circle cx="170" cy="1185" r="24" fill="#229ED9"/>
+  <!-- Paper-plane simplified -->
+  <path d="M161 1185 L178 1179 L172 1191 L165 1187 Z" fill="white"/>
+  <path d="M165 1187 L172 1191 L169 1196 Z" fill="white" fill-opacity="0.8"/>
+  <circle cx="170" cy="1185" r="26" fill="none" stroke="#071421" stroke-width="4"/>
+
+  <!-- Handle and tagline -->
+  <text x="208" y="1224" fill="#36E2FF"
+        font-family="Inter, Avenir Next, Arial, sans-serif"
+        font-size="32" font-weight="700">@aurix_outline_vpn_bot</text>
+  <text x="208" y="1254" fill="#526273"
+        font-family="Inter, Arial, sans-serif"
+        font-size="19" font-weight="500">AuriX Telegram Group &amp; Bot · Human help, always.</text>
+
+  <!-- Bottom wallet reassurance strip — omitted for setup-rescue content:
+       this post is support/help pillar, not payment. Wallet marks would dilute the message. -->
+
+</svg>

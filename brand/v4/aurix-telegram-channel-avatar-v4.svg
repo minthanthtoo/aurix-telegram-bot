@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">AuriX Telegram public channel avatar V4</title>
+  <desc id="desc">Full-bleed circular-safe AuriX avatar with outward broadcast waves for the public announcement channel.</desc>
+  <defs>
+    <radialGradient id="bg" cx="48%" cy="42%" r="76%"><stop stop-color="#102F46"/><stop offset=".54" stop-color="#071521"/><stop offset="1" stop-color="#040C14"/></radialGradient>
+    <linearGradient id="wave" x1="130" y1="160" x2="900" y2="860" gradientUnits="userSpaceOnUse"><stop stop-color="#36E2FF"/><stop offset=".58" stop-color="#7765FF"/><stop offset="1" stop-color="#FFC857"/></linearGradient>
+    <linearGradient id="gold" x1="104" y1="402" x2="250" y2="104" gradientUnits="userSpaceOnUse"><stop stop-color="#FF982F"/><stop offset="1" stop-color="#FFD36A"/></linearGradient>
+    <linearGradient id="shared" x1="238" y1="108" x2="388" y2="405" gradientUnits="userSpaceOnUse"><stop stop-color="#FFD36A"/><stop offset=".46" stop-color="#FFC254"/><stop offset=".64" stop-color="#46D9F5"/><stop offset="1" stop-color="#7667F5"/></linearGradient>
+    <linearGradient id="signal" x1="410" y1="122" x2="260" y2="402" gradientUnits="userSpaceOnUse"><stop stop-color="#31D9F5"/><stop offset="1" stop-color="#7862F2"/></linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <circle cx="512" cy="512" r="484" fill="none" stroke="url(#wave)" stroke-width="9" opacity=".68"/>
+  <path d="M156 748C56 620 56 404 156 276" fill="none" stroke="url(#wave)" stroke-width="13" stroke-linecap="round" opacity=".38"/>
+  <path d="M216 692c-69-101-69-259 0-360" fill="none" stroke="url(#wave)" stroke-width="11" stroke-linecap="round" opacity=".48"/>
+  <path d="M868 276c100 128 100 344 0 472" fill="none" stroke="url(#wave)" stroke-width="13" stroke-linecap="round" opacity=".38"/>
+  <path d="M808 332c69 101 69 259 0 360" fill="none" stroke="url(#wave)" stroke-width="11" stroke-linecap="round" opacity=".48"/>
+  <circle cx="512" cy="512" r="404" fill="#071521" opacity=".39"/>
+  <g transform="translate(-69 -65) scale(2.22)">
+    <path d="M112 398 239 116" fill="none" stroke="url(#gold)" stroke-width="50" stroke-linecap="round"/>
+    <path d="m239 116 145 282" fill="none" stroke="url(#shared)" stroke-width="50" stroke-linecap="round"/>
+    <path d="M167 305h133" fill="none" stroke="#E7EEF5" stroke-width="24" stroke-linecap="round"/>
+    <circle cx="325" cy="283" r="33" fill="#071521"/>
+    <path d="M408 127 263 398" fill="none" stroke="url(#signal)" stroke-width="42" stroke-linecap="round"/>
+  </g>
+</svg>

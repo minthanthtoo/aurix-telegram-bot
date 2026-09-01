@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" role="img" aria-labelledby="title desc">
+  <title id="title">AuriX V2 horizontal logo</title>
+  <desc id="desc">The refined AuriX shared-stroke mark and wordmark for light backgrounds.</desc>
+  <defs>
+    <linearGradient id="v2-gold" x1="45" y1="230" x2="126" y2="57" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF982F"/>
+      <stop offset="1" stop-color="#FFD36A"/>
+    </linearGradient>
+    <linearGradient id="v2-shared" x1="122" y1="57" x2="211" y2="230" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD36A"/>
+      <stop offset="0.46" stop-color="#FFC254"/>
+      <stop offset="0.64" stop-color="#46D9F5"/>
+      <stop offset="1" stop-color="#7667F5"/>
+    </linearGradient>
+    <linearGradient id="v2-signal" x1="226" y1="64" x2="139" y2="231" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#31D9F5"/>
+      <stop offset="1" stop-color="#7862F2"/>
+    </linearGradient>
+    <linearGradient id="v2-word-x" x1="622" y1="86" x2="748" y2="209" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#31D9F5"/>
+      <stop offset="1" stop-color="#7862F2"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(28 24)">
+    <rect width="272" height="272" rx="72" fill="#071521"/>
+    <rect x="1" y="1" width="270" height="270" rx="71" fill="none" stroke="#18334A" stroke-width="2"/>
+    <path d="M53 224 124 66" fill="none" stroke="url(#v2-gold)" stroke-width="28" stroke-linecap="round"/>
+    <path d="m124 66 81 158" fill="none" stroke="url(#v2-shared)" stroke-width="28" stroke-linecap="round"/>
+    <path d="M84 172h74" fill="none" stroke="#E7EEF5" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="172" cy="159" r="19" fill="#071521"/>
+    <path d="M218 72 137 224" fill="none" stroke="url(#v2-signal)" stroke-width="24" stroke-linecap="round"/>
+  </g>
+  <text x="350" y="194" fill="#071521" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="138" font-weight="750" letter-spacing="-6">Auri<tspan dx="-4" fill="url(#v2-word-x)" font-weight="800">X</tspan></text>
+  <text x="357" y="247" fill="#526273" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="29" font-weight="600" letter-spacing="0.5">Clear access. Human help.</text>
+</svg>
