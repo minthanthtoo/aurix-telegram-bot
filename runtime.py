@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from access_control import StaffAccessControl, StaffAccessError
-from commerce import CommerceDatabase, CommerceService, PostgresCommerceDatabase
+from commerce import CommerceDatabase, CommerceError, CommerceService, PostgresCommerceDatabase
 from entitlements import PUBLIC_LIMIT_BYTES, ClaimService, OutlineError
 from free_repository import Database
 from outline_adapter import OutlineClient, OutlineServerPool
@@ -142,7 +142,10 @@ def main() -> None:
     commerce.initialize()
     register_servers = getattr(commerce, "register_outline_servers", None)
     if callable(register_servers):
-        register_servers(server_labels, provider_resource_ids=server_provider_ids)
+        try:
+            register_servers(server_labels, provider_resource_ids=server_provider_ids)
+        except CommerceError as exc:
+            raise SystemExit(f"Outline server registration failed: {exc}") from exc
     order_reconciliation = commerce.reconcile_duplicate_open_orders()
     if order_reconciliation["cancelled"]:
         print(f"Reconciled {order_reconciliation['cancelled']} empty duplicate open order(s).")

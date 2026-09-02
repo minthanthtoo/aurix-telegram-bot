@@ -75,6 +75,15 @@ class FakePaidOutline:
         }
 
 
+class NamedOutlinePool:
+    def __init__(self, *server_ids):
+        self._server_ids = tuple(server_ids)
+        self.default_server_id = self._server_ids[0]
+
+    def server_ids(self):
+        return self._server_ids
+
+
 class CommerceServiceTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -122,6 +131,36 @@ class CommerceServiceTest(unittest.TestCase):
             indexes = {row[1] for row in connection.execute("PRAGMA index_list(payments)")}
         self.assertEqual(normalized, "tx123")
         self.assertIn("payments_reference_lookup", indexes)
+
+    def test_server_registration_rejects_provider_id_relabeling(self):
+        legacy = CommerceService(
+            self.database,
+            NamedOutlinePool("primary"),
+            Fernet.generate_key(),
+        )
+        legacy.register_outline_servers(
+            {"primary": "Primary"},
+            provider_resource_ids={"primary": "595626749"},
+        )
+        fleet = CommerceService(
+            self.database,
+            NamedOutlinePool("sg-a", "sg-b"),
+            Fernet.generate_key(),
+        )
+
+        with self.assertRaisesRegex(CommerceError, "keep that stable server ID"):
+            fleet.register_outline_servers(
+                {"sg-a": "Singapore A", "sg-b": "Singapore B"},
+                provider_resource_ids={"sg-a": "595626749", "sg-b": "595616487"},
+            )
+
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT server_id, provider_resource_id FROM outline_servers ORDER BY server_id"
+            ).fetchall()
+        self.assertEqual([(row["server_id"], row["provider_resource_id"]) for row in rows], [
+            ("primary", "595626749"),
+        ])
 
     def test_existing_database_adds_receipt_media_type(self):
         legacy_path = Path(self.tmp.name) / "legacy-receipts.db"

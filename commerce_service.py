@@ -182,7 +182,28 @@ class CommerceService(CommerceWorkerMixin):
         now_text = _now_text()
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            configured_resources = [
+                str(provider_resource_ids[server_id])
+                for server_id in server_ids
+                if provider_resource_ids.get(server_id)
+            ]
+            if len(configured_resources) != len(set(configured_resources)):
+                raise CommerceError(
+                    "Each Outline server must use a different provider resource ID"
+                )
             for server_id in server_ids:
+                provider_resource_id = provider_resource_ids.get(server_id)
+                if provider_resource_id:
+                    existing = connection.execute(
+                        "SELECT server_id FROM outline_servers WHERE provider_resource_id = ?",
+                        (provider_resource_id,),
+                    ).fetchone()
+                    if existing is not None and str(existing["server_id"]) != str(server_id):
+                        raise CommerceError(
+                            f"Provider resource {provider_resource_id} is already registered as "
+                            f"server {existing['server_id']!r}; keep that stable server ID in "
+                            "OUTLINE_SERVERS_JSON"
+                        )
                 connection.execute(
                     """INSERT INTO outline_servers
                        (server_id, label, provider_resource_id, created_at, updated_at)
@@ -195,7 +216,7 @@ class CommerceService(CommerceWorkerMixin):
                     (
                         server_id,
                         labels.get(server_id, server_id),
-                        provider_resource_ids.get(server_id),
+                        provider_resource_id,
                         now_text,
                         now_text,
                     ),

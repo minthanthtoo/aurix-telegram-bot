@@ -74,10 +74,15 @@ Use placeholders while editing; insert the real URL and fingerprint only in
 the protected environment:
 
 ```dotenv
-OUTLINE_SERVERS_JSON=[{"id":"sg-a","label":"Singapore A","provider_resource_id":"595626749","api_url":"https://<primary-management-url>","cert_sha256":"<64-hex>"},{"id":"sg-b","label":"Singapore B","provider_resource_id":"595616487","api_url":"https://<node-two-management-url>","cert_sha256":"<64-hex>"}]
-OUTLINE_DEFAULT_SERVER_ID=sg-a
+OUTLINE_SERVERS_JSON=[{"id":"primary","label":"Singapore A","provider_resource_id":"595626749","api_url":"https://<primary-management-url>","cert_sha256":"<64-hex>"},{"id":"sg-b","label":"Singapore B","provider_resource_id":"595616487","api_url":"https://<node-two-management-url>","cert_sha256":"<64-hex>"}]
+OUTLINE_DEFAULT_SERVER_ID=primary
 AURIX_SERVER_HEALTH_MAX_AGE_SECONDS=900
 ```
+
+Server IDs are durable database identities. Preserve the established
+`primary` ID when converting an existing one-server deployment to a fleet;
+changing only its label is safe. Reusing the same Droplet ID under a new
+server ID is rejected before any partial registration can be committed.
 
 Run the repository preflight from the deployed release, restart exactly one bot
 process, and inspect startup without printing the environment:
