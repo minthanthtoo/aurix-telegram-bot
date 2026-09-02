@@ -18,7 +18,9 @@ jobs:
       - name: Use deployment Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13.4"
+          # Match the current Ubuntu control plane. Render/newer runtimes remain
+          # forward-compatible, while this catches accidental 3.11+ syntax/API use.
+          python-version: "3.10.12"
           cache: pip
 
       - name: Install runtime and validation dependencies

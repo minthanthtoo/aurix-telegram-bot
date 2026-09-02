@@ -11,7 +11,7 @@ import os
 import subprocess
 import sys
 import tarfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -84,7 +84,7 @@ def backup_node(node: FleetNode, env: dict[str, str]) -> Path:
     ciphertext = fernet(env).encrypt(process.stdout)
     root = Path(env.get("AURIX_FLEET_BACKUP_DIR", "/var/lib/aurix-fleet/backups")) / node.node_id
     root.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     destination = root / f"{stamp}.tar.gz.fernet"
     temporary = root / f".{destination.name}.tmp"
     temporary.write_bytes(ciphertext)
@@ -93,7 +93,7 @@ def backup_node(node: FleetNode, env: dict[str, str]) -> Path:
     identity = read_identity(node, env)
     metadata = {
         "node_id": node.node_id,
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
         "management_identity_sha256": hashlib.sha256(
             (identity["api_url"] + identity["cert_sha256"]).encode()
@@ -117,7 +117,7 @@ def restore_node(node: FleetNode, env: dict[str, str], archive: Path) -> None:
     except (OSError, InvalidToken) as exc:
         raise FleetError("backup cannot be read or authenticated") from exc
     validate_archive(raw)
-    rollback = datetime.now(UTC).strftime("/opt/outline.rollback-%Y%m%dT%H%M%SZ")
+    rollback = datetime.now(timezone.utc).strftime("/opt/outline.rollback-%Y%m%dT%H%M%SZ")
     command = (
         "set -euo pipefail; "
         f"cp -a /opt/outline {rollback}; "
