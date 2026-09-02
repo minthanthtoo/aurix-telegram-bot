@@ -10,6 +10,8 @@ sanitized: management URL paths and certificate fingerprints are never logged.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import fcntl
 import ipaddress
 import json
@@ -179,6 +181,7 @@ def parse_manifest(raw: str) -> list[FleetNode]:
 
 
 def ssh_base(node: FleetNode, env: dict[str, str]) -> list[str]:
+    materialize_trust_files(env)
     key = Path(env.get("AURIX_FLEET_SSH_KEY", ""))
     known_hosts = Path(env.get("AURIX_FLEET_KNOWN_HOSTS", ""))
     if not key.is_absolute() or not key.is_file():
@@ -189,6 +192,31 @@ def ssh_base(node: FleetNode, env: dict[str, str]) -> list[str]:
             "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=15",
             "-o", "StrictHostKeyChecking=yes", "-o", f"UserKnownHostsFile={known_hosts}",
             f"{node.ssh_user}@{node.host}"]
+
+
+def materialize_trust_files(env: dict[str, str]) -> None:
+    """Restore SSH trust files from the private environment when provided."""
+    pairs = (
+        ("AURIX_FLEET_SSH_PRIVATE_KEY_B64", "AURIX_FLEET_SSH_KEY", b"PRIVATE KEY"),
+        ("AURIX_FLEET_KNOWN_HOSTS_B64", "AURIX_FLEET_KNOWN_HOSTS", b"ssh-"),
+    )
+    for source_name, path_name, marker in pairs:
+        encoded = env.get(source_name, "").strip()
+        if not encoded:
+            continue
+        target = Path(env.get(path_name, ""))
+        if not target.is_absolute():
+            raise FleetError(f"{path_name} must be an absolute path")
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise FleetError(f"{source_name} is not valid base64") from exc
+        if marker not in content or b"\x00" in content:
+            raise FleetError(f"{source_name} does not contain the expected SSH material")
+        if not content.endswith(b"\n"):
+            content += b"\n"
+        if not target.exists() or target.read_bytes() != content:
+            atomic_write(target, content)
 
 
 def run_ssh(node: FleetNode, env: dict[str, str], command: str, *, stdin: bytes | None = None) -> str:

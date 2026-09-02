@@ -1,10 +1,12 @@
 # AuriX Fleet CI/CD and Disaster Recovery
 
 This is the canonical operating guide for every Outline endpoint. The Git
-repository plus one private environment file, one fleet SSH key, its pinned
-`known_hosts`, and an offline copy of the backup encryption key are sufficient
-to rebuild the control plane and reconcile the fleet. No bot, database,
-provider, or receipt credential is copied to a VPN node.
+repository plus one private environment file and the encrypted state/database
+backups are sufficient to rebuild the control plane and reconcile the fleet.
+The private `.env` can carry base64 recovery copies of the fleet SSH key and
+pinned `known_hosts`; the reconciler materializes them mode `0600`. Base64 is
+not encryption, so this file belongs in an offline secret store, never Git. No
+bot, database, provider, or receipt credential is copied to a VPN node.
 
 ## State ownership
 
@@ -53,6 +55,11 @@ each SSH host fingerprint through the provider console before appending it to
 manifest and fleet variables from `.env.example` in
 `/etc/aurix-bot/aurix.env`, mode `0600`. Keep offline copies of that file, the
 backup key, and verified host fingerprints. Never commit them.
+
+For portable revival, set `AURIX_FLEET_SSH_PRIVATE_KEY_B64` and
+`AURIX_FLEET_KNOWN_HOSTS_B64` from those two files. The normal path variables
+remain the materialization destinations. If inline copies are omitted, the
+files must already exist.
 
 ## Validate and reconcile
 

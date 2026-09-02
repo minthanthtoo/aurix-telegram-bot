@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from deploy.fleet_reconcile import (
     FleetError,
     parse_access_text,
     parse_manifest,
+    materialize_trust_files,
     server_config,
     update_env_file,
 )
@@ -80,6 +82,24 @@ class FleetManifestTests(unittest.TestCase):
             self.assertIn("KEEP=this", path.read_text(encoding="utf-8"))
             self.assertIn("OUTLINE_DEFAULT_SERVER_ID=sg-a", path.read_text(encoding="utf-8"))
             self.assertFalse(update_env_file(path, {"OUTLINE_DEFAULT_SERVER_ID": "sg-a"}))
+
+    def test_materializes_portable_trust_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            key = Path(directory) / "fleet-key"
+            hosts = Path(directory) / "known-hosts"
+            materialize_trust_files({
+                "AURIX_FLEET_SSH_KEY": str(key),
+                "AURIX_FLEET_KNOWN_HOSTS": str(hosts),
+                "AURIX_FLEET_SSH_PRIVATE_KEY_B64": base64.b64encode(
+                    b"-----BEGIN OPENSSH PRIVATE KEY-----\ntest\n"
+                ).decode(),
+                "AURIX_FLEET_KNOWN_HOSTS_B64": base64.b64encode(
+                    b"192.0.2.10 ssh-ed25519 test\n"
+                ).decode(),
+            })
+            self.assertIn(b"PRIVATE KEY", key.read_bytes())
+            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+            self.assertIn(b"ssh-ed25519", hosts.read_bytes())
 
 
 if __name__ == "__main__":
