@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -14,6 +15,11 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from cryptography.fernet import Fernet
+
+try:
+    from deploy.fleet_reconcile import FleetError, parse_manifest
+except ModuleNotFoundError:  # Direct execution sets deploy/ as sys.path[0].
+    from fleet_reconcile import FleetError, parse_manifest
 
 
 TRUTHY = {"1", "true", "yes", "on"}
@@ -92,6 +98,31 @@ def _validate_configuration() -> dict[str, str]:
             fail("OUTLINE_API_URL must be the complete secret HTTPS management URL")
         if not re.fullmatch(r"[0-9a-fA-F]{64}", fingerprint):
             fail("OUTLINE_CERT_SHA256 must contain 64 hexadecimal characters")
+
+    fleet_raw = os.environ.get("AURIX_FLEET_NODES_JSON", "").strip()
+    if fleet_raw:
+        try:
+            fleet_nodes = parse_manifest(fleet_raw)
+        except FleetError as exc:
+            fail(str(exc))
+        fleet_ids = {node.node_id for node in fleet_nodes}
+        default_id = os.environ.get("OUTLINE_DEFAULT_SERVER_ID", "").strip()
+        if default_id and default_id not in fleet_ids:
+            fail("OUTLINE_DEFAULT_SERVER_ID must exist in AURIX_FLEET_NODES_JSON")
+        for variable in ("AURIX_FLEET_SSH_KEY", "AURIX_FLEET_KNOWN_HOSTS"):
+            configured_path = Path(_required(variable))
+            if not configured_path.is_absolute() or not configured_path.is_file():
+                fail(f"{variable} must be an existing absolute file")
+        source = _required("AURIX_FLEET_CONTROL_PLANE_SOURCE")
+        try:
+            ipaddress.ip_network(source, strict=False)
+        except ValueError:
+            fail("AURIX_FLEET_CONTROL_PLANE_SOURCE must be an IP address or CIDR")
+        backup_key = _required("AURIX_FLEET_BACKUP_KEY")
+        try:
+            Fernet(backup_key.encode())
+        except (TypeError, ValueError):
+            fail("AURIX_FLEET_BACKUP_KEY is not a valid Fernet key")
 
     database_url = os.environ.get("COMMERCE_DATABASE_URL", "").strip()
     database_path = os.environ.get("DATABASE_PATH", "").strip()

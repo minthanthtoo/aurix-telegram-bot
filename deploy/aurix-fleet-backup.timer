@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily encrypted AuriX Outline fleet backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 Asia/Yangon
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

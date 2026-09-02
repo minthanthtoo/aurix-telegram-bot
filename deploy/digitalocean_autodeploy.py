@@ -279,6 +279,27 @@ def activate_release(target: Path) -> None:
         raise
 
 
+def install_fleet_automation(target: Path) -> None:
+    """Keep fleet units versioned with the same CI-approved release."""
+    unit_names = (
+        "aurix-fleet-reconcile.service",
+        "aurix-fleet-reconcile.timer",
+        "aurix-fleet-backup.service",
+        "aurix-fleet-backup.timer",
+    )
+    for name in unit_names:
+        source = target / "deploy" / name
+        destination = Path("/etc/systemd/system") / name
+        temporary = destination.with_name(f".{name}.tmp")
+        shutil.copyfile(source, temporary)
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, destination)
+    run("systemctl", "daemon-reload", timeout=30)
+    if os.environ.get("AURIX_FLEET_NODES_JSON", "").strip():
+        run("systemctl", "enable", "--now", "aurix-fleet-reconcile.timer", timeout=30)
+        run("systemctl", "enable", "--now", "aurix-fleet-backup.timer", timeout=30)
+
+
 def _write_state(sha: str) -> None:
     temporary = STATE_DIR / ".deployed-sha.tmp"
     temporary.write_text(sha + "\n", encoding="utf-8")
@@ -335,8 +356,13 @@ def deploy() -> None:
         raise DeployError(f"GitHub CI did not pass for {sha[:12]} ({conclusion})")
     target = build_release(repository, sha)
     activate_release(target)
+    install_fleet_automation(target)
     _write_state(sha)
     _cleanup_releases()
+    if os.environ.get("AURIX_FLEET_NODES_JSON", "").strip():
+        subprocess.run(
+            ("systemctl", "start", "--no-block", "aurix-fleet-reconcile.service"), check=False
+        )
     print(f"AuriX deploy: activated {sha[:12]}")
 
 

@@ -546,3 +546,8 @@ For the supplied staging host (`139.59.122.170`, Ubuntu 24.04, 1 vCPU/1 GB RAM),
 follow [`deploy/README.md`](deploy/README.md). The server address alone is not
 enough to deploy: SSH reachability, Outline installer output, a bot token, and
 an admin Telegram ID are still required.
+
+Production multi-node fleets are declarative and health-gated. See
+[`docs/FLEET_CICD_AND_DISASTER_RECOVERY.md`](docs/FLEET_CICD_AND_DISASTER_RECOVERY.md)
+for CI/CD, one-command reconciliation, encrypted endpoint recovery, and the
+safe automated-expansion contract.

@@ -1,0 +1,15 @@
+[Unit]
+Description=AuriX declarative Outline fleet reconciliation
+After=network-online.target aurix-bot.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/aurix-current
+EnvironmentFile=/etc/aurix-bot/aurix.env
+ExecStart=/opt/aurix-current/.venv/bin/python deploy/fleet_reconcile.py reconcile --env-file /etc/aurix-bot/aurix.env
+TimeoutStartSec=20min
+Nice=10
+

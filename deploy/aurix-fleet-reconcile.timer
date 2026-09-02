@@ -1,0 +1,12 @@
+[Unit]
+Description=Continuously reconcile the AuriX Outline fleet
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+RandomizedDelaySec=45s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

@@ -37,7 +37,13 @@ jobs:
           deploy/render_preflight.py deploy/render_web.py
           deploy/digitalocean_preflight.py deploy/digitalocean_autodeploy.py
           deploy/infrastructure_worker.py
+          deploy/fleet_reconcile.py deploy/fleet_backup.py
           deploy/receipt_pipeline_smoke.py
+
+      - name: Validate fleet automation artifacts
+        run: |
+          bash -n deploy/node_bootstrap.sh
+          python deploy/fleet_reconcile.py validate --env-file .env.fleet.example
 
       - name: Run correctness lint
         run: >-

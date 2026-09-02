@@ -1,5 +1,9 @@
 # AuriX staging deployment
 
+For multi-node bootstrap, reconciliation, encrypted endpoint recovery,
+automated expansion boundaries, and full revival, use the canonical
+[fleet CI/CD and disaster-recovery guide](../docs/FLEET_CICD_AND_DISASTER_RECOVERY.md).
+
 This runbook targets the supplied DigitalOcean staging Droplet:
 
 ```text
