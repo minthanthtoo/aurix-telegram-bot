@@ -25,10 +25,10 @@ engineering estimates, not production traffic or revenue metrics.
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
 | Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; hosted DB provisioning and live migration remain gates |
 | Independent worker / web control plane | Worker implemented; web separation pending | The guarded DigitalOcean worker/timer is installed on the primary host; an independently hosted Render web/control service remains a later gate |
-| Live Telegram and Outline smoke test | Primary verified; node two pending | Bot, primary Outline endpoint, database backup, and worker are live; node-two installation and endpoint registration still require host access |
+| Live Telegram and Outline smoke test | Primary and node two verified; customer tranche controlled | Bot, both Outline endpoints, database backup, worker/timer, firewall, pinned-TLS API canaries, and isolated node-two allocation canary are verified; a real Telegram-account canary and longer observation remain |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
 | Referrals, affiliates, and resellers | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
-| Multi-node allocation and guarded scale-out | Implemented; live node-two gate open | Server-scoped allocation, provider inventory, capacity posture, idempotent intents, and worker safety gates are implemented; node two must pass the live canary |
+| Multi-node allocation and guarded scale-out | Implemented; controlled node-two tranche open | Server-scoped allocation, provider inventory, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; node two is limited to 3 daily, 2 monthly, 2 basic-paid, and 1 standard-paid slot |
 
 ## Honest aggregate view
 
@@ -39,26 +39,25 @@ engineering estimates, not production traffic or revenue metrics.
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
   and wallet suite (233 tests passing).
-- Live deployment readiness: approximately **70%**; the primary node, bot,
-  database backup, worker/timer, provider inventory, and guarded release path
-  are verified. The second node's Outline installation, endpoint registration,
-  capacity declaration, and canary remain open.
-- End-to-end MVP readiness: approximately **75%** when code and live gates are
-  weighted together. This is a progress estimate, not a claim that the fleet is
-  ready for unrestricted public traffic.
+- Live deployment readiness: approximately **94%**; both nodes, the bot,
+  database backup, worker/timer, provider inventory, guarded release path,
+  firewall boundary, capacity declaration, and pinned-TLS allocation canary are
+  verified. The remaining work is a real Telegram-account canary plus sustained
+  observation, not infrastructure installation.
+- End-to-end MVP readiness: approximately **90%** for the controlled paid-
+  concierge scope. This is a progress estimate, not a claim that automated
+  payment verification, reseller features, or unrestricted scale-out are live.
 
 ## Remaining MVP gates
 
-1. Restore SSH access to `139.59.122.170` and verify the actual host.
-2. Install or verify Outline on that host; capture version, management URL, and
-   certificate fingerprint without committing them.
-3. Create a staging Telegram bot and set `ADMIN_TELEGRAM_IDS`.
-4. Apply firewall rules and persistent `/var/lib/aurix-bot` storage.
-5. Run daily 300 MB → monthly 3 GB → buy both 50 GB and 100 GB plans → receipt photo
+1. Run a real owner-controlled Telegram-account canary: daily 300 MB → monthly
+   3 GB → buy both 50 GB and 100 GB plans → receipt photo
    → LLM/manual review → approve → provision → quota-hit DELETE → `/myvpn` smoke
    tests, with before/after key inventories and a receiving-account transaction
    comparison. Confirm whether active sessions stop within the promised window.
-6. Complete the 100% acceptance checklist in
+2. Keep the controlled node-two tranche under observation and expand only after
+   measured demand, support ownership, and quota/revocation evidence.
+3. Complete the 100% acceptance checklist in
    `docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`, then decide whether the paid
    pilot remains one-process SQLite or enables the PostgreSQL backend plus an
    independent worker before admitting more than a controlled cohort; the
