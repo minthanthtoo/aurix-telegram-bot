@@ -21,6 +21,8 @@ bot, database, provider, or receipt credential is copied to a VPN node.
 An Outline key is bound to the node's persisted Shadowbox state. Reinstalling a
 node creates a different server and cannot revive existing keys. Both the
 commerce database and encrypted `/opt/outline` backups are therefore mandatory.
+Legacy official installations rooted at `/root/shadowbox` are detected and
+backed up in place; new installations use `/opt/outline`.
 
 ## Declarative node schema
 

@@ -69,10 +69,15 @@ def select_nodes(nodes: list[FleetNode], requested: str) -> list[FleetNode]:
 
 def backup_node(node: FleetNode, env: dict[str, str]) -> Path:
     limit_mb = int(env.get("AURIX_FLEET_BACKUP_MAX_MB", "256"))
-    size = int(run_ssh(node, env, "du -sm /opt/outline/persisted-state | awk '{print $1}'").strip())
+    select_dir = (
+        "d=/opt/outline; test -s /root/shadowbox/access.txt && d=/root/shadowbox; "
+    )
+    size = int(run_ssh(
+        node, env, select_dir + "du -sm \"$d/persisted-state\" | awk '{print $1}'"
+    ).strip())
     if size > limit_mb:
         raise FleetError(f"node {node.node_id} state exceeds the configured backup limit")
-    command = "tar --numeric-owner -C /opt/outline -czf - access.txt persisted-state"
+    command = select_dir + "tar --numeric-owner -C \"$d\" -czf - access.txt persisted-state"
     process = subprocess.run(
         # Binary stream is necessary here; run_ssh intentionally decodes text.
         ssh_base(node, env) + [command],
@@ -117,20 +122,23 @@ def restore_node(node: FleetNode, env: dict[str, str], archive: Path) -> None:
     except (OSError, InvalidToken) as exc:
         raise FleetError("backup cannot be read or authenticated") from exc
     validate_archive(raw)
-    rollback = datetime.now(timezone.utc).strftime("/opt/outline.rollback-%Y%m%dT%H%M%SZ")
+    rollback_suffix = datetime.now(timezone.utc).strftime(".rollback-%Y%m%dT%H%M%SZ")
     command = (
-        "set -euo pipefail; "
-        f"cp -a /opt/outline {rollback}; "
+        "set -euo pipefail; d=/opt/outline; "
+        "test -s /root/shadowbox/access.txt && d=/root/shadowbox; "
+        f"cp -a \"$d\" \"$d{rollback_suffix}\"; "
         "docker rm -f shadowbox >/dev/null 2>&1 || true; "
-        "rm -rf /opt/outline/persisted-state /opt/outline/access.txt; "
-        "tar -C /opt/outline -xzf -; "
-        "bash /opt/outline/persisted-state/start_container.sh >/dev/null; "
-        "test -s /opt/outline/access.txt"
+        "rm -rf \"$d/persisted-state\" \"$d/access.txt\"; "
+        "tar -C \"$d\" -xzf -; "
+        "bash \"$d/persisted-state/start_container.sh\" >/dev/null; "
+        "test -s \"$d/access.txt\""
     )
     process = subprocess.run(ssh_base(node, env) + [command], input=raw, capture_output=True,
                              timeout=600, check=False)
     if process.returncode:
-        raise FleetError(f"node {node.node_id} restore failed; remote rollback is at {rollback}")
+        raise FleetError(
+            f"node {node.node_id} restore failed; remote rollback has suffix {rollback_suffix}"
+        )
     read_identity(node, env)
 
 

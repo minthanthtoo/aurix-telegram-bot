@@ -37,6 +37,12 @@ require_value AURIX_CONTROL_PLANE_SOURCE
 (( AURIX_NODE_SSH_PORT > 0 && AURIX_NODE_SSH_PORT <= 65535 )) || fail "invalid SSH port"
 (( AURIX_NODE_API_PORT != AURIX_NODE_KEYS_PORT )) || fail "management and access-key ports must differ"
 
+OUTLINE_DIR=/opt/outline
+if [[ -s /root/shadowbox/access.txt || -s /root/shadowbox/persisted-state/start_container.sh ]]; then
+  OUTLINE_DIR=/root/shadowbox
+fi
+export OUTLINE_DIR
+
 export DEBIAN_FRONTEND=noninteractive
 missing_packages=()
 command -v curl >/dev/null 2>&1 || missing_packages+=(curl)
@@ -83,9 +89,9 @@ if [[ "${AURIX_HARDEN_SSH:-1}" == "1" ]]; then
 fi
 
 fresh_install=0
-start_script=/opt/outline/persisted-state/start_container.sh
+start_script="$OUTLINE_DIR/persisted-state/start_container.sh"
 if [[ ! -s "$start_script" ]]; then
-  [[ ! -e /opt/outline/persisted-state && ! -s /opt/outline/access.txt ]] || \
+  [[ ! -e "$OUTLINE_DIR/persisted-state" && ! -s "$OUTLINE_DIR/access.txt" ]] || \
     fail "Outline state exists without a usable start script; restore instead of reinstalling"
   installer_url="${AURIX_OUTLINE_INSTALLER_URL:-$DEFAULT_INSTALLER_URL}"
   installer_sha256="${AURIX_OUTLINE_INSTALLER_SHA256:-$DEFAULT_INSTALLER_SHA256}"
@@ -118,8 +124,8 @@ configure_firewall
 # An interrupted official installer can leave the certificate and running
 # container before appending apiUrl. Reconstruct only from locally persisted
 # state; never generate a second management identity over existing key state.
-if ! grep -q '^apiUrl:' /opt/outline/access.txt; then
-  certificate=/opt/outline/persisted-state/shadowbox-selfsigned.crt
+if ! grep -q '^apiUrl:' "$OUTLINE_DIR/access.txt"; then
+  certificate="$OUTLINE_DIR/persisted-state/shadowbox-selfsigned.crt"
   [[ -s "$start_script" && -s "$certificate" ]] || fail "incomplete Outline management state"
   api_prefix="$(grep -o 'SB_API_PREFIX=[^\"]*' "$start_script" | head -1 | cut -d= -f2)"
   fingerprint="$(openssl x509 -in "$certificate" -noout -sha256 -fingerprint | cut -d= -f2 | tr -d :)"
@@ -127,9 +133,9 @@ if ! grep -q '^apiUrl:' /opt/outline/access.txt; then
   [[ "$fingerprint" =~ ^[0-9A-Fa-f]{64}$ ]] || fail "invalid persisted certificate"
   printf 'apiUrl:https://%s:%s/%s\ncertSha256:%s\n' \
     "$AURIX_NODE_HOST" "$AURIX_NODE_API_PORT" "$api_prefix" "$fingerprint" \
-    > /opt/outline/access.txt
+    > "$OUTLINE_DIR/access.txt"
 fi
-chmod 0640 /opt/outline/access.txt
+chmod 0640 "$OUTLINE_DIR/access.txt"
 
 if [[ "$fresh_install" == "1" ]]; then
   # The official installer creates one convenience key. It is untracked by
@@ -141,7 +147,9 @@ import urllib.parse
 import urllib.request
 
 fields = {}
-with open("/opt/outline/access.txt", encoding="utf-8") as stream:
+import os
+outline_dir = os.environ["OUTLINE_DIR"]
+with open(outline_dir + "/access.txt", encoding="utf-8") as stream:
     for line in stream:
         key, _, value = line.strip().partition(":")
         fields[key] = value
@@ -175,7 +183,9 @@ import ssl
 import urllib.request
 
 fields = {}
-with open("/opt/outline/access.txt", encoding="utf-8") as stream:
+import os
+outline_dir = os.environ["OUTLINE_DIR"]
+with open(outline_dir + "/access.txt", encoding="utf-8") as stream:
     for line in stream:
         key, _, value = line.strip().partition(":")
         fields[key] = value

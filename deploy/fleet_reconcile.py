@@ -244,7 +244,11 @@ def parse_access_text(text: str, node: FleetNode) -> dict[str, str]:
 
 
 def read_identity(node: FleetNode, env: dict[str, str]) -> dict[str, str]:
-    return parse_access_text(run_ssh(node, env, "test -s /opt/outline/access.txt && cat /opt/outline/access.txt"), node)
+    command = (
+        "for d in /opt/outline /root/shadowbox; do "
+        "if test -s \"$d/access.txt\"; then cat \"$d/access.txt\"; exit 0; fi; done; exit 1"
+    )
+    return parse_access_text(run_ssh(node, env, command), node)
 
 
 def bootstrap(node: FleetNode, env: dict[str, str]) -> dict[str, Any]:
