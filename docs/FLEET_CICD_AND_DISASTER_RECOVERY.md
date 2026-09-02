@@ -138,6 +138,11 @@ Backups default to `/var/lib/aurix-fleet/backups/<node-id>/`, mode `0600`, with
 14 retained copies. A size limit prevents disk exhaustion. Metadata contains
 hashes and timestamps, never management credentials.
 
+The control-plane disk is not an offsite backup. Regularly copy the encrypted
+`.fernet` files and metadata to an operator vault or private object storage.
+The local project reserves the ignored `.fleet-backups/` directory for this
+purpose; encrypted archives must still never be committed.
+
 Restore is deliberately explicit and replaces current remote Outline state. It
 validates every tar path, rejects links/devices/traversal, preserves a remote
 rollback directory, restores, starts Shadowbox, and checks identity:

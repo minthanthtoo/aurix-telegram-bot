@@ -1,4 +1,5 @@
 .env
+.fleet-backups/
 .venv/
 *.db
 *.db-shm
