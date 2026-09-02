@@ -355,6 +355,16 @@ def deploy() -> None:
         return
     if conclusion != "success":
         raise DeployError(f"GitHub CI did not pass for {sha[:12]} ({conclusion})")
+    expected_target = RELEASES_DIR / sha
+    current_target = CURRENT_LINK.resolve() if CURRENT_LINK.exists() else None
+    if current_target == expected_target and expected_target.is_dir():
+        # Recover a release that passed application health but was interrupted
+        # while installing operational units or persisting deployment state.
+        install_fleet_automation(expected_target)
+        _write_state(sha)
+        _cleanup_releases()
+        print(f"AuriX deploy: finalized partial activation {sha[:12]}")
+        return
     target = build_release(repository, sha)
     activate_release(target)
     install_fleet_automation(target)
