@@ -346,6 +346,7 @@ def deploy() -> None:
     deployed_file = STATE_DIR / "deployed-sha"
     deployed = deployed_file.read_text(encoding="utf-8").strip() if deployed_file.exists() else ""
     if deployed == sha and CURRENT_LINK.exists():
+        install_fleet_automation(CURRENT_LINK.resolve())
         print(f"AuriX deploy: already current at {sha[:12]}")
         return
     conclusion = require_github_ci(sha)
