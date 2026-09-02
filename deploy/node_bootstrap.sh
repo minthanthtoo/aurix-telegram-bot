@@ -66,6 +66,10 @@ configure_firewall() {
   # The upstream installer may create a broad API rule. Remove that exact rule
   # before restoring the source-restricted management rule.
   ufw --force delete allow "$AURIX_NODE_API_PORT"/tcp >/dev/null 2>&1 || true
+  # Outline does not require a remotely exposed Docker daemon. Remove legacy
+  # installer/firewall drift even when nothing currently listens on these ports.
+  ufw --force delete allow 2375/tcp >/dev/null 2>&1 || true
+  ufw --force delete allow 2376/tcp >/dev/null 2>&1 || true
   ufw limit "$AURIX_NODE_SSH_PORT"/tcp >/dev/null
   ufw allow from "$AURIX_CONTROL_PLANE_SOURCE" to any port "$AURIX_NODE_API_PORT" proto tcp >/dev/null
   ufw allow "$AURIX_NODE_KEYS_PORT"/tcp >/dev/null
