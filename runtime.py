@@ -89,6 +89,12 @@ def main() -> None:
             )
         receipt_storage = NullReceiptStorage()
     database.initialize()
+    try:
+        outline_timeout = float(os.environ.get("OUTLINE_REQUEST_TIMEOUT_SECONDS", "5"))
+    except ValueError as exc:
+        raise SystemExit("OUTLINE_REQUEST_TIMEOUT_SECONDS must be numeric") from exc
+    if not 1.0 <= outline_timeout <= 30.0:
+        raise SystemExit("OUTLINE_REQUEST_TIMEOUT_SECONDS must be between 1 and 30")
     server_labels: dict[str, str] = {}
     server_provider_ids: dict[str, str] = {}
     if servers_json:
@@ -104,7 +110,9 @@ def main() -> None:
                 if not re.fullmatch(r"[A-Za-z0-9_-]{1,24}", server_id) or server_id in clients:
                     raise ValueError
                 clients[server_id] = OutlineClient(
-                    str(item.get("api_url") or ""), str(item.get("cert_sha256") or "")
+                    str(item.get("api_url") or ""),
+                    str(item.get("cert_sha256") or ""),
+                    timeout_seconds=outline_timeout,
                 )
                 server_labels[server_id] = str(item.get("label") or server_id)[:64]
                 provider_resource_id = str(item.get("provider_resource_id") or "").strip()
@@ -125,7 +133,16 @@ def main() -> None:
             if not re.fullmatch(r"\d{1,20}", provider_resource_id):
                 raise SystemExit("OUTLINE_PROVIDER_RESOURCE_ID must be a numeric Droplet ID")
             server_provider_ids["primary"] = provider_resource_id
-        outline = OutlineServerPool({"primary": OutlineClient(api_url, fingerprint)}, "primary")
+        outline = OutlineServerPool(
+            {
+                "primary": OutlineClient(
+                    api_url,
+                    fingerprint,
+                    timeout_seconds=outline_timeout,
+                )
+            },
+            "primary",
+        )
     allow_text_payment = os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").lower() in (
         "1",
         "true",

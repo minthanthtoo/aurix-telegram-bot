@@ -581,6 +581,19 @@ class OutlineClientTlsTest(unittest.TestCase):
             client.server_info()
         self.assertIsNone(FakeHTTPSConnection.instances[-1].path)
 
+    def test_outline_transport_uses_configured_bounded_timeout(self):
+        client = OutlineClient(
+            "https://outline.test:1234/secret",
+            self.client.fingerprint,
+            timeout_seconds=3,
+        )
+
+        client.server_info()
+
+        self.assertEqual(FakeHTTPSConnection.instances[-1].timeout, 3.0)
+        with self.assertRaises(ValueError):
+            OutlineClient("https://outline.test/secret", "0" * 64, timeout_seconds=0.5)
+
 
 class RecordingTelegramBot(TelegramBot):
     def __init__(self, *args, **kwargs):

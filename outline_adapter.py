@@ -16,7 +16,7 @@ from observability import latency_log as _latency_log
 
 
 class OutlineClient:
-    def __init__(self, api_url: str, cert_sha256: str):
+    def __init__(self, api_url: str, cert_sha256: str, timeout_seconds: float = 15.0):
         parsed = urllib.parse.urlsplit(api_url.rstrip("/"))
         if parsed.scheme != "https" or not parsed.hostname:
             raise ValueError("OUTLINE_API_URL must be an https URL")
@@ -27,6 +27,10 @@ class OutlineClient:
         self.port = parsed.port or 443
         self.base_path = parsed.path.rstrip("/")
         self.fingerprint = fingerprint
+        timeout = float(timeout_seconds)
+        if not 1.0 <= timeout <= 30.0:
+            raise ValueError("Outline request timeout must be between 1 and 30 seconds")
+        self.timeout_seconds = timeout
 
     def _request(
         self,
@@ -40,7 +44,12 @@ class OutlineClient:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
         started_at = time.perf_counter()
-        connection = http.client.HTTPSConnection(self.host, self.port, context=context, timeout=15)
+        connection = http.client.HTTPSConnection(
+            self.host,
+            self.port,
+            context=context,
+            timeout=self.timeout_seconds,
+        )
         payload = json.dumps(body).encode() if body is not None else None
         response_status: int | None = None
         try:
