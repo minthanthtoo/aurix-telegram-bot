@@ -290,6 +290,11 @@ class CommerceService(CommerceWorkerMixin):
                 info = client.server_info()
                 inventory = client.list_keys()
                 keys = inventory.get("accessKeys", []) if isinstance(inventory, dict) else []
+                remote_items = [
+                    item
+                    for item in (keys if isinstance(keys, list) else [])
+                    if isinstance(item, dict) and str(item.get("id") or "").strip()
+                ]
                 transfer = client.transfer_metrics()
                 by_key = transfer.get("bytesTransferredByUserId", {}) if isinstance(transfer, dict) else {}
                 total_transfer = 0
@@ -316,23 +321,96 @@ class CommerceService(CommerceWorkerMixin):
                         pass
                 with self.database.connect() as connection:
                     self.database.begin_write(connection)
+                    orphan_count = 0
+                    if self._table_exists(connection, "outline_remote_keys"):
+                        managed_ids = {
+                            str(item["outline_key_id"])
+                            for item in connection.execute(
+                                """SELECT outline_key_id FROM paid_vpn_keys
+                                   WHERE server_id = ? AND outline_key_id IS NOT NULL""",
+                                (server_id,),
+                            ).fetchall()
+                        }
+                        if self._table_exists(connection, "keys"):
+                            managed_ids.update(
+                                str(item["outline_key_id"])
+                                for item in connection.execute(
+                                    """SELECT outline_key_id FROM keys
+                                       WHERE server_id = ? AND outline_key_id IS NOT NULL""",
+                                    (server_id,),
+                                ).fetchall()
+                            )
+                        # A successful inventory containing zero keys is authoritative:
+                        # previously observed records become missing, but remain in the
+                        # audit ledger for later reconciliation.
+                        connection.execute(
+                            """UPDATE outline_remote_keys
+                               SET status = 'missing'
+                               WHERE server_id = ? AND status = 'present'""",
+                            (server_id,),
+                        )
+                        for item in remote_items:
+                            outline_key_id = str(item["id"]).strip()
+                            remote_name = str(item.get("name") or "").strip()[:256] or None
+                            usage_bytes = self._metric_bytes(by_key.get(outline_key_id)) if isinstance(by_key, dict) else None
+                            connection.execute(
+                                """INSERT INTO outline_remote_keys
+                                   (server_id, outline_key_id, remote_name, managed, status,
+                                    first_seen_at, last_seen_at, last_usage_bytes)
+                                   VALUES (?, ?, ?, ?, 'present', ?, ?, ?)
+                                   ON CONFLICT(server_id, outline_key_id) DO UPDATE SET
+                                     remote_name = excluded.remote_name,
+                                     managed = excluded.managed,
+                                     status = 'present',
+                                     last_seen_at = excluded.last_seen_at,
+                                     last_usage_bytes = COALESCE(
+                                         excluded.last_usage_bytes,
+                                         outline_remote_keys.last_usage_bytes
+                                     )""",
+                                (
+                                    server_id,
+                                    outline_key_id,
+                                    remote_name,
+                                    1 if outline_key_id in managed_ids else 0,
+                                    observed_at,
+                                    observed_at,
+                                    usage_bytes,
+                                ),
+                            )
+                        orphan_count = int(
+                            connection.execute(
+                                """SELECT COUNT(*) AS n FROM outline_remote_keys
+                                   WHERE server_id = ? AND status = 'present' AND managed = 0""",
+                                (server_id,),
+                            ).fetchone()["n"]
+                        )
                     connection.execute(
                         """UPDATE outline_servers SET remote_key_count = ?, remote_transfer_bytes = ?,
                                   current_bandwidth_bytes = ?, peak_bandwidth_bytes = ?,
-                                  telemetry_experimental = ?, health_status = 'healthy', last_error = NULL,
+                                  telemetry_experimental = ?, remote_orphan_key_count = ?,
+                                  health_status = 'healthy', last_error = NULL,
                                   last_synced_at = ?, updated_at = ? WHERE server_id = ?""",
                         (
-                            len(keys) if isinstance(keys, list) else 0,
+                            len(remote_items),
                             total_transfer,
                             current_bandwidth,
                             peak_bandwidth,
                             experimental,
+                            orphan_count,
                             observed_at,
                             observed_at,
                             server_id,
                         ),
                     )
-                results.append({"server_id": server_id, "status": "healthy", "version": info.get("version")})
+                results.append(
+                    {
+                        "server_id": server_id,
+                        "status": "healthy",
+                        "version": info.get("version"),
+                        "remote_key_count": len(remote_items),
+                        "remote_orphan_key_count": orphan_count,
+                    }
+                )
             except Exception as exc:
                 with self.database.connect() as connection:
                     connection.execute(

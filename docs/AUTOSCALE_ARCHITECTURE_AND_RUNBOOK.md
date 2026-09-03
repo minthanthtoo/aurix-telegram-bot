@@ -185,6 +185,16 @@ policy in one database transaction, so a legacy over-allocation can be reduced
 to a valid manifest without a transient strict-mode failure or partially
 updated server policy.
 
+Every successful Outline inventory pass also records a server-scoped,
+non-secret remote-key audit in `outline_remote_keys`. Each observed key is
+classified as managed when its `(server_id, outline_key_id)` exists in AuriX's
+free or paid key tables; otherwise it is marked untracked. Keys that disappear
+from a successful inventory are retained as `missing` history rather than
+silently forgotten. The server's `remote_orphan_key_count` is shown in the
+admin Capacity panel and is a migration blocker: audit and classify untracked
+keys before enabling strict allocation or changing a node's saleable limits.
+Access URLs and management credentials are never stored in this audit table.
+
 Paid orders reserve capacity before receipt submission. Cancellation/rejection
 releases the reservation. Free/promo creation increments the reconciled remote
 count in the same durable transaction after successful remote creation; the next

@@ -209,6 +209,7 @@ class TelegramAdminMixin:
             traffic_text = (
                 "-" if traffic is None else f"{int(traffic) / 1_000_000_000:.1f} GB / 30d"
             )
+            orphan_count = int(item.get("remote_orphan_key_count") or 0)
             budget = item.get("monthly_traffic_bytes")
             commitment = int(item.get("committed_traffic_bytes") or 0)
             lines.extend(
@@ -216,6 +217,11 @@ class TelegramAdminMixin:
                     "",
                     f"{'🟢' if item.get('health_status') == 'healthy' else '🔴'} {item.get('label') or item.get('server_id')}",
                     f"Remote keys: {item.get('remote_key_count') or 0} · {key_limit}",
+                    (
+                        f"⚠️ Untracked remote keys: {orphan_count} · audit before strict allocation"
+                        if orphan_count
+                        else "Untracked remote keys: 0"
+                    ),
                     f"Traffic observed: {traffic_text}",
                     "Traffic allocation: "
                     + (

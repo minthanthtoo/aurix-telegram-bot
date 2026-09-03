@@ -638,6 +638,44 @@ COMMERCE_MIGRATIONS = (
             "CREATE UNIQUE INDEX IF NOT EXISTS outline_servers_provider_resource ON outline_servers(provider_resource_id) WHERE provider_resource_id IS NOT NULL",
         ),
     ),
+    Migration(
+        7,
+        "remote_key_inventory_audit",
+        sqlite_statements=(
+            "ALTER TABLE outline_servers ADD COLUMN remote_orphan_key_count INTEGER NOT NULL DEFAULT 0",
+            """CREATE TABLE IF NOT EXISTS outline_remote_keys (
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   outline_key_id TEXT NOT NULL,
+                   remote_name TEXT,
+                   managed INTEGER NOT NULL DEFAULT 0 CHECK (managed IN (0, 1)),
+                   status TEXT NOT NULL DEFAULT 'present'
+                       CHECK (status IN ('present', 'missing')),
+                   first_seen_at TEXT NOT NULL,
+                   last_seen_at TEXT NOT NULL,
+                   last_usage_bytes INTEGER,
+                   PRIMARY KEY (server_id, outline_key_id)
+               )""",
+            """CREATE INDEX IF NOT EXISTS outline_remote_keys_audit
+               ON outline_remote_keys(server_id, status, managed)""",
+        ),
+        postgres_statements=(
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS remote_orphan_key_count INTEGER NOT NULL DEFAULT 0",
+            """CREATE TABLE IF NOT EXISTS outline_remote_keys (
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   outline_key_id TEXT NOT NULL,
+                   remote_name TEXT,
+                   managed INTEGER NOT NULL DEFAULT 0 CHECK (managed IN (0, 1)),
+                   status TEXT NOT NULL DEFAULT 'present'
+                       CHECK (status IN ('present', 'missing')),
+                   first_seen_at TEXT NOT NULL,
+                   last_seen_at TEXT NOT NULL,
+                   last_usage_bytes BIGINT,
+                   PRIMARY KEY (server_id, outline_key_id)
+               )""",
+            """CREATE INDEX IF NOT EXISTS outline_remote_keys_audit
+               ON outline_remote_keys(server_id, status, managed)""",
+        ),
+    ),
 )
 
 

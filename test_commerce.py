@@ -525,6 +525,48 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["usage"][0]["used_bytes"], 1234)
         self.assertNotIn("access_url", snapshot)
 
+    def test_inventory_tracks_managed_and_untracked_remote_keys_without_secrets(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.outline.add_key("legacy-7", "legacy operator key", "ss://must-not-be-stored")
+
+        result = self.service.refresh_server_inventory(self.now)
+
+        self.assertEqual(result[0]["remote_key_count"], 2)
+        self.assertEqual(result[0]["remote_orphan_key_count"], 1)
+        with self.database.connect() as connection:
+            rows = {
+                row["outline_key_id"]: dict(row)
+                for row in connection.execute(
+                    """SELECT outline_key_id, remote_name, managed, status,
+                              last_usage_bytes FROM outline_remote_keys
+                       WHERE server_id = 'default'"""
+                ).fetchall()
+            }
+            server = connection.execute(
+                "SELECT remote_orphan_key_count FROM outline_servers WHERE server_id = 'default'"
+            ).fetchone()
+        self.assertEqual(rows["1"]["managed"], 1)
+        self.assertEqual(rows["legacy-7"]["managed"], 0)
+        self.assertEqual(rows["legacy-7"]["status"], "present")
+        self.assertEqual(server["remote_orphan_key_count"], 1)
+        self.assertNotIn("ss://must-not-be-stored", json.dumps(rows))
+
+        self.outline.keys.pop("legacy-7")
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=1))
+        with self.database.connect() as connection:
+            orphan = connection.execute(
+                "SELECT remote_orphan_key_count FROM outline_servers WHERE server_id = 'default'"
+            ).fetchone()[0]
+            status = connection.execute(
+                "SELECT status FROM outline_remote_keys WHERE server_id = 'default' AND outline_key_id = 'legacy-7'"
+            ).fetchone()[0]
+        self.assertEqual(orphan, 0)
+        self.assertEqual(status, "missing")
+
     def test_capacity_snapshot_recommends_assisted_scale_out_without_mutation(self):
         self.service.register_outline_servers({"default": "Singapore"})
         for key_id in range(1, 9):
@@ -869,15 +911,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "60a707d6bfc4e99d49eca0501c85fc53a8bdf15e94de7d870cf9af3d7d06906a",
+            "fcc1f9cc6dd47c85e20570b1d75d64ffe11956d7cecc8b06491246c1f2d4d18b",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "6f89e8ea65e868457922981f3bf3981a87e0ccbafab6921653f2a67a85203f59",
+            "24645794c27755d2832ab759add315f715783c54ae21080e7f133ef47c669bcf",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "7431a00d47ab66181c051a7db23b50657bcae49f7dd310b7d190000d0d270076",
+            "05bd2a36752bd96dc5481b04ffc428ba6af20476533d40fb28756e2ff38aab8f",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

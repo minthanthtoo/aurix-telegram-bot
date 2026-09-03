@@ -2047,6 +2047,36 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("Scale posture: Prepare · 80% allocated", text)
         self.assertIn("no automatic purchase or server deletion", text)
 
+    def test_capacity_panel_surfaces_untracked_remote_keys(self):
+        text = self.bot._capacity_text(
+            {
+                "active_keys": 0,
+                "pending_jobs": 0,
+                "servers": [
+                    {
+                        "server_id": "sg-a",
+                        "label": "Singapore A",
+                        "enabled": 1,
+                        "health_status": "healthy",
+                        "remote_key_count": 4,
+                        "remote_orphan_key_count": 2,
+                        "max_keys": 10,
+                        "reserved_keys": 2,
+                        "remaining_key_slots": 4,
+                        "committed_traffic_bytes": 0,
+                    }
+                ],
+                "scale_advice": {
+                    "status": "stable",
+                    "utilization_percent": 40.0,
+                    "message": "Current declared fleet headroom is sufficient.",
+                },
+            }
+        )
+
+        self.assertIn("Untracked remote keys: 2", text)
+        self.assertIn("audit before strict allocation", text)
+
     def test_customer_buttons_and_admin_panel_are_separated(self):
         self.bot.handle(self.message(123, "/help"))
         help_text = self.bot.sent[-1][1]

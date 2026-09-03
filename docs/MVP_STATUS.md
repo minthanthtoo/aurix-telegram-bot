@@ -28,7 +28,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Live Telegram and Outline smoke test | Three management/data endpoints verified; customer tranche controlled | Bot, primary, Singapore-B, and BKK/Nube Outline endpoints, firewall, pinned-TLS API canaries, and a reversible BKK data-port/key create-delete canary are verified; a real Telegram-account canary and longer observation remain |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
 | Referrals, affiliates, and resellers | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
-| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; BKK is healthy and canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
+| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, non-secret remote-key audit, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; untracked remote keys remain a migration blocker and BKK is healthy/canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
 
 ## Honest aggregate view
 
@@ -38,13 +38,13 @@ engineering estimates, not production traffic or revenue metrics.
 - Local test/evidence coverage: **100%** for the current fake-Outline, TLS,
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
-  and wallet suite (297 tests passing at the latest verification).
+  and wallet suite (299 tests passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local
   and Supabase offsite backups, and pinned-TLS management/data-port canaries are
   verified. A temporary-destination restore drill from the private off-site
   SQLite archive also passed. Stable DNS, a real Telegram-account canary, allocation
-  normalization/strict validation, and sustained observation remain.
+  normalization/strict validation, untracked-key audit, and sustained observation remain.
 - End-to-end MVP readiness: approximately **90%** for the controlled paid-
   concierge scope. This is a progress estimate, not a claim that automated
   payment verification, reseller features, or unrestricted scale-out are live.
