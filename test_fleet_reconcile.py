@@ -67,7 +67,7 @@ class FleetManifestTests(unittest.TestCase):
                 reserved_keys=2,
                 tier_slots={"FREE300MB": 2},
                 plan_slots={"basic_50gb": 2},
-            ))
+            ), strict_allocations=True)
 
     def test_access_identity_is_bound_to_manifest(self) -> None:
         node = parse_manifest(manifest())[0]

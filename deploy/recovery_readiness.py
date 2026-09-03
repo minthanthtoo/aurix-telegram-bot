@@ -116,7 +116,8 @@ def check_fleet_manifest(env: dict[str, str]) -> tuple[Check, list[FleetNode]]:
     if not raw:
         return Check("fleet_manifest", WARN, "no fleet manifest configured"), []
     try:
-        nodes = parse_manifest(raw)
+        strict_allocations = truthy(env.get("AURIX_FLEET_STRICT_ALLOCATION_VALIDATION"))
+        nodes = parse_manifest(raw, strict_allocations=strict_allocations)
     except FleetError as exc:
         return Check("fleet_manifest", FAIL, str(exc)), []
     return Check("fleet_manifest", PASS, f"{len(nodes)} fleet node(s) configured"), nodes

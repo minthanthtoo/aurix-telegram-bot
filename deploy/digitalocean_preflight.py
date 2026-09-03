@@ -112,7 +112,10 @@ def _validate_configuration() -> dict[str, str]:
             fail(str(exc))
     if fleet_raw:
         try:
-            fleet_nodes = parse_manifest(fleet_raw)
+            strict_allocations = os.environ.get(
+                "AURIX_FLEET_STRICT_ALLOCATION_VALIDATION", ""
+            ).strip().lower() in TRUTHY
+            fleet_nodes = parse_manifest(fleet_raw, strict_allocations=strict_allocations)
         except FleetError as exc:
             fail(str(exc))
         fleet_ids = {node.node_id for node in fleet_nodes}

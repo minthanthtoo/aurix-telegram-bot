@@ -174,6 +174,14 @@ When any explicit allocation exists for a tier/plan, unallocated servers are not
 eligible for it. A zero allocation disables new issuance of that tier on the
 server. Existing keys are not moved or revoked by allocation changes.
 
+The manifest parser always rejects unknown plan/tier names. Capacity-sum
+validation is controlled by `AURIX_FLEET_STRICT_ALLOCATION_VALIDATION=1` so an
+existing deployment with legacy over-allocated policy can be migrated without
+an unexpected outage. Enable it only after each node's
+`sum(tier_slots)+sum(plan_slots)` is at most `max_keys-reserved_keys`; the
+strict gate then fails deployment/reconciliation before that policy can be
+activated.
+
 Paid orders reserve capacity before receipt submission. Cancellation/rejection
 releases the reservation. Free/promo creation increments the reconciled remote
 count in the same durable transaction after successful remote creation; the next

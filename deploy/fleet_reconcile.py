@@ -108,7 +108,7 @@ def _nonnegative(value: Any, name: str) -> int:
     return result
 
 
-def parse_manifest(raw: str) -> list[FleetNode]:
+def parse_manifest(raw: str, *, strict_allocations: bool = False) -> list[FleetNode]:
     try:
         items = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -183,7 +183,7 @@ def parse_manifest(raw: str) -> list[FleetNode]:
             raise FleetError(f"node {node_id} has unknown plans: {sorted(unknown_plans)}")
         allocated_slots = sum(tier_slots.values()) + sum(plan_slots.values())
         saleable_slots = max_keys - reserved
-        if allocated_slots > saleable_slots:
+        if strict_allocations and allocated_slots > saleable_slots:
             raise FleetError(
                 f"node {node_id} allocates {allocated_slots} slots but only "
                 f"{saleable_slots} remain after reserved headroom"
@@ -424,7 +424,13 @@ def reconcile(args: argparse.Namespace) -> None:
 
     env_path = Path(args.env_file)
     env = environment(env_path)
-    nodes = parse_manifest(env.get("AURIX_FLEET_NODES_JSON", ""))
+    strict_allocations = env.get("AURIX_FLEET_STRICT_ALLOCATION_VALIDATION", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    nodes = parse_manifest(
+        env.get("AURIX_FLEET_NODES_JSON", ""),
+        strict_allocations=strict_allocations,
+    )
     lock_path = Path(env.get("AURIX_FLEET_LOCK_FILE", "/run/aurix-fleet-reconcile.lock"))
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w") as lock:
@@ -482,7 +488,13 @@ def main() -> None:
     args = parser.parse_args()
     try:
         env = environment(Path(args.env_file))
-        nodes = parse_manifest(env.get("AURIX_FLEET_NODES_JSON", ""))
+        strict_allocations = env.get(
+            "AURIX_FLEET_STRICT_ALLOCATION_VALIDATION", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        nodes = parse_manifest(
+            env.get("AURIX_FLEET_NODES_JSON", ""),
+            strict_allocations=strict_allocations,
+        )
         if args.command == "validate":
             print(json.dumps({"status": "valid", "nodes": [node.node_id for node in nodes]}))
             return
