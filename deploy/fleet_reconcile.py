@@ -51,6 +51,7 @@ class FleetNode:
     host: str
     api_port: int
     keys_port: int
+    dns_name: str = ""
     provider: str = "manual"
     provider_resource_id: str = ""
     region: str = ""
@@ -133,6 +134,22 @@ def parse_manifest(raw: str) -> list[FleetNode]:
             ipaddress.ip_address(host)
         except ValueError as exc:
             raise FleetError(f"node {node_id} host must be a literal IP address") from exc
+        dns_name = str(item.get("dns_name") or "").strip().rstrip(".").lower()
+        if dns_name:
+            if (
+                len(dns_name) > 253
+                or "." not in dns_name
+                or "/" in dns_name
+                or ":" in dns_name
+                or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+", dns_name)
+            ):
+                raise FleetError(f"node {node_id} dns_name must be a valid fully qualified host name")
+            try:
+                ipaddress.ip_address(dns_name)
+            except ValueError:
+                pass
+            else:
+                raise FleetError(f"node {node_id} dns_name must not be an IP address")
         api_port = _positive_port(item.get("api_port"), f"{node_id}.api_port")
         keys_port = _positive_port(item.get("keys_port", 443), f"{node_id}.keys_port")
         ssh_port = _positive_port(item.get("ssh_port", 22), f"{node_id}.ssh_port")
@@ -166,7 +183,7 @@ def parse_manifest(raw: str) -> list[FleetNode]:
             raise FleetError(f"node {node_id} currently requires root SSH")
         nodes.append(FleetNode(
             node_id=node_id, label=str(item.get("label") or node_id)[:64], host=host,
-            api_port=api_port, keys_port=keys_port, provider=provider,
+            api_port=api_port, keys_port=keys_port, dns_name=dns_name, provider=provider,
             provider_resource_id=provider_resource_id, region=str(item.get("region") or "")[:64],
             ssh_user=ssh_user, ssh_port=ssh_port, max_keys=max_keys,
             reserved_keys=reserved, monthly_traffic_bytes=monthly,
@@ -391,6 +408,10 @@ def environment(path: Path) -> dict[str, str]:
 
 
 def reconcile(args: argparse.Namespace) -> None:
+    # Import lazily: dns_records reuses manifest parsing and therefore imports
+    # this module too; a top-level import would create a circular dependency.
+    from deploy import dns_records
+
     env_path = Path(args.env_file)
     env = environment(env_path)
     nodes = parse_manifest(env.get("AURIX_FLEET_NODES_JSON", ""))
@@ -418,6 +439,14 @@ def reconcile(args: argparse.Namespace) -> None:
             try:
                 current_env = environment(env_path)
                 apply_policy(nodes, identities, current_env)
+                if dns_records.configured(current_env):
+                    dns_report = dns_records.sync(current_env)
+                    print(json.dumps({"dns": dns_report}, indent=2))
+                    for node in nodes:
+                        if node.dns_name:
+                            OutlineClient(**identities[node.node_id]).set_hostname_for_access_keys(
+                                node.dns_name
+                            )
                 if changed and not args.no_restart:
                     subprocess.run(["systemctl", "restart", "aurix-bot.service"], check=True, timeout=60)
                     subprocess.run(["systemctl", "is-active", "--quiet", "aurix-bot.service"], check=True)

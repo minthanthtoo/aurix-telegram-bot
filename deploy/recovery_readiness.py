@@ -26,6 +26,7 @@ from deploy.fleet_reconcile import (  # noqa: E402
     parse_manifest,
 )
 from deploy import database_backup  # noqa: E402
+from deploy import dns_records  # noqa: E402
 from deploy import offsite_storage  # noqa: E402
 
 TRUTHY = {"1", "true", "yes", "on"}
@@ -170,14 +171,25 @@ def check_provider(env: dict[str, str]) -> Check:
     return Check("provider_automation", FAIL, "provider mutations enabled without DIGITALOCEAN_API_TOKEN")
 
 
-def check_dns(env: dict[str, str]) -> Check:
-    zone = has_value(env, "AURIX_DNS_ZONE")
-    token = has_value(env, "AURIX_DNS_API_TOKEN")
-    provider = has_value(env, "AURIX_DNS_PROVIDER")
-    if zone and token and provider:
-        return Check("dns_automation", PASS, "DNS provider, zone, and token are configured")
-    if any((zone, token, provider)):
-        return Check("dns_automation", FAIL, "configure AURIX_DNS_PROVIDER, AURIX_DNS_ZONE, and AURIX_DNS_API_TOKEN")
+def check_dns(env: dict[str, str], nodes: list[FleetNode]) -> Check:
+    if not nodes:
+        required = truthy(env.get("AURIX_DNS_REQUIRE"))
+        return Check(
+            "dns_automation",
+            FAIL if required else WARN,
+            "DNS is required but no fleet nodes are configured"
+            if required
+            else "not required without fleet nodes",
+        )
+    if dns_records.configured(env):
+        try:
+            config = dns_records.from_env(env)
+            dns_records.desired_records(nodes, config)
+        except (FleetError, ValueError) as exc:
+            return Check("dns_automation", FAIL, str(exc))
+        return Check("dns_automation", PASS, "Cloudflare DNS endpoint sync is configured")
+    if truthy(env.get("AURIX_DNS_REQUIRE")):
+        return Check("dns_automation", FAIL, "AURIX_DNS_REQUIRE=1 but DNS automation is not configured")
     return Check("dns_automation", WARN, "stable DNS automation is not configured")
 
 
@@ -216,7 +228,7 @@ def run_audit(env_file: Path, verify_archives: bool) -> dict[str, object]:
         check_offsite_config(env, nodes),
         check_backup_archives(env, nodes, verify_archives),
         check_provider(env),
-        check_dns(env),
+        check_dns(env, nodes),
         check_recovery_entrypoint(),
     ]
     return {

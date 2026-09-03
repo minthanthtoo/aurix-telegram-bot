@@ -1632,12 +1632,18 @@ class TelegramBot(
         used = int(item.get("last_usage_bytes") or 0)
         observed = False
         try:
-            metrics, _ = self._collect_outline_state()
+            metrics, access_state = self._collect_outline_state(include_access=True)
             server_id = str(item.get("server_id") or getattr(self.service.outline, "default_server_id", "primary"))
             usage = metrics.get("byServer", {}).get(server_id, {})
             if isinstance(usage, dict) and key_id in usage:
                 used = max(0, int(usage[key_id] or 0))
                 observed = True
+            nested_access = access_state.get("byServer", {}) if isinstance(access_state, dict) else {}
+            server_access = nested_access.get(server_id, {}) if isinstance(nested_access, dict) else {}
+            if isinstance(server_access, dict) and server_access.get(key_id):
+                # A stable DNS hostname may have been applied after this
+                # subscription was provisioned; prefer the current remote URL.
+                item["access_url"] = server_access[key_id]
         except Exception as exc:
             print(f"paid key detail usage error: {type(exc).__name__}", file=sys.stderr)
         quota = int(item.get("quota_bytes") or 0)
@@ -1738,11 +1744,18 @@ class TelegramBot(
                 relevant = subscriptions[:1]
             for item in relevant:
                 key_id = str(item.get("outline_key_id") or "")
+                server_id = str(item.get("server_id") or "")
                 usage = paid_usage.get(key_id, {})
                 status = str(usage.get("status") or item.get("status") or "unknown")
                 if item.get("status") == "pending" and not item.get("key_status"):
                     status = "activation pending"
                 quota = int(usage.get("quota_bytes") or item.get("quota_bytes") or 0)
+                current_access = None
+                nested_access = access_by_key.get("byServer") if isinstance(access_by_key, dict) else None
+                if isinstance(nested_access, dict):
+                    server_access = nested_access.get(server_id, {})
+                    if isinstance(server_access, dict):
+                        current_access = server_access.get(key_id)
                 entries.append(
                     {
                         "outline_key_id": key_id,
@@ -1755,7 +1768,7 @@ class TelegramBot(
                         "usage_observed": bool(usage.get("usage_observed")),
                         "expires_at": item.get("expires_at"),
                         "status": status,
-                        "access_url": item.get("access_url"),
+                        "access_url": current_access or item.get("access_url"),
                         "subscription_id": item.get("subscription_id"),
                         "created_at": item.get("created_at") or item.get("starts_at"),
                     }

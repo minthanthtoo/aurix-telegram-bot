@@ -465,6 +465,18 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertIsNone(client.get_key("missing"))
         self.assertEqual(calls[0][2], (200, 404))
 
+    def test_outline_sets_hostname_for_access_keys(self):
+        client = OutlineClient.__new__(OutlineClient)
+        calls = []
+        client._request = lambda method, path, body=None, accepted_statuses=(200, 201, 204): calls.append(
+            (method, path, body, accepted_statuses)
+        )
+        client.set_hostname_for_access_keys("sg-a.vpn.example.com")
+        self.assertEqual(
+            calls,
+            [("PUT", "/server/hostname-for-access-keys", {"hostname": "sg-a.vpn.example.com"}, (204,))],
+        )
+
 
 class FakeHTTPResponse:
     def __init__(self, status, payload=None):

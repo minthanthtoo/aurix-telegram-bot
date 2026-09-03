@@ -23,6 +23,7 @@ def manifest(**overrides: object) -> str:
         "host": "192.0.2.10",
         "api_port": 61603,
         "keys_port": 443,
+        "dns_name": "sg-a.vpn.example.com",
         "max_keys": 20,
         "reserved_keys": 2,
         "tier_slots": {"FREE300MB": 4},
@@ -36,6 +37,7 @@ class FleetManifestTests(unittest.TestCase):
     def test_parses_capacity_policy(self) -> None:
         node = parse_manifest(manifest())[0]
         self.assertEqual(node.node_id, "sg-a")
+        self.assertEqual(node.dns_name, "sg-a.vpn.example.com")
         self.assertEqual(node.tier_slots["FREE300MB"], 4)
 
     def test_rejects_hostname_and_duplicate_endpoint(self) -> None:
@@ -51,6 +53,10 @@ class FleetManifestTests(unittest.TestCase):
             parse_manifest(manifest(max_keys=2, reserved_keys=2))
         with self.assertRaises(FleetError):
             parse_manifest(manifest(provider="digitalocean", provider_resource_id="droplet-x"))
+        with self.assertRaises(FleetError):
+            parse_manifest(manifest(dns_name="not a hostname"))
+        with self.assertRaises(FleetError):
+            parse_manifest(manifest(dns_name="192.0.2.10"))
 
     def test_access_identity_is_bound_to_manifest(self) -> None:
         node = parse_manifest(manifest())[0]

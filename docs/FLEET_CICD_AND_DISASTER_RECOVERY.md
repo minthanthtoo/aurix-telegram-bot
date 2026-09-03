@@ -32,6 +32,8 @@ backed up in place; new installations use `/opt/outline`.
 - `provider`, optional provider `provider_resource_id`, and `region`;
 - SSH user/port (root/22 by default); the private key is global and never in JSON;
 - `max_keys`, `reserved_keys`, and optional `monthly_traffic_bytes`;
+- optional stable `dns_name` (a fully-qualified hostname managed by the DNS
+  synchronizer; the SSH/management `host` remains a literal IP);
 - exact `tier_slots` for `FREE300MB`, `FREE3GB`, `PROMO`;
 - exact `plan_slots` for `basic_50gb`, `standard_100gb`;
 - `enabled` and optional `swap_mb`.
@@ -108,6 +110,44 @@ journalctl -u aurix-fleet-reconcile.service -n 100 --no-pager
 
 Logs expose node IDs, addresses, versions and counts, but not management paths,
 fingerprints, access URLs, keys, or provider secrets.
+
+### Stable endpoint DNS
+
+When a node has a `dns_name`, the fleet reconciler can maintain its DNS-only A
+or AAAA record from the manifest. Cloudflare is currently supported. Create a
+least-privilege API token with DNS edit permission for the zone and set:
+
+```dotenv
+AURIX_DNS_PROVIDER=cloudflare
+AURIX_DNS_ZONE_ID=...
+AURIX_DNS_API_TOKEN=...
+AURIX_DNS_TTL=300
+AURIX_DNS_PROXIED=0
+AURIX_DNS_REQUIRE=1
+```
+
+Preview changes without contacting the provider:
+
+```bash
+.venv/bin/python deploy/dns_records.py sync \
+  --env-file /etc/aurix-bot/aurix.env --dry-run
+```
+
+After every successful fleet reconciliation, configured records are upserted
+automatically. A direct sync is also available:
+
+```bash
+.venv/bin/python deploy/dns_records.py sync \
+  --env-file /etc/aurix-bot/aurix.env
+```
+
+The synchronizer refuses proxied records because Outline/Shadowsocks is not
+HTTP traffic. It never deletes unrelated DNS records and refuses ambiguous
+duplicate records. The recovery audit validates the provider configuration and
+every node's `dns_name`; a missing DNS configuration remains a warning until
+the operator chooses to make endpoint continuity mandatory. Set
+`AURIX_DNS_REQUIRE=1` to turn that warning into a fail-closed deployment and
+recovery gate.
 
 ## Automated expansion
 
@@ -240,7 +280,7 @@ requires pre-authorized provider and DNS credentials plus a provider adapter.
 For SQLite deployments, `DATABASE_PATH` is not enough for disaster recovery.
 Configure `AURIX_DATABASE_BACKUP_OFFSITE_DIR` or move production commerce state
 to `COMMERCE_DATABASE_URL` PostgreSQL. For endpoint continuity, configure
-`AURIX_DNS_PROVIDER`, `AURIX_DNS_ZONE`, and `AURIX_DNS_API_TOKEN` before
+`AURIX_DNS_PROVIDER`, `AURIX_DNS_ZONE_ID`, and `AURIX_DNS_API_TOKEN` before
 promising node replacement without reissuing customer keys.
 
 Never put `.env`, SSH private keys, decrypted archives, receipts, or management

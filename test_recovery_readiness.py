@@ -74,6 +74,7 @@ class RecoveryReadinessTests(unittest.TestCase):
             "id": "sg-a",
             "label": "Singapore A",
             "host": "192.0.2.10",
+            "dns_name": "sg-a.vpn.example.com",
             "api_port": 61603,
             "keys_port": 443,
             "max_keys": 10,
@@ -131,8 +132,9 @@ class RecoveryReadinessTests(unittest.TestCase):
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
             "DIGITALOCEAN_API_TOKEN": "dop_v1_test",
             "AURIX_DNS_PROVIDER": "cloudflare",
-            "AURIX_DNS_ZONE": "example.com",
+            "AURIX_DNS_ZONE_ID": "zone-test",
             "AURIX_DNS_API_TOKEN": "dns-token",
+            "AURIX_DNS_REQUIRE": "1",
         })
         self.write_env(values)
 
@@ -153,8 +155,9 @@ class RecoveryReadinessTests(unittest.TestCase):
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
             "DIGITALOCEAN_API_TOKEN": "dop_v1_test",
             "AURIX_DNS_PROVIDER": "cloudflare",
-            "AURIX_DNS_ZONE": "example.com",
+            "AURIX_DNS_ZONE_ID": "zone-test",
             "AURIX_DNS_API_TOKEN": "dns-token",
+            "AURIX_DNS_REQUIRE": "1",
         })
         self.write_env(values)
 
@@ -165,6 +168,16 @@ class RecoveryReadinessTests(unittest.TestCase):
             report = run_audit(self.env_file, verify_archives=True)
 
         self.assertEqual(report["status"], "pass")
+
+    def test_required_dns_without_configuration_fails(self) -> None:
+        values = self.fleet_env()
+        values["AURIX_DNS_REQUIRE"] = "1"
+        self.write_env(values)
+
+        report = run_audit(self.env_file, verify_archives=False)
+
+        checks = {item["name"]: item["status"] for item in report["checks"]}
+        self.assertEqual(checks["dns_automation"], "fail")
 
 
 if __name__ == "__main__":

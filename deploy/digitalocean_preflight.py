@@ -18,9 +18,11 @@ from cryptography.fernet import Fernet
 
 try:
     from deploy.fleet_reconcile import FleetError, parse_manifest
+    from deploy import dns_records
     from deploy import offsite_storage
 except ModuleNotFoundError:  # Direct execution sets deploy/ as sys.path[0].
     from fleet_reconcile import FleetError, parse_manifest
+    import dns_records
     import offsite_storage
 
 
@@ -145,6 +147,14 @@ def _validate_configuration() -> dict[str, str]:
                 fail("AURIX_FLEET_BACKUP_OFFSITE_DIR must exist when offsite is required")
         elif require_offsite:
             fail("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE needs AURIX_FLEET_BACKUP_OFFSITE_DIR")
+        if dns_records.configured(dict(os.environ)):
+            try:
+                dns_config = dns_records.from_env(dict(os.environ))
+                dns_records.desired_records(fleet_nodes, dns_config)
+            except FleetError as exc:
+                fail(str(exc))
+        elif os.environ.get("AURIX_DNS_REQUIRE", "").strip().lower() in TRUTHY:
+            fail("AURIX_DNS_REQUIRE=1 needs configured Cloudflare DNS automation")
 
     database_url = os.environ.get("COMMERCE_DATABASE_URL", "").strip()
     database_path = os.environ.get("DATABASE_PATH", "").strip()

@@ -868,9 +868,11 @@ class MvpFeatureTest(unittest.TestCase):
         self.assertEqual(client.create_key_with_id("a/b", "n", 10)["id"], "a")
         client.delete_data_limit("a/b")
         client.rename_key("a/b", "renamed")
+        client.set_hostname_for_access_keys("vpn.example.com")
         self.assertEqual(calls[0][1], "/access-keys/a%2Fb")
         self.assertEqual(calls[1][1], "/access-keys/a%2Fb/data-limit")
         self.assertEqual(calls[2][1], "/access-keys/a%2Fb/name")
+        self.assertEqual(calls[3][1], "/server/hostname-for-access-keys")
 
 
 if __name__ == "__main__":

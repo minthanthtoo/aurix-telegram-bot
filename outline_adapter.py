@@ -102,6 +102,18 @@ class OutlineClient:
             raise OutlineError("Outline experimental metrics response is not an object")
         return result
 
+    def set_hostname_for_access_keys(self, hostname: str) -> None:
+        """Set the public host embedded in newly listed/generated access URLs."""
+        value = str(hostname or "").strip().rstrip(".")
+        if not value:
+            raise ValueError("hostname is required")
+        self._request(
+            "PUT",
+            "/server/hostname-for-access-keys",
+            {"hostname": value},
+            accepted_statuses=(204,),
+        )
+
     def create_key(self, name: str, limit_bytes: int | None) -> dict[str, Any]:
         body: dict[str, Any] = {"name": name}
         if limit_bytes is not None:

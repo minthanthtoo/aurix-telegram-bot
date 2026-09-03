@@ -68,6 +68,7 @@ class DigitalOceanPreflightTest(unittest.TestCase):
                 "id": "sg-a",
                 "label": "Singapore A",
                 "host": "192.0.2.10",
+                "dns_name": "sg-a.vpn.example.com",
                 "api_port": 61603,
                 "keys_port": 443,
                 "max_keys": 10,
@@ -134,6 +135,25 @@ class DigitalOceanPreflightTest(unittest.TestCase):
         environment["AURIX_BACKUP_OBJECT_STORE_SECRET_ACCESS_KEY"] = "secret"
         with patch.dict(os.environ, environment, clear=True):
             main([])
+
+    def test_dns_configuration_requires_node_dns_names(self):
+        environment = self.fleet_environment()
+        manifest = json.loads(environment["AURIX_FLEET_NODES_JSON"])
+        manifest[0].pop("dns_name")
+        environment["AURIX_FLEET_NODES_JSON"] = json.dumps(manifest)
+        environment["AURIX_DNS_PROVIDER"] = "cloudflare"
+        environment["AURIX_DNS_ZONE_ID"] = "zone-test"
+        environment["AURIX_DNS_API_TOKEN"] = "dns-token"
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "missing dns_name"):
+                main([])
+
+    def test_required_dns_without_configuration_fails(self):
+        environment = self.fleet_environment()
+        environment["AURIX_DNS_REQUIRE"] = "1"
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "AURIX_DNS_REQUIRE"):
+                main([])
 
 
 if __name__ == "__main__":
