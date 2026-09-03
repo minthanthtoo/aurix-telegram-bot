@@ -336,10 +336,11 @@ step.
 - Database: persistent SQLite remains valid for the one-host control plane;
   PostgreSQL is mandatory before a second writer/control host.
 
-The live fleet reported 17 remote keys against 20 saleable slots on 2 September
-2026, so its posture is **Prepare**. Provisioning and verifying the second node
-is the next operator action; raising the first node's declared limit merely to
-silence the warning is not acceptable capacity planning.
+The latest live inventory check (3 September 2026 UTC) reported 16 remote keys
+on the primary endpoint against 20 saleable slots. The aggregate fleet snapshot
+reported 42 saleable slots and 38.1% utilization, so the current posture is
+**Stable**, not an instruction to provision. Raising a node's declared limit
+merely to silence a warning is not acceptable capacity planning.
 
 Do not scale on one CPU spike or one transient traffic observation. The admin panel may show the current posture
 immediately; before a provider job is approved, confirm two or more consecutive
@@ -477,9 +478,11 @@ stop.
 
 The MVP decisions are no longer open-ended: use assisted scaling, the explicit
 three-node/$18 envelope above, a 24-hour creation cooldown, no automatic destroy,
-and SQLite until a second control-plane writer exists. The last recorded live
-observation was 17 remote keys against 20 saleable slots (Prepare posture), so
-node two is the next operator gate.
+and SQLite until a second control-plane writer exists. The latest recorded live
+observation is 16 primary remote keys against 20 saleable slots, with aggregate
+fleet posture Stable. Node admission remains an owner-approved capacity
+decision; the provider worker is not authorized to purchase infrastructure
+automatically.
 
 The scoped DigitalOcean API token is installed only in the separate
 infrastructure-worker environment and provider mutation remains off by default.
