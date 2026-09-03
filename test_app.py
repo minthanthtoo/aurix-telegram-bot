@@ -74,6 +74,24 @@ class FakeOutline:
         return {"version": "test"}
 
 
+class AmbiguousDeterministicOutline(FakeOutline):
+    """Simulate a PUT that commits remotely before its response is lost."""
+
+    def __init__(self):
+        super().__init__()
+        self.deterministic_ids = []
+
+    def create_key_with_id(self, key_id, name, limit_bytes):
+        self.deterministic_ids.append(str(key_id))
+        key = {
+            "id": str(key_id),
+            "name": name,
+            "accessUrl": f"ss://{key_id}",
+        }
+        self.created.append((name, limit_bytes, key))
+        raise OutlineError("response lost after remote commit")
+
+
 class FakeOutlinePool:
     def __init__(self):
         self.clients = {"sg-a": FakeOutline(), "sg-b": FakeOutline()}
@@ -144,6 +162,34 @@ class ClaimServiceTest(unittest.TestCase):
         self.outline.fail_create = False
         result = self.service.claim(123, "Min", self.now)
         self.assertEqual(result.access_url, "ss://secret")
+
+    def test_ambiguous_deterministic_create_is_recovered_without_duplicate(self):
+        outline = AmbiguousDeterministicOutline()
+        service = ClaimService(self.db, outline)
+
+        result = service.claim(123, "Min", self.now)
+
+        self.assertTrue(result.access_url.startswith("ss://aurix-daily-"))
+        self.assertEqual(len(outline.created), 1)
+        self.assertEqual(len(outline.deterministic_ids), 1)
+        self.assertEqual(outline.deleted, [])
+        with self.db.connect() as connection:
+            row = connection.execute(
+                "SELECT outline_key_id FROM keys WHERE telegram_id = ?", (123,)
+            ).fetchone()
+        self.assertEqual(row["outline_key_id"], outline.deterministic_ids[0])
+
+    def test_trial_and_promo_use_distinct_deterministic_slots(self):
+        outline = AmbiguousDeterministicOutline()
+        service = ClaimService(self.db, outline)
+
+        trial = service.claim_trial(123, "Min", self.now)
+        promo = service.claim_giveaway(456, "Other", self.now)
+
+        self.assertTrue(trial.access_url.startswith("ss://aurix-monthly-"))
+        self.assertTrue(promo.access_url.startswith("ss://aurix-promo-"))
+        self.assertEqual(len(outline.created), 2)
+        self.assertEqual(len(set(outline.deterministic_ids)), 2)
 
     def test_expiry_revokes_key_once(self):
         self.service.claim(123, "Min", self.now)

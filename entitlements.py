@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sys
@@ -243,6 +244,101 @@ class ClaimService:
                WHERE server_id = ?""",
             (int(delta), int(delta), server_id),
         )
+
+    @staticmethod
+    def _deterministic_slot_id(prefix: str, *parts: str) -> str:
+        """Return a stable, Outline-safe ID for one entitlement issuance slot.
+
+        Free entitlements use the previous successful claim timestamp as the
+        slot seed.  If the remote create succeeds but the local transaction is
+        interrupted, a retry therefore reads the same remote key instead of
+        issuing a second credential.  The digest keeps timestamps and campaign
+        values out of the external ID while remaining deterministic.
+        """
+        seed = "\x1f".join(str(part) for part in parts)
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+        return f"aurix-{prefix}-{digest}"
+
+    def _create_key_idempotent(
+        self,
+        outline: OutlineGateway,
+        *,
+        key_id: str,
+        name: str,
+        limit_bytes: int | None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Create one remote key exactly once when the adapter supports it.
+
+        Returns ``(key, created_remote)``.  ``created_remote`` is false when a
+        pre-existing deterministic key was recovered; callers must not delete
+        such a key while compensating for a later local-transaction failure.
+        Older Outline-compatible test/adapters without deterministic PUT keep
+        the legacy POST behavior, while adapters that explicitly report an
+        unsupported endpoint may safely fall back to POST.
+        """
+        getter = getattr(outline, "get_key", None)
+        existing: dict[str, Any] | None = None
+        if callable(getter):
+            try:
+                candidate = getter(key_id)
+            except Exception as exc:
+                # A transport failure is not evidence that the key is absent;
+                # never issue a second POST in that case.
+                if getattr(exc, "status", None) not in (404, 405, 501):
+                    raise
+                candidate = None
+            if candidate is not None:
+                existing = candidate
+        if existing is not None:
+            if (
+                not isinstance(existing, dict)
+                or str(existing.get("id")) != key_id
+                or not existing.get("accessUrl")
+            ):
+                raise OutlineError("Outline deterministic key lacks accessUrl")
+            remote_name = str(existing.get("name") or "").strip()
+            if remote_name and remote_name != name:
+                raise OutlineError("Outline deterministic key belongs to another entitlement")
+            if limit_bytes is not None:
+                outline.set_data_limit(str(existing["id"]), int(limit_bytes))
+            return existing, False
+
+        creator = getattr(outline, "create_key_with_id", None)
+        if not callable(creator):
+            return outline.create_key(name, limit_bytes), True
+        try:
+            created = creator(key_id, name, limit_bytes)
+            if (
+                not isinstance(created, dict)
+                or str(created.get("id")) != key_id
+                or not created.get("accessUrl")
+            ):
+                raise OutlineError("Outline deterministic create response lacks accessUrl")
+            return created, True
+        except Exception as exc:
+            # A request can time out after Outline committed the PUT.  A GET of
+            # the same ID is the only safe recovery; retrying POST can create a
+            # second billable/usable credential.
+            if callable(getter):
+                recovered = getter(key_id)
+                if recovered is not None:
+                    if (
+                        not isinstance(recovered, dict)
+                        or str(recovered.get("id")) != key_id
+                        or not recovered.get("accessUrl")
+                    ):
+                        raise OutlineError("Outline recovered key lacks accessUrl") from exc
+                    remote_name = str(recovered.get("name") or "").strip()
+                    if remote_name and remote_name != name:
+                        raise OutlineError(
+                            "Outline recovered key belongs to another entitlement"
+                        ) from exc
+                    if limit_bytes is not None:
+                        outline.set_data_limit(str(recovered["id"]), int(limit_bytes))
+                    return recovered, False
+            if getattr(exc, "status", None) in (404, 405, 501):
+                return outline.create_key(name, limit_bytes), True
+            raise
 
     def collect_metrics(self) -> dict[str, Any]:
         """Return collision-safe per-server metrics, tolerating partial outage."""
@@ -720,15 +816,20 @@ class ClaimService:
                 connection, "PROMO", int(campaign["quota_bytes"]), now
             )
             outline = self._outline_client(server_id)
-            key = outline.create_key(
-                _outline_key_name(
-                    telegram_id,
-                    username,
-                    f"PROMO-{campaign['code']}",
-                    f"{int(campaign['duration_days'])}day",
-                    now,
+            key_name = _outline_key_name(
+                telegram_id,
+                username,
+                f"PROMO-{campaign['code']}",
+                f"{int(campaign['duration_days'])}day",
+                now,
+            )
+            key, created_remote = self._create_key_idempotent(
+                outline,
+                key_id=self._deterministic_slot_id(
+                    "promo", str(campaign["code"]), str(telegram_id)
                 ),
-                int(campaign["quota_bytes"]),
+                name=key_name,
+                limit_bytes=int(campaign["quota_bytes"]),
             )
             expires_at = now + timedelta(days=int(campaign["duration_days"]))
             total_claimed = int(
@@ -781,10 +882,12 @@ class ClaimService:
                     (now_text, campaign["code"]),
                 )
             except Exception:
-                try:
-                    outline.delete_key(str(key["id"]))
-                finally:
-                    raise
+                if created_remote:
+                    try:
+                        outline.delete_key(str(key["id"]))
+                    finally:
+                        raise
+                raise
         return GiveawayResult(
             "won",
             code=str(campaign["code"]),
@@ -846,9 +949,14 @@ class ClaimService:
 
             server_id = self._select_server_for_tier(connection, "FREE300MB", self.limit_bytes, now)
             outline = self._outline_client(server_id)
-            key = outline.create_key(
-                _outline_key_name(telegram_id, username, "FREE300MB", "24hr", now),
-                self.limit_bytes,
+            key_name = _outline_key_name(telegram_id, username, "FREE300MB", "24hr", now)
+            key, created_remote = self._create_key_idempotent(
+                outline,
+                key_id=self._deterministic_slot_id(
+                    "daily", str(telegram_id), str(user["last_claim_at"] or "first")
+                ),
+                name=key_name,
+                limit_bytes=self.limit_bytes,
             )
             expires_at = now + CLAIM_PERIOD
             try:
@@ -874,10 +982,12 @@ class ClaimService:
                     (now_text, telegram_id),
                 )
             except Exception:
-                try:
-                    outline.delete_key(str(key["id"]))
-                finally:
-                    raise
+                if created_remote:
+                    try:
+                        outline.delete_key(str(key["id"]))
+                    finally:
+                        raise
+                raise
         return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
 
     def claim_trial(
@@ -914,9 +1024,14 @@ class ClaimService:
                 connection, "FREE3GB", self.trial_limit_bytes, now
             )
             outline = self._outline_client(server_id)
-            key = outline.create_key(
-                _outline_key_name(telegram_id, username, "FREE3GB", "30day", now),
-                self.trial_limit_bytes,
+            key_name = _outline_key_name(telegram_id, username, "FREE3GB", "30day", now)
+            key, created_remote = self._create_key_idempotent(
+                outline,
+                key_id=self._deterministic_slot_id(
+                    "monthly", str(telegram_id), str(user["trial_claimed_at"] or "first")
+                ),
+                name=key_name,
+                limit_bytes=self.trial_limit_bytes,
             )
             expires_at = now + TRIAL_PERIOD
             try:
@@ -940,10 +1055,12 @@ class ClaimService:
                     (now_text, telegram_id),
                 )
             except Exception:
-                try:
-                    outline.delete_key(str(key["id"]))
-                finally:
-                    raise
+                if created_remote:
+                    try:
+                        outline.delete_key(str(key["id"]))
+                    finally:
+                        raise
+                raise
         return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
 
     def _terminate_key(

@@ -185,12 +185,20 @@ Before a public paid launch, the minimum evidence is:
 
 ### P1 — free/trial key creation bypasses the durable job pattern
 
-`ClaimService.claim()` and `claim_trial()` call `Outline.create_key()` while holding a database write transaction, then persist the key afterward ([app.py:352](../app.py#L352), [app.py:406](../app.py#L406)).
+`ClaimService.claim()`, `claim_trial()`, and giveaway claims still perform the
+remote operation while holding a database write transaction. They now use a
+stable deterministic Outline ID when the adapter supports caller-selected PUT,
+and perform a read-after-ambiguous recovery before any POST fallback. This
+closes the duplicate-after-timeout failure mode for current Outline versions,
+  but does not yet remove the network call from the local transaction
+  ([entitlements.py](../entitlements.py)).
 
 Consequences:
 
-- a network timeout can create a remote key without returning its ID, leaving an orphan that cannot be reconciled;
-- retries can create duplicate remote credentials;
+- a network timeout can still hold the database write lock until the request
+  path returns;
+- legacy adapters without deterministic PUT support can still leave an
+  ambiguous POST result that requires inventory reconciliation;
 - the database write lock is held during a network call;
 - free and paid credentials have different reliability guarantees.
 

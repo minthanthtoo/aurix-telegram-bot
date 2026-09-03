@@ -17,7 +17,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Wallet ledger | Implemented locally | Immutable credit/reserve/capture/release ledger and balance projection; external receipts use credit→reserve→capture while wallet purchases use reserve→capture without double deduction |
 | Subscription lifecycle | Implemented locally | UTC start/expiry, active/pending/expired states, and independent paid entitlements (multiple simultaneous keys per customer); untouched orders expire after 24 hours |
 | Outline provisioning | Implemented locally | TLS pinning, GET/list/POST/optional deterministic PUT, quota set/delete, metrics, and 404-safe key deletion |
-| Durable external-effect state | Implemented for one process | SQLite jobs and notifications with retry, stale-running recovery, dedupe; ten-minute conversational prompts survive restarts |
+| Durable external-effect state | Implemented for one process | SQLite jobs and notifications with retry, stale-running recovery, dedupe; paid and free/promo key creation use deterministic IDs with read-after-ambiguous recovery when the Outline adapter supports it; ten-minute conversational prompts survive restarts |
 | Expiry and revocation | Implemented locally | Expiry job, 404-safe known-key deletion, expiry notification; expired/pending subscriptions cannot disclose or later provision keys |
 | Quota exhaustion enforcement | Implemented locally | Metrics `used >= configured limit` fails closed, records a deduplicated event, and queues hard DELETE; Outline has no documented pause endpoint |
 | Usage/capacity operations | Implemented locally | Admin `/capacity`, stable transfer-metrics adapter, mapped active-key totals, and read-only per-node admission/policy posture (freshness, headroom, over-allocation, orphan audit) |
@@ -38,8 +38,8 @@ engineering estimates, not production traffic or revenue metrics.
 - Local test/evidence coverage: **100%** for the current fake-Outline, TLS,
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
-  wallet, restart-safe interaction, receipt-fingerprint, and Telegram timestamp
-  formatting and notification-lease suite (315 tests
+  wallet, restart-safe interaction, receipt-fingerprint, Telegram timestamp
+  formatting, notification-lease, and deterministic-entitlement-recovery suite (317 tests
   passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local
