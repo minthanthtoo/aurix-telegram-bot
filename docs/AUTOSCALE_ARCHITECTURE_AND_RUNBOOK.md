@@ -221,6 +221,13 @@ or All records. It is deliberately read-only: reconciliation still requires
 an explicit, separately audited decision, and the panel never displays or
 copies an `ss://` access URL.
 
+The owner can mark an untracked present key as **reviewed external** or
+re-open it as **unreviewed** directly from that same panel. This classification
+does not adopt, delete, or make the key saleable; it records the owner's
+decision and removes only that key from the unresolved-orphan warning. Remote
+key count still consumes physical/policy headroom, and any unreviewed key
+continues to block strict allocation validation.
+
 Paid orders reserve capacity before receipt submission. Cancellation/rejection
 releases the reservation. Free/promo creation increments the reconciled remote
 count in the same durable transaction after successful remote creation; the next

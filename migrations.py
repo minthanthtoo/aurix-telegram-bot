@@ -758,6 +758,38 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS payment_evidence_phash ON payment_evidence(image_phash)",
         ),
     ),
+    Migration(
+        11,
+        "remote_key_review_workflow",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS outline_remote_key_reviews (
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   outline_key_id TEXT NOT NULL,
+                   review_state TEXT NOT NULL DEFAULT 'unreviewed'
+                       CHECK (review_state IN ('unreviewed', 'accepted_external')),
+                   reviewed_by INTEGER,
+                   reviewed_at TEXT,
+                   review_note TEXT,
+                   PRIMARY KEY (server_id, outline_key_id)
+               )""",
+            """CREATE INDEX IF NOT EXISTS outline_remote_key_reviews_state
+               ON outline_remote_key_reviews(server_id, review_state)""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS outline_remote_key_reviews (
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   outline_key_id TEXT NOT NULL,
+                   review_state TEXT NOT NULL DEFAULT 'unreviewed'
+                       CHECK (review_state IN ('unreviewed', 'accepted_external')),
+                   reviewed_by BIGINT,
+                   reviewed_at TEXT,
+                   review_note TEXT,
+                   PRIMARY KEY (server_id, outline_key_id)
+               )""",
+            """CREATE INDEX IF NOT EXISTS outline_remote_key_reviews_state
+               ON outline_remote_key_reviews(server_id, review_state)""",
+        ),
+    ),
 )
 
 

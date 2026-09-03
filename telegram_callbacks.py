@@ -416,6 +416,35 @@ class TelegramCallbackMixin:
                     if can_edit_text
                     else None,
                 )
+            elif action == "R":
+                if not self._is_owner(telegram_id):
+                    self._send_customer_fallback(chat_id, telegram_id)
+                    return
+                try:
+                    server_id, key_id, next_state, raw_page = entity_id.split("|", 3)
+                    page = max(0, int(raw_page))
+                    if next_state not in {"unreviewed", "accepted_external"}:
+                        raise ValueError
+                    self._admin_owner_call(
+                        telegram_id,
+                        "review_remote_key",
+                        server_id,
+                        key_id,
+                        next_state,
+                        telegram_id,
+                        note="owner Telegram inventory action",
+                    )
+                except (CommerceError, PermissionError, ValueError) as exc:
+                    self.send(chat_id, str(exc) or "Remote key review could not be saved.")
+                    return
+                self._show_remote_inventory(
+                    chat_id,
+                    telegram_id,
+                    server_id,
+                    status="present",
+                    page=page,
+                    message_id=message_id if can_edit_text else None,
+                )
             elif action == "C":
                 try:
                     server_id, field, raw_value = entity_id.split("|", 2)

@@ -679,6 +679,57 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(orphan, 0)
         self.assertEqual(status, "missing")
 
+    def test_owner_remote_key_review_clears_only_the_reviewed_orphan(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.outline.add_key("legacy-7", "legacy operator key")
+        self.outline.add_key("legacy-8", "another operator key")
+        self.service.refresh_server_inventory(self.now)
+
+        reviewed = self.service.review_remote_key(
+            "default",
+            "legacy-7",
+            "accepted_external",
+            999,
+            note="confirmed outside AuriX",
+        )
+
+        self.assertEqual(reviewed["review_state"], "accepted_external")
+        self.assertEqual(
+            {row["outline_key_id"] for row in self.service.remote_key_inventory("default")},
+            {"legacy-7", "legacy-8"},
+        )
+        with self.database.connect() as connection:
+            server = connection.execute(
+                "SELECT remote_orphan_key_count FROM outline_servers WHERE server_id = 'default'"
+            ).fetchone()
+            audit = connection.execute(
+                """SELECT action, metadata_json FROM audit_events
+                   WHERE action = 'remote_key_reviewed' ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
+        self.assertEqual(server["remote_orphan_key_count"], 1)
+        self.assertEqual(audit["action"], "remote_key_reviewed")
+        self.assertIn("accepted_external", audit["metadata_json"])
+
+        reopened = self.service.review_remote_key("default", "legacy-7", "unreviewed", 999)
+        self.assertEqual(reopened["review_state"], "unreviewed")
+        with self.database.connect() as connection:
+            count = connection.execute(
+                "SELECT remote_orphan_key_count FROM outline_servers WHERE server_id = 'default'"
+            ).fetchone()[0]
+        self.assertEqual(count, 2)
+
+    def test_remote_key_review_rejects_managed_or_unknown_keys(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.service.process_jobs(self.now)
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=1))
+        with self.assertRaisesRegex(CommerceError, "Managed"):
+            self.service.review_remote_key("default", "1", "accepted_external", 999)
+        with self.assertRaisesRegex(CommerceError, "not present"):
+            self.service.review_remote_key("default", "missing", "accepted_external", 999)
+
     def test_capacity_snapshot_exposes_read_only_policy_and_admission_posture(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)
@@ -1102,15 +1153,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "f49745c3eb4bd2c8fb4a627be014204a9525e88cb4e90b0177280294dda4e41e",
+            "fdc9579b57cbcb864abf3150f9bd1d7ca8bbda7a6124e60a331ba5bdc2417dc2",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "d1804762bb0c8750574ff03b42068d25887fe9b1203446701391e624dcc2f979",
+            "69b23bd9914ec845ddc339006ee7c9a9d9ee0eaae8cc3a7bc80754dacaebe832",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "cff55ea0bb19ca5ff1fcb8846db921198f923e3631ff99830d377b18b6b0e135",
+            "aef8b976ddfc8e5eddb1f2117f5b5e67e4b348cb54900bc0e5b8284283b55feb",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

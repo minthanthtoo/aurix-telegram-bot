@@ -456,17 +456,28 @@ class TelegramAdminMixin:
         current = rows[current_page * page_size : (current_page + 1) * page_size]
         present_count = sum(1 for row in all_rows if row.get("status") == "present")
         missing_count = sum(1 for row in all_rows if row.get("status") == "missing")
+        unreviewed_count = sum(
+            1
+            for row in all_rows
+            if row.get("status") == "present"
+            and not row.get("managed")
+            and str(row.get("review_state") or "unreviewed") != "accepted_external"
+        )
         lines = [
             f"🔎 Remote inventory · {server_id}",
             "",
             f"Present {present_count} · Missing {missing_count} · showing {normalized_status}",
             "IDs and telemetry only; access URLs are deliberately never shown here.",
+            f"Unreviewed external keys: {unreviewed_count}",
             f"Page {current_page + 1}/{pages}",
         ]
         for row in current:
             key_id = str(row.get("outline_key_id") or "-")
             name = str(row.get("remote_name") or "unnamed")[:48]
             state = "✅ managed" if row.get("managed") else "⚠️ untracked"
+            review_state = str(row.get("review_state") or "unreviewed")
+            if not row.get("managed") and review_state == "accepted_external":
+                state = "⚪ untracked · reviewed external"
             if row.get("status") == "missing":
                 state = "🗃 missing · " + ("was managed" if row.get("managed") else "was untracked")
             lines.extend(
@@ -495,6 +506,21 @@ class TelegramAdminMixin:
             navigation.append(("Next ▶", f"a:I:{server_id}:{normalized_status}:{current_page + 1}"))
             navigation.append(("Last ⏭", f"a:I:{server_id}:{normalized_status}:{pages - 1}"))
         rows_markup.append(navigation)
+        if self._is_owner(telegram_id):
+            for row in current:
+                if row.get("status") != "present" or row.get("managed"):
+                    continue
+                key_id = str(row.get("outline_key_id") or "").strip()
+                if not key_id:
+                    continue
+                review_state = str(row.get("review_state") or "unreviewed")
+                next_state = (
+                    "unreviewed" if review_state == "accepted_external" else "accepted_external"
+                )
+                action_data = f"a:R:{server_id}|{key_id}|{next_state}|{current_page}"
+                if len(action_data.encode("utf-8")) <= 64:
+                    label = "↩ Reopen" if review_state == "accepted_external" else "✅ Mark reviewed"
+                    rows_markup.append([(f"{label} · {key_id[:12]}", action_data)])
         rows_markup.append(
             [
                 ("🔄 Refresh", f"a:I:{server_id}:{normalized_status}:{current_page}"),
@@ -639,6 +665,10 @@ class TelegramAdminMixin:
     def _admin_call(self, telegram_id: int, operation: str, *args: Any, **kwargs: Any) -> Any:
         """Invoke a commerce operation through the admin authorization boundary."""
         return self.admin_operations.call(telegram_id, operation, *args, **kwargs)
+
+    def _admin_owner_call(self, telegram_id: int, operation: str, *args: Any, **kwargs: Any) -> Any:
+        """Invoke an owner-only operation through the stronger auth boundary."""
+        return self.admin_operations.call_owner(telegram_id, operation, *args, **kwargs)
 
     def _admin_service_call(
         self, telegram_id: int, operation: str, *args: Any, **kwargs: Any

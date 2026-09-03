@@ -2192,6 +2192,62 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(len(edited), 1)
         self.assertEqual(edited[0][1], 77)
 
+    def test_owner_can_review_remote_orphan_in_place_without_disclosing_access_url(self):
+        self.commerce.register_outline_servers({"default": "Singapore"})
+        observed = datetime(2026, 8, 27, 3, 7, tzinfo=UTC).isoformat()
+        with self.db.connect() as connection:
+            connection.execute(
+                """INSERT INTO outline_remote_keys
+                   (server_id, outline_key_id, remote_name, managed, status,
+                    first_seen_at, last_seen_at, last_usage_bytes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("default", "legacy-10", "legacy operator key", 0, "present", observed, observed, 1024),
+            )
+        access = StaffAccessControl(self.db, 999)
+        access.bootstrap(owner_id=999)
+        owner_bot = RecordingTelegramBot(
+            "test-token",
+            ClaimService(self.db, self.outline),
+            self.commerce,
+            {999},
+            {123},
+            staff_access=access,
+        )
+        owner_bot._show_remote_inventory(999, 999, "default")
+        review_button = next(
+            button
+            for row in owner_bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["text"].startswith("✅ Mark reviewed")
+        )
+        self.assertNotIn("ss://", owner_bot.sent[-1][1])
+        owner_bot.edit_message = lambda chat_id, message_id, text, markup: owner_bot.sent.append(
+            (chat_id, text)
+        )
+        owner_bot.request = lambda _method, _payload: True
+        owner_bot.handle_callback(
+            {
+                "id": "orphan-review",
+                "from": {"id": 999, "first_name": "Owner"},
+                "message": {
+                    "message_id": 81,
+                    "text": owner_bot.sent[-1][1],
+                    "chat": {"id": 999, "type": "private"},
+                },
+                "data": review_button["callback_data"],
+            }
+        )
+        with self.db.connect() as connection:
+            review = connection.execute(
+                """SELECT review_state FROM outline_remote_key_reviews
+                   WHERE server_id = 'default' AND outline_key_id = 'legacy-10'"""
+            ).fetchone()
+            count = connection.execute(
+                "SELECT remote_orphan_key_count FROM outline_servers WHERE server_id = 'default'"
+            ).fetchone()[0]
+        self.assertEqual(review["review_state"], "accepted_external")
+        self.assertEqual(count, 0)
+
     def test_customer_buttons_and_admin_panel_are_separated(self):
         self.bot.handle(self.message(123, "/help"))
         help_text = self.bot.sent[-1][1]

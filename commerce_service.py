@@ -397,7 +397,14 @@ class CommerceService(CommerceWorkerMixin):
                         orphan_count = int(
                             connection.execute(
                                 """SELECT COUNT(*) AS n FROM outline_remote_keys
-                                   WHERE server_id = ? AND status = 'present' AND managed = 0""",
+                                   WHERE server_id = ? AND status = 'present' AND managed = 0
+                                     AND COALESCE(
+                                           (SELECT review_state
+                                              FROM outline_remote_key_reviews r
+                                             WHERE r.server_id = outline_remote_keys.server_id
+                                               AND r.outline_key_id = outline_remote_keys.outline_key_id),
+                                           'unreviewed'
+                                         ) = 'unreviewed'""",
                                 (server_id,),
                             ).fetchone()["n"]
                         )
@@ -469,27 +476,127 @@ class CommerceService(CommerceWorkerMixin):
                 "SELECT 1 FROM outline_servers WHERE server_id = ?", (str(server_id),)
             ).fetchone() is None:
                 raise CommerceError("Outline server is unavailable")
-            clauses = ["server_id = ?"]
+            clauses = ["outline_remote_keys.server_id = ?"]
             params: list[Any] = [str(server_id)]
             if normalized_status != "all":
-                clauses.append("status = ?")
+                clauses.append("outline_remote_keys.status = ?")
                 params.append(normalized_status)
             if managed is not None:
-                clauses.append("managed = ?")
+                clauses.append("outline_remote_keys.managed = ?")
                 params.append(1 if managed else 0)
             params.append(page_limit)
             rows = connection.execute(
-                """SELECT server_id, outline_key_id, remote_name, managed, status,
-                          first_seen_at, last_seen_at, last_usage_bytes
+                """SELECT outline_remote_keys.server_id, outline_remote_keys.outline_key_id,
+                          outline_remote_keys.remote_name, outline_remote_keys.managed,
+                          outline_remote_keys.status, outline_remote_keys.first_seen_at,
+                          outline_remote_keys.last_seen_at, outline_remote_keys.last_usage_bytes,
+                          COALESCE(r.review_state,
+                                   CASE WHEN outline_remote_keys.managed = 1
+                                        THEN 'managed' ELSE 'unreviewed' END) AS review_state,
+                          r.reviewed_by, r.reviewed_at, r.review_note
                      FROM outline_remote_keys
+                     LEFT JOIN outline_remote_key_reviews r
+                       ON r.server_id = outline_remote_keys.server_id
+                      AND r.outline_key_id = outline_remote_keys.outline_key_id
                     WHERE """
                 + " AND ".join(clauses)
-                + """ ORDER BY CASE WHEN status = 'present' THEN 0 ELSE 1 END,
-                                  last_seen_at DESC, outline_key_id
+                + """ ORDER BY CASE WHEN outline_remote_keys.status = 'present' THEN 0 ELSE 1 END,
+                                  outline_remote_keys.last_seen_at DESC,
+                                  outline_remote_keys.outline_key_id
                     LIMIT ?""",
                 tuple(params),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def review_remote_key(
+        self,
+        server_id: str,
+        outline_key_id: str,
+        review_state: str,
+        reviewer_id: int,
+        *,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """Record an explicit owner review of an untracked remote key.
+
+        ``accepted_external`` means the key was inspected and intentionally
+        remains outside AuriX lifecycle management. It does not make the key
+        saleable or hide it from remote capacity counts. Resetting to
+        ``unreviewed`` re-opens the migration blocker. No remote key is
+        deleted or adopted by this operation.
+        """
+        normalized_state = str(review_state or "").strip().lower()
+        if normalized_state not in {"unreviewed", "accepted_external"}:
+            raise CommerceError("Remote key review state is invalid")
+        server = str(server_id or "").strip()
+        key_id = str(outline_key_id or "").strip()
+        if not server or not key_id:
+            raise CommerceError("Remote key identity is required")
+        now_text = _now_text()
+        clean_note = str(note or "").strip()[:512] or None
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            row = connection.execute(
+                """SELECT managed, status FROM outline_remote_keys
+                   WHERE server_id = ? AND outline_key_id = ?""",
+                (server, key_id),
+            ).fetchone()
+            if row is None:
+                raise CommerceError("Remote key is not present in the audit inventory")
+            if int(row["managed"] or 0) == 1:
+                raise CommerceError("Managed AuriX keys do not need orphan review")
+            connection.execute(
+                """INSERT INTO outline_remote_key_reviews
+                   (server_id, outline_key_id, review_state, reviewed_by, reviewed_at, review_note)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(server_id, outline_key_id) DO UPDATE SET
+                     review_state = excluded.review_state,
+                     reviewed_by = excluded.reviewed_by,
+                     reviewed_at = excluded.reviewed_at,
+                     review_note = excluded.review_note""",
+                (server, key_id, normalized_state, int(reviewer_id), now_text, clean_note),
+            )
+            connection.execute(
+                """UPDATE outline_servers
+                      SET remote_orphan_key_count = (
+                          SELECT COUNT(*)
+                            FROM outline_remote_keys remote
+                           WHERE remote.server_id = outline_servers.server_id
+                             AND remote.status = 'present'
+                             AND remote.managed = 0
+                             AND COALESCE(
+                                   (SELECT review_state
+                                      FROM outline_remote_key_reviews review
+                                     WHERE review.server_id = remote.server_id
+                                       AND review.outline_key_id = remote.outline_key_id),
+                                   'unreviewed'
+                                 ) = 'unreviewed'
+                      ),
+                          updated_at = ?
+                    WHERE server_id = ?""",
+                (now_text, server),
+            )
+            self._audit(
+                connection,
+                "remote_key_reviewed",
+                "outline_remote_key",
+                f"{server}:{key_id}",
+                "staff",
+                str(reviewer_id),
+                {
+                    "review_state": normalized_state,
+                    "remote_status": str(row["status"] or ""),
+                    "note": clean_note,
+                },
+            )
+        return {
+            "server_id": server,
+            "outline_key_id": key_id,
+            "review_state": normalized_state,
+            "reviewed_by": int(reviewer_id),
+            "reviewed_at": now_text,
+            "review_note": clean_note,
+        }
 
     def configure_server_capacity(
         self,

@@ -47,6 +47,7 @@ class AdminOperations:
             "queue_infrastructure_provision",
         }
     )
+    OWNER_COMMERCE_OPERATIONS = frozenset({"review_remote_key"})
     SERVICE_OPERATIONS = frozenset(
         {
             "termination_summary",
@@ -96,4 +97,18 @@ class AdminOperations:
         method = getattr(self.service, operation, None)
         if not callable(method):
             raise CommerceError("That administrator operation is unavailable.")
+        return method(*args, **kwargs)
+
+    def call_owner(self, telegram_id: int, operation: str, *args: Any, **kwargs: Any) -> Any:
+        """Invoke an owner-only commerce operation through the auth boundary."""
+        if self.staff_access is None:
+            raise PermissionError("owner access required")
+        self.staff_access.require_owner(telegram_id)
+        if self.commerce is None:
+            raise CommerceError("Commerce is not configured.")
+        if operation not in self.OWNER_COMMERCE_OPERATIONS:
+            raise CommerceError("That owner operation is unavailable.")
+        method = getattr(self.commerce, operation, None)
+        if not callable(method):
+            raise CommerceError("That owner operation is unavailable.")
         return method(*args, **kwargs)
