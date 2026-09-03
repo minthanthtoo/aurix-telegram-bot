@@ -1172,9 +1172,13 @@ class TelegramBot(
                 order_id,
                 image,
                 str(unique_id) if unique_id else None,
+                provider=provider,
             )
             if duplicate_status == "different_order":
-                raise CommerceError("This receipt was already submitted for another order")
+                raise CommerceError(
+                    "This receipt was already submitted for another order; please send the original "
+                    "receipt for this order"
+                )
             policy = self.commerce.receipt_policy()
             extraction_configured = bool(
                 getattr(self.receipt_extractor, "base_url", "")
@@ -1199,7 +1203,17 @@ class TelegramBot(
         except (CommerceError, RuntimeError, urllib.error.URLError) as exc:
             self.send(chat_id, str(exc) or "Receipt could not be recorded. Try again later.")
             return
-        if queue_extraction:
+        duplicate_image_candidate = "duplicate_image_candidate" in set(
+            result.get("flags") or []
+        )
+        if duplicate_image_candidate:
+            self.send(
+                chat_id,
+                "⚠️ Receipt securely received for manual review. It resembles an earlier upload, "
+                "so staff will compare the original transaction directly. No payment or VPN plan "
+                "is activated from the image alone.",
+            )
+        elif queue_extraction:
             self.send(
                 chat_id,
                 "✅ Receipt securely received.\n\n"

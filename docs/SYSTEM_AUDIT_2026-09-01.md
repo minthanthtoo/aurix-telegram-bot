@@ -119,8 +119,10 @@ Model observations on the shared benchmark:
 
 1. No bank/wallet API, webhook, or statement feed exists; screenshots cannot be
    auto-approved safely.
-2. Cropped/re-encoded duplicate images can evade SHA-256. Add perceptual hash and
-   OCR-field fingerprinting, but keep transaction-reference uniqueness primary.
+2. Re-encoded and lightly altered duplicate images now produce a bounded
+   perceptual-hash signal and remain in manual review; heavily cropped or edited
+   images can still evade it. Keep transaction-reference uniqueness primary and
+   never treat the image fingerprint as payment proof.
 3. Build a labelled evaluation corpus and show per-provider confusion matrices;
    do not display an “accuracy” percentage before minimum sample size.
 4. Capacity should include free/trial/promo quota commitments and freshness/SLA
@@ -129,7 +131,8 @@ Model observations on the shared benchmark:
    job claiming, and independent workers are required before replicas/autoscale.
 6. Some timestamps are still displayed as raw UTC/ISO strings; Myanmar-local,
    human-readable time would improve UX.
-7. In-memory conversational input state is lost on restart; durable intent state
-   would improve top-up/admin test recovery.
+7. Short-lived conversational input state is now persisted with a ten-minute
+   expiry, so top-up/admin replies survive a restart; larger multi-step flows
+   still require explicit durable order state.
 8. Provider UI/version drift is inevitable; rules and fixtures need versioned,
    periodic review.

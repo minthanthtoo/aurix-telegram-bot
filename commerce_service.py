@@ -27,6 +27,11 @@ from ports import OutlineGateway, ReceiptStorageGateway
 from repositories import RepositoryDatabase
 from commerce_worker import CommerceWorkerMixin
 from receipt_rules import evaluate_receipt_candidate, load_recipient_profiles
+from receipt_fingerprint import (
+    NEAR_DUPLICATE_DISTANCE,
+    fingerprint_distance,
+    receipt_perceptual_hash,
+)
 from supabase_storage import NullReceiptStorage
 
 LOCAL_PAYMENT_METHODS = frozenset({"kbzpay", "wavepay", "ayapay", "uabpay", "cbpay"})
@@ -1751,24 +1756,49 @@ class CommerceService(CommerceWorkerMixin):
         order_id: str,
         image_bytes: bytes,
         file_unique_id: str | None = None,
+        provider: str | None = None,
     ) -> str:
-        """Check immutable receipt identity before any vision-model work."""
+        """Check immutable and near-duplicate identity before vision work.
+
+        Exact SHA-256/Telegram identity remains a hard duplicate check. A
+        perceptual match is a conservative cross-order fraud signal for
+        resized/re-encoded screenshots; a match is held out of model spend and
+        sent to manual review, never treated as proof of a payment.
+        """
         digest = hashlib.sha256(image_bytes).hexdigest()
+        phash = receipt_perceptual_hash(image_bytes)
+        expected_provider = str(provider or "").strip().lower()
         with self.database.connect() as connection:
             order = connection.execute(
-                "SELECT telegram_id FROM orders WHERE id = ?", (order_id,)
+                "SELECT telegram_id, payment_method FROM orders WHERE id = ?", (order_id,)
             ).fetchone()
             if order is None or int(order["telegram_id"]) != int(telegram_id):
                 raise CommerceError("Order not found")
+            if not expected_provider:
+                expected_provider = str(order["payment_method"] or "").strip().lower()
             rows = connection.execute(
-                """SELECT order_id FROM payment_evidence
+                """SELECT order_id, provider, image_phash FROM payment_evidence
                    WHERE image_sha256 = ? OR
                          (? IS NOT NULL AND telegram_file_unique_id = ?)""",
                 (digest, file_unique_id, file_unique_id),
             ).fetchall()
         if any(str(row["order_id"]) != str(order_id) for row in rows):
             return "different_order"
-        return "same_order" if rows else "new"
+        if rows:
+            return "same_order"
+        if phash:
+            with self.database.connect() as connection:
+                prior_rows = connection.execute(
+                    """SELECT order_id, provider, image_phash FROM payment_evidence
+                       WHERE image_phash IS NOT NULL"""
+                ).fetchall()
+            for row in prior_rows:
+                if expected_provider and str(row["provider"] or "").strip().lower() != expected_provider:
+                    continue
+                distance = fingerprint_distance(phash, str(row["image_phash"] or ""))
+                if distance is not None and distance <= NEAR_DUPLICATE_DISTANCE:
+                    return "possible_duplicate"
+        return "new"
 
     def submit_receipt(
         self,
@@ -1799,6 +1829,7 @@ class CommerceService(CommerceWorkerMixin):
         if telegram_media_type not in ("photo", "document"):
             raise CommerceError("Receipt media type is invalid")
         digest = hashlib.sha256(image_bytes).hexdigest()
+        phash = receipt_perceptual_hash(image_bytes)
         extraction = extraction if isinstance(extraction, dict) else None
         tx_id = extraction.get("transaction_id") if extraction else None
         # The customer-selected method is authoritative workflow state. Model
@@ -1815,6 +1846,7 @@ class CommerceService(CommerceWorkerMixin):
         evidence_id: str
         storage_path: str | None = None
         is_new = False
+        near_duplicate = False
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             self._lock_order(connection, order_id)
@@ -1836,6 +1868,30 @@ class CommerceService(CommerceWorkerMixin):
             ).fetchone()
             if duplicate is not None:
                 raise CommerceError("This receipt was already submitted for another order")
+            if phash:
+                prior_hashes = connection.execute(
+                    """SELECT order_id, provider, image_phash FROM payment_evidence
+                       WHERE image_phash IS NOT NULL AND order_id != ?""",
+                    (order_id,),
+                ).fetchall()
+                for prior in prior_hashes:
+                    if str(prior["provider"] or "").strip().lower() != provider_name:
+                        continue
+                    distance = fingerprint_distance(phash, str(prior["image_phash"] or ""))
+                    if distance is not None and distance <= NEAR_DUPLICATE_DISTANCE:
+                        # Do not hard-reject a perceptual match: two receipts
+                        # from the same provider can share a template. Preserve
+                        # the upload, stop automatic extraction, and surface a
+                        # strong manual-review flag instead.
+                        near_duplicate = True
+                        status = "needs_review"
+                        flagged = dict(extraction or {})
+                        flagged["flags"] = sorted(
+                            set(flagged.get("flags") or [])
+                            | {"duplicate_image_candidate"}
+                        )
+                        extraction = flagged
+                        break
             existing = connection.execute(
                 """SELECT id, extraction_json, extraction_status, review_status,
                           storage_bucket, storage_path, storage_status
@@ -1951,10 +2007,10 @@ class CommerceService(CommerceWorkerMixin):
                     """INSERT INTO payment_evidence
                        (id, order_id, telegram_id, provider, telegram_file_id,
                         telegram_file_unique_id, telegram_media_type, image_sha256,
-                        mime_type, byte_size, storage_bucket, storage_path,
+                        image_phash, mime_type, byte_size, storage_bucket, storage_path,
                         storage_status, extraction_json, extraction_status,
                         submitted_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         evidence_id,
                         order_id,
@@ -1964,6 +2020,7 @@ class CommerceService(CommerceWorkerMixin):
                         file_unique_id[:256] if file_unique_id else None,
                         telegram_media_type,
                         digest,
+                        phash,
                         mime_type[:64],
                         len(image_bytes),
                         storage_bucket,
@@ -2033,7 +2090,7 @@ class CommerceService(CommerceWorkerMixin):
                         "Action: open the receipt and confirm it against the receiving account.",
                         submitted_at,
                     )
-                    if queue_extraction and extraction is None:
+                    if queue_extraction and extraction is None and not near_duplicate:
                         self._queue_receipt_extraction(connection, evidence_id, submitted_at)
             except Exception:
                 # Do not leave a billable orphan if the final metadata commit

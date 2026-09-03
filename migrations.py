@@ -746,6 +746,18 @@ COMMERCE_MIGRATIONS = (
                ON interaction_states(expires_at)""",
         ),
     ),
+    Migration(
+        10,
+        "receipt_perceptual_fingerprint",
+        sqlite_statements=(
+            "ALTER TABLE payment_evidence ADD COLUMN image_phash TEXT",
+            "CREATE INDEX IF NOT EXISTS payment_evidence_phash ON payment_evidence(image_phash)",
+        ),
+        postgres_statements=(
+            "ALTER TABLE payment_evidence ADD COLUMN IF NOT EXISTS image_phash TEXT",
+            "CREATE INDEX IF NOT EXISTS payment_evidence_phash ON payment_evidence(image_phash)",
+        ),
+    ),
 )
 
 

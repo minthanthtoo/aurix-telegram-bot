@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 import re
@@ -9,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
+from PIL import Image, ImageDraw
 
 from app import Database
 from commerce import (
@@ -110,6 +112,16 @@ class CommerceServiceTest(unittest.TestCase):
         )
         return order
 
+    @staticmethod
+    def _receipt_image(quality: int = 95) -> bytes:
+        image = Image.new("RGB", (320, 180), "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((20, 20, 210, 65), fill="black")
+        draw.rectangle((80, 100, 300, 145), outline="black", width=8)
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=quality)
+        return output.getvalue()
+
     def test_existing_database_adds_reference_column_before_index(self):
         legacy_path = Path(self.tmp.name) / "legacy.db"
         with open_sqlite_connection(legacy_path) as connection:
@@ -179,6 +191,45 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertIn("storage_status", columns)
         self.assertIn("storage_error", columns)
         self.assertIn("stored_at", columns)
+
+    def test_reencoded_cross_order_receipt_is_caught_before_model_processing(self):
+        first = self.service.create_order(130, "First", "basic_50gb", self.now)
+        original = self._receipt_image(quality=95)
+        self.service.submit_receipt(
+            130,
+            first.order_id,
+            "kbzpay",
+            "receipt-first",
+            "receipt-first-unique",
+            original,
+            "image/jpeg",
+            now=self.now,
+        )
+        second = self.service.create_order(131, "Second", "basic_50gb", self.now)
+        recompressed = self._receipt_image(quality=45)
+
+        self.assertEqual(
+            self.service.receipt_duplicate_status(
+                131,
+                second.order_id,
+                recompressed,
+                "receipt-second-unique",
+                provider="kbzpay",
+            ),
+            "possible_duplicate",
+        )
+        submitted = self.service.submit_receipt(
+            131,
+            second.order_id,
+            "kbzpay",
+            "receipt-second",
+            "receipt-second-unique",
+            recompressed,
+            "image/jpeg",
+            now=self.now,
+        )
+        self.assertEqual(submitted["extraction_status"], "needs_review")
+        self.assertIn("duplicate_image_candidate", submitted["flags"])
 
     def test_short_lived_interaction_state_survives_reopen_and_expires(self):
         future = "2026-08-27T04:07:00+00:00"
@@ -996,15 +1047,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "8c79ca6173afae7cd9f307722ac5fdb6b14ce9f44e6e93ed0ef47af83f069f05",
+            "f49745c3eb4bd2c8fb4a627be014204a9525e88cb4e90b0177280294dda4e41e",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "e03d6c421501a93af149c48dc6a5fded242818d2018c2c4dfe2cebf278cbc3c0",
+            "d1804762bb0c8750574ff03b42068d25887fe9b1203446701391e624dcc2f979",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "78b20401237a477bf5200cced821a2fd269182207d91d2bf6703f257dab4116e",
+            "cff55ea0bb19ca5ff1fcb8846db921198f923e3631ff99830d377b18b6b0e135",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

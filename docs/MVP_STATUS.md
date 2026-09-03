@@ -38,7 +38,8 @@ engineering estimates, not production traffic or revenue metrics.
 - Local test/evidence coverage: **100%** for the current fake-Outline, TLS,
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
-  and wallet suite (302 tests passing at the latest verification).
+  wallet, restart-safe interaction, and receipt-fingerprint suite (309 tests
+  passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local
   and Supabase offsite backups, and pinned-TLS management/data-port canaries are
