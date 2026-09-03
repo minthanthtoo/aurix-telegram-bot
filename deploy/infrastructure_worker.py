@@ -76,9 +76,13 @@ def _declared_activation_node(
     if not provider_resource_id or not public_ip or not env_file.is_file():
         return None
     try:
-        from deploy.fleet_reconcile import environment, parse_manifest
+        from deploy.fleet_reconcile import load_dotenv, parse_manifest
 
-        env = environment(env_file)
+        # The control-plane env file is authoritative for fleet identity.  A
+        # worker service may already have a stale manifest in its own
+        # EnvironmentFile; do not let that shadow the explicit path.
+        loaded = load_dotenv(env_file, overwrite=False)
+        env = {**os.environ, **loaded}
         strict = env.get("AURIX_FLEET_STRICT_ALLOCATION_VALIDATION", "").strip().lower() in {
             "1", "true", "yes", "on",
         }
@@ -119,7 +123,7 @@ def _auto_activate(
     if match is None:
         print("infrastructure_worker: activation_waiting_for_pinned_manifest")
         return result
-    node_id, _ = match
+    node_id, fleet_env = match
     command = [
         sys.executable,
         str(Path(__file__).with_name("fleet_reconcile.py")),
@@ -135,7 +139,9 @@ def _auto_activate(
             stderr=subprocess.STDOUT,
             timeout=20 * 60,
             check=False,
-            env=dict(os.environ),
+            # Preserve the worker's provider credentials while making the
+            # explicit fleet env file authoritative for reconciliation.
+            env={**os.environ, **fleet_env},
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         print(f"infrastructure_worker: activation_failed={type(exc).__name__}", file=sys.stderr)
