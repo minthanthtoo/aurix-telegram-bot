@@ -104,6 +104,17 @@ def _validate_configuration() -> dict[str, str]:
             fail("OUTLINE_CERT_SHA256 must contain 64 hexadecimal characters")
 
     fleet_raw = os.environ.get("AURIX_FLEET_NODES_JSON", "").strip()
+    auto_activation = os.environ.get(
+        "AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED", "0"
+    ).strip().lower() in TRUTHY
+    if auto_activation and not fleet_raw:
+        fail("automatic infrastructure activation requires AURIX_FLEET_NODES_JSON")
+    if auto_activation:
+        activation_env = Path(
+            os.environ.get("AURIX_FLEET_ENV_FILE", "/etc/aurix-bot/aurix.env")
+        )
+        if not activation_env.is_absolute() or not activation_env.is_file():
+            fail("AURIX_FLEET_ENV_FILE must be an existing absolute file when auto activation is enabled")
     object_store_configured = offsite_storage.configured(dict(os.environ))
     if object_store_configured:
         try:

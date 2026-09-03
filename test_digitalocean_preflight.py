@@ -169,6 +169,23 @@ class DigitalOceanPreflightTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "AURIX_DNS_REQUIRE"):
                 main([])
 
+    def test_auto_activation_requires_an_existing_canonical_fleet_env(self):
+        environment = dict(self.fleet_environment())
+        environment["AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED"] = "1"
+        environment["AURIX_FLEET_ENV_FILE"] = str(Path(self.tmp.name) / "missing.env")
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "AURIX_FLEET_ENV_FILE"):
+                main([])
+
+    def test_auto_activation_accepts_pinned_canonical_fleet_env(self):
+        environment = dict(self.fleet_environment())
+        env_file = Path(self.tmp.name) / "fleet.env"
+        env_file.write_text("AURIX_FLEET_NODES_JSON=[]\n", encoding="utf-8")
+        environment["AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED"] = "1"
+        environment["AURIX_FLEET_ENV_FILE"] = str(env_file)
+        with patch.dict(os.environ, environment, clear=True):
+            main([])
+
 
 if __name__ == "__main__":
     unittest.main()
