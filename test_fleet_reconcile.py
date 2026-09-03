@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import base64
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from deploy.fleet_reconcile import (
     FleetError,
+    environment,
     parse_access_text,
     parse_manifest,
     materialize_trust_files,
@@ -34,6 +36,21 @@ def manifest(**overrides: object) -> str:
 
 
 class FleetManifestTests(unittest.TestCase):
+    def test_explicit_fleet_env_file_overrides_stale_process_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / "fleet.env"
+            env_file.write_text("AURIX_FLEET_NODES_JSON=file-value\n", encoding="utf-8")
+            previous = os.environ.get("AURIX_FLEET_NODES_JSON")
+            os.environ["AURIX_FLEET_NODES_JSON"] = "stale-value"
+            try:
+                values = environment(env_file)
+            finally:
+                if previous is None:
+                    os.environ.pop("AURIX_FLEET_NODES_JSON", None)
+                else:
+                    os.environ["AURIX_FLEET_NODES_JSON"] = previous
+        self.assertEqual(values["AURIX_FLEET_NODES_JSON"], "file-value")
+
     def test_parses_capacity_policy(self) -> None:
         node = parse_manifest(manifest())[0]
         self.assertEqual(node.node_id, "sg-a")

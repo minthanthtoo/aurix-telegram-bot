@@ -265,6 +265,10 @@ recovery is not externalized, when fleet backup encryption/offsite settings are
 invalid, or when provider/DNS automation is partially configured. Warnings mean
 the system can run but is not yet a true no-manual rebuild.
 
+Fleet reconciliation treats the explicit `--env-file` as authoritative over
+inherited systemd or shell variables. This prevents stale endpoint, allocation,
+or SSH-trust values from shadowing the reviewed recovery configuration.
+
 SQLite commerce backups use the same fail-closed pattern:
 
 ```bash

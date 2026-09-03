@@ -404,8 +404,12 @@ def apply_policy(nodes: list[FleetNode], identities: dict[str, dict[str, str]], 
 
 
 def environment(path: Path) -> dict[str, str]:
+    # The explicit fleet env file is the operator-owned source of truth. A
+    # systemd EnvironmentFile or inherited shell may contain stale endpoint,
+    # allocation, or trust data; allowing it to win could make a recovery or
+    # reconciliation pass apply an unreviewed configuration.
     loaded = load_dotenv(path, overwrite=False)
-    return {**loaded, **os.environ}
+    return {**os.environ, **loaded}
 
 
 def reconcile(args: argparse.Namespace) -> None:
