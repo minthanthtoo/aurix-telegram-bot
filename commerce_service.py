@@ -529,6 +529,7 @@ class CommerceService(CommerceWorkerMixin):
                     "SELECT plan_code, slot_limit FROM server_plan_allocations WHERE server_id = ?",
                     (server_id,),
                 ).fetchall()
+                if int(row["slot_limit"] or 0) > 0
             }
             existing_tiers = {
                 str(row["tier_code"]): int(row["slot_limit"] or 0)
@@ -536,9 +537,14 @@ class CommerceService(CommerceWorkerMixin):
                     "SELECT tier_code, slot_limit FROM server_tier_allocations WHERE server_id = ?",
                     (server_id,),
                 ).fetchall()
+                if int(row["slot_limit"] or 0) > 0
             }
-            desired_plans = {code: limit for code, limit in normalized_plans.items()}
-            desired_tiers = {code: limit for code, limit in normalized_tiers.items()}
+            desired_plans = {
+                code: limit for code, limit in normalized_plans.items() if limit > 0
+            }
+            desired_tiers = {
+                code: limit for code, limit in normalized_tiers.items() if limit > 0
+            }
             changed = (
                 server["max_keys"] != max_keys
                 or int(server["reserved_keys"] or 0) != int(reserved_keys)
