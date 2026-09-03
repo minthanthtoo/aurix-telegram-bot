@@ -27,7 +27,7 @@ class ProductionAcceptanceTests(unittest.TestCase):
 
             with patch("deploy.production_acceptance.run_audit", return_value={
                 "status": "warn", "checks": [{"name": "allocation_policy", "status": "warn"}],
-            }):
+            }), patch("deploy.production_acceptance.shutil.which", return_value="/usr/bin/ruff"):
                 report = run_acceptance(
                     env_file=env_file,
                     root=root,
