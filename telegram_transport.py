@@ -286,7 +286,12 @@ class TelegramBot(
             description = "request rejected"
             raise TelegramAPIError(f"{method} transport failed: {description}") from exc
         finally:
-            _latency_log("telegram_request", started_at, method=method)
+            _latency_log(
+                "telegram_request",
+                started_at,
+                method=method,
+                request_kind="long_poll" if method == "getUpdates" else "api",
+            )
         if not result.get("ok"):
             description = "request rejected"
             candidate = result.get("description") if isinstance(result, dict) else None
@@ -320,7 +325,7 @@ class TelegramBot(
         except urllib3.exceptions.HTTPError as exc:
             raise TelegramAPIError(f"{method} transport failed: request rejected") from exc
         finally:
-            _latency_log("telegram_request", started_at, method=method)
+            _latency_log("telegram_request", started_at, method=method, request_kind="multipart")
 
     def send(
         self,
