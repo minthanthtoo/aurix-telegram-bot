@@ -46,8 +46,9 @@ engineering estimates, not production traffic or revenue metrics.
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local
   and Supabase offsite backups, and pinned-TLS management/data-port canaries are
   verified. A temporary-destination restore drill from the private off-site
-  SQLite archive also passed. Stable DNS, a real Telegram-account canary, allocation
-  normalization/strict validation, untracked-key audit, and sustained observation remain.
+  SQLite archive and fleet archive verification also passed. Stable DNS, a real
+  Telegram-account canary, allocation normalization/strict validation,
+  untracked-key audit, and sustained observation remain.
 - End-to-end MVP readiness: approximately **90%** for the controlled paid-
   concierge scope. This is a progress estimate, not a claim that automated
   payment verification, reseller features, or unrestricted scale-out are live.
