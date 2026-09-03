@@ -12,6 +12,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
+from supabase_storage import ReceiptStorageError, SupabaseObjectStore
+
 try:
     from deploy.fleet_reconcile import FleetError
 except ModuleNotFoundError:  # Direct execution from deploy/ sets deploy/ as sys.path[0].
@@ -29,11 +31,56 @@ class ObjectStore:
 
 
 def configured(env: dict[str, str]) -> bool:
-    return bool(env.get("AURIX_BACKUP_OBJECT_STORE_URL", "").strip())
+    if env.get("AURIX_BACKUP_OBJECT_STORE_URL", "").strip():
+        return True
+    # SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are also used by receipt
+    # storage and therefore cannot, by themselves, enable recovery mirroring.
+    # An explicit backup bucket/prefix is the opt-in marker for this backend.
+    return bool(
+        env.get("AURIX_BACKUP_SUPABASE_BUCKET", "").strip()
+        or env.get("AURIX_BACKUP_SUPABASE_PREFIX", "").strip()
+    )
 
 
-def from_env(env: dict[str, str]) -> ObjectStore:
+def from_env(env: dict[str, str]) -> ObjectStore | SupabaseObjectStore:
     raw_url = env.get("AURIX_BACKUP_OBJECT_STORE_URL", "").strip()
+    backup_bucket = env.get("AURIX_BACKUP_SUPABASE_BUCKET", "").strip()
+    backup_prefix = env.get("AURIX_BACKUP_SUPABASE_PREFIX", "").strip()
+    if raw_url and (backup_bucket or backup_prefix):
+        raise FleetError(
+            "configure only one offsite backend: S3-compatible object storage or Supabase Storage"
+        )
+    if not raw_url:
+        if not backup_bucket:
+            raise FleetError(
+                "configure AURIX_BACKUP_OBJECT_STORE_URL or AURIX_BACKUP_SUPABASE_BUCKET"
+            )
+        project_url = env.get("SUPABASE_URL", "").strip()
+        service_role_key = env.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+        if not project_url or not service_role_key:
+            raise FleetError(
+                "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for Supabase backups"
+            )
+        receipts_bucket = env.get("SUPABASE_RECEIPTS_BUCKET", "payment-receipts").strip()
+        if backup_bucket == receipts_bucket:
+            raise FleetError(
+                "AURIX_BACKUP_SUPABASE_BUCKET must differ from SUPABASE_RECEIPTS_BUCKET"
+            )
+        try:
+            timeout = float(env.get("AURIX_BACKUP_STORAGE_TIMEOUT_SECONDS", "45"))
+            max_mb = int(env.get("AURIX_BACKUP_STORAGE_MAX_MB", "512"))
+            return SupabaseObjectStore(
+                project_url,
+                service_role_key,
+                backup_bucket,
+                prefix=backup_prefix,
+                timeout=timeout,
+                max_bytes=max_mb * 1024 * 1024,
+            )
+        except (TypeError, ValueError, ReceiptStorageError) as exc:
+            if isinstance(exc, ValueError):
+                raise FleetError(str(exc)) from exc
+            raise FleetError("Supabase backup storage configuration is invalid") from exc
     parsed = urllib.parse.urlsplit(raw_url)
     if parsed.scheme != "s3" or not parsed.netloc:
         raise FleetError("AURIX_BACKUP_OBJECT_STORE_URL must look like s3://bucket/prefix")
@@ -136,6 +183,8 @@ def _request(
 
 def put(env: dict[str, str], key: str, content: bytes) -> str:
     store = from_env(env)
+    if isinstance(store, SupabaseObjectStore):
+        return store.put(key, content)
     object_key = join_key(store, key)
     _request(store, "PUT", object_key, body=content)
     return f"s3://{store.bucket}/{object_key}"
@@ -143,16 +192,23 @@ def put(env: dict[str, str], key: str, content: bytes) -> str:
 
 def get(env: dict[str, str], key: str) -> bytes:
     store = from_env(env)
+    if isinstance(store, SupabaseObjectStore):
+        return store.get(key)
     return _request(store, "GET", join_key(store, key))
 
 
 def delete(env: dict[str, str], key: str) -> None:
     store = from_env(env)
+    if isinstance(store, SupabaseObjectStore):
+        store.delete(key)
+        return
     _request(store, "DELETE", join_key(store, key))
 
 
 def list_keys(env: dict[str, str], prefix: str) -> list[str]:
     store = from_env(env)
+    if isinstance(store, SupabaseObjectStore):
+        return store.list_keys(prefix)
     full_prefix = join_key(store, prefix)
     raw = _request(store, "GET", "", query={"list-type": "2", "prefix": full_prefix})
     root = ET.fromstring(raw)

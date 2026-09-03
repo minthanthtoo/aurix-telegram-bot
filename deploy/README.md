@@ -95,6 +95,12 @@ COMMERCE_DATABASE_URL=
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=replace-with-service-role-key
 SUPABASE_RECEIPTS_BUCKET=payment-receipts
+# Optional encrypted recovery mirror. Use a separate private bucket, and do
+# not configure this together with AURIX_BACKUP_OBJECT_STORE_*.
+# AURIX_BACKUP_SUPABASE_BUCKET=aurix-recovery
+# AURIX_BACKUP_SUPABASE_PREFIX=production
+# AURIX_BACKUP_STORAGE_TIMEOUT_SECONDS=45
+# AURIX_BACKUP_STORAGE_MAX_MB=512
 RECEIPT_STORAGE_REQUIRED=1
 # Optional OpenAI-compatible vision endpoint for receipt parsing. For the
 # standalone Antigravity proxy use https://your-gateway.example/v1, the gateway
@@ -231,6 +237,9 @@ RECEIPT_STORAGE_REQUIRED=1
 SUPABASE_URL=https://PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=server-side-secret
 SUPABASE_RECEIPTS_BUCKET=payment-receipts
+# Optional: use a separate private Supabase bucket for encrypted recovery.
+# AURIX_BACKUP_SUPABASE_BUCKET=aurix-recovery
+# AURIX_BACKUP_SUPABASE_PREFIX=production
 RECEIPT_LLM_BASE_URL=https://vision-gateway.example/v1
 RECEIPT_LLM_MODEL=vision-model-id
 RECEIPT_LLM_API_KEY=gateway-secret

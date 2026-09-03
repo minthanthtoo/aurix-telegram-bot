@@ -169,6 +169,32 @@ class RecoveryReadinessTests(unittest.TestCase):
 
         self.assertEqual(report["status"], "pass")
 
+    def test_supabase_storage_satisfies_recovery_offsite_checks(self) -> None:
+        values = self.fleet_env()
+        values.pop("AURIX_DATABASE_BACKUP_OFFSITE_DIR")
+        values.pop("AURIX_FLEET_BACKUP_OFFSITE_DIR")
+        values.update({
+            "AURIX_BACKUP_SUPABASE_BUCKET": "aurix-recovery",
+            "AURIX_BACKUP_SUPABASE_PREFIX": "production",
+            "AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE": "1",
+            "AURIX_FLEET_BACKUP_REQUIRE_OFFSITE": "1",
+            "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "DIGITALOCEAN_API_TOKEN": "dop_v1_test",
+            "AURIX_DNS_PROVIDER": "cloudflare",
+            "AURIX_DNS_ZONE_ID": "zone-test",
+            "AURIX_DNS_API_TOKEN": "dns-token",
+            "AURIX_DNS_REQUIRE": "1",
+        })
+        self.write_env(values)
+
+        with patch("deploy.recovery_readiness.database_backup.verify",
+                   return_value={"local": {}, "offsite": {}}), \
+                patch("deploy.recovery_readiness.verify_node",
+                      return_value={"node": "sg-a", "local": {}, "offsite": {}}):
+            report = run_audit(self.env_file, verify_archives=True)
+
+        self.assertEqual(report["status"], "pass")
+
     def test_required_dns_without_configuration_fails(self) -> None:
         values = self.fleet_env()
         values["AURIX_DNS_REQUIRE"] = "1"

@@ -199,6 +199,31 @@ verification fail closed if the offsite target is missing.
 `*_OFFSITE_RETENTION` controls offsite pruning and can be longer than local
 retention.
 
+Supabase Storage is also supported when the project already hosts the bot's
+receipt evidence. Create a second **private** bucket (for example
+`aurix-recovery`) and configure the same server-side Supabase URL/key plus an
+explicit backup bucket:
+
+```dotenv
+SUPABASE_URL=https://PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=server-side-secret
+SUPABASE_RECEIPTS_BUCKET=payment-receipts
+AURIX_BACKUP_SUPABASE_BUCKET=aurix-recovery
+AURIX_BACKUP_SUPABASE_PREFIX=production
+AURIX_BACKUP_STORAGE_TIMEOUT_SECONDS=45
+AURIX_BACKUP_STORAGE_MAX_MB=512
+```
+
+The backup bucket must differ from `SUPABASE_RECEIPTS_BUCKET`; this prevents a
+retention or cleanup mistake from mixing encrypted recovery archives with
+payment evidence. Configure either this Supabase backend or the S3-compatible
+backend, never both. Uploads are immutable (`x-upsert=false`), encrypted before
+leaving the control plane, and verified by downloading/decrypting the newest
+archive. The recovery audit treats an explicit backup bucket as configured, so
+partial credentials fail closed rather than silently falling back to local
+disk. Supabase's service-role key remains server-only and is never returned to
+Telegram or included in readiness output.
+
 Verify the recovery set after scheduled backups and before risky changes:
 
 ```bash
