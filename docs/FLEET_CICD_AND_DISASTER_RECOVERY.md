@@ -307,8 +307,9 @@ rollback directory, restores, starts Shadowbox, and checks identity:
 Full control-plane revival order:
 
 1. provision Ubuntu 24.04 and restore the private `.env`, fleet SSH key,
-   verified `known_hosts`, backup key, database, and encrypted node archives
-   from the offsite recovery store;
+   verified `known_hosts`, backup key, and encrypted node archives from the
+   offsite recovery store; the recovery entrypoint restores the SQLite database
+   automatically when its destination is absent;
 2. clone GitHub `main` on the fresh VM;
 3. run the recovery entrypoint:
 

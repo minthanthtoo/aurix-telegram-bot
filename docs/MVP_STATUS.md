@@ -42,7 +42,8 @@ engineering estimates, not production traffic or revenue metrics.
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local
   and Supabase offsite backups, and pinned-TLS management/data-port canaries are
-  verified. Stable DNS, a real Telegram-account canary, allocation
+  verified. A temporary-destination restore drill from the private off-site
+  SQLite archive also passed. Stable DNS, a real Telegram-account canary, allocation
   normalization/strict validation, and sustained observation remain.
 - End-to-end MVP readiness: approximately **90%** for the controlled paid-
   concierge scope. This is a progress estimate, not a claim that automated
