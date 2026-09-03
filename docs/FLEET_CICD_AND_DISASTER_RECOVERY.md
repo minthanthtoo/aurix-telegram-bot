@@ -226,7 +226,9 @@ Telegram or included in readiness output.
 
 On first setup, run the explicit bootstrap command once. It creates the bucket
 only if it is missing and refuses a public bucket; it never runs implicitly
-from the bot or backup timer:
+from the bot or backup timer. A full control-plane recovery runs the same
+private-bucket check automatically before archive verification, so a missing
+bucket does not require an operator handoff:
 
 ```bash
 .venv/bin/python deploy/recovery_storage.py ensure \

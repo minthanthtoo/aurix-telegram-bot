@@ -70,6 +70,10 @@ fleet_configured=0
 if [[ -n "${AURIX_FLEET_NODES_JSON:-}" ]]; then
   fleet_configured=1
 fi
+backup_supabase_configured=0
+if [[ -n "${AURIX_BACKUP_SUPABASE_BUCKET:-}" ]]; then
+  backup_supabase_configured=1
+fi
 unset PAYMENT_RECIPIENTS_JSON OUTLINE_SERVERS_JSON AURIX_FLEET_NODES_JSON
 
 command -v python3 >/dev/null || {
@@ -109,6 +113,15 @@ python3 -m venv "$build_dir/.venv"
 "$build_dir/.venv/bin/python" -m compileall -q "$build_dir"
 "$build_dir/.venv/bin/python" "$build_dir/deploy/digitalocean_preflight.py" \
   --live --env-file "$env_file"
+
+# A surviving Supabase project is part of the recovery boundary. If its
+# private archive bucket was removed, recreate it before archive verification;
+# recovery must not stop for a manual bucket-bootstrap step. The helper refuses
+# public buckets and never creates the bucket implicitly during normal backups.
+if [[ "$backup_supabase_configured" == "1" ]]; then
+  "$build_dir/.venv/bin/python" "$build_dir/deploy/recovery_storage.py" \
+    ensure --env-file "$env_file"
+fi
 
 if [[ -n "${DATABASE_PATH:-}" && -z "${COMMERCE_DATABASE_URL:-}" ]]; then
   "$build_dir/.venv/bin/python" "$build_dir/deploy/database_backup.py" verify \
