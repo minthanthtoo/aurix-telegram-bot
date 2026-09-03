@@ -586,5 +586,5 @@ completion.
 - Observe at least 24 hours of maintenance/worker logs with no unclassified
   errors, then keep a 72-hour rollback window and the last known-good release.
 
-Until the second node and these live gates are evidenced, the project is
+Until every declared endpoint and these live gates are evidenced, the project is
 **code-complete and operationally staged**, not 100% production-ready.
