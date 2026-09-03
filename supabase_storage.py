@@ -155,6 +155,58 @@ class SupabaseObjectStore:
             raise ReceiptStorageError("Supabase recovery upload failed") from exc
         return f"supabase://{self.bucket}/{full_path}"
 
+    def ensure_private_bucket(self) -> bool:
+        """Ensure this recovery bucket exists and is not publicly readable.
+
+        Returns ``True`` when a bucket was created and ``False`` when an
+        existing private bucket was reused. This is intentionally an explicit
+        operator action (the backup path never creates buckets implicitly).
+        """
+        encoded_bucket = urllib.parse.quote(self.bucket, safe="")
+        bucket_url = f"{self.project_url}/storage/v1/bucket/{encoded_bucket}"
+        try:
+            existing = self._request("GET", bucket_url)
+        except ReceiptStorageError as exc:
+            # Storage returns HTTP 404 for a missing bucket. Keep the check
+            # narrow: every other error is a real configuration/availability
+            # failure and must not be turned into a create attempt.
+            cause = exc.__cause__
+            if not isinstance(cause, urllib.error.HTTPError) or cause.code != 404:
+                raise
+            existing = None
+        if existing is not None:
+            if isinstance(existing, dict) and existing.get("public") is True:
+                raise ReceiptStorageError("Supabase recovery bucket must be private")
+            return False
+        payload = json.dumps({
+            "id": self.bucket,
+            "name": self.bucket,
+            "public": False,
+        }).encode("utf-8")
+        try:
+            created = self._request(
+                "POST",
+                f"{self.project_url}/storage/v1/bucket",
+                payload,
+                "application/json",
+            )
+        except ReceiptStorageError as exc:
+            # A concurrent bootstrap may win the race. Re-check that the
+            # resulting bucket is private before reporting success.
+            cause = exc.__cause__
+            if not isinstance(cause, urllib.error.HTTPError) or cause.code != 409:
+                raise
+            existing = self._request("GET", bucket_url)
+            if isinstance(existing, dict) and existing.get("public") is True:
+                raise ReceiptStorageError("Supabase recovery bucket must be private")
+            return False
+        if isinstance(created, dict) and created.get("already_exists"):
+            existing = self._request("GET", bucket_url)
+            if isinstance(existing, dict) and existing.get("public") is True:
+                raise ReceiptStorageError("Supabase recovery bucket must be private")
+            return False
+        return True
+
     def get(self, path: str) -> bytes:
         result = self._request("GET", self._object_url(path), raw_response=True)
         if not isinstance(result, bytes) or not result or len(result) > self.max_bytes:

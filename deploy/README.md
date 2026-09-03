@@ -248,6 +248,14 @@ RECEIPT_LLM_MODEL=vision-model-id
 RECEIPT_LLM_API_KEY=gateway-secret
 ```
 
+If using the optional Supabase recovery backend, bootstrap its separate private
+bucket once before enabling the off-site requirements:
+
+```sh
+/opt/aurix-current/.venv/bin/python /opt/aurix-current/deploy/recovery_storage.py \
+  ensure --env-file /etc/aurix-bot/aurix.env
+```
+
 Operational checks:
 
 ```sh

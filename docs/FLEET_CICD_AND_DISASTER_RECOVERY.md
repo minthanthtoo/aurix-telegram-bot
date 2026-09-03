@@ -224,6 +224,15 @@ partial credentials fail closed rather than silently falling back to local
 disk. Supabase's service-role key remains server-only and is never returned to
 Telegram or included in readiness output.
 
+On first setup, run the explicit bootstrap command once. It creates the bucket
+only if it is missing and refuses a public bucket; it never runs implicitly
+from the bot or backup timer:
+
+```bash
+.venv/bin/python deploy/recovery_storage.py ensure \
+  --env-file /etc/aurix-bot/aurix.env
+```
+
 Verify the recovery set after scheduled backups and before risky changes:
 
 ```bash

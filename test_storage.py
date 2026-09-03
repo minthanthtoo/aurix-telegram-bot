@@ -1,8 +1,9 @@
 import json
 import unittest
+import urllib.error
 from unittest.mock import patch
 
-from supabase_storage import ReceiptStorageError, SupabaseReceiptStorage
+from supabase_storage import ReceiptStorageError, SupabaseObjectStore, SupabaseReceiptStorage
 
 
 class _Response:
@@ -15,7 +16,7 @@ class _Response:
     def __exit__(self, *_args):
         return False
 
-    def read(self):
+    def read(self, *_args):
         return self.body
 
 
@@ -75,6 +76,61 @@ class SupabaseReceiptStorageTest(unittest.TestCase):
             json.loads(request.data),
             {"prefixes": ["orders/order-1/evidence-1.jpg"]},
         )
+
+
+class SupabaseRecoveryStorageTest(unittest.TestCase):
+    def store(self) -> SupabaseObjectStore:
+        return SupabaseObjectStore(
+            "https://project.supabase.co",
+            "service-role-secret",
+            "aurix-recovery",
+            prefix="production",
+        )
+
+    def test_existing_private_bucket_is_reused(self):
+        with patch(
+            "supabase_storage.urllib.request.urlopen",
+            return_value=_Response(b'{"id":"aurix-recovery","public":false}'),
+        ) as opener:
+            created = self.store().ensure_private_bucket()
+
+        self.assertFalse(created)
+        self.assertEqual(opener.call_count, 1)
+        request = opener.call_args.args[0]
+        self.assertEqual(request.method, "GET")
+        self.assertNotIn("service-role-secret", request.full_url)
+
+    def test_missing_bucket_is_created_private(self):
+        missing = urllib.error.HTTPError(
+            "https://project.supabase.co/storage/v1/bucket/aurix-recovery",
+            404,
+            "missing",
+            {},
+            None,
+        )
+        with patch(
+            "supabase_storage.urllib.request.urlopen",
+            side_effect=[missing, _Response(b"{}")],
+        ) as opener:
+            created = self.store().ensure_private_bucket()
+
+        self.assertTrue(created)
+        self.assertEqual(opener.call_count, 2)
+        request = opener.call_args.args[0]
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(json.loads(request.data), {
+            "id": "aurix-recovery",
+            "name": "aurix-recovery",
+            "public": False,
+        })
+
+    def test_public_bucket_is_rejected(self):
+        with patch(
+            "supabase_storage.urllib.request.urlopen",
+            return_value=_Response(b'{"id":"aurix-recovery","public":true}'),
+        ):
+            with self.assertRaisesRegex(ReceiptStorageError, "must be private"):
+                self.store().ensure_private_bucket()
 
 
 if __name__ == "__main__":
