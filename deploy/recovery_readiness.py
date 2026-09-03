@@ -25,6 +25,7 @@ from deploy.fleet_reconcile import (  # noqa: E402
     load_dotenv,
     parse_manifest,
 )
+from deploy import database_backup  # noqa: E402
 
 TRUTHY = {"1", "true", "yes", "on"}
 FAIL = "fail"
@@ -67,7 +68,7 @@ def check_repository(env: dict[str, str]) -> Check:
     return Check("source_repository", PASS, "GitHub source and branch are configured")
 
 
-def check_database(env: dict[str, str]) -> Check:
+def check_database(env: dict[str, str], verify_archives: bool) -> Check:
     database_url = env.get("COMMERCE_DATABASE_URL", "").strip()
     if database_url:
         parsed = urlsplit(database_url)
@@ -76,9 +77,17 @@ def check_database(env: dict[str, str]) -> Check:
         return Check("database_recovery", FAIL, "COMMERCE_DATABASE_URL must be PostgreSQL")
     if has_value(env, "DATABASE_PATH") and has_value(env, "AURIX_DATABASE_BACKUP_OFFSITE_DIR"):
         path = Path(env["AURIX_DATABASE_BACKUP_OFFSITE_DIR"]).expanduser()
-        if path.is_absolute():
-            return Check("database_recovery", PASS, "SQLite has an offsite database-backup path")
-        return Check("database_recovery", FAIL, "AURIX_DATABASE_BACKUP_OFFSITE_DIR must be absolute")
+        if not path.is_absolute():
+            return Check("database_recovery", FAIL, "AURIX_DATABASE_BACKUP_OFFSITE_DIR must be absolute")
+        if not truthy(env.get("AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE")):
+            return Check("database_recovery", WARN, "SQLite offsite path is set but REQUIRE_OFFSITE is not enabled")
+        if not verify_archives:
+            return Check("database_recovery", WARN, "run with --verify-archives to prove SQLite backup decryptability")
+        try:
+            database_backup.verify(env)
+        except (FleetError, OSError, ValueError) as exc:
+            return Check("database_recovery", FAIL, str(exc))
+        return Check("database_recovery", PASS, "SQLite local/offsite backups are verified")
     return Check(
         "database_recovery",
         FAIL,
@@ -186,7 +195,7 @@ def run_audit(env_file: Path, verify_archives: bool) -> dict[str, object]:
             "RECEIPT_LLM_API_KEY",
         ]),
         check_repository(env),
-        check_database(env),
+        check_database(env, verify_archives),
         fleet_check,
         check_backup_secret(env, bool(nodes)),
         check_offsite_config(env, nodes),

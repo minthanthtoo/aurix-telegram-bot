@@ -99,6 +99,11 @@ python3 -m venv "$build_dir/.venv"
 "$build_dir/.venv/bin/python" -m compileall -q "$build_dir"
 "$build_dir/.venv/bin/python" "$build_dir/deploy/digitalocean_preflight.py" --live
 
+if [[ -n "${DATABASE_PATH:-}" && -z "${COMMERCE_DATABASE_URL:-}" ]]; then
+  "$build_dir/.venv/bin/python" "$build_dir/deploy/database_backup.py" verify \
+    --env-file "$env_file"
+fi
+
 if [[ -n "${AURIX_FLEET_NODES_JSON:-}" && "$skip_fleet_check" == "0" ]]; then
   "$build_dir/.venv/bin/python" "$build_dir/deploy/fleet_backup.py" verify \
     --node all --env-file "$env_file"
@@ -123,11 +128,16 @@ mv -Tf "$temporary_link" "$current_link"
 install -o root -g root -m 0644 "$release_dir/deploy/aurix-bot.service" /etc/systemd/system/aurix-bot.service
 install -o root -g root -m 0644 "$release_dir/deploy/aurix-autodeploy.service" /etc/systemd/system/aurix-autodeploy.service
 install -o root -g root -m 0644 "$release_dir/deploy/aurix-autodeploy.timer" /etc/systemd/system/aurix-autodeploy.timer
+install -o root -g root -m 0644 "$release_dir/deploy/aurix-database-backup.service" /etc/systemd/system/aurix-database-backup.service
+install -o root -g root -m 0644 "$release_dir/deploy/aurix-database-backup.timer" /etc/systemd/system/aurix-database-backup.timer
 for unit in aurix-fleet-backup.service aurix-fleet-backup.timer aurix-fleet-reconcile.service aurix-fleet-reconcile.timer; do
   install -o root -g root -m 0644 "$release_dir/deploy/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
 systemctl enable aurix-autodeploy.timer >/dev/null
+if [[ -n "${DATABASE_PATH:-}" && -z "${COMMERCE_DATABASE_URL:-}" ]]; then
+  systemctl enable aurix-database-backup.timer >/dev/null
+fi
 if [[ -n "${AURIX_FLEET_NODES_JSON:-}" ]]; then
   systemctl enable aurix-fleet-backup.timer aurix-fleet-reconcile.timer >/dev/null
 fi

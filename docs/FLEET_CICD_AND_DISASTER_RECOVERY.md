@@ -172,6 +172,18 @@ recovery is not externalized, when fleet backup encryption/offsite settings are
 invalid, or when provider/DNS automation is partially configured. Warnings mean
 the system can run but is not yet a true no-manual rebuild.
 
+SQLite commerce backups use the same fail-closed pattern:
+
+```bash
+.venv/bin/python deploy/database_backup.py backup --env-file /etc/aurix-bot/aurix.env
+.venv/bin/python deploy/database_backup.py verify --env-file /etc/aurix-bot/aurix.env
+```
+
+`aurix-database-backup.timer` is installed automatically for SQLite deployments.
+Set `AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE=1` after mounting or syncing
+`AURIX_DATABASE_BACKUP_OFFSITE_DIR`; otherwise the timer can create local
+encrypted backups but readiness remains incomplete.
+
 Restore is deliberately explicit and replaces current remote Outline state. It
 validates every tar path, rejects links/devices/traversal, preserves a remote
 rollback directory, restores, starts Shadowbox, and checks identity:
@@ -196,9 +208,10 @@ sudo deploy/recover_control_plane.sh --env-file /etc/aurix-bot/aurix.env
 ```
 
 The script builds a versioned `/opt/aurix-current` release from the cloned
-source, installs Python dependencies, runs live deploy preflight, verifies the
-newest encrypted local/offsite node backups, runs fleet `validate` and `check`,
-installs systemd units, enables deploy/fleet timers, and starts `aurix-bot`.
+source, installs Python dependencies, runs live deploy preflight, verifies
+SQLite database backups when SQLite is configured, verifies the newest encrypted
+local/offsite node backups, runs fleet `validate` and `check`, installs systemd
+units, enables deploy/fleet timers, and starts `aurix-bot`.
 
 Continue revival with:
 

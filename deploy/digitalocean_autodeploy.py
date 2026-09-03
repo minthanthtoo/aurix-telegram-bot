@@ -282,6 +282,8 @@ def activate_release(target: Path) -> None:
 def install_fleet_automation(target: Path) -> None:
     """Keep fleet units versioned with the same CI-approved release."""
     unit_names = (
+        "aurix-database-backup.service",
+        "aurix-database-backup.timer",
         "aurix-fleet-reconcile.service",
         "aurix-fleet-reconcile.timer",
         "aurix-fleet-backup.service",
@@ -295,6 +297,10 @@ def install_fleet_automation(target: Path) -> None:
         os.chmod(temporary, 0o644)
         os.replace(temporary, destination)
     run("systemctl", "daemon-reload", timeout=30)
+    if os.environ.get("DATABASE_PATH", "").strip() and not os.environ.get(
+        "COMMERCE_DATABASE_URL", ""
+    ).strip():
+        run("systemctl", "enable", "--now", "aurix-database-backup.timer", timeout=30)
     if os.environ.get("AURIX_FLEET_NODES_JSON", "").strip():
         run("systemctl", "enable", "--now", "aurix-fleet-reconcile.timer", timeout=30)
         run("systemctl", "enable", "--now", "aurix-fleet-backup.timer", timeout=30)

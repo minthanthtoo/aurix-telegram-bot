@@ -11,6 +11,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 from deploy.fleet_backup import metadata_path, write_private
+from deploy import database_backup
 from deploy.recovery_readiness import run_audit
 
 
@@ -43,7 +44,10 @@ class RecoveryReadinessTests(unittest.TestCase):
 
     def base_env(self) -> dict[str, str]:
         database = self.root / "bot.db"
-        database.write_text("placeholder", encoding="utf-8")
+        import sqlite3
+
+        with sqlite3.connect(database) as connection:
+            connection.execute("CREATE TABLE ready (id INTEGER)")
         backup = self.root / "db-backups"
         backup.mkdir()
         return {
@@ -56,7 +60,10 @@ class RecoveryReadinessTests(unittest.TestCase):
             "RECEIPT_LLM_MODEL": "vision-model",
             "RECEIPT_LLM_API_KEY": "test-key-long-enough",
             "DATABASE_PATH": str(database),
+            "AURIX_DATABASE_BACKUP_KEY": self.key,
+            "AURIX_DATABASE_BACKUP_DIR": str(self.root / "db-local"),
             "AURIX_DATABASE_BACKUP_OFFSITE_DIR": str(backup),
+            "AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE": "1",
         }
 
     def fleet_env(self) -> dict[str, str]:
@@ -79,6 +86,7 @@ class RecoveryReadinessTests(unittest.TestCase):
             "AURIX_FLEET_BACKUP_OFFSITE_DIR": str(offsite),
             "AURIX_FLEET_BACKUP_REQUIRE_OFFSITE": "1",
         })
+        database_backup.backup(values)
         ciphertext = Fernet(self.key.encode()).encrypt(
             archive_with(["access.txt", "persisted-state/config.yml"])
         )
@@ -93,7 +101,9 @@ class RecoveryReadinessTests(unittest.TestCase):
         return values
 
     def test_minimal_recovery_state_reports_warnings(self) -> None:
-        self.write_env(self.base_env())
+        values = self.base_env()
+        values["AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE"] = "0"
+        self.write_env(values)
 
         report = run_audit(self.env_file, verify_archives=False)
 

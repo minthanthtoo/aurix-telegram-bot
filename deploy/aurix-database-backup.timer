@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily encrypted AuriX SQLite database backup
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

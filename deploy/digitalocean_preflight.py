@@ -152,6 +152,25 @@ def _validate_configuration() -> dict[str, str]:
             resolved.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             fail(f"DATABASE_PATH parent is unavailable: {type(exc).__name__}")
+        database_offsite = os.environ.get("AURIX_DATABASE_BACKUP_OFFSITE_DIR", "").strip()
+        require_database_offsite = os.environ.get(
+            "AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE", ""
+        ).strip().lower() in TRUTHY
+        if database_offsite:
+            database_offsite_path = Path(database_offsite)
+            if not database_offsite_path.is_absolute():
+                fail("AURIX_DATABASE_BACKUP_OFFSITE_DIR must be an absolute path")
+            if require_database_offsite and not database_offsite_path.is_dir():
+                fail("AURIX_DATABASE_BACKUP_OFFSITE_DIR must exist when offsite is required")
+            database_backup_key = os.environ.get(
+                "AURIX_DATABASE_BACKUP_KEY", os.environ.get("AURIX_FLEET_BACKUP_KEY", "")
+            )
+            try:
+                Fernet(database_backup_key.encode())
+            except (TypeError, ValueError):
+                fail("AURIX_DATABASE_BACKUP_KEY or AURIX_FLEET_BACKUP_KEY is not a valid Fernet key")
+        elif require_database_offsite:
+            fail("AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE needs AURIX_DATABASE_BACKUP_OFFSITE_DIR")
 
     if os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").strip().lower() in TRUTHY:
         fail("ALLOW_TEXT_PAYMENT_REFERENCES must remain disabled")

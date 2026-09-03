@@ -1,0 +1,14 @@
+[Unit]
+Description=Encrypt and retain AuriX SQLite database backups
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/aurix-current
+EnvironmentFile=/etc/aurix-bot/aurix.env
+ExecStart=/opt/aurix-current/.venv/bin/python deploy/database_backup.py backup --env-file /etc/aurix-bot/aurix.env
+TimeoutStartSec=10min
+Nice=15

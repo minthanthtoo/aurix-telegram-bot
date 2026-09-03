@@ -103,6 +103,25 @@ class DigitalOceanPreflightTest(unittest.TestCase):
         with patch.dict(os.environ, environment, clear=True):
             main([])
 
+    def test_required_database_offsite_backup_path_must_exist(self):
+        environment = dict(self.environment)
+        environment["AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE"] = "1"
+        environment["AURIX_DATABASE_BACKUP_OFFSITE_DIR"] = str(Path(self.tmp.name) / "missing")
+        environment["AURIX_DATABASE_BACKUP_KEY"] = Fernet.generate_key().decode()
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "DATABASE_BACKUP_OFFSITE_DIR"):
+                main([])
+
+    def test_required_database_offsite_backup_path_can_pass(self):
+        offsite = Path(self.tmp.name) / "database-offsite"
+        offsite.mkdir()
+        environment = dict(self.environment)
+        environment["AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE"] = "1"
+        environment["AURIX_DATABASE_BACKUP_OFFSITE_DIR"] = str(offsite)
+        environment["AURIX_DATABASE_BACKUP_KEY"] = Fernet.generate_key().decode()
+        with patch.dict(os.environ, environment, clear=True):
+            main([])
+
 
 if __name__ == "__main__":
     unittest.main()
