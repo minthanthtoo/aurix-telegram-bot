@@ -83,7 +83,7 @@ flowchart TB
 |---|---|
 | Application style | Modular monolith, not microservices |
 | Primary interface | Telegram bot |
-| Production bot transport | Authenticated Telegram webhook |
+| Target production bot transport | Authenticated Telegram webhook; the current single-writer MVP deliberately uses one long-polling worker until webhook ingress, replay protection, and cutover are live-tested |
 | Local/staging transport | Long polling is acceptable |
 | Commercial database | PostgreSQL |
 | External side effects | PostgreSQL-backed jobs and transactional outbox |
@@ -428,7 +428,13 @@ stateDiagram-v2
 
 The reseller owns the commercial relationship; AuriX owns infrastructure, central customer records, policy, abuse controls, and audit. Start prepaid. Do not launch reseller credit, white-label, inventory, or multi-level commissions.
 
-## Deployment topology
+## Deployment topology (target after the single-writer MVP)
+
+This section describes the converged production target, not the currently
+deployed topology. The live MVP is one long-polling bot/worker process with
+SQLite on the Singapore control-plane host; it must remain single-writer until
+the webhook ingress, PostgreSQL migration, and independent-worker cutover are
+each rehearsed and evidenced.
 
 ### Paid pilot
 
