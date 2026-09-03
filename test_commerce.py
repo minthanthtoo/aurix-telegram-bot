@@ -410,6 +410,38 @@ class CommerceServiceTest(unittest.TestCase):
             1,
         )
 
+    def test_notification_claim_uses_a_lease_and_recovers_after_expiry(self):
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
+                (123, "Min", self.now.isoformat()),
+            )
+            connection.execute(
+                """INSERT INTO notifications
+                   (id, dedupe_key, telegram_id, kind, text, status,
+                    next_attempt_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (
+                    "notification-1",
+                    "notification-1",
+                    123,
+                    "test",
+                    "hello",
+                    self.now.isoformat(),
+                    self.now.isoformat(),
+                ),
+            )
+
+        first = self.service.claim_pending_notifications(self.now, lease_seconds=60)
+        second = self.service.claim_pending_notifications(self.now, lease_seconds=60)
+        recovered = self.service.claim_pending_notifications(
+            self.now + timedelta(seconds=60), lease_seconds=60
+        )
+
+        self.assertEqual([item["id"] for item in first], ["notification-1"])
+        self.assertEqual(second, [])
+        self.assertEqual([item["id"] for item in recovered], ["notification-1"])
+
     def test_user_usage_reports_only_owned_paid_key(self):
         order = self._paid_order(123)
         self.service.approve_order(order.order_id, 999, self.now)

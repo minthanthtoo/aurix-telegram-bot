@@ -39,7 +39,7 @@ engineering estimates, not production traffic or revenue metrics.
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
   wallet, restart-safe interaction, receipt-fingerprint, and Telegram timestamp
-  formatting suite (314 tests
+  formatting and notification-lease suite (315 tests
   passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local

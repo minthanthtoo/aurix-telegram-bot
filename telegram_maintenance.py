@@ -37,7 +37,9 @@ class TelegramMaintenanceMixin:
     def _send_pending_notifications(self) -> None:
         if self.commerce is None:
             return
-        for notification in self.commerce.pending_notifications():
+        claim = getattr(self.commerce, "claim_pending_notifications", None)
+        notifications = claim() if callable(claim) else self.commerce.pending_notifications()
+        for notification in notifications:
             if notification.get("secret_unavailable"):
                 self.commerce.mark_notification_failed(notification["id"])
                 print("notification secret unavailable", file=sys.stderr)
