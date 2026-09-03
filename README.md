@@ -86,6 +86,12 @@ Optional:
 - `RECEIPT_LLM_BASE_URL`, `RECEIPT_LLM_MODEL`, `RECEIPT_LLM_API_KEY` — optional OpenAI-compatible vision endpoint. If absent/unavailable, receipts stay in manual review.
 - `RECEIPT_LLM_FALLBACK_MODELS` — optional comma-separated routes on the same gateway. A fallback runs only when the primary fails or omits critical receipt fields; QR/payment-request negatives do not waste a fallback call.
 - `PAYMENT_RECIPIENTS_JSON` — required server-side merchant profiles for all five payment methods. Each profile contains accepted recipient `names` and/or account/phone `accounts`; values are never shown in customer messages or diagnostics.
+
+When loading `.env` with a shell or systemd `EnvironmentFile`, keep this value
+on one line and quote the complete JSON (the example below uses single quotes).
+Without shell quoting, JSON property quotes are stripped before the bot starts,
+causing the fail-closed receipt recipient check and the deployment preflight to
+reject an otherwise valid profile.
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
