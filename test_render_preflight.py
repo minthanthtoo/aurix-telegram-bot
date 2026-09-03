@@ -68,6 +68,27 @@ class RenderPreflightTest(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "fallback models require"):
             self.run_preflight(environment)
 
+    def test_receipt_selection_mode_is_allowlisted(self):
+        environment = valid_environment()
+        environment["RECEIPT_LLM_SELECTION_MODE"] = "first_and_best"
+        with self.assertRaisesRegex(SystemExit, "SELECTION_MODE"):
+            self.run_preflight(environment)
+
+    def test_receipt_consensus_requires_a_fallback_model(self):
+        environment = valid_environment()
+        environment["RECEIPT_LLM_SELECTION_MODE"] = "consensus"
+        with self.assertRaisesRegex(SystemExit, "at least one fallback"):
+            self.run_preflight(environment)
+
+    def test_receipt_consensus_with_fallback_passes(self):
+        environment = valid_environment()
+        environment["RECEIPT_LLM_BASE_URL"] = "https://vision.example/v1"
+        environment["RECEIPT_LLM_MODEL"] = "primary-model"
+        environment["RECEIPT_LLM_API_KEY"] = "test-vision-key"
+        environment["RECEIPT_LLM_SELECTION_MODE"] = "consensus"
+        environment["RECEIPT_LLM_FALLBACK_MODELS"] = "second-model"
+        self.assertIn("preflight passed", self.run_preflight(environment).lower())
+
     def test_invalid_postgres_url_is_rejected(self):
         environment = valid_environment()
         environment["COMMERCE_DATABASE_URL"] = "sqlite:///tmp/bot.db"

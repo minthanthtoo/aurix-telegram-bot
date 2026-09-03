@@ -169,6 +169,13 @@ def main() -> None:
         fail("receipt fallback models require the primary RECEIPT_LLM_* configuration")
     if len(fallback_models) > 3:
         fail("configure at most three receipt fallback models")
+    selection_mode = os.environ.get(
+        "RECEIPT_LLM_SELECTION_MODE", "first_acceptable"
+    ).strip().lower()
+    if selection_mode not in {"first_acceptable", "rank_all", "consensus"}:
+        fail("RECEIPT_LLM_SELECTION_MODE must be first_acceptable, rank_all, or consensus")
+    if selection_mode == "consensus" and len(fallback_models) < 1:
+        fail("consensus receipt selection requires at least one fallback model")
 
     profile = "persistent disk" if storage_mode == "disk" else "hosted PostgreSQL"
     print(f"Render preflight passed: single-worker {profile} configuration is valid")

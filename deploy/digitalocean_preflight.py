@@ -220,6 +220,20 @@ def _validate_configuration() -> dict[str, str]:
     llm_url = _required("RECEIPT_LLM_BASE_URL")
     llm_model = _required("RECEIPT_LLM_MODEL")
     llm_key = _required("RECEIPT_LLM_API_KEY")
+    selection_mode = os.environ.get(
+        "RECEIPT_LLM_SELECTION_MODE", "first_acceptable"
+    ).strip().lower()
+    fallback_models = [
+        item.strip()
+        for item in os.environ.get("RECEIPT_LLM_FALLBACK_MODELS", "").split(",")
+        if item.strip()
+    ]
+    if selection_mode not in {"first_acceptable", "rank_all", "consensus"}:
+        fail("RECEIPT_LLM_SELECTION_MODE must be first_acceptable, rank_all, or consensus")
+    if len(fallback_models) > 3:
+        fail("configure at most three receipt fallback models")
+    if selection_mode == "consensus" and not fallback_models:
+        fail("consensus receipt selection requires at least one fallback model")
     parsed_llm = urlsplit(llm_url)
     if parsed_llm.scheme != "https" or not parsed_llm.hostname:
         fail("RECEIPT_LLM_BASE_URL must use HTTPS")

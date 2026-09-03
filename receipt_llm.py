@@ -9,6 +9,7 @@ wallet/account transaction history before approval.
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
 import io
 import json
 import os
@@ -350,7 +351,14 @@ class FallbackReceiptExtractor:
         normalized_flags = " ".join(extraction.flags).lower().replace("-", "_")
         negative = any(
             marker in normalized_flags
-            for marker in ("not_a_receipt", "not_a_completed_receipt", "payment_qr", "qr_receive")
+            for marker in (
+                "not_a_receipt",
+                "not_a_completed_receipt",
+                "payment_qr",
+                "qr_receive",
+                "model_disagreement",
+                "consensus_unavailable",
+            )
         )
         if negative and extraction.transaction_id is None:
             return True
@@ -377,7 +385,40 @@ class FallbackReceiptExtractor:
                 extraction.recipient,
             )
         )
-        return populated + extraction.confidence
+        labels = sum(
+            value is not None
+            for value in (
+                extraction.transaction_id_label,
+                extraction.timestamp_label,
+                extraction.amount_label,
+                extraction.recipient_account_label,
+            )
+        )
+        completed = 0.5 if extraction.completion_status == "completed" else 0.0
+        risk_penalty = min(2.0, 0.25 * len(extraction.flags))
+        return populated + (0.75 * labels) + completed + extraction.confidence - risk_penalty
+
+    @staticmethod
+    def _selection_mode() -> str:
+        """Return the configured model-selection policy.
+
+        ``first_acceptable`` is the inexpensive compatibility default.  The
+        owner may opt into ``rank_all`` to compare every configured route or
+        ``consensus`` to require agreement between at least two acceptable
+        routes.  Neither mode approves a payment; disagreements are surfaced
+        as a manual-review flag.
+        """
+        value = os.environ.get("RECEIPT_LLM_SELECTION_MODE", "first_acceptable").strip().lower()
+        return value if value in {"first_acceptable", "rank_all", "consensus"} else "first_acceptable"
+
+    @staticmethod
+    def _consensus_key(extraction: ReceiptExtraction) -> tuple[str, str, str, str]:
+        return (
+            str(extraction.provider or "").strip().casefold(),
+            str(extraction.transaction_id or "").replace(" ", "").casefold(),
+            str(extraction.amount_minor if extraction.amount_minor is not None else ""),
+            str(extraction.currency or "").strip().casefold(),
+        )
 
     def extract(
         self, image_bytes: bytes, mime_type: str = "image/jpeg", expected_provider: str | None = None
@@ -394,6 +435,7 @@ class FallbackReceiptExtractor:
         expected_provider: str | None = None,
     ) -> tuple[ReceiptExtraction, dict[str, Any]]:
         normalized, normalized_mime = normalize_receipt_image(image_bytes, mime_type)
+        selection_mode = self._selection_mode()
         attempts: list[dict[str, Any]] = []
         candidates: list[tuple[ReceiptExtraction, dict[str, Any]]] = []
         last_error: ReceiptExtractionError | None = None
@@ -419,7 +461,7 @@ class FallbackReceiptExtractor:
                     }
                 )
                 candidates.append((extraction, diagnostics))
-                if self._is_acceptable(extraction):
+                if self._is_acceptable(extraction) and selection_mode == "first_acceptable":
                     diagnostics = dict(diagnostics)
                     diagnostics["attempts"] = attempts
                     diagnostics["selected_model"] = extractor.model
@@ -438,11 +480,43 @@ class FallbackReceiptExtractor:
                     }
                 )
         if candidates:
-            extraction, diagnostics = max(candidates, key=lambda item: self._score(item[0]))
+            acceptable = [item for item in candidates if self._is_acceptable(item[0])]
+            ranked = acceptable or candidates
+            ranked = sorted(
+                enumerate(ranked),
+                key=lambda item: (self._score(item[1][0]), -item[0]),
+                reverse=True,
+            )
+            extraction, diagnostics = ranked[0][1]
+            if selection_mode in {"rank_all", "consensus"}:
+                consensus = {self._consensus_key(item[0]) for item in acceptable}
+                review_flags: set[str] = set()
+                if len(acceptable) < 2 and selection_mode == "consensus":
+                    review_flags.add("consensus_unavailable")
+                elif len(consensus) > 1:
+                    review_flags.add("model_disagreement")
+                if review_flags:
+                    extraction = replace(
+                        extraction,
+                        flags=tuple(sorted(set(extraction.flags) | review_flags)),
+                    )
             diagnostics = dict(diagnostics)
             diagnostics["attempts"] = attempts
             diagnostics["selected_model"] = diagnostics.get("model")
             diagnostics["normalized_byte_size"] = len(normalized)
+            diagnostics["selection_mode"] = selection_mode
+            diagnostics["candidate_scores"] = [
+                {
+                    "model": item[1].get("model"),
+                    "score": round(self._score(item[0]), 3),
+                    "acceptable": self._is_acceptable(item[0]),
+                }
+                for item in candidates
+            ]
+            if selection_mode == "consensus" and len(acceptable) >= 2:
+                diagnostics["consensus"] = len(
+                    {self._consensus_key(item[0]) for item in acceptable}
+                ) == 1
             return extraction, diagnostics
         error = ReceiptLLMUnavailable("All receipt vision routes were unavailable")
         error.diagnostics = {
@@ -451,6 +525,7 @@ class FallbackReceiptExtractor:
             "model": self.model,
             "attempts": attempts,
             "last_error_type": type(last_error).__name__ if last_error else None,
+            "selection_mode": selection_mode,
         }
         raise error from last_error
 

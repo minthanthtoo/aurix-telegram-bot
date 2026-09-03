@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -792,6 +793,42 @@ class MvpFeatureTest(unittest.TestCase):
         self.assertIsNone(result.transaction_id)
         self.assertEqual(primary.calls, 1)
         self.assertEqual(fallback.calls, 0)
+
+    def test_receipt_consensus_mode_surfaces_model_disagreement(self):
+        class StubExtractor:
+            base_url = "https://gateway.example/v1"
+            api_key = "test-only"
+
+            def __init__(self, model, extraction):
+                self.model = model
+                self.extraction = extraction
+
+            def extract_with_diagnostics(self, _image, _mime):
+                return self.extraction, {"model": self.model, "duration_ms": 10}
+
+        first = ReceiptExtraction(
+            "WavePay", "TX-ONE", 150000, "MMK", "2026-08-27T03:05:00+00:00",
+            "Merchant", 0.95, (), (), "completed", "Transaction ID", "Date/time",
+            "Amount", None, None, "completed_receipt",
+        )
+        second = ReceiptExtraction(
+            "WavePay", "TX-TWO", 150000, "MMK", "2026-08-27T03:05:00+00:00",
+            "Merchant", 0.94, (), (), "completed", "Transaction ID", "Date/time",
+            "Amount", None, None, "completed_receipt",
+        )
+        chain = FallbackReceiptExtractor([
+            StubExtractor("primary", first), StubExtractor("fallback", second)
+        ])
+        image = io.BytesIO()
+        Image.new("RGB", (20, 20), "white").save(image, "PNG")
+
+        with patch.dict(os.environ, {"RECEIPT_LLM_SELECTION_MODE": "consensus"}, clear=False):
+            result, diagnostics = chain.extract_with_diagnostics(image.getvalue(), "image/png")
+
+        self.assertIn("model_disagreement", result.flags)
+        self.assertEqual(diagnostics["selection_mode"], "consensus")
+        self.assertFalse(diagnostics["consensus"])
+        self.assertEqual(len(diagnostics["candidate_scores"]), 2)
 
     def test_assisted_receipt_extraction_job_is_durable_and_never_approves(self):
         order = self.commerce.create_order(777, "Queued", "basic_50gb", self.now)
