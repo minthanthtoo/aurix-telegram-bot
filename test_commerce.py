@@ -610,11 +610,30 @@ class CommerceServiceTest(unittest.TestCase):
     def test_infrastructure_request_records_intent_only(self):
         environment = {
             "AURIX_INFRASTRUCTURE_QUEUE_ENABLED": "1",
+            "AURIX_SCALE_OBSERVATION_INTERVAL_SECONDS": "0",
             "AURIX_SCALE_REGION": "sgp1",
             "AURIX_SCALE_DROPLET_SIZE": "s-1vcpu-1gb",
             "AURIX_SCALE_DROPLET_IMAGE": "ubuntu-24-04-x64",
         }
         with patch.dict(os.environ, environment, clear=False):
+            self.service.register_outline_servers({"default": "Singapore"})
+            for key_id in range(1, 9):
+                self.outline.add_key(str(key_id), f"existing-{key_id}")
+            self.service.refresh_server_inventory(self.now)
+            self.service.configure_server_capacity(
+                "default",
+                999,
+                max_keys=12,
+                reserved_keys=2,
+                monthly_traffic_bytes=1_000_000_000_000,
+            )
+            first = self.service.capacity_snapshot(self.now)
+            self.assertEqual(first["scale_advice"]["consecutive_observations"], 1)
+            self.assertFalse(first["scale_advice"]["observation_ready"])
+            with self.assertRaisesRegex(CommerceError, "separate observations"):
+                self.service.queue_infrastructure_provision(999, self.now)
+            second = self.service.capacity_snapshot(self.now + timedelta(minutes=1))
+            self.assertTrue(second["scale_advice"]["observation_ready"])
             job_id = self.service.queue_infrastructure_provision(999, self.now)
         with self.database.connect() as connection:
             row = connection.execute(
@@ -911,15 +930,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "fcc1f9cc6dd47c85e20570b1d75d64ffe11956d7cecc8b06491246c1f2d4d18b",
+            "d8db39dce84061b36f525528ceb84a16ab7a3b13895180050543328eb1f7fd51",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "24645794c27755d2832ab759add315f715783c54ae21080e7f133ef47c669bcf",
+            "02545f15c5331fe295656b252bb9d71c0d693004ea16a05ca1de31dd97271776",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "05bd2a36752bd96dc5481b04ffc428ba6af20476533d40fb28756e2ff38aab8f",
+            "a7a769b6a57137198df724de72b76a734029f287e5cfa8e0b40064871ffdb9a6",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

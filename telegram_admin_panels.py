@@ -197,6 +197,11 @@ class TelegramAdminMixin:
                 "Scaling mode: assisted · no automatic purchase or server deletion.",
             ]
         )
+        if str(advice.get("status") or "") in {"prepare", "urgent"}:
+            observed = int(advice.get("consecutive_observations") or 0)
+            required = int(advice.get("required_observations") or 2)
+            gate_text = "ready" if advice.get("observation_ready") else "observe again before queueing"
+            lines.append(f"Scale evidence: {observed}/{required} consecutive observations · {gate_text}")
         for item in servers:
             max_keys = item.get("max_keys")
             remaining = item.get("remaining_key_slots")
@@ -271,7 +276,10 @@ class TelegramAdminMixin:
             "on",
         }
         if queue_enabled and advice_status in {"prepare", "urgent"}:
-            rows.append([("🛠 Prepare next node", "a:n:prepare")])
+            if (snapshot.get("scale_advice") or {}).get("observation_ready"):
+                rows.append([("🛠 Prepare next node", "a:n:prepare")])
+            else:
+                rows.append([("⏱ Collect another observation", "a:n:capacity")])
         rows.append([("🔄 Reconcile", "a:n:capacity"), ("🏠 Admin Home", "a:n:admin")])
         text = self._capacity_text(snapshot)
         markup = self._inline_keyboard(rows)

@@ -118,6 +118,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 5, "fleet_lifecycle_and_tier_capacity"),
                     ("commerce", 6, "provider_inventory_and_node_identity"),
                     ("commerce", 7, "remote_key_inventory_audit"),
+                    ("commerce", 8, "scale_observation_history"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

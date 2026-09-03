@@ -676,6 +676,48 @@ COMMERCE_MIGRATIONS = (
                ON outline_remote_keys(server_id, status, managed)""",
         ),
     ),
+    Migration(
+        8,
+        "scale_observation_history",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS scale_observations (
+                   id TEXT PRIMARY KEY,
+                   fleet_fingerprint TEXT NOT NULL,
+                   observed_at TEXT NOT NULL,
+                   status TEXT NOT NULL CHECK (
+                       status IN ('stable', 'prepare', 'urgent', 'blocked', 'unconfigured')
+                   ),
+                   utilization_percent REAL,
+                   remaining_slots INTEGER,
+                   saleable_capacity INTEGER,
+                   traffic_utilization_percent REAL,
+                   healthy_server_count INTEGER NOT NULL DEFAULT 0,
+                   created_at TEXT NOT NULL,
+                   UNIQUE (fleet_fingerprint, observed_at)
+               )""",
+            """CREATE INDEX IF NOT EXISTS scale_observations_recent
+               ON scale_observations(observed_at)""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS scale_observations (
+                   id TEXT PRIMARY KEY,
+                   fleet_fingerprint TEXT NOT NULL,
+                   observed_at TEXT NOT NULL,
+                   status TEXT NOT NULL CHECK (
+                       status IN ('stable', 'prepare', 'urgent', 'blocked', 'unconfigured')
+                   ),
+                   utilization_percent DOUBLE PRECISION,
+                   remaining_slots INTEGER,
+                   saleable_capacity INTEGER,
+                   traffic_utilization_percent DOUBLE PRECISION,
+                   healthy_server_count INTEGER NOT NULL DEFAULT 0,
+                   created_at TEXT NOT NULL,
+                   UNIQUE (fleet_fingerprint, observed_at)
+               )""",
+            """CREATE INDEX IF NOT EXISTS scale_observations_recent
+               ON scale_observations(observed_at)""",
+        ),
+    ),
 )
 
 

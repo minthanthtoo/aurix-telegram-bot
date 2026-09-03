@@ -299,6 +299,11 @@ AURIX_SCALE_PREPARE_UTILIZATION_PERCENT=75
 AURIX_SCALE_URGENT_UTILIZATION_PERCENT=90
 AURIX_SCALE_PREPARE_TRAFFIC_PERCENT=75
 AURIX_SCALE_URGENT_TRAFFIC_PERCENT=90
+# A scale-out intent requires two qualifying observations. The interval is
+# deliberately non-zero in production so repeated Telegram refreshes cannot
+# manufacture independent evidence.
+AURIX_SCALE_REQUIRED_OBSERVATIONS=2
+AURIX_SCALE_OBSERVATION_INTERVAL_SECONDS=300
 AURIX_INFRASTRUCTURE_QUEUE_ENABLED=0
 AURIX_SCALE_REGION=sgp1
 AURIX_SCALE_DROPLET_SIZE=s-1vcpu-1gb
@@ -345,6 +350,13 @@ Before queuing, estimate pending reservations, expiring keys in the next 24/72
 hours, recent order arrival rate, current cloud spend, new-node lead time, and
 manual verification availability. Early production should be recommend/approve,
 not autonomous create.
+
+The implementation persists each non-secret fleet posture in
+`scale_observations`. A qualifying `Prepare` or `Urgent` posture must be seen in
+the configured number of distinct observation windows (two by default) before
+the Telegram **Prepare next node** action can create an infrastructure intent.
+A stable, blocked, or unconfigured observation resets the consecutive count.
+The intent remains provider-gated and does not itself create a Droplet.
 
 ## 14. Drain and scale-in
 

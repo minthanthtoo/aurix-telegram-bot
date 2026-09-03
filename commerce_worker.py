@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import sys
@@ -818,6 +820,124 @@ class CommerceWorkerMixin:
                 )
         return scheduled
 
+    @staticmethod
+    def _required_scale_observations() -> int:
+        """Return the minimum independent scale observations required to queue."""
+        try:
+            return max(2, min(10, int(os.environ.get("AURIX_SCALE_REQUIRED_OBSERVATIONS", "2"))))
+        except (TypeError, ValueError):
+            return 2
+
+    @staticmethod
+    def _scale_observation_interval_seconds() -> int:
+        """Bound the interval so repeated UI refreshes cannot fake a window."""
+        try:
+            return max(
+                0,
+                min(
+                    86_400,
+                    int(os.environ.get("AURIX_SCALE_OBSERVATION_INTERVAL_SECONDS", "300")),
+                ),
+            )
+        except (TypeError, ValueError):
+            return 300
+
+    def _record_scale_observation(
+        self,
+        current: datetime,
+        servers: list[dict[str, Any]],
+        advice: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist a non-secret fleet posture and calculate its consecutive gate.
+
+        A capacity button may be pressed repeatedly, so observations are
+        rate-limited and idempotent. Only distinct time windows count toward a
+        scale-out intent; a stable/blocked observation resets the consecutive
+        qualifying count. This is evidence collection only and never calls a
+        provider.
+        """
+        required = self._required_scale_observations()
+        interval = self._scale_observation_interval_seconds()
+        observed_at = _now_text(current)
+        fingerprint_payload = [
+            {
+                "server_id": str(item.get("server_id") or ""),
+                "enabled": int(item.get("enabled") or 0),
+                "health_status": str(item.get("health_status") or ""),
+                "saleable_key_capacity": item.get("saleable_key_capacity"),
+                "key_demand": item.get("key_demand"),
+                "remaining_key_slots": item.get("remaining_key_slots"),
+                "monthly_traffic_bytes": item.get("monthly_traffic_bytes"),
+                "committed_traffic_bytes": item.get("committed_traffic_bytes"),
+            }
+            for item in sorted(servers, key=lambda value: str(value.get("server_id") or ""))
+        ]
+        fleet_fingerprint = hashlib.sha256(
+            json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
+        healthy_count = sum(1 for item in servers if item.get("health_status") == "healthy")
+        status = str(advice.get("status") or "unconfigured")
+        with self.database.connect() as connection:
+            if not self._table_exists(connection, "scale_observations"):
+                return {
+                    "consecutive_observations": 0,
+                    "required_observations": required,
+                    "observation_ready": False,
+                    "last_observed_at": None,
+                }
+            self.database.begin_write(connection)
+            latest = connection.execute(
+                """SELECT observed_at FROM scale_observations
+                   ORDER BY observed_at DESC LIMIT 1"""
+            ).fetchone()
+            should_insert = True
+            latest_at: datetime | None = None
+            if latest is not None and latest["observed_at"]:
+                try:
+                    latest_at = datetime.fromisoformat(str(latest["observed_at"])).astimezone(UTC)
+                except (TypeError, ValueError):
+                    latest_at = None
+                if latest_at is not None:
+                    current_utc = current.astimezone(UTC)
+                    should_insert = current_utc > latest_at + timedelta(seconds=interval)
+            if should_insert:
+                connection.execute(
+                    """INSERT INTO scale_observations
+                       (id, fleet_fingerprint, observed_at, status,
+                        utilization_percent, remaining_slots, saleable_capacity,
+                        traffic_utilization_percent, healthy_server_count, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(fleet_fingerprint, observed_at) DO NOTHING""",
+                    (
+                        _new_id(),
+                        fleet_fingerprint,
+                        observed_at,
+                        status,
+                        advice.get("utilization_percent"),
+                        advice.get("remaining_slots"),
+                        advice.get("saleable_capacity"),
+                        advice.get("traffic_utilization_percent"),
+                        healthy_count,
+                        observed_at,
+                    ),
+                )
+            rows = connection.execute(
+                """SELECT observed_at, status FROM scale_observations
+                   ORDER BY observed_at DESC LIMIT 10"""
+            ).fetchall()
+        consecutive = 0
+        for row in rows:
+            if str(row["status"]) not in {"prepare", "urgent"}:
+                break
+            consecutive += 1
+        return {
+            "consecutive_observations": consecutive,
+            "required_observations": required,
+            "observation_ready": status in {"prepare", "urgent"} and consecutive >= required,
+            "last_observed_at": rows[0]["observed_at"] if rows else None,
+            "observation_interval_seconds": interval,
+        }
+
     def capacity_snapshot(self, now: datetime | None = None) -> dict[str, Any]:
         """Return declared capacity beside observed remote inventory/telemetry."""
         current = (now or datetime.now(UTC)).astimezone(UTC)
@@ -987,12 +1107,14 @@ class CommerceWorkerMixin:
                 outline_version = str(self.outline.server_info().get("version", "unknown"))[:64]
             except Exception:
                 pass
+        advice = self._scale_advice(servers)
+        advice.update(self._record_scale_observation(current, servers, advice))
         return {
             **dict(counts),
             "outline_version": outline_version,
             "usage": usage,
             "servers": servers,
-            "scale_advice": self._scale_advice(servers),
+            "scale_advice": advice,
         }
 
     @staticmethod

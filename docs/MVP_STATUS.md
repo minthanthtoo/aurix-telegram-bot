@@ -28,7 +28,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Live Telegram and Outline smoke test | Three management/data endpoints verified; customer tranche controlled | Bot, primary, Singapore-B, and BKK/Nube Outline endpoints, firewall, pinned-TLS API canaries, and a reversible BKK data-port/key create-delete canary are verified; a real Telegram-account canary and longer observation remain |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
 | Referrals, affiliates, and resellers | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
-| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, non-secret remote-key audit, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; untracked remote keys remain a migration blocker and BKK is healthy/canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
+| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, non-secret remote-key audit, durable two-observation scale gate, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; untracked remote keys remain a migration blocker and BKK is healthy/canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
 
 ## Honest aggregate view
 

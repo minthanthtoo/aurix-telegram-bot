@@ -154,6 +154,18 @@ class CommerceService(CommerceWorkerMixin):
             "on",
         }:
             raise CommerceError("Infrastructure provisioning is not enabled for this deployment.")
+        current = now or datetime.now(UTC)
+        snapshot = self.capacity_snapshot(current)
+        advice = snapshot.get("scale_advice") or {}
+        if str(advice.get("status") or "") not in {"prepare", "urgent"}:
+            raise CommerceError("A scale-out intent is allowed only in Prepare or Urgent posture.")
+        if not bool(advice.get("observation_ready")):
+            required = int(advice.get("required_observations") or 2)
+            observed = int(advice.get("consecutive_observations") or 0)
+            raise CommerceError(
+                f"Scale-out evidence is not ready: collect {required} separate observations "
+                f"({observed}/{required} recorded)."
+            )
         from infrastructure import FleetController
 
         controller = FleetController(self.database)
