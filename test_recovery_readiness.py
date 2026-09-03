@@ -195,6 +195,28 @@ class RecoveryReadinessTests(unittest.TestCase):
 
         self.assertEqual(report["status"], "pass")
 
+    def test_legacy_overallocation_is_visible_when_strict_mode_is_disabled(self) -> None:
+        values = self.fleet_env()
+        values["AURIX_FLEET_NODES_JSON"] = json.dumps([{
+            "id": "sg-a",
+            "label": "Singapore A",
+            "host": "192.0.2.10",
+            "api_port": 61603,
+            "keys_port": 443,
+            "max_keys": 5,
+            "reserved_keys": 2,
+            "tier_slots": {"FREE300MB": 2},
+            "plan_slots": {"basic_50gb": 2},
+        }])
+        values["AURIX_FLEET_STRICT_ALLOCATION_VALIDATION"] = "0"
+        self.write_env(values)
+
+        report = run_audit(self.env_file, verify_archives=False)
+
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["allocation_policy"]["status"], "warn")
+        self.assertIn("legacy over-allocation", checks["allocation_policy"]["detail"])
+
     def test_required_dns_without_configuration_fails(self) -> None:
         values = self.fleet_env()
         values["AURIX_DNS_REQUIRE"] = "1"

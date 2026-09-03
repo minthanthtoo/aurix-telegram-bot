@@ -123,6 +123,29 @@ def check_fleet_manifest(env: dict[str, str]) -> tuple[Check, list[FleetNode]]:
     return Check("fleet_manifest", PASS, f"{len(nodes)} fleet node(s) configured"), nodes
 
 
+def check_allocation_policy(env: dict[str, str], nodes: list[FleetNode]) -> Check:
+    """Make compatibility-mode over-allocation visible in every readiness audit."""
+    if not nodes:
+        return Check("allocation_policy", WARN, "not required without fleet nodes")
+    overallocated = []
+    for node in nodes:
+        saleable = max(0, int(node.max_keys) - int(node.reserved_keys))
+        allocated = sum(node.plan_slots.values()) + sum(node.tier_slots.values())
+        if allocated > saleable:
+            overallocated.append(f"{node.node_id}={allocated}/{saleable}")
+    if not overallocated:
+        return Check("allocation_policy", PASS, "declared plan/tier slots fit saleable key headroom")
+    if truthy(env.get("AURIX_FLEET_STRICT_ALLOCATION_VALIDATION")):
+        return Check("allocation_policy", FAIL, "strict allocation validation rejected over-allocation")
+    return Check(
+        "allocation_policy",
+        WARN,
+        "legacy over-allocation; enable strict validation after owner normalization ("
+        + ", ".join(overallocated)
+        + ")",
+    )
+
+
 def check_backup_secret(env: dict[str, str], has_fleet: bool) -> Check:
     if not has_fleet:
         return Check("fleet_backup_key", WARN, "not required without fleet nodes")
@@ -233,6 +256,7 @@ def run_audit(env_file: Path, verify_archives: bool) -> dict[str, object]:
         check_repository(env),
         check_database(env, verify_archives),
         fleet_check,
+        check_allocation_policy(env, nodes),
         check_backup_secret(env, bool(nodes)),
         check_offsite_config(env, nodes),
         check_backup_archives(env, nodes, verify_archives),
