@@ -40,7 +40,8 @@ engineering estimates, not production traffic or revenue metrics.
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
   wallet, restart-safe interaction, receipt-fingerprint, Telegram timestamp
   formatting, notification-lease, deterministic-entitlement-recovery, receipt-model-selection, and
-  provider-activation-gate, release-unit, preflight-gate, and recovery-audit suite (330 tests
+  provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
+  production-acceptance suite (332 tests
   passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local

@@ -193,6 +193,16 @@ as proof of identity. If any prerequisite is missing, the job remains
 Do not set `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1` until provider inventory,
 budget, Outline installation, firewall restrictions and canary tests have passed.
 
+Before declaring a release production-ready, run the source-controlled
+acceptance audit. It is intentionally a gate: warnings for allocation policy,
+DNS, canaries, or sustained observation keep the result non-passing.
+
+```sh
+python deploy/production_acceptance.py \
+  --env-file /etc/aurix-bot/aurix.env \
+  --verify-archives --live
+```
+
 Use `/start`, `/claim`, `/trial`, `/plans`, `/buy`, send a receipt screenshot,
 `/receipts`, `/receipt`, `/verify`, `/approve`, `/myvpn`, and `/capacity` with an owner test
 account. Verify the Outline key inventory before and after provisioning, quota
