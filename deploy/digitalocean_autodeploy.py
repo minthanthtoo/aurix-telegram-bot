@@ -42,6 +42,16 @@ RELEASE_GATE_VARIABLES = (
     "RECEIPT_LLM_API_KEY",
     "PAYMENT_RECIPIENTS_JSON",
 )
+VERSIONED_UNIT_NAMES = (
+    "aurix-database-backup.service",
+    "aurix-database-backup.timer",
+    "aurix-fleet-reconcile.service",
+    "aurix-fleet-reconcile.timer",
+    "aurix-fleet-backup.service",
+    "aurix-fleet-backup.timer",
+    "aurix-infrastructure-worker.service",
+    "aurix-infrastructure-worker.timer",
+)
 
 
 class DeployError(RuntimeError):
@@ -281,15 +291,7 @@ def activate_release(target: Path) -> None:
 
 def install_fleet_automation(target: Path) -> None:
     """Keep fleet units versioned with the same CI-approved release."""
-    unit_names = (
-        "aurix-database-backup.service",
-        "aurix-database-backup.timer",
-        "aurix-fleet-reconcile.service",
-        "aurix-fleet-reconcile.timer",
-        "aurix-fleet-backup.service",
-        "aurix-fleet-backup.timer",
-    )
-    for name in unit_names:
+    for name in VERSIONED_UNIT_NAMES:
         source = target / "deploy" / name
         destination = Path("/etc/systemd/system") / name
         temporary = destination.with_name(f".{name}.tmp")

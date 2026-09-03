@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from deploy.digitalocean_autodeploy import (
+    VERSIONED_UNIT_NAMES,
     ci_conclusion,
     github_slug,
     make_release_traversable,
@@ -15,6 +16,9 @@ from deploy.digitalocean_autodeploy import (
 
 
 class DigitalOceanDeployTest(unittest.TestCase):
+    def test_operational_units_are_versioned_with_the_release(self):
+        self.assertIn("aurix-infrastructure-worker.service", VERSIONED_UNIT_NAMES)
+        self.assertIn("aurix-infrastructure-worker.timer", VERSIONED_UNIT_NAMES)
     def test_receipt_smoke_is_directly_executable_outside_repository(self):
         script = Path(__file__).resolve().parent / "deploy/receipt_pipeline_smoke.py"
         with tempfile.TemporaryDirectory() as temporary:
