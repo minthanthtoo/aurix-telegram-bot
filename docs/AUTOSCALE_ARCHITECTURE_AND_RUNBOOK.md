@@ -180,7 +180,10 @@ existing deployment with legacy over-allocated policy can be migrated without
 an unexpected outage. Enable it only after each node's
 `sum(tier_slots)+sum(plan_slots)` is at most `max_keys-reserved_keys`; the
 strict gate then fails deployment/reconciliation before that policy can be
-activated.
+activated. Fleet reconciliation applies the complete capacity and allocation
+policy in one database transaction, so a legacy over-allocation can be reduced
+to a valid manifest without a transient strict-mode failure or partially
+updated server policy.
 
 Paid orders reserve capacity before receipt submission. Cancellation/rejection
 releases the reservation. Free/promo creation increments the reconciled remote

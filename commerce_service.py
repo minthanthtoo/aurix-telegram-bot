@@ -368,6 +368,7 @@ class CommerceService(CommerceWorkerMixin):
             )
             if getattr(updated, "rowcount", 1) == 0:
                 raise CommerceError("Outline server is not configured in the environment")
+            self._validate_server_allocation_capacity(connection, server_id)
             self._audit(
                 connection, "server_capacity_changed", "outline_server", server_id,
                 "admin", str(admin_id),
@@ -396,6 +397,7 @@ class CommerceService(CommerceWorkerMixin):
                      slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
                 (server_id, plan_code, int(slot_limit), now_text),
             )
+            self._validate_server_allocation_capacity(connection, server_id)
             self._audit(
                 connection, "plan_capacity_changed", "outline_server", server_id,
                 "admin", str(admin_id), {"plan_code": plan_code, "slot_limit": int(slot_limit)},
@@ -424,6 +426,7 @@ class CommerceService(CommerceWorkerMixin):
                      slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
                 (server_id, normalized, int(slot_limit), now_text),
             )
+            self._validate_server_allocation_capacity(connection, server_id)
             self._audit(
                 connection,
                 "tier_capacity_changed",
@@ -432,6 +435,165 @@ class CommerceService(CommerceWorkerMixin):
                 "admin",
                 str(admin_id),
                 {"tier_code": normalized, "slot_limit": int(slot_limit)},
+            )
+
+    @staticmethod
+    def _validate_server_allocation_capacity(connection: Any, server_id: str) -> None:
+        """Reject a new over-allocation when strict fleet policy is enabled.
+
+        Existing deployments can remain in compatibility mode while their
+        manifest is migrated. Once strict validation is enabled, Telegram
+        capacity controls and declarative reconciliation share the same
+        invariant: the sum of all plan/tier slots cannot exceed saleable key
+        headroom. The transaction rolls back on failure, so an admin cannot
+        leave a partially updated policy behind.
+        """
+        if os.environ.get("AURIX_FLEET_STRICT_ALLOCATION_VALIDATION", "").strip().lower() not in {
+            "1", "true", "yes", "on",
+        }:
+            return
+        server = connection.execute(
+            "SELECT max_keys, reserved_keys FROM outline_servers WHERE server_id = ?",
+            (server_id,),
+        ).fetchone()
+        if server is None or server["max_keys"] is None:
+            return
+        saleable = max(0, int(server["max_keys"]) - int(server["reserved_keys"] or 0))
+        plan_total = int(
+            connection.execute(
+                "SELECT COALESCE(SUM(slot_limit), 0) AS n FROM server_plan_allocations WHERE server_id = ?",
+                (server_id,),
+            ).fetchone()["n"]
+            or 0
+        )
+        tier_total = int(
+            connection.execute(
+                "SELECT COALESCE(SUM(slot_limit), 0) AS n FROM server_tier_allocations WHERE server_id = ?",
+                (server_id,),
+            ).fetchone()["n"]
+            or 0
+        )
+        total = plan_total + tier_total
+        if total > saleable:
+            raise CommerceError(
+                f"server {server_id} allocates {total} slots but only {saleable} remain after reserved headroom"
+            )
+
+    def apply_server_policy(
+        self,
+        server_id: str,
+        admin_id: int,
+        *,
+        max_keys: int | None,
+        reserved_keys: int,
+        monthly_traffic_bytes: int | None,
+        plan_slots: dict[str, int],
+        tier_slots: dict[str, int],
+    ) -> None:
+        """Apply one complete server policy atomically.
+
+        Fleet reconciliation can migrate a legacy over-allocated database to a
+        strict manifest only if capacity and all allocations are changed in one
+        transaction. Calling the individual Telegram controls sequentially
+        would reject the transient state before the later reductions arrive.
+        """
+        if max_keys is not None and int(max_keys) <= 0:
+            raise CommerceError("Maximum keys must be positive")
+        if int(reserved_keys) < 0:
+            raise CommerceError("Reserved headroom cannot be negative")
+        if monthly_traffic_bytes is not None and int(monthly_traffic_bytes) <= 0:
+            raise CommerceError("Traffic budget must be positive")
+        normalized_plans = {str(code): int(limit) for code, limit in plan_slots.items()}
+        normalized_tiers = {str(code).upper(): int(limit) for code, limit in tier_slots.items()}
+        if any(limit < 0 for limit in normalized_plans.values()):
+            raise CommerceError("Plan slots cannot be negative")
+        if any(limit < 0 for limit in normalized_tiers.values()):
+            raise CommerceError("Tier slots cannot be negative")
+        if any(code not in {str(plan.code) for plan in self.plans()} for code in normalized_plans):
+            raise CommerceError("Unknown plan")
+        if any(code not in {"FREE300MB", "FREE3GB", "PROMO"} for code in normalized_tiers):
+            raise CommerceError("Unknown free or promotional tier")
+        now_text = _now_text()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            server = connection.execute(
+                "SELECT max_keys, reserved_keys, monthly_traffic_bytes FROM outline_servers "
+                "WHERE server_id = ? AND enabled = 1",
+                (server_id,),
+            ).fetchone()
+            if server is None:
+                raise CommerceError("Outline server is unavailable")
+            existing_plans = {
+                str(row["plan_code"]): int(row["slot_limit"] or 0)
+                for row in connection.execute(
+                    "SELECT plan_code, slot_limit FROM server_plan_allocations WHERE server_id = ?",
+                    (server_id,),
+                ).fetchall()
+            }
+            existing_tiers = {
+                str(row["tier_code"]): int(row["slot_limit"] or 0)
+                for row in connection.execute(
+                    "SELECT tier_code, slot_limit FROM server_tier_allocations WHERE server_id = ?",
+                    (server_id,),
+                ).fetchall()
+            }
+            desired_plans = {code: limit for code, limit in normalized_plans.items()}
+            desired_tiers = {code: limit for code, limit in normalized_tiers.items()}
+            changed = (
+                server["max_keys"] != max_keys
+                or int(server["reserved_keys"] or 0) != int(reserved_keys)
+                or server["monthly_traffic_bytes"] != monthly_traffic_bytes
+                or existing_plans != desired_plans
+                or existing_tiers != desired_tiers
+            )
+            if not changed:
+                return
+            connection.execute(
+                """UPDATE outline_servers SET max_keys = ?, reserved_keys = ?,
+                          monthly_traffic_bytes = ?, updated_at = ? WHERE server_id = ?""",
+                (max_keys, reserved_keys, monthly_traffic_bytes, now_text, server_id),
+            )
+            # Clear stale rows first; no intermediate strict check is performed
+            # until every manifest value is present in this transaction.
+            connection.execute(
+                "UPDATE server_plan_allocations SET slot_limit = 0, updated_at = ? WHERE server_id = ?",
+                (now_text, server_id),
+            )
+            connection.execute(
+                "UPDATE server_tier_allocations SET slot_limit = 0, updated_at = ? WHERE server_id = ?",
+                (now_text, server_id),
+            )
+            for plan_code, slot_limit in desired_plans.items():
+                connection.execute(
+                    """INSERT INTO server_plan_allocations
+                       (server_id, plan_code, slot_limit, updated_at) VALUES (?, ?, ?, ?)
+                       ON CONFLICT(server_id, plan_code) DO UPDATE SET
+                         slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
+                    (server_id, plan_code, slot_limit, now_text),
+                )
+            for tier_code, slot_limit in desired_tiers.items():
+                connection.execute(
+                    """INSERT INTO server_tier_allocations
+                       (server_id, tier_code, slot_limit, updated_at) VALUES (?, ?, ?, ?)
+                       ON CONFLICT(server_id, tier_code) DO UPDATE SET
+                         slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
+                    (server_id, tier_code, slot_limit, now_text),
+                )
+            self._validate_server_allocation_capacity(connection, server_id)
+            self._audit(
+                connection,
+                "server_policy_reconciled",
+                "outline_server",
+                server_id,
+                "admin",
+                str(admin_id),
+                {
+                    "max_keys": max_keys,
+                    "reserved_keys": int(reserved_keys),
+                    "monthly_traffic_bytes": monthly_traffic_bytes,
+                    "plan_slots": desired_plans,
+                    "tier_slots": desired_tiers,
+                },
             )
 
     def _select_server_for_plan(self, connection: Any, plan_code: str, now_text: str) -> str:

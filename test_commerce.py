@@ -609,6 +609,54 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(row["server_id"], "default")
         self.assertIsNotNone(row["capacity_reserved_until"])
 
+    def test_strict_capacity_controls_reject_overallocation_atomically(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        with patch.dict(os.environ, {"AURIX_FLEET_STRICT_ALLOCATION_VALIDATION": "1"}, clear=False):
+            self.service.configure_server_capacity(
+                "default", 999, max_keys=3, reserved_keys=1,
+                monthly_traffic_bytes=1_000_000_000_000,
+            )
+            self.service.configure_plan_allocation("default", "basic_50gb", 2, 999)
+            with self.assertRaisesRegex(CommerceError, "allocates 3 slots but only 2"):
+                self.service.configure_tier_allocation("default", "FREE300MB", 1, 999)
+
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT slot_limit FROM server_tier_allocations WHERE server_id = ? AND tier_code = ?",
+                ("default", "FREE300MB"),
+            ).fetchone()
+        self.assertIsNone(row)
+
+    def test_strict_fleet_policy_can_migrate_legacy_overallocation_atomically(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        with patch.dict(os.environ, {"AURIX_FLEET_STRICT_ALLOCATION_VALIDATION": "0"}, clear=False):
+            self.service.configure_server_capacity(
+                "default", 999, max_keys=10, reserved_keys=2,
+                monthly_traffic_bytes=1_000_000_000_000,
+            )
+            self.service.configure_plan_allocation("default", "basic_50gb", 10, 999)
+            self.service.configure_tier_allocation("default", "FREE300MB", 10, 999)
+
+        with patch.dict(os.environ, {"AURIX_FLEET_STRICT_ALLOCATION_VALIDATION": "1"}, clear=False):
+            self.service.apply_server_policy(
+                "default", 999,
+                max_keys=10,
+                reserved_keys=2,
+                monthly_traffic_bytes=1_000_000_000_000,
+                plan_slots={"basic_50gb": 2, "standard_100gb": 0},
+                tier_slots={"FREE300MB": 0, "FREE3GB": 0, "PROMO": 0},
+            )
+
+        with self.database.connect() as connection:
+            total = connection.execute(
+                "SELECT COALESCE((SELECT SUM(slot_limit) FROM server_plan_allocations WHERE server_id = ?), 0) + "
+                "COALESCE((SELECT SUM(slot_limit) FROM server_tier_allocations WHERE server_id = ?), 0)",
+                ("default", "default"),
+            ).fetchone()[0]
+        self.assertEqual(total, 2)
+
     def test_stale_server_telemetry_is_not_eligible_for_new_orders(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)

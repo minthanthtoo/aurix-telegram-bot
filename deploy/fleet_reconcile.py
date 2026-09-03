@@ -379,37 +379,21 @@ def apply_policy(nodes: list[FleetNode], identities: dict[str, dict[str, str]], 
         raise FleetError("policy activation refused because a node is unhealthy")
     owner = int((env.get("OWNER_TELEGRAM_ID") or env.get("ADMIN_TELEGRAM_IDS") or "0").split(",")[0])
     for node in nodes:
-        with database.connect() as connection:
-            current_capacity = connection.execute(
-                "SELECT max_keys, reserved_keys, monthly_traffic_bytes FROM outline_servers "
-                "WHERE server_id = ?", (node.node_id,),
-            ).fetchone()
-        expected_capacity = (node.max_keys, node.reserved_keys, node.monthly_traffic_bytes)
-        observed_capacity = tuple(current_capacity[key] for key in (
-            "max_keys", "reserved_keys", "monthly_traffic_bytes"
-        ))
-        if observed_capacity != expected_capacity:
-            service.configure_server_capacity(node.node_id, owner, max_keys=node.max_keys,
-                                              reserved_keys=node.reserved_keys,
-                                              monthly_traffic_bytes=node.monthly_traffic_bytes)
-        for tier in KNOWN_TIERS:
-            expected = node.tier_slots.get(tier, 0)
-            with database.connect() as connection:
-                current = connection.execute(
-                    "SELECT slot_limit FROM server_tier_allocations "
-                    "WHERE server_id = ? AND tier_code = ?", (node.node_id, tier),
-                ).fetchone()
-            if current is None or int(current["slot_limit"]) != expected:
-                service.configure_tier_allocation(node.node_id, tier, expected, owner)
-        for plan in sorted(set(KNOWN_PLANS) | set(node.plan_slots)):
-            expected = node.plan_slots.get(plan, 0)
-            with database.connect() as connection:
-                current = connection.execute(
-                    "SELECT slot_limit FROM server_plan_allocations "
-                    "WHERE server_id = ? AND plan_code = ?", (node.node_id, plan),
-                ).fetchone()
-            if current is None or int(current["slot_limit"]) != expected:
-                service.configure_plan_allocation(node.node_id, plan, expected, owner)
+        service.apply_server_policy(
+            node.node_id,
+            owner,
+            max_keys=node.max_keys,
+            reserved_keys=node.reserved_keys,
+            monthly_traffic_bytes=node.monthly_traffic_bytes,
+            plan_slots={
+                plan: int(node.plan_slots.get(plan, 0))
+                for plan in sorted(set(KNOWN_PLANS) | set(node.plan_slots))
+            },
+            tier_slots={
+                tier: int(node.tier_slots.get(tier, 0))
+                for tier in KNOWN_TIERS
+            },
+        )
 
 
 def environment(path: Path) -> dict[str, str]:
