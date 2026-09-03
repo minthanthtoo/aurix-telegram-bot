@@ -1,6 +1,6 @@
 # AuriX MVP status
 
-Status date: 2026-09-02 (Asia/Rangoon)
+Status date: 2026-09-04 (Asia/Rangoon)
 
 The percentages below separate code completion from live readiness. They are
 engineering estimates, not production traffic or revenue metrics.
@@ -25,10 +25,10 @@ engineering estimates, not production traffic or revenue metrics.
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
 | Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; hosted DB provisioning and live migration remain gates |
 | Independent worker / web control plane | Worker implemented; web separation pending | The guarded DigitalOcean worker/timer is installed on the primary host; an independently hosted Render web/control service remains a later gate |
-| Live Telegram and Outline smoke test | Primary and node two verified; customer tranche controlled | Bot, both Outline endpoints, database backup, worker/timer, firewall, pinned-TLS API canaries, and isolated node-two allocation canary are verified; a real Telegram-account canary and longer observation remain |
+| Live Telegram and Outline smoke test | Three management/data endpoints verified; customer tranche controlled | Bot, primary, Singapore-B, and BKK/Nube Outline endpoints, firewall, pinned-TLS API canaries, and a reversible BKK data-port/key create-delete canary are verified; a real Telegram-account canary and longer observation remain |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
 | Referrals, affiliates, and resellers | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
-| Multi-node allocation and guarded scale-out | Implemented; controlled node-two tranche open | Server-scoped allocation, provider inventory, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; node two is limited to 3 daily, 2 monthly, 2 basic-paid, and 1 standard-paid slot |
+| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; BKK is healthy and canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
 
 ## Honest aggregate view
 
@@ -39,11 +39,11 @@ engineering estimates, not production traffic or revenue metrics.
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
   and wallet suite (234 tests passing).
-- Live deployment readiness: approximately **94%**; both nodes, the bot,
-  database backup, worker/timer, provider inventory, guarded release path,
-  firewall boundary, capacity declaration, and pinned-TLS allocation canary are
-  verified. The remaining work is a real Telegram-account canary plus sustained
-  observation, not infrastructure installation.
+- Live deployment readiness: **staged, not 100%**; all three declared nodes,
+  the bot, worker/timers, provider inventory, firewall boundary, encrypted local
+  backups, and pinned-TLS management/data-port canaries are verified. Offsite
+  recovery storage, stable DNS, a real Telegram-account canary, allocation
+  normalization/strict validation, and sustained observation remain.
 - End-to-end MVP readiness: approximately **90%** for the controlled paid-
   concierge scope. This is a progress estimate, not a claim that automated
   payment verification, reseller features, or unrestricted scale-out are live.
@@ -55,8 +55,9 @@ engineering estimates, not production traffic or revenue metrics.
    → LLM/manual review → approve → provision → quota-hit DELETE → `/myvpn` smoke
    tests, with before/after key inventories and a receiving-account transaction
    comparison. Confirm whether active sessions stop within the promised window.
-2. Keep the controlled node-two tranche under observation and expand only after
-   measured demand, support ownership, and quota/revocation evidence.
+2. Keep BKK/Nube at zero issuance slots until the owner sets a conservative
+   allocation tranche after the data-plane canary; expand only after measured
+   demand, support ownership, and quota/revocation evidence.
 3. Complete the 100% acceptance checklist in
    `docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`, then decide whether the paid
    pilot remains one-process SQLite or enables the PostgreSQL backend plus an

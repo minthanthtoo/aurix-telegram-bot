@@ -452,11 +452,16 @@ node two is the next operator gate.
 
 The scoped DigitalOcean API token is installed only in the separate
 infrastructure-worker environment and provider mutation remains off by default.
-The existing second Droplet is not yet customer-eligible until Outline is
-installed, its pinned Management API endpoint is registered, inventory is
-healthy, and the owner declares allocations. A future non-Outline transport
-must prove replicated identity/quota state before any load-balanced design is
-reconsidered.
+The existing second Droplet is registered as `sg-b`; the Nube BKK endpoint is
+registered as `bkk-a`. Both are healthy in the current control-plane inventory.
+BKK's reversible canary created a 1 MB key, verified the advertised TCP/443
+data port and server-scoped lookup/metrics, then deleted the key and confirmed a
+404. BKK remains customer-ineligible while its declared plan/tier allocations
+are zero. The live primary manifest still contains a legacy over-allocation
+(70 plan+tier slots against 20 saleable keys); strict validation is therefore
+an explicit migration gate rather than an unannounced policy rewrite. A future
+non-Outline transport must prove replicated identity/quota state before any
+load-balanced design is reconsidered.
 
 ## 20. Definition of done (100% acceptance)
 

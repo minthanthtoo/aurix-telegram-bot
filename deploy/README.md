@@ -73,6 +73,9 @@ OUTLINE_API_URL=replace-with-installer-output
 OUTLINE_CERT_SHA256=replace-with-installer-output
 # For multiple servers, replace the two lines above with root-only
 # OUTLINE_SERVERS_JSON and choose a legacy fallback ID.
+# Enable after normalizing allocations so all plan+tier slots fit the saleable
+# key capacity (max_keys minus reserved_keys).
+# AURIX_FLEET_STRICT_ALLOCATION_VALIDATION=1
 # OUTLINE_SERVERS_JSON=[{"id":"sg-a","label":"Singapore A","provider_resource_id":"<droplet-id>","api_url":"https://host:port/secret","cert_sha256":"64hex"}]
 # OUTLINE_DEFAULT_SERVER_ID=sg-a
 # For the legacy single-server form, optionally record its numeric Droplet ID.
