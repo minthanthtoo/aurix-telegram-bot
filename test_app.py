@@ -2085,6 +2085,45 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("Untracked remote keys: 2", text)
         self.assertIn("audit before strict allocation", text)
 
+    def test_admin_remote_inventory_panel_is_read_only_and_refreshes_in_place(self):
+        self.commerce.register_outline_servers({"default": "Singapore"})
+        observed = datetime(2026, 8, 27, 3, 7, tzinfo=UTC).isoformat()
+        with self.db.connect() as connection:
+            connection.execute(
+                """INSERT INTO outline_remote_keys
+                   (server_id, outline_key_id, remote_name, managed, status,
+                    first_seen_at, last_seen_at, last_usage_bytes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("default", "legacy-9", "legacy operator key", 0, "present", observed, observed, 1024),
+            )
+        self.bot._show_remote_inventory(999, 999, "default")
+        self.assertIn("legacy-9", self.bot.sent[-1][1])
+        self.assertIn("untracked", self.bot.sent[-1][1])
+        self.assertNotIn("ss://", self.bot.sent[-1][1])
+        labels = {
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        }
+        self.assertIn("🔄 Refresh", labels)
+        self.assertIn("⬅ Server policy", labels)
+
+        edited = []
+        self.bot.edit_message = lambda chat_id, message_id, text, markup: edited.append(
+            (chat_id, message_id, text, markup)
+        )
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "inventory-refresh",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}, "message_id": 77},
+                "data": "a:I:default:present:0",
+            }
+        )
+        self.assertEqual(len(edited), 1)
+        self.assertEqual(edited[0][1], 77)
+
     def test_customer_buttons_and_admin_panel_are_separated(self):
         self.bot.handle(self.message(123, "/help"))
         help_text = self.bot.sent[-1][1]

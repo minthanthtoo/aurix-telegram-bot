@@ -399,6 +399,23 @@ class TelegramCallbackMixin:
                     entity_id,
                     message_id=message.get("message_id"),
                 )
+            elif action == "I":
+                try:
+                    server_id, status, raw_page = entity_id.split(":", 2)
+                    page = max(0, int(raw_page))
+                except (TypeError, ValueError):
+                    self.send(chat_id, "That remote inventory view is no longer valid.")
+                    return
+                self._show_remote_inventory(
+                    chat_id,
+                    telegram_id,
+                    server_id,
+                    status=status,
+                    page=page,
+                    message_id=message.get("message_id")
+                    if can_edit_text
+                    else None,
+                )
             elif action == "C":
                 try:
                     server_id, field, raw_value = entity_id.split("|", 2)

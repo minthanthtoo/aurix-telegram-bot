@@ -11,6 +11,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from commerce import CommerceError
+
 UTC = timezone.utc
 ADMIN_CONFIRMATION_TTL = timedelta(minutes=5)
 
@@ -311,6 +313,11 @@ class TelegramAdminMixin:
         lines = [
             f"⚙️ {server.get('label') or server_id}",
             f"Health: {server.get('health_status')} · remote keys: {server.get('remote_key_count') or 0}",
+            (
+                f"Inventory audit: ⚠️ {int(server.get('remote_orphan_key_count') or 0)} untracked"
+                if int(server.get("remote_orphan_key_count") or 0)
+                else "Inventory audit: ✅ all observed keys are managed"
+            ),
             f"Maximum keys: {max_keys or 'not capped'} · protected headroom: {server.get('reserved_keys') or 0}",
             "Monthly traffic budget: "
             + (f"{int(traffic) / 1_000_000_000:g} GB" if traffic else "monitor only"),
@@ -318,6 +325,7 @@ class TelegramAdminMixin:
             "Choose declared server capacity, then allocate paid and free/promo tiers. Changes apply to new issuance; existing keys are never silently moved.",
         ]
         rows: list[list[tuple[str, str]]] = [
+            [("🔎 Remote inventory", f"a:I:{server_id}:present:0")],
             [
                 ("Keys 25", f"a:C:{server_id}|keys|25"),
                 ("50", f"a:C:{server_id}|keys|50"),
@@ -361,6 +369,112 @@ class TelegramAdminMixin:
             )
         rows.append([("◀ All Servers", "a:n:capacity"), ("🔄 Refresh", f"a:S:{server_id}")])
         markup = self._inline_keyboard(rows)
+        text = "\n".join(lines)[:4096]
+        if message_id is not None:
+            try:
+                self.edit_message(chat_id, int(message_id), text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+
+    @staticmethod
+    def _inventory_bytes(value: Any) -> str:
+        try:
+            amount = max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return "-"
+        units = ("B", "KB", "MB", "GB", "TB")
+        number = float(amount)
+        unit = units[0]
+        for unit in units:
+            if number < 1000 or unit == units[-1]:
+                break
+            number /= 1000
+        return f"{number:.1f} {unit}" if unit != "B" else f"{int(number)} B"
+
+    def _show_remote_inventory(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        server_id: str,
+        status: str = "present",
+        page: int = 0,
+        message_id: int | None = None,
+    ) -> None:
+        normalized_status = str(status or "present").lower()
+        if normalized_status not in {"present", "missing", "all"}:
+            normalized_status = "present"
+        try:
+            all_rows = list(
+                self._admin_call(
+                    telegram_id,
+                    "remote_key_inventory",
+                    server_id,
+                    status="all",
+                    limit=500,
+                )
+                or []
+            )
+        except (CommerceError, ValueError) as exc:
+            self.send(chat_id, str(exc) or "Remote inventory is unavailable.")
+            return
+        rows = [
+            row for row in all_rows
+            if normalized_status == "all" or str(row.get("status") or "") == normalized_status
+        ]
+        page_size = 5
+        pages = max(1, (len(rows) + page_size - 1) // page_size)
+        current_page = max(0, min(int(page or 0), pages - 1))
+        current = rows[current_page * page_size : (current_page + 1) * page_size]
+        present_count = sum(1 for row in all_rows if row.get("status") == "present")
+        missing_count = sum(1 for row in all_rows if row.get("status") == "missing")
+        lines = [
+            f"🔎 Remote inventory · {server_id}",
+            "",
+            f"Present {present_count} · Missing {missing_count} · showing {normalized_status}",
+            "IDs and telemetry only; access URLs are deliberately never shown here.",
+            f"Page {current_page + 1}/{pages}",
+        ]
+        for row in current:
+            key_id = str(row.get("outline_key_id") or "-")
+            name = str(row.get("remote_name") or "unnamed")[:48]
+            state = "✅ managed" if row.get("managed") else "⚠️ untracked"
+            if row.get("status") == "missing":
+                state = "🗃 missing · " + ("was managed" if row.get("managed") else "was untracked")
+            lines.extend(
+                [
+                    "",
+                    f"• `{key_id}` · {name}",
+                    f"  {state} · usage {self._inventory_bytes(row.get('last_usage_bytes'))}",
+                    f"  last seen {row.get('last_seen_at') or '-'}",
+                ]
+            )
+        if not current:
+            lines.extend(["", "No audit records match this filter."])
+        rows_markup: list[list[tuple[str, str]]] = [
+            [
+                (f"✅ Present ({present_count})", f"a:I:{server_id}:present:0"),
+                (f"🗃 Missing ({missing_count})", f"a:I:{server_id}:missing:0"),
+            ],
+            [("📋 All", f"a:I:{server_id}:all:0")],
+        ]
+        navigation: list[tuple[str, str]] = []
+        if current_page > 0:
+            navigation.append(("⏮ First", f"a:I:{server_id}:{normalized_status}:0"))
+            navigation.append(("◀ Previous", f"a:I:{server_id}:{normalized_status}:{current_page - 1}"))
+        navigation.append((f"{current_page + 1}/{pages}", f"a:I:{server_id}:{normalized_status}:{current_page}"))
+        if current_page + 1 < pages:
+            navigation.append(("Next ▶", f"a:I:{server_id}:{normalized_status}:{current_page + 1}"))
+            navigation.append(("Last ⏭", f"a:I:{server_id}:{normalized_status}:{pages - 1}"))
+        rows_markup.append(navigation)
+        rows_markup.append(
+            [
+                ("🔄 Refresh", f"a:I:{server_id}:{normalized_status}:{current_page}"),
+                ("⬅ Server policy", f"a:S:{server_id}"),
+            ]
+        )
+        markup = self._inline_keyboard(rows_markup)
         text = "\n".join(lines)[:4096]
         if message_id is not None:
             try:

@@ -195,6 +195,12 @@ admin Capacity panel and is a migration blocker: audit and classify untracked
 keys before enabling strict allocation or changing a node's saleable limits.
 Access URLs and management credentials are never stored in this audit table.
 
+Owner/staff can open a server's **Remote inventory** button from the Capacity
+panel. The in-place Telegram view is paginated and filters Present, Missing,
+or All records. It is deliberately read-only: reconciliation still requires
+an explicit, separately audited decision, and the panel never displays or
+copies an `ss://` access URL.
+
 Paid orders reserve capacity before receipt submission. Cancellation/rejection
 releases the reservation. Free/promo creation increments the reconciled remote
 count in the same durable transaction after successful remote creation; the next

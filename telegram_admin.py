@@ -32,6 +32,7 @@ class AdminOperations:
             "consistency_report",
             "capacity_snapshot",
             "refresh_server_inventory",
+            "remote_key_inventory",
             "configure_server_capacity",
             "configure_plan_allocation",
             "configure_tier_allocation",

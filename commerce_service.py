@@ -433,6 +433,59 @@ class CommerceService(CommerceWorkerMixin):
                 results.append({"server_id": server_id, "status": "unreachable"})
         return results
 
+    def remote_key_inventory(
+        self,
+        server_id: str,
+        *,
+        status: str = "present",
+        managed: bool | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return the safe, operator-facing remote-key audit ledger.
+
+        Only Outline's key id, display name, management classification,
+        lifecycle status and observed telemetry are returned. Access URLs are
+        never read by this method, so the admin inventory panel cannot
+        accidentally disclose a usable VPN credential.
+        """
+        normalized_status = str(status or "present").strip().lower()
+        if normalized_status not in {"present", "missing", "all"}:
+            raise CommerceError("Remote inventory status must be present, missing or all")
+        try:
+            page_limit = max(1, min(500, int(limit)))
+        except (TypeError, ValueError):
+            page_limit = 100
+        with self.database.connect() as connection:
+            if not self._table_exists(connection, "outline_remote_keys"):
+                return []
+            # Validate the server id so a stale button is distinguishable from
+            # a server which genuinely has no audit rows.
+            if connection.execute(
+                "SELECT 1 FROM outline_servers WHERE server_id = ?", (str(server_id),)
+            ).fetchone() is None:
+                raise CommerceError("Outline server is unavailable")
+            clauses = ["server_id = ?"]
+            params: list[Any] = [str(server_id)]
+            if normalized_status != "all":
+                clauses.append("status = ?")
+                params.append(normalized_status)
+            if managed is not None:
+                clauses.append("managed = ?")
+                params.append(1 if managed else 0)
+            params.append(page_limit)
+            rows = connection.execute(
+                """SELECT server_id, outline_key_id, remote_name, managed, status,
+                          first_seen_at, last_seen_at, last_usage_bytes
+                     FROM outline_remote_keys
+                    WHERE """
+                + " AND ".join(clauses)
+                + """ ORDER BY CASE WHEN status = 'present' THEN 0 ELSE 1 END,
+                                  last_seen_at DESC, outline_key_id
+                    LIMIT ?""",
+                tuple(params),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def configure_server_capacity(
         self,
         server_id: str,

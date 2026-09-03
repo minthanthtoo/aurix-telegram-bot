@@ -567,6 +567,43 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(orphan, 0)
         self.assertEqual(status, "missing")
 
+    def test_remote_key_inventory_filters_audit_rows_without_access_urls(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        with self.database.connect() as connection:
+            observed = self.now.isoformat()
+            connection.execute(
+                """INSERT INTO outline_remote_keys
+                   (server_id, outline_key_id, remote_name, managed, status,
+                    first_seen_at, last_seen_at, last_usage_bytes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("default", "managed-1", "managed key", 1, "present", observed, observed, 1234),
+            )
+            connection.execute(
+                """INSERT INTO outline_remote_keys
+                   (server_id, outline_key_id, remote_name, managed, status,
+                    first_seen_at, last_seen_at, last_usage_bytes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("default", "legacy-1", "legacy key", 0, "present", observed, observed, 5678),
+            )
+            connection.execute(
+                """INSERT INTO outline_remote_keys
+                   (server_id, outline_key_id, remote_name, managed, status,
+                    first_seen_at, last_seen_at, last_usage_bytes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("default", "old-1", "old key", 1, "missing", observed, observed, 9),
+            )
+
+        present = self.service.remote_key_inventory("default", status="present")
+        untracked = self.service.remote_key_inventory("default", status="all", managed=False)
+        missing = self.service.remote_key_inventory("default", status="missing")
+
+        self.assertEqual({row["outline_key_id"] for row in present}, {"managed-1", "legacy-1"})
+        self.assertEqual([row["outline_key_id"] for row in untracked], ["legacy-1"])
+        self.assertEqual([row["outline_key_id"] for row in missing], ["old-1"])
+        self.assertNotIn("access_url", json.dumps(present))
+        with self.assertRaises(CommerceError):
+            self.service.remote_key_inventory("not-configured")
+
     def test_capacity_snapshot_recommends_assisted_scale_out_without_mutation(self):
         self.service.register_outline_servers({"default": "Singapore"})
         for key_id in range(1, 9):
