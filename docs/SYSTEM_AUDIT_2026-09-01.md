@@ -129,8 +129,9 @@ Model observations on the shared benchmark:
    gates. Throughput and CPU/RAM need separate load tests.
 5. SQLite plus long polling is one-process architecture. Webhooks, PostgreSQL
    job claiming, and independent workers are required before replicas/autoscale.
-6. Some timestamps are still displayed as raw UTC/ISO strings; Myanmar-local,
-   human-readable time would improve UX.
+6. Telegram-facing timestamps are now rendered in Myanmar-local, human-readable
+   form (`Asia/Yangon` / MMT by default) while persistence remains UTC; operators
+   can set `AURIX_DISPLAY_TIMEZONE` for another IANA zone.
 7. Short-lived conversational input state is now persisted with a ten-minute
    expiry, so top-up/admin replies survive a restart; larger multi-step flows
    still require explicit durable order state.

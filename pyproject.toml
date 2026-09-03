@@ -33,6 +33,7 @@ source = [
     "telegram_callbacks",
     "telegram_commands",
     "telegram_maintenance",
+    "telegram_formatting",
     "deploy",
 ]
 

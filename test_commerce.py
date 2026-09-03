@@ -647,6 +647,29 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(orphan, 0)
         self.assertEqual(status, "missing")
 
+    def test_capacity_snapshot_exposes_read_only_policy_and_admission_posture(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        self.service.configure_server_capacity(
+            "default",
+            999,
+            max_keys=5,
+            reserved_keys=1,
+            monthly_traffic_bytes=1_000_000_000_000,
+        )
+        self.service.configure_plan_allocation("default", "basic_50gb", 2, 999)
+        self.service.configure_tier_allocation("default", "FREE300MB", 1, 999)
+
+        snapshot = self.service.capacity_snapshot(self.now, refresh_inventory=False)
+        server = snapshot["servers"][0]
+
+        self.assertEqual(server["allocation_total_slots"], 3)
+        self.assertEqual(server["allocation_remaining_slots"], 1)
+        self.assertEqual(server["allocation_policy_status"], "ready")
+        self.assertEqual(server["admission_status"], "eligible")
+        self.assertEqual(server["admission_blockers"], [])
+        self.assertFalse(snapshot["strict_allocation_validation"])
+
     def test_remote_key_inventory_filters_audit_rows_without_access_urls(self):
         self.service.register_outline_servers({"default": "Singapore"})
         with self.database.connect() as connection:

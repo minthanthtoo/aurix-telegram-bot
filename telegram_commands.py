@@ -11,6 +11,7 @@ from typing import Any
 
 from commerce import CommerceError
 from entitlements import OutlineError
+from telegram_formatting import format_user_datetime
 
 UTC = timezone.utc
 
@@ -356,7 +357,7 @@ class TelegramCommandMixin:
                     f"🎉 Promo gift #{result.winner_number}: {result.code}\n\n"
                     f"Your {quota} / {result.duration_days}-day Outline key:\n\n"
                     f"{result.access_url}\n\n"
-                    f"Expires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+                    f"Expires: {format_user_datetime(result.expires_at)}\n\n"
                     "Enjoy your gift—no payment or receipt was needed. Other AuriX plans rest "
                     "while this gift and its promo season are active, then return automatically:\n"
                     "• Daily Free — 300 MB for 24 hours\n"
@@ -369,7 +370,7 @@ class TelegramCommandMixin:
                 self.send(
                     chat["id"],
                     f"You already won slot #{result.winner_number}. No second key or slot was created.\n"
-                    f"Expires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+                    f"Expires: {format_user_datetime(result.expires_at)}\n"
                     "Open My VPN to retrieve the key and track usage. Regular plans are available "
                     "again after the gift or season ends.",
                     self._customer_keyboard(telegram_id),
@@ -581,8 +582,8 @@ class TelegramCommandMixin:
                     f"Current window: {promo['window_claimed_count']} claimed · "
                     f"{promo['remaining_slots']} remaining\n"
                     f"Lifetime claims: {promo['claimed_count']}\n"
-                    f"From: {promo['starts_at'] or 'open'}\n"
-                    f"To: {promo['ends_at'] or 'open'}\n\n"
+                    f"From: {format_user_datetime(promo['starts_at'], 'open')}\n"
+                    f"To: {format_user_datetime(promo['ends_at'], 'open')}\n\n"
                     "Setup syntax:\n"
                     "/setpromo CODE QUOTA_GB DAYS COUNT campaign|daily|hourly FROM_UTC TO_UTC\n\n"
                     "Each account can claim once per campaign. Daily/hourly resets the slot count, "
@@ -809,12 +810,12 @@ class TelegramCommandMixin:
             elif result.access_url:
                 self.send(
                     chat["id"],
-                    f"Your monthly 3 GB key:\n\n{result.access_url}\n\nExpires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}",
+                    f"Your monthly 3 GB key:\n\n{result.access_url}\n\nExpires: {format_user_datetime(result.expires_at)}",
                     self._key_delivery_keyboard(str(result.access_url)),
                 )
             else:
                 retry = (
-                    result.next_claim_at.strftime("%Y-%m-%d %H:%M UTC")
+                    format_user_datetime(result.next_claim_at)
                     if result.next_claim_at
                     else "later"
                 )
@@ -828,7 +829,7 @@ class TelegramCommandMixin:
                 history_text = ""
                 if history:
                     history_text = "\n\nRecent wallet events:\n" + "\n".join(
-                        f"{item['created_at']} · {item['kind']} {int(item['amount_minor']):,} {item['currency']} · {item['reference_id']}"
+                        f"{format_user_datetime(item['created_at'])} · {item['kind']} {int(item['amount_minor']):,} {item['currency']} · {item['reference_id']}"
                         for item in history
                     )
                 self.send(
@@ -1161,7 +1162,7 @@ class TelegramCommandMixin:
                 else:
                     lines = [f"Wallet ledger · tg:{customer_id}", f"Balance: {balance:,} MMK"]
                     lines.extend(
-                        f"{item['created_at']} · {item['kind']} {int(item['amount_minor']):,} {item['currency']} · {item['reference_id']}"
+                        f"{format_user_datetime(item['created_at'])} · {item['kind']} {int(item['amount_minor']):,} {item['currency']} · {item['reference_id']}"
                         for item in history
                     )
                     self.send(chat["id"], "\n".join(lines), self._admin_keyboard(telegram_id))
@@ -1230,7 +1231,7 @@ class TelegramCommandMixin:
                     "gift or promo season ends.",
                 )
             elif result.access_url:
-                expiry = result.expires_at.strftime("%Y-%m-%d %H:%M UTC")
+                expiry = format_user_datetime(result.expires_at)
                 amount = self.service.limit_bytes / 1_000_000
                 self.send(
                     chat["id"],
@@ -1238,7 +1239,7 @@ class TelegramCommandMixin:
                     self._key_delivery_keyboard(str(result.access_url)),
                 )
             elif result.next_claim_at:
-                retry = result.next_claim_at.strftime("%Y-%m-%d %H:%M UTC")
+                retry = format_user_datetime(result.next_claim_at)
                 self.send(chat["id"], f"Already claimed. Come back after {retry}.")
             else:
                 self.send(chat["id"], "Claims are unavailable for this account.")

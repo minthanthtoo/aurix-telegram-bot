@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from commerce import CommerceError
+from telegram_formatting import format_user_datetime
 
 UTC = timezone.utc
 ADMIN_CONFIRMATION_TTL = timedelta(minutes=5)
@@ -223,6 +224,12 @@ class TelegramAdminMixin:
                 [
                     "",
                     f"{'🟢' if item.get('health_status') == 'healthy' else '🔴'} {item.get('label') or item.get('server_id')}",
+                    (
+                        "Admission: ✅ eligible"
+                        if item.get("admission_status") == "eligible"
+                        else "Admission: ⛔ blocked · "
+                        + ", ".join(str(value).replace("_", " ") for value in item.get("admission_blockers") or [])
+                    ),
                     f"Remote keys: {item.get('remote_key_count') or 0} · {key_limit}",
                     (
                         f"⚠️ Untracked remote keys: {orphan_count} · audit before strict allocation"
@@ -238,6 +245,26 @@ class TelegramAdminMixin:
                     ),
                 ]
             )
+            allocation_status = str(item.get("allocation_policy_status") or "unknown")
+            allocation_total = int(item.get("allocation_total_slots") or 0)
+            allocation_gap = item.get("allocation_remaining_slots")
+            if allocation_status == "overallocated":
+                lines.append(
+                    f"⚠️ Policy: over-allocated {allocation_total} slots; "
+                    f"{abs(int(allocation_gap or 0))} above saleable headroom"
+                )
+            elif allocation_status == "audit_required":
+                lines.append(
+                    f"Policy audit: ⚠️ {orphan_count} untracked key(s) must be classified "
+                    "before strict validation"
+                )
+            elif allocation_status == "unconfigured":
+                lines.append("Policy: capacity is not declared; node cannot be sized safely")
+            else:
+                lines.append(
+                    f"Policy: ✅ {allocation_total} allocated slot(s) · "
+                    f"{max(0, int(allocation_gap or 0))} unallocated"
+                )
             allocations = item.get("allocations") or []
             if allocations:
                 lines.append(
@@ -447,7 +474,7 @@ class TelegramAdminMixin:
                     "",
                     f"• `{key_id}` · {name}",
                     f"  {state} · usage {self._inventory_bytes(row.get('last_usage_bytes'))}",
-                    f"  last seen {row.get('last_seen_at') or '-'}",
+                    f"  last seen {format_user_datetime(row.get('last_seen_at'))}",
                 ]
             )
         if not current:
@@ -1043,10 +1070,10 @@ class TelegramAdminMixin:
             f"Subscription: {order.get('subscription_status') or 'not created'}",
             f"Provisioning: {order.get('provisioning_status') or 'not queued'}",
             f"Revocation: {order.get('revocation_status') or 'not queued'}",
-            f"Created: {order['created_at']}",
+            f"Created: {format_user_datetime(order['created_at'])}",
         ]
         if order.get("expires_at"):
-            lines.append(f"Expires: {order['expires_at']}")
+            lines.append(f"Expires: {format_user_datetime(order['expires_at'])}")
         if order.get("payment_method"):
             lines.append(f"Selected method: {str(order['payment_method']).upper()}")
         if order.get("evidence_id"):

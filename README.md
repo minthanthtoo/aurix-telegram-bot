@@ -486,6 +486,12 @@ remaining bytes, percentage, expiry, and local state. These figures come from
 speed or a calendar-month usage ledger. A customer can never query another
 customer's key statistics.
 
+Telegram displays persisted timestamps in `Asia/Yangon` as `DD Mon YYYY, HH:MM
+MMT` by default, while the database and audit events remain UTC. Set
+`AURIX_DISPLAY_TIMEZONE` to another IANA timezone when the operator or customer
+base requires a different display zone; an invalid display-only value safely
+falls back to UTC and does not prevent startup.
+
 Outline key names are operator-readable and use UTC start time: `<username-or-telegram-id>-<tier>-<duration>-YYYYMMDDHHMM`, for example `min_user-FREE300MB-24hr-202608280520`. Telegram usernames are sanitized; accounts without a username fall back to their numeric Telegram ID. Renaming a key does not change its access URL.
 
 Receipt images are evidence, not proof. AuriX stores each new raw image in a private Supabase Storage bucket and stores only its bucket/path, checksum, MIME type, size, extraction result, and review state in the database. Telegram file metadata remains as a compatibility fallback for older evidence. The upload is completed before the order enters `payment_submitted`; failed uploads remain retryable and are never shown in the admin review queue. Provider-aware AI triage checks completion, selected provider, exact amount/currency, the provider's visible reference label, timestamp relative to the original upload, and the configured merchant recipient. Clear mismatches are reject candidates; missing or ambiguous fields remain manual review. The LLM never approves a payment or credits a wallet. Staff tap **Verify Payment**, compare the candidate fields with the actual receiving account, and confirm; **Approve** appears only after verification. The underlying typed commands remain compatibility/recovery tools, not the primary workflow. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.

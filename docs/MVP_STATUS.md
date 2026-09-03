@@ -20,7 +20,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Durable external-effect state | Implemented for one process | SQLite jobs and notifications with retry, stale-running recovery, dedupe; ten-minute conversational prompts survive restarts |
 | Expiry and revocation | Implemented locally | Expiry job, 404-safe known-key deletion, expiry notification; expired/pending subscriptions cannot disclose or later provision keys |
 | Quota exhaustion enforcement | Implemented locally | Metrics `used >= configured limit` fails closed, records a deduplicated event, and queues hard DELETE; Outline has no documented pause endpoint |
-| Usage/capacity operations | Implemented locally | Admin `/capacity`, stable transfer-metrics adapter, mapped active-key totals |
+| Usage/capacity operations | Implemented locally | Admin `/capacity`, stable transfer-metrics adapter, mapped active-key totals, and read-only per-node admission/policy posture (freshness, headroom, over-allocation, orphan audit) |
 | Auditability | Implemented locally | Order, payment, approval, rejection, provision, revoke events |
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
 | Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; hosted DB provisioning and live migration remain gates |
@@ -38,7 +38,8 @@ engineering estimates, not production traffic or revenue metrics.
 - Local test/evidence coverage: **100%** for the current fake-Outline, TLS,
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
-  wallet, restart-safe interaction, and receipt-fingerprint suite (309 tests
+  wallet, restart-safe interaction, receipt-fingerprint, and Telegram timestamp
+  formatting suite (313 tests
   passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local

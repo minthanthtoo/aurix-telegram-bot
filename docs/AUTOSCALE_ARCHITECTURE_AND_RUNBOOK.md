@@ -195,6 +195,15 @@ admin Capacity panel and is a migration blocker: audit and classify untracked
 keys before enabling strict allocation or changing a node's saleable limits.
 Access URLs and management credentials are never stored in this audit table.
 
+The admin Capacity view also derives two read-only postures per node. **Admission**
+is eligible only when the node is enabled, healthy, freshly inventoried, and has
+declared key headroom; otherwise the panel lists the exact blockers (for example
+`stale inventory`, `no inventory`, or `key capacity`). **Policy** compares the
+sum of declared paid/free/promo slots with saleable headroom and separately flags
+untracked remote keys. These signals do not mutate allocations or revoke keys;
+they make the owner decision explicit before enabling strict validation or
+queueing a node.
+
 Owner/staff can open a server's **Remote inventory** button from the Capacity
 panel. The in-place Telegram view is paginated and filters Present, Missing,
 or All records. It is deliberately read-only: reconciliation still requires

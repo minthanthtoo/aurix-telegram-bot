@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from observability import latency_log as _latency_log
+from telegram_formatting import format_user_datetime
 
 UTC = timezone.utc
 
@@ -145,7 +146,7 @@ class TelegramMaintenanceMixin:
             try:
                 self.send(
                     event["telegram_id"],
-                    f"VPN access terminated\nReason: {reason}{usage}\nExpired at: {event['expires_at']}\n{remote}",
+                    f"VPN access terminated\nReason: {reason}{usage}\nExpired at: {format_user_datetime(event['expires_at'])}\n{remote}",
                 )
             except Exception:
                 continue
@@ -157,7 +158,7 @@ class TelegramMaintenanceMixin:
                 f"VPN enforcement | tg:{event['telegram_id']} | key:{event['outline_key_id']}\n"
                 f"Reason: {event['reason']} | remote:{event['remote_state']} | attempts:{event['delete_attempts']}\n"
                 f"Used/quota: {event.get('used_bytes') or '-'} / {event['quota_bytes']} | "
-                f"detected:{event['detected_at']} | error:{event.get('last_error') or '-'}"
+                f"detected:{format_user_datetime(event.get('detected_at'))} | error:{event.get('last_error') or '-'}"
             )
             delivered = False
             for admin_id in self.admin_ids:

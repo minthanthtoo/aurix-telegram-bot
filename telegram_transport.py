@@ -26,6 +26,7 @@ from telegram_callbacks import TelegramCallbackMixin
 from telegram_commands import TelegramCommandMixin
 from telegram_maintenance import TelegramMaintenanceMixin
 from receipt_llm import build_receipt_extractor
+from telegram_formatting import format_user_datetime
 
 UTC = timezone.utc
 DEFAULT_MAINTENANCE_INTERVAL_SECONDS = 60.0
@@ -1363,7 +1364,7 @@ class TelegramBot(
                 f"Plan: {self._promo_quota_label(giveaway['quota_bytes'])} / "
                 f"{giveaway['duration_days']} days\n"
                 f"Key status: {giveaway_key_status}\n"
-                f"Expires: {giveaway['expires_at']}\n"
+                f"Expires: {format_user_datetime(giveaway['expires_at'])}\n"
                 "Regular plans: "
                 + (
                     "paused until gift or season ends"
@@ -1407,7 +1408,7 @@ class TelegramBot(
             + (
                 f"Status: {subscription['status']}\n"
                 f"Plan: {subscription['plan_code']}\n"
-                f"Expires: {subscription['expires_at']}\n"
+                f"Expires: {format_user_datetime(subscription['expires_at'])}\n"
                 f"Paid keys: {sum(1 for item in subscriptions if item.get('key_status') == 'active')}"
             )
         )
@@ -1416,11 +1417,11 @@ class TelegramBot(
             for item in subscriptions:
                 if item.get("access_url") and item.get("key_status") == "active":
                     key_blocks.append(
-                        f"{item['plan_code']} · expires {item['expires_at']}\n{item['access_url']}"
+                        f"{item['plan_code']} · expires {format_user_datetime(item['expires_at'])}\n{item['access_url']}"
                     )
                 elif item.get("status") == "pending":
                     key_blocks.append(
-                        f"{item['plan_code']} · provisioning pending (expires {item['expires_at']})"
+                        f"{item['plan_code']} · provisioning pending (expires {format_user_datetime(item['expires_at'])})"
                     )
             text += (
                 "\n\nYour paid Outline keys:\n\n" + "\n\n".join(key_blocks)
@@ -1731,7 +1732,7 @@ class TelegramBot(
             "",
             f"Status: {status}",
             f"Key reference: {subscription_id[-6:]}",
-            f"Expires: {item.get('expires_at') or 'pending'}",
+            f"Expires: {format_user_datetime(item.get('expires_at'), 'pending')}",
         ]
         if quota:
             percent = min(100.0, used * 100 / quota)
@@ -1880,7 +1881,7 @@ class TelegramBot(
             remaining = max(0, int(entry.get("remaining_bytes") or 0))
             lines = [
                 f"#{index} · {entry['tier']}",
-                f"{icon} {status} · Expires: {entry.get('expires_at') or 'pending'}",
+                f"{icon} {status} · Expires: {format_user_datetime(entry.get('expires_at'), 'pending')}",
             ]
             if quota > 0:
                 formatter = (
@@ -2037,7 +2038,7 @@ class TelegramBot(
                 f"{bar} {percent:.1f}%\n"
                 f"Used: {self._format_bytes(used)}{observed_note}\n"
                 f"Remaining: {self._format_bytes(remaining)} of {self._format_bytes(quota)}\n"
-                f"Expires: {entry['expires_at']}\n"
+                f"Expires: {format_user_datetime(entry['expires_at'])}\n"
                 f"State: {entry['status']}"
             )
         blocks.append(

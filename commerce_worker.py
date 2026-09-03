@@ -1046,6 +1046,9 @@ class CommerceWorkerMixin:
             item["remaining_slots"] = max(0, int(item["slot_limit"]) - active_count)
             tier_allocations_by_server.setdefault(str(item["server_id"]), []).append(item)
         servers = []
+        strict_allocations = os.environ.get(
+            "AURIX_FLEET_STRICT_ALLOCATION_VALIDATION", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
         for row in server_rows:
             item = dict(row)
             max_keys = item.get("max_keys")
@@ -1103,6 +1106,53 @@ class CommerceWorkerMixin:
             item["tier_allocations"] = tier_allocations_by_server.get(
                 str(item["server_id"]), []
             )
+            allocation_total = sum(
+                int(allocation.get("slot_limit") or 0) for allocation in item["allocations"]
+            ) + sum(
+                int(allocation.get("slot_limit") or 0)
+                for allocation in item["tier_allocations"]
+            )
+            orphan_count = int(item.get("remote_orphan_key_count") or 0)
+            allocation_gap = None if usable is None else int(usable) - allocation_total
+            policy_blockers: list[str] = []
+            if allocation_gap is not None and allocation_gap < 0:
+                policy_blockers.append("overallocated")
+            if orphan_count:
+                policy_blockers.append("untracked_remote_keys")
+            item["allocation_total_slots"] = allocation_total
+            item["allocation_remaining_slots"] = allocation_gap
+            item["allocation_policy_status"] = (
+                "overallocated"
+                if allocation_gap is not None and allocation_gap < 0
+                else "audit_required"
+                if orphan_count
+                else "ready"
+                if usable is not None
+                else "unconfigured"
+            )
+            item["allocation_policy_blockers"] = policy_blockers
+            admission_blockers: list[str] = []
+            if not int(item.get("enabled") or 0):
+                admission_blockers.append("disabled")
+            if str(item.get("health_status") or "") != "healthy":
+                admission_blockers.append("unhealthy")
+            if item.get("last_synced_at") is None:
+                admission_blockers.append("no_inventory")
+            else:
+                try:
+                    synced_at = datetime.fromisoformat(str(item["last_synced_at"])).astimezone(UTC)
+                    age_limit = max(
+                        30,
+                        int(os.environ.get("AURIX_SERVER_HEALTH_MAX_AGE_SECONDS", "900")),
+                    )
+                    if current - synced_at > timedelta(seconds=age_limit):
+                        admission_blockers.append("stale_inventory")
+                except (TypeError, ValueError, OverflowError):
+                    admission_blockers.append("invalid_inventory_time")
+            if item.get("remaining_key_slots") is not None and int(item["remaining_key_slots"]) <= 0:
+                admission_blockers.append("key_capacity")
+            item["admission_status"] = "blocked" if admission_blockers else "eligible"
+            item["admission_blockers"] = admission_blockers
             servers.append(item)
         outline_version = "multi" if len(servers) > 1 else "unknown"
         if not servers:
@@ -1117,6 +1167,7 @@ class CommerceWorkerMixin:
             "outline_version": outline_version,
             "usage": usage,
             "servers": servers,
+            "strict_allocation_validation": strict_allocations,
             "scale_advice": advice,
         }
 
