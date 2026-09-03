@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from deploy.production_acceptance import _summarize, run_acceptance
+from deploy.production_acceptance import _summarize, _tool_checks, run_acceptance
 
 
 class ProductionAcceptanceTests(unittest.TestCase):
@@ -38,6 +38,18 @@ class ProductionAcceptanceTests(unittest.TestCase):
             next(item for item in report["checks"] if item["name"] == "live_release")["status"],
             "skip",
         )
+
+    def test_runtime_release_does_not_fail_when_ruff_is_ci_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def runner(command, **kwargs):
+                del kwargs
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch("deploy.production_acceptance.shutil.which", return_value=None):
+                checks = _tool_checks(root, runner)
+        self.assertEqual(next(item for item in checks if item["name"] == "ruff")["status"], "skip")
 
 
 if __name__ == "__main__":

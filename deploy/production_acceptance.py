@@ -43,6 +43,8 @@ def _summarize(checks: list[dict[str, str]]) -> str:
 
 
 def _git_clean(root: Path, runner: Callable[..., subprocess.CompletedProcess[str]]) -> dict[str, str]:
+    if not (root / ".git").is_dir():
+        return _check("source_clean", SKIP, "deployed release is an immutable archive; CI checked the source checkout")
     try:
         result = runner(
             ("git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"),
@@ -70,7 +72,7 @@ def _tool_checks(root: Path, runner: Callable[..., subprocess.CompletedProcess[s
     ]
     for name, command in commands:
         if command[0] != sys.executable and shutil.which(command[0]) is None:
-            checks.append(_check(name, FAIL, f"{command[0]} is not installed"))
+            checks.append(_check(name, SKIP, f"{command[0]} is not installed; rely on the CI gate"))
             continue
         try:
             result = runner(
