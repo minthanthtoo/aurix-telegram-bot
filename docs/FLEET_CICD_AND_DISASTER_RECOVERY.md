@@ -199,7 +199,9 @@ verification fail closed if the offsite target is missing.
 `*_OFFSITE_RETENTION` controls offsite pruning and can be longer than local
 retention. Object-store backups prune complete archive/metadata pairs after
 each successful upload, including the Supabase backend, so a daily schedule
-does not grow without bound.
+does not grow without bound. Retention values are positive integers capped at
+3,650 copies; malformed values fail the backup rather than silently disabling
+retention.
 
 Supabase Storage is also supported when the project already hosts the bot's
 receipt evidence. Create a second **private** bucket (for example

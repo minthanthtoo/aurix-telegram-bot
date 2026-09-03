@@ -20,6 +20,23 @@ except ModuleNotFoundError:  # Direct execution from deploy/ sets deploy/ as sys
     from fleet_reconcile import FleetError
 
 
+MAX_RETENTION_COPIES = 3650
+
+
+def retention_count(value: object, label: str, default: int) -> int:
+    """Parse a finite, positive backup retention count."""
+    raw = str(default if value is None or not str(value).strip() else value).strip()
+    try:
+        count = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise FleetError(f"{label} must be an integer") from exc
+    if not 1 <= count <= MAX_RETENTION_COPIES:
+        raise FleetError(
+            f"{label} must be between 1 and {MAX_RETENTION_COPIES} copies"
+        )
+    return count
+
+
 @dataclass(frozen=True)
 class ObjectStore:
     bucket: str
@@ -224,7 +241,7 @@ def list_keys(env: dict[str, str], prefix: str) -> list[str]:
 
 def prune(env: dict[str, str], prefix: str, suffix: str, keep: int) -> int:
     """Delete old archive/metadata pairs from the configured offsite store."""
-    retention = max(1, int(keep))
+    retention = retention_count(keep, "offsite retention", 1)
     archives = sorted(
         [key for key in list_keys(env, prefix) if key.endswith(suffix)],
         reverse=True,

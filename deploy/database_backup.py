@@ -167,7 +167,11 @@ def mirror_offsite(env: dict[str, str], archive: Path) -> Path | None:
             env,
             "database/",
             ".sqlite3.fernet",
-            max(1, int(env.get("AURIX_DATABASE_BACKUP_OFFSITE_RETENTION", "30"))),
+            offsite_storage.retention_count(
+                env.get("AURIX_DATABASE_BACKUP_OFFSITE_RETENTION"),
+                "AURIX_DATABASE_BACKUP_OFFSITE_RETENTION",
+                30,
+            ),
         )
         return None
     root = offsite_root(env)
@@ -180,8 +184,14 @@ def mirror_offsite(env: dict[str, str], archive: Path) -> Path | None:
     destination = root / archive.name
     write_private(destination, archive.read_bytes())
     write_private(metadata_path(destination), metadata_path(archive).read_bytes())
-    keep = max(1, int(env.get("AURIX_DATABASE_BACKUP_OFFSITE_RETENTION",
-                              env.get("AURIX_DATABASE_BACKUP_RETENTION", "14"))))
+    keep = offsite_storage.retention_count(
+        env.get(
+            "AURIX_DATABASE_BACKUP_OFFSITE_RETENTION",
+            env.get("AURIX_DATABASE_BACKUP_RETENTION", "14"),
+        ),
+        "AURIX_DATABASE_BACKUP_OFFSITE_RETENTION",
+        14,
+    )
     prune(root, keep)
     return destination
 
@@ -201,7 +211,11 @@ def backup(env: dict[str, str]) -> Path:
         "database_path": str(database_path(env)),
     }
     write_private(metadata_path(archive), (json.dumps(metadata, indent=2) + "\n").encode())
-    keep = max(1, int(env.get("AURIX_DATABASE_BACKUP_RETENTION", "14")))
+    keep = offsite_storage.retention_count(
+        env.get("AURIX_DATABASE_BACKUP_RETENTION"),
+        "AURIX_DATABASE_BACKUP_RETENTION",
+        14,
+    )
     prune(root, keep)
     mirror_offsite(env, archive)
     return archive

@@ -135,6 +135,13 @@ class OffsiteStorageTests(unittest.TestCase):
             ],
         )
 
+    def test_retention_count_is_bounded_and_defaults_empty_values(self) -> None:
+        self.assertEqual(offsite_storage.retention_count("", "retention", 14), 14)
+        self.assertEqual(offsite_storage.retention_count("3650", "retention", 14), 3650)
+        for value in ("0", "3651", "not-a-number"):
+            with self.assertRaises(FleetError):
+                offsite_storage.retention_count(value, "retention", 14)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -165,7 +165,11 @@ def mirror_offsite(node: FleetNode, env: dict[str, str], archive: Path) -> Path 
             env,
             f"fleet/{node.node_id}/",
             ".tar.gz.fernet",
-            max(1, int(env.get("AURIX_FLEET_BACKUP_OFFSITE_RETENTION", "30"))),
+            offsite_storage.retention_count(
+                env.get("AURIX_FLEET_BACKUP_OFFSITE_RETENTION"),
+                "AURIX_FLEET_BACKUP_OFFSITE_RETENTION",
+                30,
+            ),
         )
         return None
     root = offsite_root(env, node)
@@ -177,8 +181,14 @@ def mirror_offsite(node: FleetNode, env: dict[str, str], archive: Path) -> Path 
     destination = root / archive.name
     write_private(destination, archive.read_bytes())
     write_private(metadata_path(destination), metadata_file.read_bytes())
-    keep = max(1, int(env.get("AURIX_FLEET_BACKUP_OFFSITE_RETENTION",
-                              env.get("AURIX_FLEET_BACKUP_RETENTION", "14"))))
+    keep = offsite_storage.retention_count(
+        env.get(
+            "AURIX_FLEET_BACKUP_OFFSITE_RETENTION",
+            env.get("AURIX_FLEET_BACKUP_RETENTION", "14"),
+        ),
+        "AURIX_FLEET_BACKUP_OFFSITE_RETENTION",
+        14,
+    )
     prune_backups(root, keep)
     return destination
 
@@ -218,7 +228,11 @@ def backup_node(node: FleetNode, env: dict[str, str]) -> Path:
         ).hexdigest(),
     }
     write_private(metadata_path(destination), (json.dumps(metadata, indent=2) + "\n").encode())
-    keep = max(1, int(env.get("AURIX_FLEET_BACKUP_RETENTION", "14")))
+    keep = offsite_storage.retention_count(
+        env.get("AURIX_FLEET_BACKUP_RETENTION"),
+        "AURIX_FLEET_BACKUP_RETENTION",
+        14,
+    )
     prune_backups(root, keep)
     mirror_offsite(node, env, destination)
     return destination
