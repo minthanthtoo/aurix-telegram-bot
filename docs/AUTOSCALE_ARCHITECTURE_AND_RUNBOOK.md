@@ -53,11 +53,20 @@ The current code provides:
 - durable `infrastructure_jobs` and `infrastructure_events`;
 - an opt-in, budget-guarded DigitalOcean controller in `infrastructure.py`.
 
-The controller deliberately stops at `awaiting_verification`. It does not store
-an Outline Management URL in the database and does not make a new VM customer-
-eligible. An operator must install/verify Outline, add the pinned secret endpoint
-to `OUTLINE_SERVERS_JSON`, restart the service, observe a healthy inventory, set
-capacity, and only then allocate tiers/plans.
+The controller deliberately separates provider creation from endpoint
+activation. It never stores an Outline Management URL in the database and does
+not make a merely `active` VM customer-eligible. By default a job stops at
+`awaiting_verification`. A fully unattended hand-off is supported only when a
+trusted automation setup has already declared the exact provider resource ID
+and public IP in `AURIX_FLEET_NODES_JSON` and has pinned the node's SSH host key
+in `AURIX_FLEET_KNOWN_HOSTS`; with
+`AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED=1`, the worker runs the normal
+fleet reconciler, verifies Outline, applies capacity policy, restarts the bot
+if needed, and records `endpoint_activated`. Missing or conflicting identity
+data leaves the job waiting. There is intentionally no `ssh-keyscan`,
+`StrictHostKeyChecking=accept-new`, secret-bearing cloud-init, or blind IP
+trust. Without an authenticated host-key path, an operator must install/verify
+Outline and update the manifest.
 
 Not implemented or intentionally not automatic:
 
@@ -322,6 +331,7 @@ AURIX_SCALE_URGENT_TRAFFIC_PERCENT=90
 AURIX_SCALE_REQUIRED_OBSERVATIONS=2
 AURIX_SCALE_OBSERVATION_INTERVAL_SECONDS=300
 AURIX_INFRASTRUCTURE_QUEUE_ENABLED=0
+AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED=0
 AURIX_SCALE_REGION=sgp1
 AURIX_SCALE_DROPLET_SIZE=s-1vcpu-1gb
 AURIX_SCALE_DROPLET_IMAGE=ubuntu-24-04-x64
@@ -476,7 +486,7 @@ post-verification procedure may enable new admission.
 | Delete fails | Durable retry/escalation and transparent notices |
 | PostgreSQL unavailable | No allocation, payment commit, or provider mutation |
 | DigitalOcean create timeout | Reconcile stored job/provider action; never blindly create another |
-| Droplet becomes active | Await operator Outline verification; no customer allocation |
+| Droplet becomes active | Await pinned manifest/SSH verification; no customer allocation |
 | Stale health snapshot | Endpoint excluded from new admission |
 | Duplicate callback/job execution | Database uniqueness/idempotency returns existing state |
 
@@ -554,7 +564,8 @@ completion.
   Enabling it requires owner approval, allowlisted region/size/image, budget,
   cooldown, node-count, and two consecutive fresh capacity observations.
 - A queued provision is an idempotent intent only; the worker is the sole actor
-  allowed to call DigitalOcean and stops at `awaiting_verification`.
+  allowed to call DigitalOcean. It stops at `awaiting_verification` unless the
+  explicit, identity-pinned auto-activation gate is enabled.
 - Scale-in is proven by a drain rehearsal: allocations zero, no active keys or
   reservations, final inventory captured, endpoint removed, then manual destroy.
 

@@ -105,14 +105,66 @@ class FleetControllerTest(unittest.TestCase):
         with patch.dict(os.environ, environment, clear=True):
             created = controller.execute_provision(job_id)
             result = controller.reconcile_provision(job_id)
+            waiting_again = controller.reconcile_provision(job_id)
         self.assertEqual(created["status"], "creating")
         self.assertEqual(result["status"], "awaiting_verification")
+        self.assertEqual(waiting_again["provider_resource_id"], "42")
+        self.assertEqual(waiting_again["public_ip"], "203.0.113.10")
         self.assertNotIn("user_data", provider.specifications[0])
         with self.database.connect() as connection:
             status = connection.execute(
                 "SELECT status FROM infrastructure_jobs WHERE id = ?", (job_id,)
             ).fetchone()["status"]
         self.assertEqual(status, "awaiting_verification")
+
+    def test_verified_activation_is_idempotent_and_audited(self):
+        provider = FakeProvider()
+        controller = FleetController(self.database, provider)
+        job_id = controller.queue_provision(
+            region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+            requested_by=123, now=self.now,
+        )
+        environment = {
+            "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "10",
+            "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            controller.execute_provision(job_id)
+            controller.reconcile_provision(job_id)
+            with self.database.connect() as connection:
+                connection.execute(
+                    """INSERT INTO outline_servers
+                       (server_id, label, provider_resource_id, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    ("sg-b", "Singapore B", "42", self.now.isoformat(), self.now.isoformat()),
+                )
+            first = controller.mark_provision_activated(job_id, "sg-b")
+            second = controller.mark_provision_activated(job_id, "sg-b")
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(second, first)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT status, completed_at FROM infrastructure_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            events = connection.execute(
+                "SELECT event_type, server_id FROM infrastructure_events "
+                "WHERE infrastructure_job_id = ? AND event_type = 'endpoint_activated'",
+                (job_id,),
+            ).fetchall()
+        self.assertEqual(row["status"], "completed")
+        self.assertTrue(row["completed_at"])
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["server_id"], "sg-b")
+
+    def test_activation_requires_awaiting_verification(self):
+        controller = FleetController(self.database, FakeProvider())
+        job_id = controller.queue_provision(
+            region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+            requested_by=123, now=self.now,
+        )
+        with self.assertRaisesRegex(InfrastructureError, "awaiting verification"):
+            controller.mark_provision_activated(job_id, "sg-b")
 
     def test_existing_managed_provider_nodes_count_toward_limit(self):
         provider = FakeProvider(

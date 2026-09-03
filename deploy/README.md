@@ -179,7 +179,17 @@ systemctl daemon-reload
 systemctl enable --now aurix-infrastructure-worker.timer
 ```
 
-The worker only processes durable jobs and stops at `awaiting_verification`.
+The worker only makes a node customer-eligible after a separate activation
+gate. By default it stops at `awaiting_verification`. An optional
+`AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED=1` gate may be used when the
+new resource is already declared in `AURIX_FLEET_NODES_JSON` with the exact
+provider resource ID and public IP, and the pinned `AURIX_FLEET_KNOWN_HOSTS`
+trust file is available. The worker then runs the normal fleet reconciler and
+records a durable `endpoint_activated` event. It never uses `ssh-keyscan`,
+`StrictHostKeyChecking=accept-new`, cloud-init secrets, or a merely active VM
+as proof of identity. If any prerequisite is missing, the job remains
+`awaiting_verification` for a later pass.
+
 Do not set `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1` until provider inventory,
 budget, Outline installation, firewall restrictions and canary tests have passed.
 

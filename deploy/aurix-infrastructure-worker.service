@@ -10,7 +10,9 @@ Group=root
 WorkingDirectory=/opt/aurix-current
 EnvironmentFile=/etc/aurix-infrastructure/worker.env
 ExecStart=/opt/aurix-current/.venv/bin/python -m deploy.infrastructure_worker --once
-TimeoutStartSec=90s
+# A pinned fleet reconcile may bootstrap several nodes serially; keep the
+# worker bounded but long enough to finish one activation transaction.
+TimeoutStartSec=20min
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

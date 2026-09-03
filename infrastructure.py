@@ -115,7 +115,12 @@ class DigitalOceanClient:
 
 
 class FleetController:
-    """Create and reconcile bounded provider jobs; never auto-activate endpoints."""
+    """Create and reconcile bounded provider jobs.
+
+    Provider creation and Outline activation remain separate gates.  The
+    optional worker-side activation bridge may mark a job complete only after
+    an external fleet reconciler has verified the declared node identity.
+    """
 
     def __init__(self, database: Any, provider: DigitalOceanClient | None = None):
         self.database = database
@@ -407,7 +412,23 @@ class FleetController:
         if row is None:
             raise InfrastructureError("Provisioning job does not exist")
         if row["status"] in ("failed", "awaiting_verification", "completed"):
-            return {"job_id": job_id, "status": str(row["status"])}
+            result = {"job_id": job_id, "status": str(row["status"])}
+            if row["status"] == "awaiting_verification":
+                with self.database.connect() as connection:
+                    event = connection.execute(
+                        """SELECT metadata_json FROM infrastructure_events
+                           WHERE infrastructure_job_id = ? AND event_type = 'droplet_active'
+                           ORDER BY created_at DESC LIMIT 1""",
+                        (job_id,),
+                    ).fetchone()
+                if event is not None:
+                    try:
+                        metadata = json.loads(str(event["metadata_json"]))
+                    except (TypeError, json.JSONDecodeError):
+                        metadata = {}
+                    result["public_ip"] = metadata.get("public_ip")
+                result["provider_resource_id"] = str(row["provider_resource_id"] or "")
+            return result
         if row["provider_action_id"]:
             action = self.provider.action(str(row["provider_action_id"]))
             status = str(action.get("status") or "unknown")
@@ -445,4 +466,65 @@ class FleetController:
                    VALUES (?, ?, 'droplet_active', ?, ?)""",
                 (uuid.uuid4().hex, job_id, json.dumps({"public_ip": public_ip}), now_text),
             )
-        return {"job_id": job_id, "status": "awaiting_verification", "public_ip": public_ip}
+        return {
+            "job_id": job_id,
+            "status": "awaiting_verification",
+            "public_ip": public_ip,
+            "provider_resource_id": str(row["provider_resource_id"]),
+        }
+
+    def mark_provision_activated(self, job_id: str, node_id: str) -> dict[str, Any]:
+        """Commit a verified endpoint activation exactly once.
+
+        This method does not inspect or create provider resources.  Callers
+        must complete the pinned-SSH/Outline reconciliation first; this is the
+        durable state transition that records that verified hand-off.
+        """
+        normalized_node = str(node_id).strip()
+        if not normalized_node:
+            raise InfrastructureError("activated node id is required")
+        now_text = datetime.now(UTC).isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            row = connection.execute(
+                """SELECT j.status, j.provider_resource_id,
+                          s.provider_resource_id AS node_provider_resource_id
+                   FROM infrastructure_jobs AS j
+                   LEFT JOIN outline_servers AS s ON s.server_id = ?
+                   WHERE j.id = ? AND j.operation = 'provision'""",
+                (normalized_node, job_id),
+            ).fetchone()
+            if row is None:
+                raise InfrastructureError("provisioning job does not exist")
+            status = str(row["status"])
+            if status == "completed":
+                return {"job_id": job_id, "status": status, "node_id": normalized_node}
+            if status != "awaiting_verification":
+                raise InfrastructureError(
+                    f"provisioning job is not awaiting verification (status={status})"
+                )
+            if not row["provider_resource_id"] or str(row["provider_resource_id"]) != str(
+                row["node_provider_resource_id"] or ""
+            ):
+                raise InfrastructureError(
+                    "activated node is not registered for this provider resource"
+                )
+            connection.execute(
+                """UPDATE infrastructure_jobs
+                   SET status = 'completed', completed_at = ?, locked_at = NULL, last_error = NULL
+                   WHERE id = ? AND status = 'awaiting_verification'""",
+                (now_text, job_id),
+            )
+            connection.execute(
+                """INSERT INTO infrastructure_events
+                   (id, infrastructure_job_id, server_id, event_type, metadata_json, created_at)
+                   VALUES (?, ?, ?, 'endpoint_activated', ?, ?)""",
+                (
+                    uuid.uuid4().hex,
+                    job_id,
+                    normalized_node,
+                    json.dumps({"node_id": normalized_node}, sort_keys=True),
+                    now_text,
+                ),
+            )
+        return {"job_id": job_id, "status": "completed", "node_id": normalized_node}
