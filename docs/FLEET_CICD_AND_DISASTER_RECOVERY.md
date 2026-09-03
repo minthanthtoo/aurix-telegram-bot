@@ -197,7 +197,9 @@ absolute private mount or synced paths. Set
 `AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE=1` in production; then backups and
 verification fail closed if the offsite target is missing.
 `*_OFFSITE_RETENTION` controls offsite pruning and can be longer than local
-retention.
+retention. Object-store backups prune complete archive/metadata pairs after
+each successful upload, including the Supabase backend, so a daily schedule
+does not grow without bound.
 
 Supabase Storage is also supported when the project already hosts the bot's
 receipt evidence. Create a second **private** bucket (for example

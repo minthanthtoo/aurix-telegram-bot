@@ -162,6 +162,12 @@ def mirror_offsite(env: dict[str, str], archive: Path) -> Path | None:
         object_key = f"database/{archive.name}"
         offsite_storage.put(env, object_key, archive.read_bytes())
         offsite_storage.put(env, object_key + ".json", metadata_path(archive).read_bytes())
+        offsite_storage.prune(
+            env,
+            "database/",
+            ".sqlite3.fernet",
+            max(1, int(env.get("AURIX_DATABASE_BACKUP_OFFSITE_RETENTION", "30"))),
+        )
         return None
     root = offsite_root(env)
     if root is None:

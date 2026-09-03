@@ -67,6 +67,7 @@ class DatabaseBackupTests(unittest.TestCase):
 
         with patch.object(database_backup.offsite_storage, "put", put), \
                 patch.object(database_backup.offsite_storage, "get", get), \
+                patch.object(database_backup.offsite_storage, "prune", return_value=0), \
                 patch.object(database_backup.offsite_storage, "latest_key",
                              lambda _env, prefix, suffix: sorted(
                                  key for key in objects if key.startswith(prefix) and key.endswith(suffix)

@@ -161,6 +161,12 @@ def mirror_offsite(node: FleetNode, env: dict[str, str], archive: Path) -> Path 
         object_key = f"fleet/{node.node_id}/{archive.name}"
         offsite_storage.put(env, object_key, archive.read_bytes())
         offsite_storage.put(env, object_key + ".json", metadata_path(archive).read_bytes())
+        offsite_storage.prune(
+            env,
+            f"fleet/{node.node_id}/",
+            ".tar.gz.fernet",
+            max(1, int(env.get("AURIX_FLEET_BACKUP_OFFSITE_RETENTION", "30"))),
+        )
         return None
     root = offsite_root(env, node)
     if root is None:

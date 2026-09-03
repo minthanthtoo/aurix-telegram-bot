@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from deploy import offsite_storage
 from deploy.fleet_reconcile import FleetError
@@ -110,6 +110,30 @@ class OffsiteStorageTests(unittest.TestCase):
                     "database/last.sqlite3.fernet",
                 ],
             )
+
+    def test_prune_removes_old_archive_and_metadata_pairs(self) -> None:
+        env = self.env()
+        keys = [
+            "prod/database/20260101.sqlite3.fernet",
+            "prod/database/20260101.sqlite3.fernet.json",
+            "prod/database/20260102.sqlite3.fernet",
+            "prod/database/20260102.sqlite3.fernet.json",
+            "prod/database/20260103.sqlite3.fernet",
+            "prod/database/20260103.sqlite3.fernet.json",
+        ]
+        with patch.object(offsite_storage, "list_keys", return_value=[
+            key.removeprefix("prod/") for key in keys
+        ]), patch.object(offsite_storage, "delete") as remove:
+            removed = offsite_storage.prune(env, "database/", ".sqlite3.fernet", keep=2)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(
+            remove.call_args_list,
+            [
+                call(env, "database/20260101.sqlite3.fernet"),
+                call(env, "database/20260101.sqlite3.fernet.json"),
+            ],
+        )
 
 
 if __name__ == "__main__":

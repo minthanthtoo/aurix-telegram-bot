@@ -159,6 +159,7 @@ class FleetBackupTests(unittest.TestCase):
 
             with patch.object(fleet_backup.offsite_storage, "put", put), \
                     patch.object(fleet_backup.offsite_storage, "get", get), \
+                    patch.object(fleet_backup.offsite_storage, "prune", return_value=0), \
                     patch.object(
                         fleet_backup.offsite_storage,
                         "latest_key",

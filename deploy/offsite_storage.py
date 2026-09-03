@@ -222,6 +222,21 @@ def list_keys(env: dict[str, str], prefix: str) -> list[str]:
     return sorted(keys)
 
 
+def prune(env: dict[str, str], prefix: str, suffix: str, keep: int) -> int:
+    """Delete old archive/metadata pairs from the configured offsite store."""
+    retention = max(1, int(keep))
+    archives = sorted(
+        [key for key in list_keys(env, prefix) if key.endswith(suffix)],
+        reverse=True,
+    )
+    removed = 0
+    for archive in archives[retention:]:
+        delete(env, archive)
+        delete(env, archive + ".json")
+        removed += 1
+    return removed
+
+
 def latest_key(env: dict[str, str], prefix: str, suffix: str) -> str:
     matches = [key for key in list_keys(env, prefix) if key.endswith(suffix)]
     if not matches:
