@@ -7,9 +7,11 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
+from deploy import fleet_backup
 from deploy.fleet_backup import (
     metadata_path,
     mirror_offsite,
@@ -125,6 +127,51 @@ class FleetBackupTests(unittest.TestCase):
 
             with self.assertRaises(FleetError):
                 verify_node(node, env)
+
+    def test_object_store_replaces_offsite_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = FleetNode("sg-a", "Singapore A", "192.0.2.10", 61603, 443)
+            archive = root / "local" / node.node_id / "20260903T000000Z.tar.gz.fernet"
+            key = Fernet.generate_key().decode()
+            ciphertext = Fernet(key.encode()).encrypt(
+                archive_with(["access.txt", "persisted-state/config.yml"])
+            )
+            write_private(archive, ciphertext)
+            write_private(metadata_path(archive), json.dumps({
+                "node_id": node.node_id,
+                "created_at": "2026-09-03T00:00:00+00:00",
+                "ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
+            }).encode())
+            env = {
+                "AURIX_FLEET_BACKUP_KEY": key,
+                "AURIX_FLEET_BACKUP_DIR": str(root / "local"),
+                "AURIX_BACKUP_OBJECT_STORE_URL": "s3://bucket/aurix",
+            }
+            objects: dict[str, bytes] = {}
+
+            def put(_env: dict[str, str], object_key: str, content: bytes) -> str:
+                objects[object_key] = content
+                return f"s3://bucket/aurix/{object_key}"
+
+            def get(_env: dict[str, str], object_key: str) -> bytes:
+                return objects[object_key]
+
+            with patch.object(fleet_backup.offsite_storage, "put", put), \
+                    patch.object(fleet_backup.offsite_storage, "get", get), \
+                    patch.object(
+                        fleet_backup.offsite_storage,
+                        "latest_key",
+                        lambda _env, prefix, suffix: sorted(
+                            item for item in objects
+                            if item.startswith(prefix) and item.endswith(suffix)
+                        )[-1],
+                    ):
+                mirror_offsite(node, env, archive)
+                result = verify_node(node, env)
+
+            self.assertIn("offsite", result)
+            self.assertTrue(any(item.startswith("fleet/sg-a/") for item in objects))
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ from deploy.fleet_reconcile import (  # noqa: E402
     run_ssh,
     ssh_base,
 )
+from deploy import offsite_storage  # noqa: E402
 
 
 def fernet(env: dict[str, str]) -> Fernet:
@@ -127,6 +128,27 @@ def verify_archive(env: dict[str, str], archive: Path) -> dict[str, object]:
     }
 
 
+def verify_archive_bytes(
+    env: dict[str, str], ciphertext: bytes, metadata_raw: bytes, label: str
+) -> dict[str, object]:
+    try:
+        metadata = json.loads(metadata_raw.decode())
+        raw = fernet(env).decrypt(ciphertext)
+    except (UnicodeDecodeError, json.JSONDecodeError, InvalidToken) as exc:
+        raise FleetError(f"backup cannot be verified: {label}") from exc
+    validate_archive(raw)
+    expected_hash = metadata.get("ciphertext_sha256")
+    actual_hash = hashlib.sha256(ciphertext).hexdigest()
+    if expected_hash != actual_hash:
+        raise FleetError(f"backup hash mismatch: {label}")
+    return {
+        "archive": label,
+        "metadata": f"{label}.json",
+        "created_at": metadata.get("created_at"),
+        "ciphertext_sha256": actual_hash,
+    }
+
+
 def prune_backups(root: Path, keep: int) -> None:
     archives = sorted(root.glob("*.tar.gz.fernet"), reverse=True)
     for obsolete in archives[keep:]:
@@ -135,6 +157,11 @@ def prune_backups(root: Path, keep: int) -> None:
 
 
 def mirror_offsite(node: FleetNode, env: dict[str, str], archive: Path) -> Path | None:
+    if offsite_storage.configured(env):
+        object_key = f"fleet/{node.node_id}/{archive.name}"
+        offsite_storage.put(env, object_key, archive.read_bytes())
+        offsite_storage.put(env, object_key + ".json", metadata_path(archive).read_bytes())
+        return None
     root = offsite_root(env, node)
     if root is None:
         if truthy(env.get("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE")):
@@ -194,8 +221,17 @@ def backup_node(node: FleetNode, env: dict[str, str]) -> Path:
 def verify_node(node: FleetNode, env: dict[str, str]) -> dict[str, object]:
     local = verify_archive(env, latest_archive(backup_root(env, node)))
     result: dict[str, object] = {"node": node.node_id, "local": local}
-    remote_root = offsite_root(env, node)
-    if remote_root is not None:
+    if offsite_storage.configured(env):
+        object_key = offsite_storage.latest_key(
+            env, f"fleet/{node.node_id}/", ".tar.gz.fernet"
+        )
+        result["offsite"] = verify_archive_bytes(
+            env,
+            offsite_storage.get(env, object_key),
+            offsite_storage.get(env, object_key + ".json"),
+            f"object://{object_key}",
+        )
+    elif (remote_root := offsite_root(env, node)) is not None:
         result["offsite"] = verify_archive(env, latest_archive(remote_root))
     elif truthy(env.get("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE")):
         raise FleetError("offsite backups are required but AURIX_FLEET_BACKUP_OFFSITE_DIR is empty")

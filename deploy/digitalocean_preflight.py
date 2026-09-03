@@ -18,8 +18,10 @@ from cryptography.fernet import Fernet
 
 try:
     from deploy.fleet_reconcile import FleetError, parse_manifest
+    from deploy import offsite_storage
 except ModuleNotFoundError:  # Direct execution sets deploy/ as sys.path[0].
     from fleet_reconcile import FleetError, parse_manifest
+    import offsite_storage
 
 
 TRUTHY = {"1", "true", "yes", "on"}
@@ -100,6 +102,12 @@ def _validate_configuration() -> dict[str, str]:
             fail("OUTLINE_CERT_SHA256 must contain 64 hexadecimal characters")
 
     fleet_raw = os.environ.get("AURIX_FLEET_NODES_JSON", "").strip()
+    object_store_configured = offsite_storage.configured(dict(os.environ))
+    if object_store_configured:
+        try:
+            offsite_storage.from_env(dict(os.environ))
+        except FleetError as exc:
+            fail(str(exc))
     if fleet_raw:
         try:
             fleet_nodes = parse_manifest(fleet_raw)
@@ -127,7 +135,9 @@ def _validate_configuration() -> dict[str, str]:
         require_offsite = os.environ.get(
             "AURIX_FLEET_BACKUP_REQUIRE_OFFSITE", ""
         ).strip().lower() in {"1", "true", "yes", "on"}
-        if offsite:
+        if object_store_configured:
+            pass
+        elif offsite:
             offsite_path = Path(offsite)
             if not offsite_path.is_absolute():
                 fail("AURIX_FLEET_BACKUP_OFFSITE_DIR must be an absolute path")
@@ -156,7 +166,15 @@ def _validate_configuration() -> dict[str, str]:
         require_database_offsite = os.environ.get(
             "AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE", ""
         ).strip().lower() in TRUTHY
-        if database_offsite:
+        if object_store_configured:
+            database_backup_key = os.environ.get(
+                "AURIX_DATABASE_BACKUP_KEY", os.environ.get("AURIX_FLEET_BACKUP_KEY", "")
+            )
+            try:
+                Fernet(database_backup_key.encode())
+            except (TypeError, ValueError):
+                fail("AURIX_DATABASE_BACKUP_KEY or AURIX_FLEET_BACKUP_KEY is not a valid Fernet key")
+        elif database_offsite:
             database_offsite_path = Path(database_offsite)
             if not database_offsite_path.is_absolute():
                 fail("AURIX_DATABASE_BACKUP_OFFSITE_DIR must be an absolute path")

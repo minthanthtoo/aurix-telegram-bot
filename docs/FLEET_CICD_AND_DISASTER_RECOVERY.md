@@ -138,13 +138,26 @@ Backups default to `/var/lib/aurix-fleet/backups/<node-id>/`, mode `0600`, with
 14 retained copies. A size limit prevents disk exhaustion. Metadata contains
 hashes and timestamps, never management credentials.
 
-The control-plane disk is not an offsite backup. Set
-`AURIX_FLEET_BACKUP_OFFSITE_DIR` to an absolute private mount or synced object
-storage path so every encrypted `.fernet` archive and metadata file is mirrored
-outside the control-plane VM. Set `AURIX_FLEET_BACKUP_REQUIRE_OFFSITE=1` in
-production; then backups and verification fail closed if the offsite target is
-missing. `AURIX_FLEET_BACKUP_OFFSITE_RETENTION` controls offsite pruning and can
-be longer than local retention.
+The control-plane disk is not an offsite backup. Prefer S3-compatible object
+storage for the offsite recovery store:
+
+```dotenv
+AURIX_BACKUP_OBJECT_STORE_URL=s3://bucket/aurix-production
+AURIX_BACKUP_OBJECT_STORE_ENDPOINT=https://account.r2.cloudflarestorage.com
+AURIX_BACKUP_OBJECT_STORE_REGION=auto
+AURIX_BACKUP_OBJECT_STORE_ACCESS_KEY_ID=...
+AURIX_BACKUP_OBJECT_STORE_SECRET_ACCESS_KEY=...
+```
+
+This shape works for Cloudflare R2, Backblaze B2 S3, DigitalOcean Spaces, and
+AWS S3. If object storage is unavailable, use
+`AURIX_FLEET_BACKUP_OFFSITE_DIR` and `AURIX_DATABASE_BACKUP_OFFSITE_DIR` as
+absolute private mount or synced paths. Set
+`AURIX_FLEET_BACKUP_REQUIRE_OFFSITE=1` and
+`AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE=1` in production; then backups and
+verification fail closed if the offsite target is missing.
+`*_OFFSITE_RETENTION` controls offsite pruning and can be longer than local
+retention.
 
 Verify the recovery set after scheduled backups and before risky changes:
 
@@ -180,9 +193,9 @@ SQLite commerce backups use the same fail-closed pattern:
 ```
 
 `aurix-database-backup.timer` is installed automatically for SQLite deployments.
-Set `AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE=1` after mounting or syncing
-`AURIX_DATABASE_BACKUP_OFFSITE_DIR`; otherwise the timer can create local
-encrypted backups but readiness remains incomplete.
+Set `AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE=1` after configuring object storage
+or mounting/syncing `AURIX_DATABASE_BACKUP_OFFSITE_DIR`; otherwise the timer can
+create local encrypted backups but readiness remains incomplete.
 
 Restore is deliberately explicit and replaces current remote Outline state. It
 validates every tar path, rejects links/devices/traversal, preserves a remote

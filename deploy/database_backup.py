@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 
 from deploy.fleet_backup import truthy, write_private  # noqa: E402
 from deploy.fleet_reconcile import FleetError, load_dotenv  # noqa: E402
+from deploy import offsite_storage  # noqa: E402
 
 
 def backup_key(env: dict[str, str]) -> Fernet:
@@ -127,7 +128,41 @@ def verify_archive(env: dict[str, str], archive: Path) -> dict[str, object]:
     }
 
 
+def verify_archive_bytes(
+    env: dict[str, str], ciphertext: bytes, metadata_raw: bytes, label: str
+) -> dict[str, object]:
+    try:
+        metadata = json.loads(metadata_raw.decode())
+        raw = backup_key(env).decrypt(ciphertext)
+    except (UnicodeDecodeError, json.JSONDecodeError, InvalidToken) as exc:
+        raise FleetError(f"database backup cannot be verified: {label}") from exc
+    expected = metadata.get("ciphertext_sha256")
+    actual = hashlib.sha256(ciphertext).hexdigest()
+    if expected != actual:
+        raise FleetError(f"database backup hash mismatch: {label}")
+    temporary = Path(tempfile.mkdtemp(prefix="aurix-db-object-verify-")) / "verify.sqlite3"
+    try:
+        temporary.write_bytes(raw)
+        with sqlite3.connect(temporary) as connection:
+            row = connection.execute("PRAGMA integrity_check").fetchone()
+            if not row or row[0] != "ok":
+                raise FleetError("database backup integrity_check failed")
+    finally:
+        shutil.rmtree(temporary.parent, ignore_errors=True)
+    return {
+        "archive": label,
+        "metadata": f"{label}.json",
+        "created_at": metadata.get("created_at"),
+        "ciphertext_sha256": actual,
+    }
+
+
 def mirror_offsite(env: dict[str, str], archive: Path) -> Path | None:
+    if offsite_storage.configured(env):
+        object_key = f"database/{archive.name}"
+        offsite_storage.put(env, object_key, archive.read_bytes())
+        offsite_storage.put(env, object_key + ".json", metadata_path(archive).read_bytes())
+        return None
     root = offsite_root(env)
     if root is None:
         if truthy(env.get("AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE")):
@@ -167,8 +202,15 @@ def backup(env: dict[str, str]) -> Path:
 
 def verify(env: dict[str, str]) -> dict[str, object]:
     result: dict[str, object] = {"local": verify_archive(env, latest_archive(local_root(env)))}
-    remote_root = offsite_root(env)
-    if remote_root is not None:
+    if offsite_storage.configured(env):
+        object_key = offsite_storage.latest_key(env, "database/", ".sqlite3.fernet")
+        result["offsite"] = verify_archive_bytes(
+            env,
+            offsite_storage.get(env, object_key),
+            offsite_storage.get(env, object_key + ".json"),
+            f"object://{object_key}",
+        )
+    elif (remote_root := offsite_root(env)) is not None:
         result["offsite"] = verify_archive(env, latest_archive(remote_root))
     elif truthy(env.get("AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE")):
         raise FleetError(

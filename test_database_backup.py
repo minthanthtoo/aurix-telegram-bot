@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
@@ -51,6 +52,30 @@ class DatabaseBackupTests(unittest.TestCase):
 
         with self.assertRaises(FleetError):
             database_backup.backup(self.env)
+
+    def test_object_store_replaces_offsite_directory(self) -> None:
+        self.env.pop("AURIX_DATABASE_BACKUP_OFFSITE_DIR")
+        self.env["AURIX_BACKUP_OBJECT_STORE_URL"] = "s3://bucket/aurix"
+        objects: dict[str, bytes] = {}
+
+        def put(_env: dict[str, str], key: str, content: bytes) -> str:
+            objects[key] = content
+            return f"s3://bucket/aurix/{key}"
+
+        def get(_env: dict[str, str], key: str) -> bytes:
+            return objects[key]
+
+        with patch.object(database_backup.offsite_storage, "put", put), \
+                patch.object(database_backup.offsite_storage, "get", get), \
+                patch.object(database_backup.offsite_storage, "latest_key",
+                             lambda _env, prefix, suffix: sorted(
+                                 key for key in objects if key.startswith(prefix) and key.endswith(suffix)
+                             )[-1]):
+            database_backup.backup(self.env)
+            report = database_backup.verify(self.env)
+
+        self.assertIn("offsite", report)
+        self.assertTrue(any(key.startswith("database/") for key in objects))
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
@@ -136,6 +137,32 @@ class RecoveryReadinessTests(unittest.TestCase):
         self.write_env(values)
 
         report = run_audit(self.env_file, verify_archives=True)
+
+        self.assertEqual(report["status"], "pass")
+
+    def test_object_store_satisfies_recovery_offsite_checks(self) -> None:
+        values = self.fleet_env()
+        values.pop("AURIX_DATABASE_BACKUP_OFFSITE_DIR")
+        values.pop("AURIX_FLEET_BACKUP_OFFSITE_DIR")
+        values.update({
+            "AURIX_BACKUP_OBJECT_STORE_URL": "s3://aurix-backups/prod",
+            "AURIX_BACKUP_OBJECT_STORE_ENDPOINT": "https://object.example",
+            "AURIX_BACKUP_OBJECT_STORE_REGION": "auto",
+            "AURIX_BACKUP_OBJECT_STORE_ACCESS_KEY_ID": "access",
+            "AURIX_BACKUP_OBJECT_STORE_SECRET_ACCESS_KEY": "secret",
+            "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "DIGITALOCEAN_API_TOKEN": "dop_v1_test",
+            "AURIX_DNS_PROVIDER": "cloudflare",
+            "AURIX_DNS_ZONE": "example.com",
+            "AURIX_DNS_API_TOKEN": "dns-token",
+        })
+        self.write_env(values)
+
+        with patch("deploy.recovery_readiness.database_backup.verify",
+                   return_value={"local": {}, "offsite": {}}), \
+                patch("deploy.recovery_readiness.verify_node",
+                      return_value={"node": "sg-a", "local": {}, "offsite": {}}):
+            report = run_audit(self.env_file, verify_archives=True)
 
         self.assertEqual(report["status"], "pass")
 

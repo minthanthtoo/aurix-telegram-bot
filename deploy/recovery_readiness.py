@@ -26,6 +26,7 @@ from deploy.fleet_reconcile import (  # noqa: E402
     parse_manifest,
 )
 from deploy import database_backup  # noqa: E402
+from deploy import offsite_storage  # noqa: E402
 
 TRUTHY = {"1", "true", "yes", "on"}
 FAIL = "fail"
@@ -75,6 +76,16 @@ def check_database(env: dict[str, str], verify_archives: bool) -> Check:
         if parsed.scheme in {"postgres", "postgresql"} and parsed.hostname:
             return Check("database_recovery", PASS, "external PostgreSQL is configured")
         return Check("database_recovery", FAIL, "COMMERCE_DATABASE_URL must be PostgreSQL")
+    if has_value(env, "DATABASE_PATH") and offsite_storage.configured(env):
+        if not truthy(env.get("AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE")):
+            return Check("database_recovery", WARN, "object storage is set but database REQUIRE_OFFSITE is not enabled")
+        if not verify_archives:
+            return Check("database_recovery", WARN, "run with --verify-archives to prove SQLite backup decryptability")
+        try:
+            database_backup.verify(env)
+        except (FleetError, OSError, ValueError) as exc:
+            return Check("database_recovery", FAIL, str(exc))
+        return Check("database_recovery", PASS, "SQLite local/object-store backups are verified")
     if has_value(env, "DATABASE_PATH") and has_value(env, "AURIX_DATABASE_BACKUP_OFFSITE_DIR"):
         path = Path(env["AURIX_DATABASE_BACKUP_OFFSITE_DIR"]).expanduser()
         if not path.is_absolute():
@@ -121,6 +132,10 @@ def check_backup_secret(env: dict[str, str], has_fleet: bool) -> Check:
 def check_offsite_config(env: dict[str, str], nodes: list[FleetNode]) -> Check:
     if not nodes:
         return Check("fleet_offsite", WARN, "not required without fleet nodes")
+    if offsite_storage.configured(env):
+        if not truthy(env.get("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE")):
+            return Check("fleet_offsite", WARN, "object storage is set but fleet REQUIRE_OFFSITE is not enabled")
+        return Check("fleet_offsite", PASS, "object-store fleet backups are required")
     raw = env.get("AURIX_FLEET_BACKUP_OFFSITE_DIR", "").strip()
     if not raw:
         return Check("fleet_offsite", FAIL, "missing AURIX_FLEET_BACKUP_OFFSITE_DIR")

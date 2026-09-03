@@ -122,6 +122,19 @@ class DigitalOceanPreflightTest(unittest.TestCase):
         with patch.dict(os.environ, environment, clear=True):
             main([])
 
+    def test_object_store_can_satisfy_required_offsite_paths(self):
+        environment = self.fleet_environment()
+        environment["AURIX_FLEET_BACKUP_REQUIRE_OFFSITE"] = "1"
+        environment["AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE"] = "1"
+        environment["AURIX_DATABASE_BACKUP_KEY"] = Fernet.generate_key().decode()
+        environment["AURIX_BACKUP_OBJECT_STORE_URL"] = "s3://aurix-backups/prod"
+        environment["AURIX_BACKUP_OBJECT_STORE_ENDPOINT"] = "https://object.example"
+        environment["AURIX_BACKUP_OBJECT_STORE_REGION"] = "auto"
+        environment["AURIX_BACKUP_OBJECT_STORE_ACCESS_KEY_ID"] = "access"
+        environment["AURIX_BACKUP_OBJECT_STORE_SECRET_ACCESS_KEY"] = "secret"
+        with patch.dict(os.environ, environment, clear=True):
+            main([])
+
 
 if __name__ == "__main__":
     unittest.main()
