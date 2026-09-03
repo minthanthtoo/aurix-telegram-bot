@@ -44,6 +44,20 @@ class DigitalOceanPreflightTest(unittest.TestCase):
         with patch.dict(os.environ, self.environment, clear=True):
             main([])
 
+    def test_env_file_parses_json_after_shell_environment_was_sourced(self):
+        env_file = Path(self.tmp.name) / "aurix.env"
+        lines = []
+        for key, value in self.environment.items():
+            if key == "PAYMENT_RECIPIENTS_JSON":
+                lines.append(f"{key}='{value}'")
+            else:
+                lines.append(f"{key}={value}")
+        env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        shell_environment = dict(self.environment)
+        shell_environment["PAYMENT_RECIPIENTS_JSON"] = "{kbzpay:broken}"
+        with patch.dict(os.environ, shell_environment, clear=True):
+            main(["--env-file", str(env_file)])
+
     def test_receipt_storage_cannot_be_disabled(self):
         environment = dict(self.environment, RECEIPT_STORAGE_REQUIRED="0")
         with patch.dict(os.environ, environment, clear=True):

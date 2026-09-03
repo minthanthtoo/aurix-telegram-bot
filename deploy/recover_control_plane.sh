@@ -62,6 +62,16 @@ set -a
 . "$env_file"
 set +a
 
+# JSON values are valid dotenv strings but are not shell-safe when unquoted
+# (the example intentionally keeps them readable). Preserve a simple marker for
+# the later unit-install branch, then let Python's canonical dotenv parser load
+# the exact values for validation and backup verification.
+fleet_configured=0
+if [[ -n "${AURIX_FLEET_NODES_JSON:-}" ]]; then
+  fleet_configured=1
+fi
+unset PAYMENT_RECIPIENTS_JSON OUTLINE_SERVERS_JSON AURIX_FLEET_NODES_JSON
+
 command -v python3 >/dev/null || {
   echo "python3 is required" >&2
   exit 1
@@ -97,14 +107,15 @@ python3 -m venv "$build_dir/.venv"
 "$build_dir/.venv/bin/python" -m pip install \
   --disable-pip-version-check --no-cache-dir --requirement "$build_dir/requirements.txt"
 "$build_dir/.venv/bin/python" -m compileall -q "$build_dir"
-"$build_dir/.venv/bin/python" "$build_dir/deploy/digitalocean_preflight.py" --live
+"$build_dir/.venv/bin/python" "$build_dir/deploy/digitalocean_preflight.py" \
+  --live --env-file "$env_file"
 
 if [[ -n "${DATABASE_PATH:-}" && -z "${COMMERCE_DATABASE_URL:-}" ]]; then
   "$build_dir/.venv/bin/python" "$build_dir/deploy/database_backup.py" verify \
     --env-file "$env_file"
 fi
 
-if [[ -n "${AURIX_FLEET_NODES_JSON:-}" && "$skip_fleet_check" == "0" ]]; then
+if [[ "$fleet_configured" == "1" && "$skip_fleet_check" == "0" ]]; then
   "$build_dir/.venv/bin/python" "$build_dir/deploy/fleet_backup.py" verify \
     --node all --env-file "$env_file"
   "$build_dir/.venv/bin/python" "$build_dir/deploy/fleet_reconcile.py" validate \
@@ -138,7 +149,7 @@ systemctl enable aurix-autodeploy.timer >/dev/null
 if [[ -n "${DATABASE_PATH:-}" && -z "${COMMERCE_DATABASE_URL:-}" ]]; then
   systemctl enable aurix-database-backup.timer >/dev/null
 fi
-if [[ -n "${AURIX_FLEET_NODES_JSON:-}" ]]; then
+if [[ "$fleet_configured" == "1" ]]; then
   systemctl enable aurix-fleet-backup.timer aurix-fleet-reconcile.timer >/dev/null
 fi
 

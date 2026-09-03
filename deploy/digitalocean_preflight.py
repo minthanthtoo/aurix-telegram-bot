@@ -17,11 +17,11 @@ from urllib.parse import quote, urlsplit
 from cryptography.fernet import Fernet
 
 try:
-    from deploy.fleet_reconcile import FleetError, parse_manifest
+    from deploy.fleet_reconcile import FleetError, load_dotenv, parse_manifest
     from deploy import dns_records
     from deploy import offsite_storage
 except ModuleNotFoundError:  # Direct execution sets deploy/ as sys.path[0].
-    from fleet_reconcile import FleetError, parse_manifest
+    from fleet_reconcile import FleetError, load_dotenv, parse_manifest
     import dns_records
     import offsite_storage
 
@@ -305,7 +305,20 @@ def _validate_live(values: dict[str, str]) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true", help="check configured external services")
+    parser.add_argument(
+        "--env-file",
+        default="",
+        help="load the canonical dotenv file before validating (recommended for recovery)",
+    )
     args = parser.parse_args(argv)
+    if args.env_file:
+        try:
+            # Recovery may have sourced the file for shell variables first.
+            # Overwrite so JSON values are parsed by the canonical dotenv
+            # reader instead of by shell tokenization.
+            load_dotenv(Path(args.env_file), overwrite=True)
+        except (FleetError, OSError) as exc:
+            fail(str(exc))
     values = _validate_configuration()
     if args.live:
         _validate_live(values)

@@ -112,7 +112,7 @@ RECEIPT_LLM_BASE_URL=
 RECEIPT_LLM_MODEL=
 RECEIPT_LLM_API_KEY=
 RECEIPT_LLM_FALLBACK_MODELS=
-PAYMENT_RECIPIENTS_JSON={"kbzpay":{"names":["MERCHANT NAME"],"accounts":["1234"]},"wavepay":{"names":["MERCHANT NAME"],"accounts":["09123456789"]},"ayapay":{"names":["MERCHANT NAME"],"accounts":["1234"]},"uabpay":{"names":["MERCHANT NAME"],"accounts":["09123456789"]},"cbpay":{"names":["MERCHANT NAME"],"accounts":[]}}
+PAYMENT_RECIPIENTS_JSON='{"kbzpay":{"names":["MERCHANT NAME"],"accounts":["1234"]},"wavepay":{"names":["MERCHANT NAME"],"accounts":["09123456789"]},"ayapay":{"names":["MERCHANT NAME"],"accounts":["1234"]},"uabpay":{"names":["MERCHANT NAME"],"accounts":["09123456789"]},"cbpay":{"names":["MERCHANT NAME"],"accounts":[]}}'
 ALLOW_TEXT_PAYMENT_REFERENCES=0
 ```
 
