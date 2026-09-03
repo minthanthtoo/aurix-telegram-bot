@@ -751,6 +751,7 @@ class MaintenanceCommerceService:
     def __init__(self):
         self.metrics = None
         self.process_calls = 0
+        self.snapshot_calls = 0
 
     def enforce_quotas(self, metrics=None):
         self.metrics = metrics
@@ -759,6 +760,11 @@ class MaintenanceCommerceService:
     def expire_and_process(self):
         self.process_calls += 1
         return 0
+
+    def capacity_snapshot(self, *, refresh_inventory=True):
+        self.snapshot_calls += 1
+        self.snapshot_refresh_inventory = refresh_inventory
+        return {}
 
 
 class FailingQuotaClaimService(MaintenanceClaimService):
@@ -1451,6 +1457,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIs(commerce.metrics, outline.snapshot)
         self.assertEqual(claim.expiry_calls, 1)
         self.assertEqual(commerce.process_calls, 1)
+        self.assertEqual(commerce.snapshot_calls, 1)
+        self.assertFalse(commerce.snapshot_refresh_inventory)
 
     def test_maintenance_expiry_runs_when_quota_stage_fails(self):
         outline = MaintenanceOutline()

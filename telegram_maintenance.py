@@ -279,6 +279,15 @@ class TelegramMaintenanceMixin:
             refresh_inventory = getattr(self.commerce, "refresh_server_inventory", None)
             if callable(refresh_inventory):
                 run_stage("server_inventory", refresh_inventory)
+            capacity_snapshot = getattr(self.commerce, "capacity_snapshot", None)
+            if callable(capacity_snapshot):
+                # Inventory has just been refreshed above. Reuse that observed
+                # state while recording durable scale evidence, avoiding a
+                # second round of Outline requests in the same maintenance pass.
+                run_stage(
+                    "scale_observation",
+                    lambda: capacity_snapshot(refresh_inventory=False),
+                )
             run_stage("notifications", self._send_pending_notifications)
             # Slow model calls run last so quota enforcement and customer/staff
             # notifications are never held behind optional assisted extraction.

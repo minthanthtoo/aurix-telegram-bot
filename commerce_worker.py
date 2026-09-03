@@ -938,14 +938,17 @@ class CommerceWorkerMixin:
             "observation_interval_seconds": interval,
         }
 
-    def capacity_snapshot(self, now: datetime | None = None) -> dict[str, Any]:
+    def capacity_snapshot(
+        self, now: datetime | None = None, *, refresh_inventory: bool = True
+    ) -> dict[str, Any]:
         """Return declared capacity beside observed remote inventory/telemetry."""
         current = (now or datetime.now(UTC)).astimezone(UTC)
         expiring_at = _now_text(current + timedelta(hours=24))
-        try:
-            self.refresh_server_inventory(current)
-        except Exception:
-            pass
+        if refresh_inventory:
+            try:
+                self.refresh_server_inventory(current)
+            except Exception:
+                pass
         with self.database.connect() as connection:
             counts = connection.execute(
                 """SELECT
