@@ -58,6 +58,17 @@ class FleetManifestTests(unittest.TestCase):
         with self.assertRaises(FleetError):
             parse_manifest(manifest(dns_name="192.0.2.10"))
 
+    def test_rejects_unknown_or_overallocated_plan_policy(self) -> None:
+        with self.assertRaises(FleetError):
+            parse_manifest(manifest(plan_slots={"enterprise_1tb": 1}))
+        with self.assertRaises(FleetError):
+            parse_manifest(manifest(
+                max_keys=5,
+                reserved_keys=2,
+                tier_slots={"FREE300MB": 2},
+                plan_slots={"basic_50gb": 2},
+            ))
+
     def test_access_identity_is_bound_to_manifest(self) -> None:
         node = parse_manifest(manifest())[0]
         fingerprint = "a" * 64

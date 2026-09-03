@@ -178,6 +178,16 @@ def parse_manifest(raw: str) -> list[FleetNode]:
         unknown_tiers = set(tier_slots) - set(KNOWN_TIERS)
         if unknown_tiers:
             raise FleetError(f"node {node_id} has unknown tiers: {sorted(unknown_tiers)}")
+        unknown_plans = set(plan_slots) - set(KNOWN_PLANS)
+        if unknown_plans:
+            raise FleetError(f"node {node_id} has unknown plans: {sorted(unknown_plans)}")
+        allocated_slots = sum(tier_slots.values()) + sum(plan_slots.values())
+        saleable_slots = max_keys - reserved
+        if allocated_slots > saleable_slots:
+            raise FleetError(
+                f"node {node_id} allocates {allocated_slots} slots but only "
+                f"{saleable_slots} remain after reserved headroom"
+            )
         ssh_user = str(item.get("ssh_user") or "root").strip()
         if ssh_user != "root":
             raise FleetError(f"node {node_id} currently requires root SSH")
