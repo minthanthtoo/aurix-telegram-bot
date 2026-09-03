@@ -120,7 +120,7 @@ Key evidence:
 
 The code is therefore not “behind” in a simple feature-count sense. It correctly built much of the commercial foundation first. The mismatch is that some documents call the Outline-only target “final,” while the later conversations redefine the final target as protocol-agnostic V13.
 
-## Capability matrix
+## Historical capability matrix (2026-08-29 baseline)
 
 | Capability | Evidence in current code | Maturity | V13 gap |
 |---|---|---:|---|
