@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,17 +134,68 @@ def check_allocation_policy(env: dict[str, str], nodes: list[FleetNode]) -> Chec
         allocated = sum(node.plan_slots.values()) + sum(node.tier_slots.values())
         if allocated > saleable:
             overallocated.append(f"{node.node_id}={allocated}/{saleable}")
-    if not overallocated:
-        return Check("allocation_policy", PASS, "declared plan/tier slots fit saleable key headroom")
-    if truthy(env.get("AURIX_FLEET_STRICT_ALLOCATION_VALIDATION")):
-        return Check("allocation_policy", FAIL, "strict allocation validation rejected over-allocation")
-    return Check(
-        "allocation_policy",
-        WARN,
-        "legacy over-allocation; enable strict validation after owner normalization ("
-        + ", ".join(overallocated)
-        + ")",
-    )
+    orphaned = _sqlite_orphan_inventory(env)
+    strict = truthy(env.get("AURIX_FLEET_STRICT_ALLOCATION_VALIDATION"))
+    if strict and overallocated:
+        detail = "strict allocation validation rejected over-allocation"
+        if orphaned:
+            detail += "; untracked remote keys must also be audited (" + ", ".join(orphaned) + ")"
+        return Check("allocation_policy", FAIL, detail)
+    if strict and orphaned:
+        return Check(
+            "allocation_policy",
+            FAIL,
+            "strict allocation validation is blocked by untracked remote keys ("
+            + ", ".join(orphaned)
+            + ")",
+        )
+    if overallocated:
+        detail = "legacy over-allocation; enable strict validation after owner normalization ("
+        detail += ", ".join(overallocated) + ")"
+        if orphaned:
+            detail += "; audit untracked remote keys (" + ", ".join(orphaned) + ")"
+        return Check("allocation_policy", WARN, detail)
+    if orphaned:
+        return Check(
+            "allocation_policy",
+            WARN,
+            "audit untracked remote keys before enabling strict allocation ("
+            + ", ".join(orphaned)
+            + ")",
+        )
+    return Check("allocation_policy", PASS, "declared plan/tier slots fit saleable key headroom")
+
+
+def _sqlite_orphan_inventory(env: dict[str, str]) -> list[str]:
+    """Read only the sanitized orphan counters when the MVP uses SQLite.
+
+    Readiness must never open or mutate a hosted PostgreSQL connection. The
+    live SQLite schema is maintained by the bot's inventory reconciler; a
+    missing/legacy schema simply leaves this optional signal unavailable.
+    """
+    if has_value(env, "COMMERCE_DATABASE_URL"):
+        return []
+    raw_path = env.get("DATABASE_PATH", "").strip()
+    if not raw_path:
+        return []
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute() or not path.is_file():
+        return []
+    try:
+        with sqlite3.connect(path) as connection:
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(outline_servers)").fetchall()
+            }
+            if "remote_orphan_key_count" not in columns:
+                return []
+            rows = connection.execute(
+                """SELECT server_id, remote_orphan_key_count FROM outline_servers
+                   WHERE remote_orphan_key_count > 0 ORDER BY server_id"""
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [f"{str(row[0])}={int(row[1])}" for row in rows]
 
 
 def check_backup_secret(env: dict[str, str], has_fleet: bool) -> Check:

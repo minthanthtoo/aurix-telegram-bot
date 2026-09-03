@@ -217,6 +217,30 @@ class RecoveryReadinessTests(unittest.TestCase):
         self.assertEqual(checks["allocation_policy"]["status"], "warn")
         self.assertIn("legacy over-allocation", checks["allocation_policy"]["detail"])
 
+    def test_untracked_remote_inventory_blocks_strict_allocation(self) -> None:
+        values = self.fleet_env()
+        database = Path(values["DATABASE_PATH"])
+        import sqlite3
+
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                """CREATE TABLE outline_servers (
+                       server_id TEXT PRIMARY KEY,
+                       remote_orphan_key_count INTEGER NOT NULL DEFAULT 0
+                   )"""
+            )
+            connection.execute(
+                "INSERT INTO outline_servers(server_id, remote_orphan_key_count) VALUES ('sg-a', 2)"
+            )
+        values["AURIX_FLEET_STRICT_ALLOCATION_VALIDATION"] = "1"
+        self.write_env(values)
+
+        report = run_audit(self.env_file, verify_archives=False)
+
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["allocation_policy"]["status"], "fail")
+        self.assertIn("untracked remote keys", checks["allocation_policy"]["detail"])
+
     def test_required_dns_without_configuration_fails(self) -> None:
         values = self.fleet_env()
         values["AURIX_DNS_REQUIRE"] = "1"
