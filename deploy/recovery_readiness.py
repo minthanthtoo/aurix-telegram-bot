@@ -293,7 +293,13 @@ def summarize(checks: list[Check]) -> str:
 
 
 def run_audit(env_file: Path, verify_archives: bool) -> dict[str, object]:
-    env = load_dotenv(env_file, overwrite=False)
+    # The explicit recovery file is authoritative. A long-lived shell or
+    # service may already contain stale values; do not let those shadow the
+    # file being audited. The recovery contract requires a self-contained
+    # canonical env file, so values absent from it are intentionally absent
+    # from this audit rather than inherited from the process.
+    loaded = load_dotenv(env_file, overwrite=False)
+    env = dict(loaded)
     fleet_check, nodes = check_fleet_manifest(env)
     checks = [
         check_required(env, [

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import tarfile
 import tempfile
 import unittest
@@ -114,6 +115,15 @@ class RecoveryReadinessTests(unittest.TestCase):
         self.assertEqual(checks["required_secrets"], "pass")
         self.assertEqual(checks["fleet_manifest"], "warn")
         self.assertEqual(checks["dns_automation"], "warn")
+
+    def test_explicit_recovery_file_overrides_stale_process_environment(self) -> None:
+        values = self.base_env()
+        values["AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE"] = "0"
+        self.write_env(values)
+        with patch.dict(os.environ, {"AURIX_FLEET_NODES_JSON": "{not-json}"}, clear=False):
+            report = run_audit(self.env_file, verify_archives=False)
+        checks = {item["name"]: item["status"] for item in report["checks"]}
+        self.assertEqual(checks["fleet_manifest"], "warn")
 
     def test_fleet_without_offsite_fails(self) -> None:
         values = self.fleet_env()
