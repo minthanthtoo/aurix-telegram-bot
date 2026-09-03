@@ -502,6 +502,13 @@ older evidence. `/receipts` remains the durable recovery queue.
 
 Wallet events are immutable. A wallet top-up accepts an exact receipt amount only, credits the balance exactly once after human verification, and never provisions a VPN subscription. A subsequent wallet purchase records `reserve → capture`; rejection releases a reservation exactly once. Capture does not deduct the balance a second time. Receipt SHA-256 and Telegram file identity are rejected across different orders before vision processing; normalized provider transaction IDs remain the authoritative duplicate check at verification. AI triage fails closed when a merchant profile is missing and always leaves financial approval to staff. `/wallet` shows the current projection and recent ledger events, while `/reconcile` reports balance mismatches and impossible order/job combinations.
 
+Short-lived conversational prompts (custom top-up amount, staff receipt
+verification details, receipt diagnostics, and owner admin entry) are also
+stored as bounded, ten-minute workflow markers. A restart therefore cannot
+silently lose the context of a reply; expired markers are ignored and pruned by
+maintenance. The markers contain only IDs and action names, never screenshots,
+access URLs, or credentials.
+
 The receipt parser uses an OpenAI-compatible `/chat/completions` endpoint with a
 vision-capable model. Configure the three `RECEIPT_LLM_*` variables only after
 testing that endpoint with a synthetic receipt. If they are unset, unreachable,

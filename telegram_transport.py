@@ -30,6 +30,7 @@ from receipt_llm import build_receipt_extractor
 UTC = timezone.utc
 DEFAULT_MAINTENANCE_INTERVAL_SECONDS = 60.0
 ADMIN_CONFIRMATION_TTL = timedelta(minutes=5)
+INTERACTION_STATE_TTL = timedelta(minutes=10)
 
 
 class TelegramAPIError(RuntimeError):
@@ -187,6 +188,7 @@ class TelegramBot(
         self._receipt_test_providers: dict[int, str] = {}
         self._admin_add_waiting: set[int] = set()
         self._customer_inputs: dict[int, dict[str, Any]] = {}
+        self._interaction_state_checked: set[tuple[int, str]] = set()
         self._maintenance_last_status: dict[str, Any] = {
             "status": "never_run",
             "last_started_at": None,
@@ -195,6 +197,65 @@ class TelegramBot(
             "last_stage": None,
             "last_error": None,
         }
+
+    def _save_interaction_state(
+        self, telegram_id: int, state_key: str, payload: dict[str, Any]
+    ) -> None:
+        """Best-effort persistence for short-lived conversational prompts.
+
+        Telegram retries and service restarts are normal. Persisting only the
+        small workflow marker (never an image, access URL, or credential) lets
+        a numeric top-up amount or staff reply continue safely after restart.
+        In-memory state remains the fast path and compatibility fallback for
+        lightweight test doubles that do not expose a database.
+        """
+        database = getattr(self.commerce, "database", None)
+        saver = getattr(database, "save_interaction_state", None)
+        if not callable(saver):
+            return
+        try:
+            saver(
+                int(telegram_id),
+                str(state_key),
+                dict(payload),
+                (datetime.now(UTC) + INTERACTION_STATE_TTL).isoformat(),
+            )
+            self._interaction_state_checked.add((int(telegram_id), str(state_key)))
+        except Exception as exc:
+            # The prompt is still kept in memory; do not turn a recoverability
+            # enhancement into a customer-facing failure or leak DB details.
+            print(
+                f"WARNING: interaction state persistence failed: {type(exc).__name__}",
+                file=sys.stderr,
+            )
+
+    def _load_interaction_state(self, telegram_id: int, state_key: str) -> dict[str, Any] | None:
+        marker = (int(telegram_id), str(state_key))
+        if marker in self._interaction_state_checked:
+            return None
+        database = getattr(self.commerce, "database", None)
+        loader = getattr(database, "load_interaction_state", None)
+        if not callable(loader):
+            return None
+        try:
+            value = loader(int(telegram_id), str(state_key))
+        except Exception:
+            return None
+        self._interaction_state_checked.add(marker)
+        return value if isinstance(value, dict) else None
+
+    def _clear_interaction_state(self, telegram_id: int, state_key: str) -> None:
+        database = getattr(self.commerce, "database", None)
+        clearer = getattr(database, "clear_interaction_state", None)
+        if not callable(clearer):
+            return
+        try:
+            clearer(int(telegram_id), str(state_key))
+            self._interaction_state_checked.add((int(telegram_id), str(state_key)))
+        except Exception:
+            # Best effort: the expiry column is authoritative and will prevent
+            # an old prompt from being accepted even if cleanup is unavailable.
+            return
 
     def request(self, method: str, payload: dict[str, Any]) -> Any:
         started_at = time.perf_counter()
@@ -557,6 +618,7 @@ class TelegramBot(
             "action": action,
             "expires_at": time.monotonic() + 600,
         }
+        self._save_interaction_state(telegram_id, "customer_input", {"action": str(action)})
 
     def configure_commands(self) -> None:
         # Startup configures scopes asynchronously while maintenance starts

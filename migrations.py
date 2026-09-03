@@ -718,6 +718,34 @@ COMMERCE_MIGRATIONS = (
                ON scale_observations(observed_at)""",
         ),
     ),
+    Migration(
+        9,
+        "restart_safe_interaction_state",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS interaction_states (
+                   telegram_id INTEGER NOT NULL,
+                   state_key TEXT NOT NULL,
+                   payload_json TEXT NOT NULL DEFAULT '{}',
+                   expires_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (telegram_id, state_key)
+               )""",
+            """CREATE INDEX IF NOT EXISTS interaction_states_expiry
+               ON interaction_states(expires_at)""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS interaction_states (
+                   telegram_id BIGINT NOT NULL,
+                   state_key TEXT NOT NULL,
+                   payload_json TEXT NOT NULL DEFAULT '{}',
+                   expires_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (telegram_id, state_key)
+               )""",
+            """CREATE INDEX IF NOT EXISTS interaction_states_expiry
+               ON interaction_states(expires_at)""",
+        ),
+    ),
 )
 
 

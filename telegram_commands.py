@@ -62,8 +62,18 @@ class TelegramCommandMixin:
             self._handle_control_group_shared(message, chat["id"], telegram_id)
             return
         if message.get("photo") or message.get("document"):
-            if self._is_admin(telegram_id) and telegram_id in self._receipt_test_waiting:
+            persisted_receipt_test = None
+            if self._is_admin(telegram_id) and telegram_id not in self._receipt_test_waiting:
+                persisted_receipt_test = self._load_interaction_state(telegram_id, "receipt_test")
+                if persisted_receipt_test is not None:
+                    self._receipt_test_providers[telegram_id] = str(
+                        persisted_receipt_test.get("provider") or ""
+                    )
+            if self._is_admin(telegram_id) and (
+                telegram_id in self._receipt_test_waiting or persisted_receipt_test is not None
+            ):
                 self._receipt_test_waiting.discard(telegram_id)
+                self._clear_interaction_state(telegram_id, "receipt_test")
                 self._handle_receipt_diagnostic(message, chat["id"], telegram_id)
                 return
             self._handle_receipt(message, chat["id"], telegram_id)
@@ -74,6 +84,19 @@ class TelegramCommandMixin:
         raw_text = text.strip()
         customer_text: str | None = None
         customer_input = self._customer_inputs.get(int(telegram_id))
+        if (
+            customer_input is None
+            and not raw_text.startswith("/")
+            and raw_text not in self.CUSTOMER_BUTTON_COMMANDS
+            and raw_text not in self.ADMIN_BUTTON_COMMANDS
+        ):
+            persisted_input = self._load_interaction_state(telegram_id, "customer_input")
+            if persisted_input is not None and isinstance(persisted_input.get("action"), str):
+                customer_input = {
+                    "action": persisted_input["action"],
+                    "expires_at": time.monotonic() + 600,
+                }
+                self._customer_inputs[int(telegram_id)] = customer_input
         if customer_input:
             if (
                 float(customer_input.get("expires_at", 0)) <= time.monotonic()
@@ -81,6 +104,7 @@ class TelegramCommandMixin:
                 or raw_text.startswith("/")
             ):
                 self._customer_inputs.pop(int(telegram_id), None)
+                self._clear_interaction_state(telegram_id, "customer_input")
             elif customer_input.get("action") == "topup_amount":
                 normalized_amount = raw_text.replace(",", "")
                 if not normalized_amount.isdigit():
@@ -90,13 +114,20 @@ class TelegramCommandMixin:
                     )
                     return
                 self._customer_inputs.pop(int(telegram_id), None)
+                self._clear_interaction_state(telegram_id, "customer_input")
                 customer_text = f"/topup {normalized_amount}"
         pending_receipt = self._receipt_verify_inputs.get(int(telegram_id))
+        if pending_receipt is None and self._is_admin(telegram_id) and not raw_text.startswith("/"):
+            persisted_receipt = self._load_interaction_state(telegram_id, "receipt_verify")
+            if persisted_receipt is not None and isinstance(persisted_receipt.get("evidence_id"), str):
+                pending_receipt = persisted_receipt["evidence_id"]
+                self._receipt_verify_inputs[int(telegram_id)] = pending_receipt
         menu_navigation = (
             raw_text in self.CUSTOMER_BUTTON_COMMANDS or raw_text in self.ADMIN_BUTTON_COMMANDS
         )
         if pending_receipt and (menu_navigation or raw_text.startswith("/")):
             self._receipt_verify_inputs.pop(int(telegram_id), None)
+            self._clear_interaction_state(telegram_id, "receipt_verify")
             pending_receipt = None
         if pending_receipt and self._is_admin(telegram_id) and not raw_text.startswith("/"):
             values = raw_text.rsplit(maxsplit=1)
@@ -112,6 +143,7 @@ class TelegramCommandMixin:
                 )
                 return
             self._receipt_verify_inputs.pop(int(telegram_id), None)
+            self._clear_interaction_state(telegram_id, "receipt_verify")
             self._queue_admin_confirmation(
                 chat["id"],
                 telegram_id,
@@ -123,8 +155,14 @@ class TelegramCommandMixin:
             )
             return
         text = customer_text
-        if self._is_owner(telegram_id) and telegram_id in self._admin_add_waiting:
+        persisted_admin_add = None
+        if self._is_owner(telegram_id) and telegram_id not in self._admin_add_waiting:
+            persisted_admin_add = self._load_interaction_state(telegram_id, "admin_add")
+        if self._is_owner(telegram_id) and (
+            telegram_id in self._admin_add_waiting or persisted_admin_add is not None
+        ):
             self._admin_add_waiting.discard(telegram_id)
+            self._clear_interaction_state(telegram_id, "admin_add")
             if raw_text.isdigit():
                 text = f"/addadmin {raw_text}"
             else:

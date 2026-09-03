@@ -865,6 +865,28 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 ).fetchone()["last_claim_at"]
             )
 
+    def test_custom_topup_amount_resumes_after_bot_restart(self):
+        self.bot._expect_customer_input(123, "topup_amount")
+        restarted = RecordingTelegramBot(
+            "test-token",
+            ClaimService(self.db, self.outline),
+            self.commerce,
+            {999},
+            {123},
+        )
+
+        restarted.handle(self.message(123, "7500"))
+
+        with self.db.connect() as connection:
+            order = connection.execute(
+                "SELECT plan_code, amount_minor, status FROM orders WHERE telegram_id = 123"
+            ).fetchone()
+        self.assertEqual(tuple(order), ("wallet_topup", 7500, "awaiting_payment"))
+        self.assertTrue(restarted.media or restarted.sent)
+        self.assertIsNone(
+            self.commerce.database.load_interaction_state(123, "customer_input")
+        )
+
     def test_owner_selects_and_persists_control_group_via_chat_shared(self):
         access = StaffAccessControl(self.db, 999)
         access.bootstrap(owner_id=999)

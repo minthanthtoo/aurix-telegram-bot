@@ -496,6 +496,9 @@ class TelegramCallbackMixin:
                         return
                     self._receipt_test_providers[telegram_id] = provider
                     self._receipt_test_waiting.add(telegram_id)
+                    self._save_interaction_state(
+                        telegram_id, "receipt_test", {"provider": provider}
+                    )
                     self.send(
                         chat_id,
                         f"🧪 {self.PAYMENT_METHODS[provider]['label']} test ready\n\n"
@@ -535,6 +538,7 @@ class TelegramCallbackMixin:
                 elif entity_id == "cancel":
                     self._receipt_test_waiting.discard(telegram_id)
                     self._receipt_test_providers.pop(telegram_id, None)
+                    self._clear_interaction_state(telegram_id, "receipt_test")
                     self.send(chat_id, "Receipt test cancelled.", self._receipt_system_keyboard())
                 else:
                     self.send(chat_id, "That diagnostic action is no longer valid.")
@@ -547,6 +551,7 @@ class TelegramCallbackMixin:
                     return
                 if entity_id == "add":
                     self._admin_add_waiting.add(telegram_id)
+                    self._save_interaction_state(telegram_id, "admin_add", {})
                     self.send(
                         chat_id,
                         "➕ Add Administrator\n\nSend the numeric Telegram ID shown by that person's /whoami. Access is not granted until you review and confirm the next screen.",
@@ -665,6 +670,7 @@ class TelegramCallbackMixin:
                 )
             elif action == "r":
                 self._receipt_verify_inputs.pop(telegram_id, None)
+                self._clear_interaction_state(telegram_id, "receipt_verify")
                 synthetic["text"] = f"/receipt {entity_id}"
                 self.handle(synthetic)
             elif action == "v":
@@ -691,6 +697,9 @@ class TelegramCallbackMixin:
                     )
                 else:
                     self._receipt_verify_inputs[telegram_id] = entity_id
+                    self._save_interaction_state(
+                        telegram_id, "receipt_verify", {"evidence_id": entity_id}
+                    )
                     self.send(
                         chat_id,
                         "🔎 Check the actual receiving account, then reply with only:\n"

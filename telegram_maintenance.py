@@ -292,6 +292,10 @@ class TelegramMaintenanceMixin:
             # Slow model calls run last so quota enforcement and customer/staff
             # notifications are never held behind optional assisted extraction.
             run_stage("receipt_extraction", self._process_receipt_extraction)
+            interaction_store = getattr(self.commerce, "database", None)
+            prune_interactions = getattr(interaction_store, "prune_interaction_states", None)
+            if callable(prune_interactions):
+                run_stage("interaction_state_cleanup", prune_interactions)
         challenge_store = getattr(self.service, "database", None)
         prune = getattr(challenge_store, "prune_admin_challenges", None)
         if callable(prune):

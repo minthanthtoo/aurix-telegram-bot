@@ -180,6 +180,35 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertIn("storage_error", columns)
         self.assertIn("stored_at", columns)
 
+    def test_short_lived_interaction_state_survives_reopen_and_expires(self):
+        future = "2026-08-27T04:07:00+00:00"
+        self.database.save_interaction_state(
+            123,
+            "customer_input",
+            {"action": "topup_amount"},
+            future,
+        )
+        reopened = CommerceDatabase(self.database.path)
+        self.assertEqual(
+            reopened.load_interaction_state(123, "customer_input", "2026-08-27T03:08:00+00:00"),
+            {"action": "topup_amount"},
+        )
+        self.assertIsNone(
+            reopened.load_interaction_state(123, "customer_input", "2026-08-27T04:07:00+00:00")
+        )
+        self.assertEqual(
+            reopened.prune_interaction_states("2026-08-27T04:07:00+00:00"), 1
+        )
+
+    def test_interaction_state_rejects_oversized_payload(self):
+        with self.assertRaisesRegex(ValueError, "too large"):
+            self.database.save_interaction_state(
+                123,
+                "customer_input",
+                {"value": "x" * 5000},
+                "2026-08-27T04:07:00+00:00",
+            )
+
     def test_payment_is_required_and_approval_is_idempotent(self):
         order = self.service.create_order(123, "Min", "basic_50gb", self.now)
         with self.assertRaises(CommerceError):
@@ -967,15 +996,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "d8db39dce84061b36f525528ceb84a16ab7a3b13895180050543328eb1f7fd51",
+            "8c79ca6173afae7cd9f307722ac5fdb6b14ce9f44e6e93ed0ef47af83f069f05",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "02545f15c5331fe295656b252bb9d71c0d693004ea16a05ca1de31dd97271776",
+            "e03d6c421501a93af149c48dc6a5fded242818d2018c2c4dfe2cebf278cbc3c0",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "a7a769b6a57137198df724de72b76a734029f287e5cfa8e0b40064871ffdb9a6",
+            "78b20401237a477bf5200cced821a2fd269182207d91d2bf6703f257dab4116e",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

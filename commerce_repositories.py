@@ -345,6 +345,74 @@ class CommerceDatabase:
             "quota_bytes = NULL, duration_days = 1, active = 0 WHERE code = 'wallet_topup'"
         )
 
+    def save_interaction_state(
+        self,
+        telegram_id: int,
+        state_key: str,
+        payload: dict[str, Any],
+        expires_at: str,
+    ) -> None:
+        """Persist short-lived Telegram input state across process restarts.
+
+        Only workflow metadata (never receipt images, access URLs, or secrets)
+        belongs here. The transport keeps a hot in-memory copy; this table is
+        the restart/retry safety net for a reply arriving after a deploy.
+        """
+        if not isinstance(payload, dict):
+            raise ValueError("interaction state payload must be an object")
+        encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        if len(encoded) > 4096:
+            raise ValueError("interaction state payload is too large")
+        key = str(state_key).strip()
+        if not key or len(key) > 48:
+            raise ValueError("interaction state key is invalid")
+        with self.connect() as connection:
+            self.begin_write(connection)
+            connection.execute(
+                """INSERT INTO interaction_states
+                   (telegram_id, state_key, payload_json, expires_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(telegram_id, state_key) DO UPDATE SET
+                     payload_json = excluded.payload_json,
+                     expires_at = excluded.expires_at,
+                     updated_at = excluded.updated_at""",
+                (int(telegram_id), key, encoded, str(expires_at), _now_text()),
+            )
+
+    def load_interaction_state(
+        self, telegram_id: int, state_key: str, now: str | None = None
+    ) -> dict[str, Any] | None:
+        """Return one unexpired workflow state, rejecting malformed payloads."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT payload_json FROM interaction_states
+                   WHERE telegram_id = ? AND state_key = ? AND expires_at > ?""",
+                (int(telegram_id), str(state_key), str(now or _now_text())),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def clear_interaction_state(self, telegram_id: int, state_key: str) -> bool:
+        with self.connect() as connection:
+            deleted = connection.execute(
+                "DELETE FROM interaction_states WHERE telegram_id = ? AND state_key = ?",
+                (int(telegram_id), str(state_key)),
+            )
+        return int(getattr(deleted, "rowcount", 0) or 0) == 1
+
+    def prune_interaction_states(self, now: str | None = None) -> int:
+        with self.connect() as connection:
+            deleted = connection.execute(
+                "DELETE FROM interaction_states WHERE expires_at <= ?",
+                (str(now or _now_text()),),
+            )
+        return int(getattr(deleted, "rowcount", 0) or 0)
+
 
 class _PostgresConnection:
     """Small qmark-parameter adapter shared by the existing service queries."""
@@ -586,6 +654,75 @@ class PostgresCommerceDatabase:
                    WHERE (status = 'pending' AND expires_at <= ?)
                       OR (status <> 'pending' AND created_at < ?)""",
                 (now, cutoff),
+            )
+        return int(getattr(deleted, "rowcount", 0) or 0)
+
+    def save_interaction_state(
+        self,
+        telegram_id: int,
+        state_key: str,
+        payload: dict[str, Any],
+        expires_at: str,
+    ) -> None:
+        """Persist short-lived Telegram input state across process restarts.
+
+        Only workflow metadata (never receipt images, access URLs, or secrets)
+        belongs here.  The transport still keeps a hot in-memory copy; this
+        table is the restart/retry safety net for a user who replies after a
+        deploy or process restart.
+        """
+        if not isinstance(payload, dict):
+            raise ValueError("interaction state payload must be an object")
+        encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        if len(encoded) > 4096:
+            raise ValueError("interaction state payload is too large")
+        key = str(state_key).strip()
+        if not key or len(key) > 48:
+            raise ValueError("interaction state key is invalid")
+        with self.connect() as connection:
+            self.begin_write(connection)
+            connection.execute(
+                """INSERT INTO interaction_states
+                   (telegram_id, state_key, payload_json, expires_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(telegram_id, state_key) DO UPDATE SET
+                     payload_json = excluded.payload_json,
+                     expires_at = excluded.expires_at,
+                     updated_at = excluded.updated_at""",
+                (int(telegram_id), key, encoded, str(expires_at), _now_text()),
+            )
+
+    def load_interaction_state(
+        self, telegram_id: int, state_key: str, now: str | None = None
+    ) -> dict[str, Any] | None:
+        """Return one unexpired workflow state, rejecting malformed payloads."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT payload_json FROM interaction_states
+                   WHERE telegram_id = ? AND state_key = ? AND expires_at > ?""",
+                (int(telegram_id), str(state_key), str(now or _now_text())),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def clear_interaction_state(self, telegram_id: int, state_key: str) -> bool:
+        with self.connect() as connection:
+            deleted = connection.execute(
+                "DELETE FROM interaction_states WHERE telegram_id = ? AND state_key = ?",
+                (int(telegram_id), str(state_key)),
+            )
+        return int(getattr(deleted, "rowcount", 0) or 0) == 1
+
+    def prune_interaction_states(self, now: str | None = None) -> int:
+        with self.connect() as connection:
+            deleted = connection.execute(
+                "DELETE FROM interaction_states WHERE expires_at <= ?",
+                (str(now or _now_text()),),
             )
         return int(getattr(deleted, "rowcount", 0) or 0)
 
