@@ -1,25 +1,43 @@
 # AuriX codebase vs. VPN architecture conversations
 
-Status: evidence-backed repository study  
-Date: 2026-08-29 (Asia/Rangoon)  
-Scope: current repository against the extracted Outline, V0–V13, resilience, and market/final-architecture conversations
+Status: historical baseline with current-state addendum
+Original date: 2026-08-29 (Asia/Rangoon)
+Current evidence refresh: 2026-09-04 (Asia/Rangoon)
+Scope: repository against the extracted Outline, V0–V13, resilience, and
+market/final-architecture conversations. For live status, prefer
+[`MVP_STATUS.md`](MVP_STATUS.md) and
+[`AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`](AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md).
 
 ## Executive verdict
 
-The repository is a credible **single-Outline paid-concierge MVP** with unusually good business-state handling for its size. It has real strengths in payment verification, immutable wallet accounting, subscription snapshots, encrypted access-key storage, deterministic paid-key recovery, quota/expiry revocation, retries, dead-letter visibility, and audit events.
+The original study correctly identified a credible **single-Outline
+paid-concierge MVP** with unusually good business-state handling for its size.
+Since that study, the repository has added deterministic free/trial/promo
+recovery, a three-node endpoint registry with capacity/admission policy, remote
+orphan audits, fleet backups with verified archives, provider inventory, a
+guarded infrastructure worker, and an identity-pinned activation gate.
 
 It is not yet the adaptive V10–V13 connectivity platform described in the later conversations.
 
-The most accurate classification is:
+The most accurate current classification is:
 
 ```text
 Business/control-plane maturity: hardened V2 foundation
-Connectivity topology:          V0/V1 single endpoint
-Operational automation:         bounded single-node precursor to V13
+Connectivity topology:          three declared Outline endpoints
+Operational automation:         bounded fleet automation with guarded scale-out
 Adaptive/network intelligence:  not implemented
 ```
 
-The current code should therefore be treated as **Phase 1 of the later V13 plan**, not as an incomplete V13 implementation and not as something that should be replaced wholesale.
+The current code should therefore be treated as **Phase 2 of the later V13
+plan**: a production-staged, multi-node Outline control plane, not a complete
+adaptive V13 connectivity platform and not something that should be replaced
+wholesale.
+
+Current evidence is strong for code and controlled operations (329 tests, live
+three-node health, CI-gated deployment, and verified encrypted archives), but
+not yet for unrestricted customer admission: allocation normalization, orphan
+classification, stable DNS, real Telegram/payment canaries, and sustained
+observation remain explicit gates.
 
 The correct next technical target is **V3: a small multi-node Outline control plane with explicit endpoint records and manual/controlled migration**. Xray, automatic failover, custom clients, multi-provider provisioning, and predictive routing should remain gated behind measured failures and real customer evidence.
 
@@ -138,7 +156,11 @@ The code is therefore not “behind” in a simple feature-count sense. It corre
 
 The bot provisions and delivers credentials, but customer VPN traffic goes directly to Outline. A Telegram or AuriX outage therefore does not inherently terminate an already-working tunnel. This is the most important foundation from both the original and final conversations.
 
-There is one operational nuance: startup exits if the Outline management API readiness check fails ([app.py:2135](../app.py#L2135)). Existing VPN sessions should still work, but the bot cannot restart to serve unrelated account/payment functions while management is temporarily unavailable. A mature control plane should start in a degraded mode and expose the dependency failure rather than making every function unavailable.
+The startup path now intentionally degrades when Outline is unavailable: the
+bot remains available for recovery/admin functions, issuance is rejected by
+the health gate, and maintenance continues probing. This closes the earlier
+single-endpoint startup concern; a live multi-node canary and sustained outage
+rehearsal are still operational evidence gates.
 
 ### 2. Money is separated from the remote provisioning effect
 
@@ -553,7 +575,7 @@ Do not build yet:
 - automatic fleet-wide migration;
 - claims that any protocol is permanently censorship-resistant.
 
-## Final scorecard
+## Historical scorecard (2026-08-29 baseline)
 
 | Area | Current score | Reason |
 |---|---:|---|
@@ -569,11 +591,31 @@ Do not build yet:
 | Production evidence | 2/10 | Unit-tested; live external behavior remains unverified |
 | V13 completion | about 2/10 | Stable commercial foundation exists; connectivity operating system does not |
 
+## Current scorecard (2026-09-04 evidence refresh)
+
+| Area | Current judgement | Evidence / remaining gate |
+|---|---:|---|
+| Paid-concierge business logic | 8.5/10 | Wallet, orders, receipts, plans, promo, notifications, and audit paths are covered by the live-tested suite |
+| Outline provisioning | 9/10 | Three healthy, server-scoped endpoints; deterministic create/recovery and hard-delete enforcement |
+| Free/trial/promo provisioning | 8/10 | Deterministic slot IDs and ambiguous-create recovery; legacy POST adapters remain bounded |
+| Durability/recovery | 8.5/10 | SQLite/PostgreSQL paths, durable jobs, offsite database/fleet backups, and verified archive decrypt/restore |
+| Multi-node allocation | 7.5/10 | Capacity, admission, traffic, orphan audit, and provider identity are implemented; primary policy still needs normalization |
+| Provider automation | 6/10 | Budgeted, allowlisted DO worker plus identity-pinned activation; provider mutation intentionally disabled |
+| Receipt verification | 7/10 | Evidence-only LLM ranking/consensus with manual authority; production-vendor benchmark remains |
+| Production evidence | 5/10 | Live health/preflight are green; real Telegram/payment canary and 24–72 hour observation remain |
+| Adaptive V10–V13 resilience | 1/10 | No network-aware failover, protocol migration, or custom client; intentionally deferred |
+
 ## Bottom line
 
-The codebase validates the conversations' most economically sensible sequence: build a reliable commercial core around one working Outline endpoint before investing in sophisticated resilience.
+The codebase validates the conversations' most economically sensible sequence:
+build a reliable commercial core around working Outline endpoints before
+investing in sophisticated resilience.
 
-Its next risk is not that it lacks Xray or AI. Its next risk is **crossing from a single-node MVP into multi-node infrastructure without first introducing endpoint identity, a generic credential model, unified durable provisioning, measured health, migrations, backups, and clear operational gates**.
+Its next risk is not that it lacks Xray or AI. Its next risk is **admitting more
+capacity before allocation/orphan cleanup and live customer evidence are
+complete**. Endpoint identity, durable provisioning, measured health,
+migrations, backups, and operational gates now exist at MVP level; adaptive
+failover and protocol diversity remain later phases.
 
 The recommended path is:
 
