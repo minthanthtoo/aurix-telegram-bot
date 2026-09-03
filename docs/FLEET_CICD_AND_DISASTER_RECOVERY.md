@@ -138,10 +138,39 @@ Backups default to `/var/lib/aurix-fleet/backups/<node-id>/`, mode `0600`, with
 14 retained copies. A size limit prevents disk exhaustion. Metadata contains
 hashes and timestamps, never management credentials.
 
-The control-plane disk is not an offsite backup. Regularly copy the encrypted
-`.fernet` files and metadata to an operator vault or private object storage.
-The local project reserves the ignored `.fleet-backups/` directory for this
-purpose; encrypted archives must still never be committed.
+The control-plane disk is not an offsite backup. Set
+`AURIX_FLEET_BACKUP_OFFSITE_DIR` to an absolute private mount or synced object
+storage path so every encrypted `.fernet` archive and metadata file is mirrored
+outside the control-plane VM. Set `AURIX_FLEET_BACKUP_REQUIRE_OFFSITE=1` in
+production; then backups and verification fail closed if the offsite target is
+missing. `AURIX_FLEET_BACKUP_OFFSITE_RETENTION` controls offsite pruning and can
+be longer than local retention.
+
+Verify the recovery set after scheduled backups and before risky changes:
+
+```bash
+.venv/bin/python deploy/fleet_backup.py verify --node all --env-file /etc/aurix-bot/aurix.env
+```
+
+`verify` decrypts the newest local archive for each node, validates the tar
+contents, checks metadata hashes, and repeats the same checks against the
+offsite copy when configured. The local project reserves the ignored
+`.fleet-backups/` directory for operator-side encrypted copies; encrypted
+archives must still never be committed.
+
+Run the full sanitized readiness audit before declaring recovery complete:
+
+```bash
+.venv/bin/python deploy/recovery_readiness.py \
+  --env-file /etc/aurix-bot/aurix.env \
+  --verify-archives
+```
+
+The readiness audit prints only variable names, statuses, and sanitized detail.
+It fails when required bot/payment/vision secrets are missing, when database
+recovery is not externalized, when fleet backup encryption/offsite settings are
+invalid, or when provider/DNS automation is partially configured. Warnings mean
+the system can run but is not yet a true no-manual rebuild.
 
 Restore is deliberately explicit and replaces current remote Outline state. It
 validates every tar path, rejects links/devices/traversal, preserves a remote
@@ -157,12 +186,36 @@ rollback directory, restores, starts Shadowbox, and checks identity:
 Full control-plane revival order:
 
 1. provision Ubuntu 24.04 and restore the private `.env`, fleet SSH key,
-   verified `known_hosts`, backup key, database, and encrypted node archives;
-2. clone GitHub `main`, install requirements and versioned systemd units;
-3. restore a replaced node's matching Outline backup before changing its address;
-4. run `validate`, `check`, then `reconcile`;
-5. verify `Outline inventory ready: N/N`, Telegram authorization, database and
+   verified `known_hosts`, backup key, database, and encrypted node archives
+   from the offsite recovery store;
+2. clone GitHub `main` on the fresh VM;
+3. run the recovery entrypoint:
+
+```bash
+sudo deploy/recover_control_plane.sh --env-file /etc/aurix-bot/aurix.env
+```
+
+The script builds a versioned `/opt/aurix-current` release from the cloned
+source, installs Python dependencies, runs live deploy preflight, verifies the
+newest encrypted local/offsite node backups, runs fleet `validate` and `check`,
+installs systemd units, enables deploy/fleet timers, and starts `aurix-bot`.
+
+Continue revival with:
+
+4. restore a replaced node's matching Outline backup before changing its address;
+5. run `reconcile`;
+6. verify `Outline inventory ready: N/N`, Telegram authorization, database and
    remote-key counts, then a canary connection before enabling sales.
+
+This is control-plane recovery from source and private environment. It does not
+create a new provider VM by itself; full zero-touch VM creation additionally
+requires pre-authorized provider and DNS credentials plus a provider adapter.
+
+For SQLite deployments, `DATABASE_PATH` is not enough for disaster recovery.
+Configure `AURIX_DATABASE_BACKUP_OFFSITE_DIR` or move production commerce state
+to `COMMERCE_DATABASE_URL` PostgreSQL. For endpoint continuity, configure
+`AURIX_DNS_PROVIDER`, `AURIX_DNS_ZONE`, and `AURIX_DNS_API_TOKEN` before
+promising node replacement without reissuing customer keys.
 
 Never put `.env`, SSH private keys, decrypted archives, receipts, or management
 API URLs in Git, CI logs, Telegram, or issue trackers.

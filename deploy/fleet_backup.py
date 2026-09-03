@@ -67,6 +67,89 @@ def select_nodes(nodes: list[FleetNode], requested: str) -> list[FleetNode]:
     return selected
 
 
+def truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def backup_root(env: dict[str, str], node: FleetNode) -> Path:
+    return Path(env.get("AURIX_FLEET_BACKUP_DIR", "/var/lib/aurix-fleet/backups")) / node.node_id
+
+
+def offsite_root(env: dict[str, str], node: FleetNode) -> Path | None:
+    raw = env.get("AURIX_FLEET_BACKUP_OFFSITE_DIR", "").strip()
+    if not raw:
+        return None
+    root = Path(raw).expanduser()
+    if not root.is_absolute():
+        raise FleetError("AURIX_FLEET_BACKUP_OFFSITE_DIR must be an absolute path")
+    return root / node.node_id
+
+
+def metadata_path(archive: Path) -> Path:
+    return archive.with_suffix(archive.suffix + ".json")
+
+
+def write_private(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.parent / f".{path.name}.tmp"
+    temporary.write_bytes(content)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def latest_archive(root: Path) -> Path:
+    archives = sorted(root.glob("*.tar.gz.fernet"), reverse=True)
+    if not archives:
+        raise FleetError(f"no encrypted backups found in {root}")
+    return archives[0]
+
+
+def verify_archive(env: dict[str, str], archive: Path) -> dict[str, object]:
+    metadata_file = metadata_path(archive)
+    if not metadata_file.is_file():
+        raise FleetError(f"backup metadata is missing: {metadata_file}")
+    try:
+        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+        ciphertext = archive.read_bytes()
+        raw = fernet(env).decrypt(ciphertext)
+    except (OSError, json.JSONDecodeError, InvalidToken) as exc:
+        raise FleetError(f"backup cannot be verified: {archive}") from exc
+    validate_archive(raw)
+    expected_hash = metadata.get("ciphertext_sha256")
+    actual_hash = hashlib.sha256(ciphertext).hexdigest()
+    if expected_hash != actual_hash:
+        raise FleetError(f"backup hash mismatch: {archive}")
+    return {
+        "archive": str(archive),
+        "metadata": str(metadata_file),
+        "created_at": metadata.get("created_at"),
+        "ciphertext_sha256": actual_hash,
+    }
+
+
+def prune_backups(root: Path, keep: int) -> None:
+    archives = sorted(root.glob("*.tar.gz.fernet"), reverse=True)
+    for obsolete in archives[keep:]:
+        obsolete.unlink(missing_ok=True)
+        metadata_path(obsolete).unlink(missing_ok=True)
+
+
+def mirror_offsite(node: FleetNode, env: dict[str, str], archive: Path) -> Path | None:
+    root = offsite_root(env, node)
+    if root is None:
+        if truthy(env.get("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE")):
+            raise FleetError("offsite backups are required but AURIX_FLEET_BACKUP_OFFSITE_DIR is empty")
+        return None
+    metadata_file = metadata_path(archive)
+    destination = root / archive.name
+    write_private(destination, archive.read_bytes())
+    write_private(metadata_path(destination), metadata_file.read_bytes())
+    keep = max(1, int(env.get("AURIX_FLEET_BACKUP_OFFSITE_RETENTION",
+                              env.get("AURIX_FLEET_BACKUP_RETENTION", "14"))))
+    prune_backups(root, keep)
+    return destination
+
+
 def backup_node(node: FleetNode, env: dict[str, str]) -> Path:
     limit_mb = int(env.get("AURIX_FLEET_BACKUP_MAX_MB", "256"))
     select_dir = (
@@ -87,14 +170,11 @@ def backup_node(node: FleetNode, env: dict[str, str]) -> Path:
         raise FleetError(f"node {node.node_id} backup stream failed")
     validate_archive(process.stdout)
     ciphertext = fernet(env).encrypt(process.stdout)
-    root = Path(env.get("AURIX_FLEET_BACKUP_DIR", "/var/lib/aurix-fleet/backups")) / node.node_id
+    root = backup_root(env, node)
     root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     destination = root / f"{stamp}.tar.gz.fernet"
-    temporary = root / f".{destination.name}.tmp"
-    temporary.write_bytes(ciphertext)
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, destination)
+    write_private(destination, ciphertext)
     identity = read_identity(node, env)
     metadata = {
         "node_id": node.node_id,
@@ -104,16 +184,22 @@ def backup_node(node: FleetNode, env: dict[str, str]) -> Path:
             (identity["api_url"] + identity["cert_sha256"]).encode()
         ).hexdigest(),
     }
-    destination.with_suffix(destination.suffix + ".json").write_text(
-        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
-    )
-    os.chmod(destination.with_suffix(destination.suffix + ".json"), 0o600)
+    write_private(metadata_path(destination), (json.dumps(metadata, indent=2) + "\n").encode())
     keep = max(1, int(env.get("AURIX_FLEET_BACKUP_RETENTION", "14")))
-    archives = sorted(root.glob("*.tar.gz.fernet"), reverse=True)
-    for obsolete in archives[keep:]:
-        obsolete.unlink(missing_ok=True)
-        obsolete.with_suffix(obsolete.suffix + ".json").unlink(missing_ok=True)
+    prune_backups(root, keep)
+    mirror_offsite(node, env, destination)
     return destination
+
+
+def verify_node(node: FleetNode, env: dict[str, str]) -> dict[str, object]:
+    local = verify_archive(env, latest_archive(backup_root(env, node)))
+    result: dict[str, object] = {"node": node.node_id, "local": local}
+    remote_root = offsite_root(env, node)
+    if remote_root is not None:
+        result["offsite"] = verify_archive(env, latest_archive(remote_root))
+    elif truthy(env.get("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE")):
+        raise FleetError("offsite backups are required but AURIX_FLEET_BACKUP_OFFSITE_DIR is empty")
+    return result
 
 
 def restore_node(node: FleetNode, env: dict[str, str], archive: Path) -> None:
@@ -147,11 +233,13 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     backup = sub.add_parser("backup")
     backup.add_argument("--node", default="all")
+    verify = sub.add_parser("verify")
+    verify.add_argument("--node", default="all")
     restore = sub.add_parser("restore")
     restore.add_argument("--node", required=True)
     restore.add_argument("--archive", required=True)
     restore.add_argument("--confirm-node", required=True)
-    for command in (backup, restore):
+    for command in (backup, verify, restore):
         command.add_argument("--env-file", default=os.environ.get(
             "AURIX_FLEET_ENV_FILE", "/etc/aurix-bot/aurix.env"))
     args = parser.parse_args()
@@ -161,6 +249,9 @@ def main() -> None:
         if args.command == "backup":
             outputs = [str(backup_node(node, env)) for node in select_nodes(nodes, args.node)]
             print(json.dumps({"status": "complete", "archives": outputs}, indent=2))
+        elif args.command == "verify":
+            outputs = [verify_node(node, env) for node in select_nodes(nodes, args.node)]
+            print(json.dumps({"status": "verified", "nodes": outputs}, indent=2))
         else:
             if args.confirm_node != args.node:
                 raise FleetError("--confirm-node must exactly match --node")

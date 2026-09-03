@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 import io
+import hashlib
+import json
 import tarfile
+import tempfile
 import unittest
+from pathlib import Path
 
-from deploy.fleet_backup import validate_archive
-from deploy.fleet_reconcile import FleetError
+from cryptography.fernet import Fernet
+
+from deploy.fleet_backup import (
+    metadata_path,
+    mirror_offsite,
+    validate_archive,
+    verify_archive,
+    verify_node,
+    write_private,
+)
+from deploy.fleet_reconcile import FleetError, FleetNode
 
 
 def archive_with(names: list[str]) -> bytes:
@@ -30,6 +43,88 @@ class FleetBackupTests(unittest.TestCase):
     def test_rejects_incomplete_archive(self) -> None:
         with self.assertRaises(FleetError):
             validate_archive(archive_with(["access.txt"]))
+
+    def test_verifies_encrypted_archive_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "20260903T000000Z.tar.gz.fernet"
+            key = Fernet.generate_key().decode()
+            ciphertext = Fernet(key.encode()).encrypt(
+                archive_with(["access.txt", "persisted-state/config.yml"])
+            )
+            write_private(archive, ciphertext)
+            write_private(metadata_path(archive), json.dumps({
+                "node_id": "sg-a",
+                "created_at": "2026-09-03T00:00:00+00:00",
+                "ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
+            }).encode())
+
+            result = verify_archive({"AURIX_FLEET_BACKUP_KEY": key}, archive)
+
+            self.assertEqual(result["archive"], str(archive))
+
+    def test_rejects_tampered_encrypted_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "20260903T000000Z.tar.gz.fernet"
+            key = Fernet.generate_key().decode()
+            ciphertext = Fernet(key.encode()).encrypt(
+                archive_with(["access.txt", "persisted-state/config.yml"])
+            )
+            write_private(archive, ciphertext + b"x")
+            write_private(metadata_path(archive), json.dumps({
+                "ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
+            }).encode())
+
+            with self.assertRaises(FleetError):
+                verify_archive({"AURIX_FLEET_BACKUP_KEY": key}, archive)
+
+    def test_mirrors_and_verifies_offsite_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = FleetNode("sg-a", "Singapore A", "192.0.2.10", 61603, 443)
+            archive = root / "local" / node.node_id / "20260903T000000Z.tar.gz.fernet"
+            key = Fernet.generate_key().decode()
+            ciphertext = Fernet(key.encode()).encrypt(
+                archive_with(["access.txt", "persisted-state/config.yml"])
+            )
+            write_private(archive, ciphertext)
+            write_private(metadata_path(archive), json.dumps({
+                "node_id": node.node_id,
+                "created_at": "2026-09-03T00:00:00+00:00",
+                "ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
+            }).encode())
+            env = {
+                "AURIX_FLEET_BACKUP_KEY": key,
+                "AURIX_FLEET_BACKUP_DIR": str(root / "local"),
+                "AURIX_FLEET_BACKUP_OFFSITE_DIR": str(root / "offsite"),
+            }
+
+            offsite = mirror_offsite(node, env, archive)
+            result = verify_node(node, env)
+
+            self.assertEqual(offsite, root / "offsite" / node.node_id / archive.name)
+            self.assertIn("offsite", result)
+
+    def test_requires_offsite_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = FleetNode("sg-a", "Singapore A", "192.0.2.10", 61603, 443)
+            archive = root / "local" / node.node_id / "20260903T000000Z.tar.gz.fernet"
+            key = Fernet.generate_key().decode()
+            ciphertext = Fernet(key.encode()).encrypt(
+                archive_with(["access.txt", "persisted-state/config.yml"])
+            )
+            write_private(archive, ciphertext)
+            write_private(metadata_path(archive), json.dumps({
+                "ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
+            }).encode())
+            env = {
+                "AURIX_FLEET_BACKUP_KEY": key,
+                "AURIX_FLEET_BACKUP_DIR": str(root / "local"),
+                "AURIX_FLEET_BACKUP_REQUIRE_OFFSITE": "1",
+            }
+
+            with self.assertRaises(FleetError):
+                verify_node(node, env)
 
 
 if __name__ == "__main__":

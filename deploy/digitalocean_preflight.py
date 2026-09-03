@@ -123,6 +123,18 @@ def _validate_configuration() -> dict[str, str]:
             Fernet(backup_key.encode())
         except (TypeError, ValueError):
             fail("AURIX_FLEET_BACKUP_KEY is not a valid Fernet key")
+        offsite = os.environ.get("AURIX_FLEET_BACKUP_OFFSITE_DIR", "").strip()
+        require_offsite = os.environ.get(
+            "AURIX_FLEET_BACKUP_REQUIRE_OFFSITE", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if offsite:
+            offsite_path = Path(offsite)
+            if not offsite_path.is_absolute():
+                fail("AURIX_FLEET_BACKUP_OFFSITE_DIR must be an absolute path")
+            if require_offsite and not offsite_path.is_dir():
+                fail("AURIX_FLEET_BACKUP_OFFSITE_DIR must exist when offsite is required")
+        elif require_offsite:
+            fail("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE needs AURIX_FLEET_BACKUP_OFFSITE_DIR")
 
     database_url = os.environ.get("COMMERCE_DATABASE_URL", "").strip()
     database_path = os.environ.get("DATABASE_PATH", "").strip()

@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Sanitized recovery-readiness audit for AuriX control-plane revival."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from cryptography.fernet import Fernet
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from deploy.fleet_backup import offsite_root, verify_node  # noqa: E402
+from deploy.fleet_reconcile import (  # noqa: E402
+    FleetError,
+    FleetNode,
+    load_dotenv,
+    parse_manifest,
+)
+
+TRUTHY = {"1", "true", "yes", "on"}
+FAIL = "fail"
+WARN = "warn"
+PASS = "pass"
+
+
+@dataclass(frozen=True)
+class Check:
+    name: str
+    status: str
+    detail: str
+
+
+def truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in TRUTHY
+
+
+def has_value(env: dict[str, str], name: str) -> bool:
+    return bool(env.get(name, "").strip())
+
+
+def check_required(env: dict[str, str], names: list[str]) -> Check:
+    missing = [name for name in names if not has_value(env, name)]
+    if missing:
+        return Check("required_secrets", FAIL, "missing " + ", ".join(missing))
+    return Check("required_secrets", PASS, "all required secret names are present")
+
+
+def check_repository(env: dict[str, str]) -> Check:
+    repository = env.get(
+        "AURIX_DEPLOY_REPOSITORY", "https://github.com/minthanthtoo/aurix-telegram-bot.git"
+    ).strip()
+    branch = env.get("AURIX_DEPLOY_BRANCH", "main").strip()
+    parsed = urlsplit(repository)
+    if parsed.scheme != "https" or parsed.hostname != "github.com":
+        return Check("source_repository", FAIL, "AURIX_DEPLOY_REPOSITORY must be an HTTPS GitHub URL")
+    if not re.fullmatch(r"[A-Za-z0-9._/-]{1,160}", branch):
+        return Check("source_repository", FAIL, "AURIX_DEPLOY_BRANCH has invalid characters")
+    return Check("source_repository", PASS, "GitHub source and branch are configured")
+
+
+def check_database(env: dict[str, str]) -> Check:
+    database_url = env.get("COMMERCE_DATABASE_URL", "").strip()
+    if database_url:
+        parsed = urlsplit(database_url)
+        if parsed.scheme in {"postgres", "postgresql"} and parsed.hostname:
+            return Check("database_recovery", PASS, "external PostgreSQL is configured")
+        return Check("database_recovery", FAIL, "COMMERCE_DATABASE_URL must be PostgreSQL")
+    if has_value(env, "DATABASE_PATH") and has_value(env, "AURIX_DATABASE_BACKUP_OFFSITE_DIR"):
+        path = Path(env["AURIX_DATABASE_BACKUP_OFFSITE_DIR"]).expanduser()
+        if path.is_absolute():
+            return Check("database_recovery", PASS, "SQLite has an offsite database-backup path")
+        return Check("database_recovery", FAIL, "AURIX_DATABASE_BACKUP_OFFSITE_DIR must be absolute")
+    return Check(
+        "database_recovery",
+        FAIL,
+        "use COMMERCE_DATABASE_URL or configure DATABASE_PATH plus AURIX_DATABASE_BACKUP_OFFSITE_DIR",
+    )
+
+
+def check_fleet_manifest(env: dict[str, str]) -> tuple[Check, list[FleetNode]]:
+    raw = env.get("AURIX_FLEET_NODES_JSON", "").strip()
+    if not raw:
+        return Check("fleet_manifest", WARN, "no fleet manifest configured"), []
+    try:
+        nodes = parse_manifest(raw)
+    except FleetError as exc:
+        return Check("fleet_manifest", FAIL, str(exc)), []
+    return Check("fleet_manifest", PASS, f"{len(nodes)} fleet node(s) configured"), nodes
+
+
+def check_backup_secret(env: dict[str, str], has_fleet: bool) -> Check:
+    if not has_fleet:
+        return Check("fleet_backup_key", WARN, "not required without fleet nodes")
+    if not has_value(env, "AURIX_FLEET_BACKUP_KEY"):
+        return Check("fleet_backup_key", FAIL, "missing AURIX_FLEET_BACKUP_KEY")
+    try:
+        Fernet(env["AURIX_FLEET_BACKUP_KEY"].encode())
+    except (TypeError, ValueError):
+        return Check("fleet_backup_key", FAIL, "AURIX_FLEET_BACKUP_KEY is invalid")
+    return Check("fleet_backup_key", PASS, "fleet backup key is valid")
+
+
+def check_offsite_config(env: dict[str, str], nodes: list[FleetNode]) -> Check:
+    if not nodes:
+        return Check("fleet_offsite", WARN, "not required without fleet nodes")
+    raw = env.get("AURIX_FLEET_BACKUP_OFFSITE_DIR", "").strip()
+    if not raw:
+        return Check("fleet_offsite", FAIL, "missing AURIX_FLEET_BACKUP_OFFSITE_DIR")
+    root = Path(raw).expanduser()
+    if not root.is_absolute():
+        return Check("fleet_offsite", FAIL, "AURIX_FLEET_BACKUP_OFFSITE_DIR must be absolute")
+    if not truthy(env.get("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE")):
+        return Check("fleet_offsite", WARN, "offsite path is set but REQUIRE_OFFSITE is not enabled")
+    missing = [node.node_id for node in nodes if offsite_root(env, node) is None]
+    if missing:
+        return Check("fleet_offsite", FAIL, "missing offsite roots for " + ", ".join(missing))
+    return Check("fleet_offsite", PASS, "offsite fleet backups are required")
+
+
+def check_backup_archives(env: dict[str, str], nodes: list[FleetNode], verify: bool) -> Check:
+    if not nodes:
+        return Check("fleet_backup_archives", WARN, "not required without fleet nodes")
+    if not verify:
+        return Check("fleet_backup_archives", WARN, "run with --verify-archives to prove backup decryptability")
+    try:
+        verified = [verify_node(node, env)["node"] for node in nodes]
+    except (FleetError, OSError, ValueError) as exc:
+        return Check("fleet_backup_archives", FAIL, str(exc))
+    return Check("fleet_backup_archives", PASS, "verified archives for " + ", ".join(verified))
+
+
+def check_provider(env: dict[str, str]) -> Check:
+    if not truthy(env.get("AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED")):
+        return Check("provider_automation", WARN, "provider mutations are disabled")
+    if has_value(env, "DIGITALOCEAN_API_TOKEN"):
+        return Check("provider_automation", PASS, "DigitalOcean provider token is configured")
+    return Check("provider_automation", FAIL, "provider mutations enabled without DIGITALOCEAN_API_TOKEN")
+
+
+def check_dns(env: dict[str, str]) -> Check:
+    zone = has_value(env, "AURIX_DNS_ZONE")
+    token = has_value(env, "AURIX_DNS_API_TOKEN")
+    provider = has_value(env, "AURIX_DNS_PROVIDER")
+    if zone and token and provider:
+        return Check("dns_automation", PASS, "DNS provider, zone, and token are configured")
+    if any((zone, token, provider)):
+        return Check("dns_automation", FAIL, "configure AURIX_DNS_PROVIDER, AURIX_DNS_ZONE, and AURIX_DNS_API_TOKEN")
+    return Check("dns_automation", WARN, "stable DNS automation is not configured")
+
+
+def check_recovery_entrypoint() -> Check:
+    path = ROOT / "deploy" / "recover_control_plane.sh"
+    if path.is_file() and os.access(path, os.X_OK):
+        return Check("recovery_entrypoint", PASS, "recover_control_plane.sh is executable")
+    return Check("recovery_entrypoint", FAIL, "deploy/recover_control_plane.sh is missing or not executable")
+
+
+def summarize(checks: list[Check]) -> str:
+    if any(check.status == FAIL for check in checks):
+        return FAIL
+    if any(check.status == WARN for check in checks):
+        return WARN
+    return PASS
+
+
+def run_audit(env_file: Path, verify_archives: bool) -> dict[str, object]:
+    env = load_dotenv(env_file, overwrite=False)
+    fleet_check, nodes = check_fleet_manifest(env)
+    checks = [
+        check_required(env, [
+            "TELEGRAM_BOT_TOKEN",
+            "AURIX_ACCESS_URL_KEY",
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "RECEIPT_LLM_BASE_URL",
+            "RECEIPT_LLM_MODEL",
+            "RECEIPT_LLM_API_KEY",
+        ]),
+        check_repository(env),
+        check_database(env),
+        fleet_check,
+        check_backup_secret(env, bool(nodes)),
+        check_offsite_config(env, nodes),
+        check_backup_archives(env, nodes, verify_archives),
+        check_provider(env),
+        check_dns(env),
+        check_recovery_entrypoint(),
+    ]
+    return {
+        "status": summarize(checks),
+        "checks": [check.__dict__ for check in checks],
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env-file", default=os.environ.get(
+        "AURIX_FLEET_ENV_FILE", "/etc/aurix-bot/aurix.env"))
+    parser.add_argument("--verify-archives", action="store_true")
+    args = parser.parse_args()
+    try:
+        report = run_audit(Path(args.env_file), args.verify_archives)
+    except (FleetError, OSError, ValueError) as exc:
+        print(f"recovery readiness failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(json.dumps(report, indent=2))
+    if report["status"] == FAIL:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
