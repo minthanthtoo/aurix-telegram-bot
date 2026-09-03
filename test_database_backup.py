@@ -106,6 +106,18 @@ class DatabaseBackupTests(unittest.TestCase):
         self.assertEqual(result["status"], "restored")
         self.assertTrue(any(self.root.glob("bot.db.rollback-*")))
 
+    def test_restore_falls_back_to_offsite_when_local_archive_is_invalid(self) -> None:
+        archive = database_backup.backup(self.env)
+        archive.write_bytes(b"not an authenticated archive")
+        restored = self.root / "offsite-recovered.db"
+        self.env["DATABASE_PATH"] = str(restored)
+
+        result = database_backup.restore(self.env, confirm_path=str(restored))
+
+        self.assertTrue(result["source"].startswith(str(self.root / "offsite")))
+        with sqlite3.connect(restored) as connection:
+            self.assertEqual(connection.execute("SELECT id FROM ready").fetchone()[0], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

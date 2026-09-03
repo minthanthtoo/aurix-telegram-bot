@@ -239,34 +239,46 @@ def _latest_source(env: dict[str, str], archive: Path | None = None) -> tuple[by
         )
         return raw, str(archive)
 
+    failures: list[str] = []
     local = local_root(env)
     if local.is_dir() and any(local.glob("*.sqlite3.fernet")):
         selected = latest_archive(local)
         metadata = metadata_path(selected)
-        if not metadata.is_file():
-            raise FleetError(f"database backup metadata is missing: {metadata}")
-        raw, _details, _hash = _verified_archive_bytes(
-            env, selected.read_bytes(), metadata.read_bytes(), str(selected)
-        )
-        return raw, str(selected)
+        try:
+            if not metadata.is_file():
+                raise FleetError("metadata is missing")
+            raw, _details, _hash = _verified_archive_bytes(
+                env, selected.read_bytes(), metadata.read_bytes(), str(selected)
+            )
+            return raw, str(selected)
+        except (FleetError, OSError) as exc:
+            failures.append(type(exc).__name__)
 
     if offsite_storage.configured(env):
-        object_key = offsite_storage.latest_key(env, "database/", ".sqlite3.fernet")
-        raw, _details, _hash = _verified_archive_bytes(
-            env,
-            offsite_storage.get(env, object_key),
-            offsite_storage.get(env, object_key + ".json"),
-            f"object://{object_key}",
-        )
-        return raw, f"object://{object_key}"
+        try:
+            object_key = offsite_storage.latest_key(env, "database/", ".sqlite3.fernet")
+            raw, _details, _hash = _verified_archive_bytes(
+                env,
+                offsite_storage.get(env, object_key),
+                offsite_storage.get(env, object_key + ".json"),
+                f"object://{object_key}",
+            )
+            return raw, f"object://{object_key}"
+        except (FleetError, OSError) as exc:
+            failures.append(type(exc).__name__)
 
     if (remote_root := offsite_root(env)) is not None:
-        selected = latest_archive(remote_root)
-        metadata = metadata_path(selected)
-        raw, _details, _hash = _verified_archive_bytes(
-            env, selected.read_bytes(), metadata.read_bytes(), str(selected)
-        )
-        return raw, str(selected)
+        try:
+            selected = latest_archive(remote_root)
+            metadata = metadata_path(selected)
+            raw, _details, _hash = _verified_archive_bytes(
+                env, selected.read_bytes(), metadata.read_bytes(), str(selected)
+            )
+            return raw, str(selected)
+        except (FleetError, OSError) as exc:
+            failures.append(type(exc).__name__)
+    if failures:
+        raise FleetError("no authenticated database backup archive is available for restore")
     raise FleetError("no database backup archive is available for restore")
 
 
