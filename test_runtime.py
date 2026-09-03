@@ -38,10 +38,13 @@ class _CommerceDatabase(_Database):
 
 
 class _Outline:
-    def __init__(self, api_url, fingerprint, timeout_seconds=15.0):
+    def __init__(
+        self, api_url, fingerprint, timeout_seconds=15.0, circuit_breaker_seconds=60.0
+    ):
         self.api_url = api_url
         self.fingerprint = fingerprint
         self.timeout_seconds = timeout_seconds
+        self.circuit_breaker_seconds = circuit_breaker_seconds
 
     def server_info(self):
         return {"version": "test-outline"}

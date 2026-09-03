@@ -594,6 +594,22 @@ class OutlineClientTlsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             OutlineClient("https://outline.test/secret", "0" * 64, timeout_seconds=0.5)
 
+    def test_transport_failure_opens_endpoint_circuit(self):
+        client = OutlineClient(
+            "https://outline.test:1234/secret",
+            self.client.fingerprint,
+            circuit_breaker_seconds=60,
+        )
+        with patch.object(FakeHTTPSConnection, "connect", side_effect=OSError("offline")):
+            with self.assertRaises(OutlineError):
+                client.server_info()
+        connection_count = len(FakeHTTPSConnection.instances)
+
+        with self.assertRaisesRegex(OutlineError, "cooling down"):
+            client.server_info()
+
+        self.assertEqual(len(FakeHTTPSConnection.instances), connection_count)
+
 
 class RecordingTelegramBot(TelegramBot):
     def __init__(self, *args, **kwargs):

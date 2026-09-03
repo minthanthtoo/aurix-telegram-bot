@@ -95,6 +95,12 @@ def main() -> None:
         raise SystemExit("OUTLINE_REQUEST_TIMEOUT_SECONDS must be numeric") from exc
     if not 1.0 <= outline_timeout <= 30.0:
         raise SystemExit("OUTLINE_REQUEST_TIMEOUT_SECONDS must be between 1 and 30")
+    try:
+        outline_cooldown = float(os.environ.get("OUTLINE_CIRCUIT_BREAKER_SECONDS", "60"))
+    except ValueError as exc:
+        raise SystemExit("OUTLINE_CIRCUIT_BREAKER_SECONDS must be numeric") from exc
+    if not 0.0 <= outline_cooldown <= 900.0:
+        raise SystemExit("OUTLINE_CIRCUIT_BREAKER_SECONDS must be between 0 and 900")
     server_labels: dict[str, str] = {}
     server_provider_ids: dict[str, str] = {}
     if servers_json:
@@ -113,6 +119,7 @@ def main() -> None:
                     str(item.get("api_url") or ""),
                     str(item.get("cert_sha256") or ""),
                     timeout_seconds=outline_timeout,
+                    circuit_breaker_seconds=outline_cooldown,
                 )
                 server_labels[server_id] = str(item.get("label") or server_id)[:64]
                 provider_resource_id = str(item.get("provider_resource_id") or "").strip()
@@ -139,6 +146,7 @@ def main() -> None:
                     api_url,
                     fingerprint,
                     timeout_seconds=outline_timeout,
+                    circuit_breaker_seconds=outline_cooldown,
                 )
             },
             "primary",

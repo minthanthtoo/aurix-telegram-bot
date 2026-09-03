@@ -7,6 +7,7 @@ import hmac
 import http.client
 import json
 import ssl
+import threading
 import time
 import urllib.parse
 from typing import Any, Mapping
@@ -16,7 +17,13 @@ from observability import latency_log as _latency_log
 
 
 class OutlineClient:
-    def __init__(self, api_url: str, cert_sha256: str, timeout_seconds: float = 15.0):
+    def __init__(
+        self,
+        api_url: str,
+        cert_sha256: str,
+        timeout_seconds: float = 15.0,
+        circuit_breaker_seconds: float = 60.0,
+    ):
         parsed = urllib.parse.urlsplit(api_url.rstrip("/"))
         if parsed.scheme != "https" or not parsed.hostname:
             raise ValueError("OUTLINE_API_URL must be an https URL")
@@ -31,6 +38,12 @@ class OutlineClient:
         if not 1.0 <= timeout <= 30.0:
             raise ValueError("Outline request timeout must be between 1 and 30 seconds")
         self.timeout_seconds = timeout
+        cooldown = float(circuit_breaker_seconds)
+        if not 0.0 <= cooldown <= 900.0:
+            raise ValueError("Outline circuit breaker must be between 0 and 900 seconds")
+        self.circuit_breaker_seconds = cooldown
+        self._circuit_lock = threading.Lock()
+        self._unavailable_until = 0.0
 
     def _request(
         self,
@@ -39,6 +52,9 @@ class OutlineClient:
         body: dict[str, Any] | None = None,
         accepted_statuses: tuple[int, ...] = (200, 201, 204),
     ) -> Any:
+        with self._circuit_lock:
+            if time.monotonic() < self._unavailable_until:
+                raise OutlineError("Outline endpoint is cooling down after a transport failure")
         # Outline commonly uses a self-signed certificate. Trust only exact pinned cert.
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False
@@ -67,7 +83,9 @@ class OutlineClient:
             response = connection.getresponse()
             response_status = response.status
             raw = response.read()
-        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException, OutlineError) as exc:
+            with self._circuit_lock:
+                self._unavailable_until = time.monotonic() + self.circuit_breaker_seconds
             raise OutlineError(f"Outline request failed: {exc}") from exc
         finally:
             connection.close()
@@ -80,6 +98,8 @@ class OutlineClient:
                 else path,
                 status=response_status or "error",
             )
+        with self._circuit_lock:
+            self._unavailable_until = 0.0
         if response.status not in accepted_statuses:
             raise OutlineError(f"Outline returned HTTP {response.status}", status=response.status)
         if response.status == 404:
