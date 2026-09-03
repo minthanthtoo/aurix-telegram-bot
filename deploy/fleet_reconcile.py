@@ -118,6 +118,7 @@ def parse_manifest(raw: str, *, strict_allocations: bool = False) -> list[FleetN
     nodes: list[FleetNode] = []
     ids: set[str] = set()
     endpoints: set[tuple[str, int]] = set()
+    provider_resource_ids: set[str] = set()
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise FleetError(f"fleet node {index + 1} must be an object")
@@ -162,6 +163,10 @@ def parse_manifest(raw: str, *, strict_allocations: bool = False) -> list[FleetN
         provider_resource_id = str(item.get("provider_resource_id") or "").strip()
         if provider == "digitalocean" and provider_resource_id and not provider_resource_id.isdigit():
             raise FleetError(f"node {node_id} DigitalOcean resource id must be numeric")
+        if provider_resource_id and provider_resource_id in provider_resource_ids:
+            raise FleetError(
+                f"provider resource {provider_resource_id!r} is assigned to more than one node"
+            )
         max_keys = _nonnegative(item.get("max_keys", 10), f"{node_id}.max_keys")
         reserved = _nonnegative(item.get("reserved_keys", 2), f"{node_id}.reserved_keys")
         if max_keys <= 0 or reserved >= max_keys:
@@ -202,6 +207,8 @@ def parse_manifest(raw: str, *, strict_allocations: bool = False) -> list[FleetN
         ))
         ids.add(node_id)
         endpoints.add(endpoint)
+        if provider_resource_id:
+            provider_resource_ids.add(provider_resource_id)
     if not nodes:
         raise FleetError("fleet manifest has no enabled nodes")
     return nodes

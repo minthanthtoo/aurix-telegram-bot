@@ -58,6 +58,12 @@ class FleetManifestTests(unittest.TestCase):
         with self.assertRaises(FleetError):
             parse_manifest(manifest(dns_name="192.0.2.10"))
 
+    def test_rejects_duplicate_provider_resource_identity(self) -> None:
+        first = json.loads(manifest(provider="digitalocean", provider_resource_id="123"))[0]
+        second = {**first, "id": "sg-b", "host": "192.0.2.11", "api_port": 61604}
+        with self.assertRaisesRegex(FleetError, "more than one node"):
+            parse_manifest(json.dumps([first, second]))
+
     def test_rejects_unknown_or_overallocated_plan_policy(self) -> None:
         with self.assertRaises(FleetError):
             parse_manifest(manifest(plan_slots={"enterprise_1tb": 1}))

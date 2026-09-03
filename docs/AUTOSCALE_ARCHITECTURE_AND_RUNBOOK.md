@@ -26,6 +26,8 @@ Therefore:
 
 - one `outline_servers` row represents one explicit Outline endpoint;
 - one key is identified by `(server_id, outline_key_id)`, never key ID alone;
+- one provider resource ID is bound to at most one logical node; a manifest
+  reusing a Droplet ID is rejected before reconciliation;
 - every free, promo, paid order, subscription, and paid key is assigned to one
   endpoint;
 - AuriX admits new work only against fresh, healthy, declared capacity;
