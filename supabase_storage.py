@@ -168,10 +168,13 @@ class SupabaseObjectStore:
             existing = self._request("GET", bucket_url)
         except ReceiptStorageError as exc:
             # Storage returns HTTP 404 for a missing bucket. Keep the check
-            # narrow: every other error is a real configuration/availability
-            # failure and must not be turned into a create attempt.
+            # narrow: Supabase's hosted API currently wraps that condition as
+            # HTTP 400 with a JSON ``statusCode: \"404\"`` body, while some
+            # deployments use a real HTTP 404. Every other error is a real
+            # configuration/availability failure and must not be turned into
+            # a create attempt.
             cause = exc.__cause__
-            if not isinstance(cause, urllib.error.HTTPError) or cause.code != 404:
+            if not isinstance(cause, urllib.error.HTTPError) or not self._is_missing_bucket_error(cause):
                 raise
             existing = None
         if existing is not None:
@@ -206,6 +209,29 @@ class SupabaseObjectStore:
                 raise ReceiptStorageError("Supabase recovery bucket must be private")
             return False
         return True
+
+    @staticmethod
+    def _is_missing_bucket_error(error: urllib.error.HTTPError) -> bool:
+        """Recognize Supabase's 400-wrapped missing-bucket response.
+
+        The response body is read only for this narrow status check and is
+        never included in an exception or log. This avoids turning arbitrary
+        400 responses into bucket-creation attempts.
+        """
+        if error.code == 404:
+            return True
+        if error.code != 400:
+            return False
+        try:
+            raw = error.read(4096)
+            detail = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if not isinstance(detail, dict):
+            return False
+        status_code = str(detail.get("statusCode", "")).strip()
+        error_name = str(detail.get("error", "")).strip().lower()
+        return status_code == "404" and error_name == "bucket not found"
 
     def get(self, path: str) -> bytes:
         result = self._request("GET", self._object_url(path), raw_response=True)

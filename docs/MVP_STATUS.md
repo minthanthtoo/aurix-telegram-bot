@@ -38,11 +38,11 @@ engineering estimates, not production traffic or revenue metrics.
 - Local test/evidence coverage: **100%** for the current fake-Outline, TLS,
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
-  and wallet suite (234 tests passing).
+  and wallet suite (288 tests passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local
-  backups, and pinned-TLS management/data-port canaries are verified. Offsite
-  recovery storage, stable DNS, a real Telegram-account canary, allocation
+  and Supabase offsite backups, and pinned-TLS management/data-port canaries are
+  verified. Stable DNS, a real Telegram-account canary, allocation
   normalization/strict validation, and sustained observation remain.
 - End-to-end MVP readiness: approximately **90%** for the controlled paid-
   concierge scope. This is a progress estimate, not a claim that automated

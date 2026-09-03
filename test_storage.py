@@ -1,3 +1,4 @@
+import io
 import json
 import unittest
 import urllib.error
@@ -123,6 +124,42 @@ class SupabaseRecoveryStorageTest(unittest.TestCase):
             "name": "aurix-recovery",
             "public": False,
         })
+
+    def test_hosted_supabase_wraps_missing_bucket_as_http_400(self):
+        missing = urllib.error.HTTPError(
+            "https://project.supabase.co/storage/v1/bucket/aurix-recovery",
+            400,
+            "bad request",
+            {},
+            io.BytesIO(
+                b'{"statusCode":"404","error":"Bucket not found","message":"Bucket not found"}'
+            ),
+        )
+        with patch(
+            "supabase_storage.urllib.request.urlopen",
+            side_effect=[missing, _Response(b'{"name":"aurix-recovery"}')],
+        ) as opener:
+            created = self.store().ensure_private_bucket()
+
+        self.assertTrue(created)
+        self.assertEqual(opener.call_count, 2)
+
+    def test_arbitrary_http_400_does_not_create_bucket(self):
+        invalid = urllib.error.HTTPError(
+            "https://project.supabase.co/storage/v1/bucket/aurix-recovery",
+            400,
+            "bad request",
+            {},
+            io.BytesIO(
+                b'{"statusCode":"400","error":"Invalid bucket name"}'
+            ),
+        )
+        with patch(
+            "supabase_storage.urllib.request.urlopen",
+            side_effect=invalid,
+        ):
+            with self.assertRaises(ReceiptStorageError):
+                self.store().ensure_private_bucket()
 
     def test_public_bucket_is_rejected(self):
         with patch(
