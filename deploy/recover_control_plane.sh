@@ -124,8 +124,14 @@ if [[ "$backup_supabase_configured" == "1" ]]; then
 fi
 
 if [[ -n "${DATABASE_PATH:-}" && -z "${COMMERCE_DATABASE_URL:-}" ]]; then
-  "$build_dir/.venv/bin/python" "$build_dir/deploy/database_backup.py" verify \
-    --env-file "$env_file"
+  if [[ -e "$DATABASE_PATH" ]]; then
+    "$build_dir/.venv/bin/python" "$build_dir/deploy/database_backup.py" verify \
+      --env-file "$env_file"
+  else
+    echo "AuriX recovery: SQLite database is absent; restoring the newest authenticated backup"
+    "$build_dir/.venv/bin/python" "$build_dir/deploy/database_backup.py" restore \
+      --env-file "$env_file" --confirm-path "$DATABASE_PATH"
+  fi
 fi
 
 if [[ "$fleet_configured" == "1" && "$skip_fleet_check" == "0" ]]; then

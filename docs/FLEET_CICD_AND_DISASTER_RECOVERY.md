@@ -275,6 +275,22 @@ Set `AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE=1` after configuring object storage
 or mounting/syncing `AURIX_DATABASE_BACKUP_OFFSITE_DIR`; otherwise the timer can
 create local encrypted backups but readiness remains incomplete.
 
+On a fresh control-plane host, `recover_control_plane.sh` automatically
+restores the newest authenticated local/off-site SQLite archive when
+`DATABASE_PATH` is absent. The restore is atomic, creates the destination with
+private permissions, and refuses to overwrite an existing database. To run a
+deliberate operator restore, provide an exact path confirmation:
+
+```bash
+.venv/bin/python deploy/database_backup.py restore \
+  --confirm-path /var/lib/aurix-bot/bot.db \
+  --env-file /etc/aurix-bot/aurix.env
+```
+
+An existing database requires the additional `--allow-existing` flag and must
+be restored only while the bot is stopped; the previous file is retained as a
+timestamped rollback copy.
+
 Restore is deliberately explicit and replaces current remote Outline state. It
 validates every tar path, rejects links/devices/traversal, preserves a remote
 rollback directory, restores, starts Shadowbox, and checks identity:

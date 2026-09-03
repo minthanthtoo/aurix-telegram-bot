@@ -78,6 +78,34 @@ class DatabaseBackupTests(unittest.TestCase):
         self.assertIn("offsite", report)
         self.assertTrue(any(key.startswith("database/") for key in objects))
 
+    def test_restore_recreates_missing_database_from_latest_archive(self) -> None:
+        database_backup.backup(self.env)
+        restored = self.root / "recovered" / "bot.db"
+        self.env["DATABASE_PATH"] = str(restored)
+
+        result = database_backup.restore(self.env, confirm_path=str(restored))
+
+        self.assertEqual(result["status"], "restored")
+        with sqlite3.connect(restored) as connection:
+            self.assertEqual(connection.execute("SELECT id FROM ready").fetchone()[0], 1)
+        self.assertEqual(restored.stat().st_mode & 0o777, 0o600)
+
+    def test_restore_refuses_existing_database_without_explicit_override(self) -> None:
+        archive = database_backup.backup(self.env)
+
+        with self.assertRaises(FleetError):
+            database_backup.restore(self.env, archive, confirm_path=str(self.database))
+
+        result = database_backup.restore(
+            self.env,
+            archive,
+            confirm_path=str(self.database),
+            allow_existing=True,
+        )
+
+        self.assertEqual(result["status"], "restored")
+        self.assertTrue(any(self.root.glob("bot.db.rollback-*")))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,14 @@ def backup_key(env: dict[str, str]) -> Fernet:
 
 
 def database_path(env: dict[str, str]) -> Path:
+    path = database_target_path(env)
+    if not path.is_file():
+        raise FleetError(f"DATABASE_PATH is not readable: {path}")
+    return path
+
+
+def database_target_path(env: dict[str, str]) -> Path:
+    """Return the validated SQLite destination, even before it exists."""
     if env.get("COMMERCE_DATABASE_URL", "").strip():
         raise FleetError("database_backup.py handles SQLite only; PostgreSQL needs provider backup")
     raw = env.get("DATABASE_PATH", "").strip()
@@ -44,8 +52,6 @@ def database_path(env: dict[str, str]) -> Path:
     path = Path(raw)
     if not path.is_absolute():
         raise FleetError("DATABASE_PATH must be absolute")
-    if not path.is_file():
-        raise FleetError(f"DATABASE_PATH is not readable: {path}")
     return path
 
 
@@ -101,25 +107,10 @@ def verify_archive(env: dict[str, str], archive: Path) -> dict[str, object]:
     meta = metadata_path(archive)
     if not meta.is_file():
         raise FleetError(f"database backup metadata is missing: {meta}")
-    try:
-        metadata = json.loads(meta.read_text(encoding="utf-8"))
-        ciphertext = archive.read_bytes()
-        raw = backup_key(env).decrypt(ciphertext)
-    except (OSError, json.JSONDecodeError, InvalidToken) as exc:
-        raise FleetError(f"database backup cannot be verified: {archive}") from exc
-    expected = metadata.get("ciphertext_sha256")
-    actual = hashlib.sha256(ciphertext).hexdigest()
-    if expected != actual:
-        raise FleetError(f"database backup hash mismatch: {archive}")
-    temporary = Path(tempfile.mkdtemp(prefix="aurix-db-verify-")) / "verify.sqlite3"
-    try:
-        temporary.write_bytes(raw)
-        with sqlite3.connect(temporary) as connection:
-            row = connection.execute("PRAGMA integrity_check").fetchone()
-            if not row or row[0] != "ok":
-                raise FleetError("database backup integrity_check failed")
-    finally:
-        shutil.rmtree(temporary.parent, ignore_errors=True)
+    raw, metadata, actual = _verified_archive_bytes(
+        env, archive.read_bytes(), meta.read_bytes(), str(archive)
+    )
+    del raw
     return {
         "archive": str(archive),
         "metadata": str(meta),
@@ -131,16 +122,31 @@ def verify_archive(env: dict[str, str], archive: Path) -> dict[str, object]:
 def verify_archive_bytes(
     env: dict[str, str], ciphertext: bytes, metadata_raw: bytes, label: str
 ) -> dict[str, object]:
+    _raw, metadata, actual = _verified_archive_bytes(env, ciphertext, metadata_raw, label)
+    return {
+        "archive": label,
+        "metadata": f"{label}.json",
+        "created_at": metadata.get("created_at"),
+        "ciphertext_sha256": actual,
+    }
+
+
+def _verified_archive_bytes(
+    env: dict[str, str], ciphertext: bytes, metadata_raw: bytes, label: str
+) -> tuple[bytes, dict[str, object], str]:
+    """Authenticate, hash-check, and integrity-check an encrypted archive."""
     try:
         metadata = json.loads(metadata_raw.decode())
         raw = backup_key(env).decrypt(ciphertext)
     except (UnicodeDecodeError, json.JSONDecodeError, InvalidToken) as exc:
         raise FleetError(f"database backup cannot be verified: {label}") from exc
+    if not isinstance(metadata, dict):
+        raise FleetError(f"database backup metadata is invalid: {label}")
     expected = metadata.get("ciphertext_sha256")
     actual = hashlib.sha256(ciphertext).hexdigest()
     if expected != actual:
         raise FleetError(f"database backup hash mismatch: {label}")
-    temporary = Path(tempfile.mkdtemp(prefix="aurix-db-object-verify-")) / "verify.sqlite3"
+    temporary = Path(tempfile.mkdtemp(prefix="aurix-db-verify-")) / "verify.sqlite3"
     try:
         temporary.write_bytes(raw)
         with sqlite3.connect(temporary) as connection:
@@ -149,12 +155,7 @@ def verify_archive_bytes(
                 raise FleetError("database backup integrity_check failed")
     finally:
         shutil.rmtree(temporary.parent, ignore_errors=True)
-    return {
-        "archive": label,
-        "metadata": f"{label}.json",
-        "created_at": metadata.get("created_at"),
-        "ciphertext_sha256": actual,
-    }
+    return raw, metadata, actual
 
 
 def mirror_offsite(env: dict[str, str], archive: Path) -> Path | None:
@@ -225,9 +226,102 @@ def verify(env: dict[str, str]) -> dict[str, object]:
     return result
 
 
+def _latest_source(env: dict[str, str], archive: Path | None = None) -> tuple[bytes, str]:
+    """Read the requested archive, preferring local then off-site storage."""
+    if archive is not None:
+        if not archive.is_file():
+            raise FleetError(f"database backup archive is not readable: {archive}")
+        metadata = metadata_path(archive)
+        if not metadata.is_file():
+            raise FleetError(f"database backup metadata is missing: {metadata}")
+        raw, _details, _hash = _verified_archive_bytes(
+            env, archive.read_bytes(), metadata.read_bytes(), str(archive)
+        )
+        return raw, str(archive)
+
+    local = local_root(env)
+    if local.is_dir() and any(local.glob("*.sqlite3.fernet")):
+        selected = latest_archive(local)
+        metadata = metadata_path(selected)
+        if not metadata.is_file():
+            raise FleetError(f"database backup metadata is missing: {metadata}")
+        raw, _details, _hash = _verified_archive_bytes(
+            env, selected.read_bytes(), metadata.read_bytes(), str(selected)
+        )
+        return raw, str(selected)
+
+    if offsite_storage.configured(env):
+        object_key = offsite_storage.latest_key(env, "database/", ".sqlite3.fernet")
+        raw, _details, _hash = _verified_archive_bytes(
+            env,
+            offsite_storage.get(env, object_key),
+            offsite_storage.get(env, object_key + ".json"),
+            f"object://{object_key}",
+        )
+        return raw, f"object://{object_key}"
+
+    if (remote_root := offsite_root(env)) is not None:
+        selected = latest_archive(remote_root)
+        metadata = metadata_path(selected)
+        raw, _details, _hash = _verified_archive_bytes(
+            env, selected.read_bytes(), metadata.read_bytes(), str(selected)
+        )
+        return raw, str(selected)
+    raise FleetError("no database backup archive is available for restore")
+
+
+def restore(
+    env: dict[str, str],
+    archive: Path | None = None,
+    *,
+    confirm_path: str,
+    allow_existing: bool = False,
+) -> dict[str, object]:
+    """Atomically restore an authenticated SQLite archive to ``DATABASE_PATH``.
+
+    An exact path confirmation is mandatory. Existing databases are refused by
+    default so a recovery script cannot silently replace a live data store.
+    """
+    target = database_target_path(env)
+    if str(target) != str(confirm_path):
+        raise FleetError("--confirm-path must exactly match DATABASE_PATH")
+    if target.exists() and not allow_existing:
+        raise FleetError("DATABASE_PATH already exists; refusing an implicit overwrite")
+    raw, source = _latest_source(env, archive)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(target.parent, 0o700)
+    temporary = target.parent / f".{target.name}.restore-{os.getpid()}"
+    try:
+        write_private(temporary, raw)
+        with sqlite3.connect(temporary) as connection:
+            row = connection.execute("PRAGMA integrity_check").fetchone()
+            if not row or row[0] != "ok":
+                raise FleetError("restored SQLite integrity_check failed")
+        if target.exists():
+            rollback = target.with_name(
+                target.name
+                + ".rollback-"
+                + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            )
+            write_private(rollback, target.read_bytes())
+        os.replace(temporary, target)
+        os.chmod(target, 0o600)
+        directory_fd = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"target": str(target), "source": source, "status": "restored"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("backup", "verify"))
+    parser.add_argument("command", choices=("backup", "verify", "restore"))
+    parser.add_argument("--archive", type=Path)
+    parser.add_argument("--confirm-path")
+    parser.add_argument("--allow-existing", action="store_true")
     parser.add_argument("--env-file", default=os.environ.get(
         "AURIX_FLEET_ENV_FILE", "/etc/aurix-bot/aurix.env"))
     args = parser.parse_args()
@@ -235,8 +329,20 @@ def main() -> None:
         env = load_dotenv(Path(args.env_file), overwrite=False)
         if args.command == "backup":
             print(json.dumps({"status": "complete", "archive": str(backup(env))}, indent=2))
-        else:
+        elif args.command == "verify":
             print(json.dumps({"status": "verified", **verify(env)}, indent=2))
+        else:
+            if not args.confirm_path:
+                raise FleetError("restore requires --confirm-path DATABASE_PATH")
+            print(json.dumps(
+                restore(
+                    env,
+                    args.archive,
+                    confirm_path=args.confirm_path,
+                    allow_existing=args.allow_existing,
+                ),
+                indent=2,
+            ))
     except (FleetError, OSError, ValueError, sqlite3.Error) as exc:
         print(f"database backup failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
