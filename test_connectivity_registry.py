@@ -158,6 +158,129 @@ class ConnectivityRegistryTest(unittest.TestCase):
                 "ended",
             )
 
+    def test_credential_binding_rejects_plaintext_outline_url(self):
+        service = CommerceService(self.database, _Pool(), Fernet.generate_key())
+        service.register_outline_servers({"sg-b": "Singapore B"})
+        with open_sqlite_connection(self.path) as connection:
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
+                (123, "Test", "2026-09-04T00:00:00+00:00"),
+            )
+            with self.assertRaisesRegex(ValueError, "must be encrypted"):
+                ConnectivityRegistry.bind_credential(
+                    connection,
+                    telegram_id=123,
+                    server_id="sg-b",
+                    external_id="key-raw",
+                    secret_ciphertext="ss://raw-secret",
+                    now_text="2026-09-04T00:00:00+00:00",
+                    profile_kind="paid",
+                )
+
+    def test_legacy_plaintext_access_url_is_encrypted_during_registry_backfill(self):
+        key = Fernet.generate_key()
+        service = CommerceService(self.database, _Pool(), key)
+        service.register_outline_servers({"sg-a": "Singapore A", "sg-b": "Singapore B"})
+        with open_sqlite_connection(self.path) as connection:
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
+                (123, "Test", "2026-09-04T00:00:00+00:00"),
+            )
+            connection.execute(
+                """INSERT INTO orders
+                   (id, telegram_id, plan_code, amount_minor, currency, plan_name,
+                    quota_bytes_snapshot, duration_days_snapshot, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?)""",
+                (
+                    "order-legacy", 123, "basic_50gb", 3000, "MMK", "50 GB",
+                    50_000_000_000, 30, "2026-09-04T00:00:00+00:00",
+                ),
+            )
+            connection.execute(
+                """INSERT INTO subscriptions
+                   (id, order_id, telegram_id, plan_code, starts_at, expires_at,
+                    plan_name, quota_bytes, duration_days, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')""",
+                (
+                    "sub-legacy", "order-legacy", 123, "basic_50gb",
+                    "2026-09-04T00:00:00+00:00", "2026-10-04T00:00:00+00:00",
+                    "50 GB", 50_000_000_000, 30,
+                ),
+            )
+            connection.execute(
+                """INSERT INTO paid_vpn_keys
+                   (id, subscription_id, telegram_id, outline_key_id, access_url,
+                    quota_bytes, status, created_at, server_id)
+                   VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                (
+                    "paid-legacy", "sub-legacy", 123, "key-legacy", "ss://legacy-secret",
+                    50_000_000_000, "2026-09-04T00:00:00+00:00", "sg-a",
+                ),
+            )
+            ConnectivityRegistry.rebuild_from_legacy(
+                connection,
+                now_text="2026-09-04T00:00:00+00:00",
+                encrypt_access_url=service._normalize_legacy_access_url,
+            )
+            row = connection.execute(
+                "SELECT secret_ciphertext FROM connectivity_credentials WHERE external_id = ?",
+                ("key-legacy",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertNotIn("ss://legacy-secret", str(row[0]))
+        self.assertEqual(service._decrypt_access_url(str(row[0])), "ss://legacy-secret")
+
+    def test_unverifiable_legacy_secret_is_not_copied_into_registry(self):
+        service = CommerceService(self.database, _Pool(), Fernet.generate_key())
+        service.register_outline_servers({"sg-a": "Singapore A", "sg-b": "Singapore B"})
+        with open_sqlite_connection(self.path) as connection:
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
+                (123, "Test", "2026-09-04T00:00:00+00:00"),
+            )
+            connection.execute(
+                """INSERT INTO orders
+                   (id, telegram_id, plan_code, amount_minor, currency, plan_name,
+                    quota_bytes_snapshot, duration_days_snapshot, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?)""",
+                (
+                    "order-opaque", 123, "basic_50gb", 3000, "MMK", "50 GB",
+                    50_000_000_000, 30, "2026-09-04T00:00:00+00:00",
+                ),
+            )
+            connection.execute(
+                """INSERT INTO subscriptions
+                   (id, order_id, telegram_id, plan_code, starts_at, expires_at,
+                    plan_name, quota_bytes, duration_days, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')""",
+                (
+                    "sub-opaque", "order-opaque", 123, "basic_50gb",
+                    "2026-09-04T00:00:00+00:00", "2026-10-04T00:00:00+00:00",
+                    "50 GB", 50_000_000_000, 30,
+                ),
+            )
+            connection.execute(
+                """INSERT INTO paid_vpn_keys
+                   (id, subscription_id, telegram_id, outline_key_id, access_url,
+                    quota_bytes, status, created_at, server_id)
+                   VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                (
+                    "paid-opaque", "sub-opaque", 123, "key-opaque", "not-a-valid-secret",
+                    50_000_000_000, "2026-09-04T00:00:00+00:00", "sg-a",
+                ),
+            )
+            ConnectivityRegistry.rebuild_from_legacy(
+                connection,
+                now_text="2026-09-04T00:00:00+00:00",
+                encrypt_access_url=service._normalize_legacy_access_url,
+            )
+            row = connection.execute(
+                "SELECT secret_ciphertext FROM connectivity_credentials WHERE external_id = ?",
+                ("key-opaque",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertIsNone(row[0])
+
     def test_owner_queued_migration_preserves_remaining_quota_and_cuts_over(self):
         pool = _MigrationPool()
         service = CommerceService(self.database, pool, Fernet.generate_key())

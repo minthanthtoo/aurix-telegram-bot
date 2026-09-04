@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from typing import Any
 
 
@@ -217,6 +218,8 @@ class ConnectivityRegistry:
         """Create/update a generic profile, assignment, and credential binding."""
         if not cls.available(connection):
             return
+        if secret_ciphertext and str(secret_ciphertext).startswith("ss://"):
+            raise ValueError("connectivity credential secret must be encrypted")
         endpoint = connection.execute(
             "SELECT endpoint_id FROM connectivity_endpoints WHERE outline_server_id = ?",
             (server_id,),
@@ -315,22 +318,38 @@ class ConnectivityRegistry:
         )
 
     @classmethod
-    def rebuild_from_legacy(cls, connection: Any, *, now_text: str) -> int:
-        """Backfill generic bindings for existing paid/free rows after migration."""
+    def rebuild_from_legacy(
+        cls,
+        connection: Any,
+        *,
+        now_text: str,
+        encrypt_access_url: Callable[[str], str] | None = None,
+    ) -> int:
+        """Backfill generic bindings for existing paid/free rows after migration.
+
+        Older ``paid_vpn_keys`` rows may contain a plaintext ``ss://`` URL,
+        while current rows contain Fernet ciphertext. The generic registry
+        must never receive the former. A caller that owns the access-url cipher
+        can normalize legacy values; unverifiable values are omitted.
+        """
         if not cls.available(connection):
             return 0
         count = 0
         for row in connection.execute(
-            "SELECT telegram_id, subscription_id, server_id, outline_key_id, access_url FROM paid_vpn_keys"
+            "SELECT telegram_id, subscription_id, server_id, outline_key_id, access_url, status FROM paid_vpn_keys"
         ).fetchall():
             if not row["server_id"] or not row["outline_key_id"]:
                 continue
+            raw_secret = str(row["access_url"] or "")
+            secret_ciphertext: str | None = None
+            if raw_secret and encrypt_access_url is not None:
+                secret_ciphertext = encrypt_access_url(raw_secret)
             cls.bind_credential(
                 connection,
                 telegram_id=int(row["telegram_id"]),
                 server_id=str(row["server_id"]),
                 external_id=str(row["outline_key_id"]),
-                secret_ciphertext=str(row["access_url"] or ""),
+                secret_ciphertext=secret_ciphertext,
                 now_text=now_text,
                 profile_kind="paid",
                 subscription_id=str(row["subscription_id"]),

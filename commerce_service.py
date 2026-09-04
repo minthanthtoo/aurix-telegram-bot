@@ -334,7 +334,28 @@ class CommerceService(CommerceWorkerMixin):
                    WHERE server_id IS NULL AND status IN ('awaiting_payment', 'payment_submitted')""",
                 (default_server_id, _now_text(datetime.now(UTC) + timedelta(hours=24))),
             )
-            ConnectivityRegistry.rebuild_from_legacy(connection, now_text=now_text)
+            ConnectivityRegistry.rebuild_from_legacy(
+                connection,
+                now_text=now_text,
+                encrypt_access_url=self._normalize_legacy_access_url,
+            )
+
+    def _normalize_legacy_access_url(self, value: str) -> str | None:
+        """Return a registry-safe ciphertext for a legacy access URL.
+
+        Current rows already contain ciphertext. A legacy plaintext URL is
+        encrypted exactly once. Anything else is retained only when this
+        service can decrypt it with the active key; unknown values are omitted
+        rather than copied as potentially sensitive plaintext.
+        """
+        raw = str(value or "")
+        if not raw:
+            return None
+        if raw.startswith("ss://"):
+            return self._encrypt_access_url(raw)
+        if self._decrypt_access_url(raw) is not None:
+            return raw
+        return None
 
     def _outline_client(self, server_id: str | None = None) -> Any:
         getter = getattr(self.outline, "client", None)
