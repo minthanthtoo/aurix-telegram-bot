@@ -32,7 +32,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Live Telegram and Outline smoke test | Three management/data endpoints verified; customer tranche controlled | Bot, primary, Singapore-B, and BKK/Nube Outline endpoints, firewall, pinned-TLS API canaries, and a reversible BKK data-port/key create-delete canary are verified; a real Telegram-account canary and longer observation remain |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
 | Referrals, affiliates, and resellers | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
-| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, two-observation provider-orphan audit with separately gated cleanup, non-secret remote-key audit, durable two-observation scale gate, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; free/trial/promo provisioning is restart-safe and counts pending reservations against node admission; untracked remote keys remain a migration blocker and BKK is healthy/canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
+| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, provider-side SSH-key attachment, two-observation provider-orphan audit with separately gated cleanup, non-secret remote-key audit, durable two-observation scale gate, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; free/trial/promo provisioning is restart-safe and counts pending reservations against node admission; untracked remote keys remain a migration blocker and BKK is healthy/canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
 
 ## Honest aggregate view
 
@@ -45,7 +45,7 @@ engineering estimates, not production traffic or revenue metrics.
   wallet, restart-safe interaction, receipt-fingerprint, Telegram timestamp
   formatting, notification-lease, deterministic-entitlement-recovery, receipt-model-selection, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (358 tests
+  production-acceptance suite (362 tests
   passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local

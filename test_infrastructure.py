@@ -104,6 +104,7 @@ class FleetControllerTest(unittest.TestCase):
         )
         environment = {
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
             "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "10",
             "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
         }
@@ -120,6 +121,7 @@ class FleetControllerTest(unittest.TestCase):
         )
         environment = {
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
             "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "10",
             "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
         }
@@ -132,6 +134,7 @@ class FleetControllerTest(unittest.TestCase):
         self.assertEqual(waiting_again["provider_resource_id"], "42")
         self.assertEqual(waiting_again["public_ip"], "203.0.113.10")
         self.assertNotIn("user_data", provider.specifications[0])
+        self.assertEqual(provider.specifications[0]["ssh_keys"], ["12345"])
         with self.database.connect() as connection:
             status = connection.execute(
                 "SELECT status FROM infrastructure_jobs WHERE id = ?", (job_id,)
@@ -147,6 +150,7 @@ class FleetControllerTest(unittest.TestCase):
         )
         environment = {
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
             "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "10",
             "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
         }
@@ -169,6 +173,22 @@ class FleetControllerTest(unittest.TestCase):
         self.assertEqual(tuple(row), ("42", "77", "awaiting_verification"))
         self.assertEqual(event["event_type"], "droplet_active")
 
+    def test_provider_provisioning_fails_closed_without_ssh_key_attachment(self):
+        provider = FakeProvider()
+        controller = FleetController(self.database, provider)
+        job_id = controller.queue_provision(
+            region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+            requested_by=123, now=self.now,
+        )
+        environment = {
+            "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "10",
+            "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(InfrastructureError, "SSH_KEY_IDS"):
+                controller.execute_provision(job_id)
+
     def test_verified_activation_is_idempotent_and_audited(self):
         provider = FakeProvider()
         controller = FleetController(self.database, provider)
@@ -178,6 +198,7 @@ class FleetControllerTest(unittest.TestCase):
         )
         environment = {
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
             "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "10",
             "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
         }
@@ -262,6 +283,7 @@ class FleetControllerTest(unittest.TestCase):
         )
         environment = {
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
             "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "17",
             "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
         }
@@ -369,6 +391,7 @@ class FleetControllerTest(unittest.TestCase):
             environment = {
                 "AURIX_ORPHAN_CLEANUP_ENABLED": "1",
                 "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+                "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
                 "AURIX_ORPHAN_CLEANUP_CONFIRMATION": "DELETE-UNREGISTERED-AURIX-NODES",
                 "AURIX_ORPHAN_CLEANUP_MIN_AGE_SECONDS": "3600",
             }

@@ -170,6 +170,38 @@ def _validate_configuration() -> dict[str, str]:
         elif os.environ.get("AURIX_DNS_REQUIRE", "").strip().lower() in TRUTHY:
             fail("AURIX_DNS_REQUIRE=1 needs configured Cloudflare DNS automation")
 
+    mutations_enabled = os.environ.get(
+        "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED", "0"
+    ).strip().lower() in TRUTHY
+    if mutations_enabled:
+        _required("DIGITALOCEAN_API_TOKEN")
+        key_ids = [
+            item.strip()
+            for item in os.environ.get("AURIX_DIGITALOCEAN_SSH_KEY_IDS", "").split(",")
+            if item.strip()
+        ]
+        if not key_ids:
+            fail(
+                "AURIX_DIGITALOCEAN_SSH_KEY_IDS is required when provider mutations are enabled"
+            )
+        if len(key_ids) > 10 or any(
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:._-]{0,127}", value)
+            for value in key_ids
+        ):
+            fail("AURIX_DIGITALOCEAN_SSH_KEY_IDS is invalid")
+    orphan_cleanup_enabled = os.environ.get(
+        "AURIX_ORPHAN_CLEANUP_ENABLED", "0"
+    ).strip().lower() in TRUTHY
+    if orphan_cleanup_enabled and not mutations_enabled:
+        fail("AURIX_ORPHAN_CLEANUP_ENABLED requires AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1")
+    if orphan_cleanup_enabled and os.environ.get(
+        "AURIX_ORPHAN_CLEANUP_CONFIRMATION", ""
+    ) != "DELETE-UNREGISTERED-AURIX-NODES":
+        fail(
+            "AURIX_ORPHAN_CLEANUP_CONFIRMATION must exactly equal "
+            "DELETE-UNREGISTERED-AURIX-NODES"
+        )
+
     database_url = os.environ.get("COMMERCE_DATABASE_URL", "").strip()
     database_path = os.environ.get("DATABASE_PATH", "").strip()
     if database_url:

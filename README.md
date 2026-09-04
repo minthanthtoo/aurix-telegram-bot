@@ -115,6 +115,11 @@ single idempotent **Prepare next node** action in the admin Capacity panel. That
 button records intent only; the separate worker and its mutation gate remain the
 final authority. Configure `AURIX_SCALE_REGION`, `AURIX_SCALE_DROPLET_SIZE` and
 `AURIX_SCALE_DROPLET_IMAGE` only with values inside the worker allowlists.
+When provider mutations are enabled, the worker also requires
+`AURIX_DIGITALOCEAN_SSH_KEY_IDS` (comma-separated DigitalOcean SSH-key IDs or
+fingerprints) so every new Droplet is reachable by the pinned automation key.
+The private key itself stays in `AURIX_FLEET_SSH_KEY`/the worker environment;
+provider creation never uses a password or an untrusted first connection.
 
 Provider inventory is also audited for stale, billable AuriX Droplets. The
 worker records a candidate only after two persisted observations separated by

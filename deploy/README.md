@@ -196,6 +196,11 @@ as proof of identity. If any prerequisite is missing, the job remains
 
 Do not set `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1` until provider inventory,
 budget, Outline installation, firewall restrictions and canary tests have passed.
+The worker also requires `AURIX_DIGITALOCEAN_SSH_KEY_IDS` when mutations are
+enabled. These are DigitalOcean-side key IDs/fingerprints, not private key
+material; attaching them at creation is what makes unattended bootstrap
+reachable. The corresponding private key and pinned `known_hosts` file remain
+root-only on the control plane.
 
 For unattended scale intent collection, set both
 `AURIX_INFRASTRUCTURE_QUEUE_ENABLED=1` and

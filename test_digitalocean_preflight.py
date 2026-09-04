@@ -71,6 +71,43 @@ class DigitalOceanPreflightTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "RECEIPT_LLM_API_KEY"):
                 main([])
 
+    def test_provider_mutation_requires_token_and_ssh_key_attachment(self):
+        environment = dict(self.environment)
+        environment["AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED"] = "1"
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "DIGITALOCEAN_API_TOKEN"):
+                main([])
+        environment["DIGITALOCEAN_API_TOKEN"] = "dop_v1_test"
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "SSH_KEY_IDS"):
+                main([])
+        environment["AURIX_DIGITALOCEAN_SSH_KEY_IDS"] = "12345"
+        with patch.dict(os.environ, environment, clear=True):
+            main([])
+
+    def test_orphan_cleanup_requires_mutation_gate_and_exact_confirmation(self):
+        environment = dict(self.environment)
+        environment["AURIX_ORPHAN_CLEANUP_ENABLED"] = "1"
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "MUTATIONS_ENABLED"):
+                main([])
+        environment.update(
+            {
+                "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+                "DIGITALOCEAN_API_TOKEN": "dop_v1_test",
+                "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
+                "AURIX_ORPHAN_CLEANUP_CONFIRMATION": "wrong",
+            }
+        )
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "exactly equal"):
+                main([])
+        environment["AURIX_ORPHAN_CLEANUP_CONFIRMATION"] = (
+            "DELETE-UNREGISTERED-AURIX-NODES"
+        )
+        with patch.dict(os.environ, environment, clear=True):
+            main([])
+
     def fleet_environment(self):
         ssh_key = Path(self.tmp.name) / "fleet_key"
         known_hosts = Path(self.tmp.name) / "known_hosts"

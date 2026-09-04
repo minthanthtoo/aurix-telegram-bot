@@ -141,6 +141,7 @@ class RecoveryReadinessTests(unittest.TestCase):
         values.update({
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
             "DIGITALOCEAN_API_TOKEN": "dop_v1_test",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
             "AURIX_DNS_PROVIDER": "cloudflare",
             "AURIX_DNS_ZONE_ID": "zone-test",
             "AURIX_DNS_API_TOKEN": "dns-token",
@@ -151,6 +152,20 @@ class RecoveryReadinessTests(unittest.TestCase):
         report = run_audit(self.env_file, verify_archives=True)
 
         self.assertEqual(report["status"], "pass")
+
+    def test_provider_mutation_readiness_requires_provider_ssh_key_attachment(self) -> None:
+        values = self.fleet_env()
+        values.update(
+            {
+                "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+                "DIGITALOCEAN_API_TOKEN": "dop_v1_test",
+            }
+        )
+        self.write_env(values)
+        report = run_audit(self.env_file, verify_archives=False)
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["provider_automation"]["status"], "fail")
+        self.assertIn("SSH_KEY_IDS", checks["provider_automation"]["detail"])
 
     def test_object_store_satisfies_recovery_offsite_checks(self) -> None:
         values = self.fleet_env()
@@ -164,6 +179,7 @@ class RecoveryReadinessTests(unittest.TestCase):
             "AURIX_BACKUP_OBJECT_STORE_SECRET_ACCESS_KEY": "secret",
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
             "DIGITALOCEAN_API_TOKEN": "dop_v1_test",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
             "AURIX_DNS_PROVIDER": "cloudflare",
             "AURIX_DNS_ZONE_ID": "zone-test",
             "AURIX_DNS_API_TOKEN": "dns-token",
@@ -190,6 +206,7 @@ class RecoveryReadinessTests(unittest.TestCase):
             "AURIX_FLEET_BACKUP_REQUIRE_OFFSITE": "1",
             "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
             "DIGITALOCEAN_API_TOKEN": "dop_v1_test",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
             "AURIX_DNS_PROVIDER": "cloudflare",
             "AURIX_DNS_ZONE_ID": "zone-test",
             "AURIX_DNS_API_TOKEN": "dns-token",

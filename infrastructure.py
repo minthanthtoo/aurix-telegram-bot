@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -141,6 +142,29 @@ class FleetController:
     def _managed_provider_ids() -> set[str]:
         raw = os.environ.get("AURIX_MANAGED_DROPLET_IDS", "")
         return {item.strip() for item in raw.split(",") if item.strip()}
+
+    @staticmethod
+    def _provider_ssh_key_ids() -> list[str]:
+        """Return provider-side SSH key IDs/fingerprints for new Droplets.
+
+        DigitalOcean does not make a newly created Droplet reachable through
+        the control plane unless an SSH key is attached at creation time. The
+        key identifiers are safe to include in the provider request; private
+        key material remains only in the worker environment and is never sent
+        to DigitalOcean.
+        """
+        raw = os.environ.get("AURIX_DIGITALOCEAN_SSH_KEY_IDS", "")
+        values = [item.strip() for item in raw.split(",") if item.strip()]
+        if not values:
+            raise InfrastructureError(
+                "AURIX_DIGITALOCEAN_SSH_KEY_IDS is required for provider provisioning"
+            )
+        if len(values) > 10 or any(
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:._-]{0,127}", value)
+            for value in values
+        ):
+            raise InfrastructureError("AURIX_DIGITALOCEAN_SSH_KEY_IDS is invalid")
+        return values
 
     def _provider_inventory(self) -> list[dict[str, Any]]:
         """Return provider nodes explicitly owned by AuriX.
@@ -602,6 +626,11 @@ class FleetController:
                 "image": specification["image"],
                 "tags": ["aurix-vpn-node", "aurix-awaiting-verification"],
             }
+            # Attach the pre-registered automation public key(s) at creation;
+            # a password delivered out-of-band cannot support unattended,
+            # repeatable bootstrap.  This list contains provider key IDs or
+            # fingerprints, never private key material.
+            specification["ssh_keys"] = self._provider_ssh_key_ids()
             connection.execute(
                 """UPDATE infrastructure_jobs SET status = 'running', attempts = attempts + 1,
                           locked_at = ? WHERE id = ?""",

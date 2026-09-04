@@ -381,13 +381,16 @@ AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED=0
 AURIX_SCALE_REGION=sgp1
 AURIX_SCALE_DROPLET_SIZE=s-1vcpu-1gb
 AURIX_SCALE_DROPLET_IMAGE=ubuntu-24-04-x64
+# Required by the provider worker when mutations are enabled; IDs/fingerprints only.
+AURIX_DIGITALOCEAN_SSH_KEY_IDS=<provider-ssh-key-id>
 ```
 
 Safe default is disabled. The budget is mandatory when mutation is enabled and
 fails closed on invalid/unavailable billing data. Existing managed Droplets are
 counted by provider inventory and the configured ID bridge until tags are
-verified. `user_data` is not accepted; new nodes require an operator verification
-step.
+verified. Every new Droplet receives the pre-registered provider SSH key IDs at
+creation; private key material is never sent in provider user data. `user_data`
+is not accepted; new nodes still require a pinned identity verification step.
 
 ## 13. Scale-out decision
 
