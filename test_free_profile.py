@@ -29,6 +29,7 @@ class _Child:
 class RenderWebHealthTest(unittest.TestCase):
     def tearDown(self):
         HealthHandler.registration_database = None
+        HealthHandler.heartbeat_path = None
 
     def _request(self, child):
         HealthHandler.child = child
@@ -74,6 +75,33 @@ class RenderWebHealthTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_health_degrades_when_latest_maintenance_pass_failed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            heartbeat = Path(directory) / "heartbeat.json"
+            heartbeat.write_text(
+                json.dumps(
+                    {
+                        "status": "error",
+                        "last_success_at": "2099-01-01T00:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            HealthHandler.heartbeat_path = str(heartbeat)
+            status, payload = self._request(_Child())
+        self.assertEqual(status, 503)
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["maintenance_status"], "error")
+
+    def test_health_degrades_on_first_failed_maintenance_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            heartbeat = Path(directory) / "heartbeat.json"
+            heartbeat.write_text(json.dumps({"status": "error"}), encoding="utf-8")
+            HealthHandler.heartbeat_path = str(heartbeat)
+            status, payload = self._request(_Child())
+        self.assertEqual(status, 503)
+        self.assertEqual(payload["maintenance_status"], "error")
 
 
     def test_registration_endpoint_accepts_one_time_enrollment_without_echoing_secrets(self):

@@ -140,14 +140,20 @@ class HealthHandler(BaseHTTPRequestHandler):
         try:
             with open(path, encoding="utf-8") as stream:
                 heartbeat = json.load(stream)
+            status = str(heartbeat.get("status") or "starting")
             last_success = heartbeat.get("last_success_at")
             if not last_success:
-                return True, {"maintenance_status": heartbeat.get("status", "starting")}
+                return status != "error", {"maintenance_status": status}
             success_at = datetime.fromisoformat(str(last_success)).astimezone(timezone.utc)
             interval = max(30.0, float(os.environ.get("AURIX_MAINTENANCE_INTERVAL_SECONDS", "60")))
             age = max(0.0, (datetime.now(timezone.utc) - success_at).total_seconds())
-            return age <= interval * 3, {
-                "maintenance_status": heartbeat.get("status", "ok"),
+            status = str(heartbeat.get("status") or "ok")
+            # A recent successful pass must not mask a currently failing pass.
+            # Otherwise a database/Outline outage could leave UptimeRobot seeing
+            # HTTP 200 for up to three intervals while enforcement is broken.
+            healthy = status != "error" and age <= interval * 3
+            return healthy, {
+                "maintenance_status": status,
                 "maintenance_last_success_at": last_success,
                 "maintenance_age_seconds": round(age, 1),
             }
