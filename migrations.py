@@ -1292,7 +1292,7 @@ COMMERCE_MIGRATIONS = (
             # events are server-side audit/worker state. The trusted commerce
             # database role used by AuriX continues to access the table, while
             # Supabase anon/authenticated roles cannot read or mutate rows.
-            "ALTER TABLE key_termination_events ENABLE ROW LEVEL SECURITY",
+            "ALTER TABLE public.key_termination_events ENABLE ROW LEVEL SECURITY",
         ),
     ),
 )
