@@ -223,7 +223,7 @@ class TelegramAdminMixin:
             lines.extend(
                 [
                     "",
-                    f"{'🟢' if item.get('health_status') == 'healthy' else '🔴'} {item.get('label') or item.get('server_id')}",
+                    f"{'🟢' if item.get('health_status') == 'healthy' else '🔴'} {item.get('label') or item.get('server_id')} · {str(item.get('lifecycle_state') or 'active').title()}",
                     (
                         "Health evidence: "
                         f"{str(item.get('health_status') or 'unknown')} · "
@@ -249,6 +249,23 @@ class TelegramAdminMixin:
                         f"{commitment / 1_000_000_000:g}/{int(budget) / 1_000_000_000:g} GB committed"
                         if budget
                         else "monitor only"
+                    ),
+                    (
+                        "Drain: ✅ empty and ready to retire"
+                        if item.get("drain_ready_to_retire")
+                        else "Drain: ⏳ "
+                        + ", ".join(
+                            label
+                            for label, value in (
+                                ("free keys", item.get("active_free_key_count")),
+                                ("paid keys", item.get("active_paid_key_count")),
+                                ("open orders", item.get("open_order_count")),
+                                ("pending setup", item.get("pending_provisioning_count")),
+                                ("remote keys", item.get("remote_key_count")),
+                                ("unreviewed remote", item.get("remote_orphan_key_count")),
+                            )
+                            if value is None or int(value or 0) > 0
+                        )
                     ),
                 ]
             )
@@ -346,6 +363,7 @@ class TelegramAdminMixin:
         traffic = server.get("monthly_traffic_bytes")
         lines = [
             f"⚙️ {server.get('label') or server_id}",
+            f"Lifecycle: {str(server.get('lifecycle_state') or 'active').title()} · {'admission enabled' if server.get('enabled') else 'admission disabled'}",
             f"Health: {server.get('health_status')} · remote keys: {server.get('remote_key_count') or 0}",
             (
                 "Probe: "
@@ -365,6 +383,7 @@ class TelegramAdminMixin:
             + (f"{int(traffic) / 1_000_000_000:g} GB" if traffic else "monitor only"),
             "",
             "Choose declared server capacity, then allocate paid and free/promo tiers. Changes apply to new issuance; existing keys are never silently moved.",
+            "Drain mode blocks new issuance but keeps existing keys alive. Retirement is allowed only after every local and remotely observed key/order/setup is gone.",
         ]
         rows: list[list[tuple[str, str]]] = [
             [("🔎 Remote inventory", f"a:I:{server_id}:present:0")],
@@ -384,6 +403,19 @@ class TelegramAdminMixin:
                 ("2TB", f"a:C:{server_id}|traffic|2000"),
             ],
         ]
+        lifecycle = str(server.get("lifecycle_state") or "active")
+        if self._is_owner(telegram_id):
+            if lifecycle == "active":
+                rows.append([("🚧 Start drain", f"a:L:{server_id}|draining")])
+            elif lifecycle == "draining":
+                rows.append(
+                    [
+                        ("▶ Resume admission", f"a:L:{server_id}|active"),
+                        ("⏹ Retire when empty", f"a:L:{server_id}|retired"),
+                    ]
+                )
+            else:
+                rows.append([("▶ Re-open endpoint", f"a:L:{server_id}|active")])
         allocations = {item["plan_code"]: item for item in server.get("allocations", [])}
         for plan in self.commerce.plans():
             current = int((allocations.get(plan.code) or {}).get("slot_limit") or 0)
@@ -744,7 +776,26 @@ class TelegramAdminMixin:
             snapshot["state"] = "missing"
             return snapshot
         try:
-            if command == "/retryjob":
+            if command == "/serverstate":
+                if len(args) != 2 or str(args[1]).lower() not in {"active", "draining", "retired"}:
+                    snapshot["state"] = "missing"
+                else:
+                    readiness = self._admin_owner_call(
+                        telegram_id,
+                        "server_drain_readiness",
+                        target_id,
+                    )
+                    snapshot.update(
+                        {
+                            "state": "present",
+                            "server_id": target_id,
+                            "requested_state": str(args[1]).lower(),
+                            "lifecycle_state": readiness.get("lifecycle_state"),
+                            "ready_to_retire": readiness.get("ready_to_retire"),
+                            "blockers": readiness.get("blockers") or [],
+                        }
+                    )
+            elif command == "/retryjob":
                 jobs = self._admin_call(
                     telegram_id, "failed_jobs", limit=100, include_nonterminal=True
                 )
@@ -900,6 +951,19 @@ class TelegramAdminMixin:
                 lines.append("Result: stop the season; normal plans return immediately.")
             else:
                 lines.append("Result: resume the saved season if it is within its dates.")
+            return "\n".join(lines)
+        if command == "/serverstate":
+            requested = str(snapshot.get("requested_state") or args[1] if len(args) > 1 else "-").lower()
+            lines = [
+                f"Endpoint: {snapshot.get('server_id') or (args[0] if args else '-')}",
+                f"Current lifecycle: {str(snapshot.get('lifecycle_state') or '-').title()}",
+                f"Requested lifecycle: {requested.title()}",
+            ]
+            blockers = [str(value).replace("_", " ") for value in snapshot.get("blockers") or []]
+            if requested == "retired" and blockers:
+                lines.append("Retirement is currently blocked by: " + ", ".join(blockers))
+            else:
+                lines.append("Result: change admission state only; no provider VM action is performed.")
             return "\n".join(lines)
         if command == "/retryjob":
             return "\n".join(

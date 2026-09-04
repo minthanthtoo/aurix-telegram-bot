@@ -1011,6 +1011,22 @@ COMMERCE_MIGRATIONS = (
                ON endpoint_health_observations(server_id, observed_at)""",
         ),
     ),
+    Migration(
+        13,
+        "endpoint_lifecycle_drain_state",
+        sqlite_statements=(
+            "ALTER TABLE outline_servers ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle_state IN ('active', 'draining', 'retired'))",
+            "ALTER TABLE outline_servers ADD COLUMN lifecycle_reason TEXT",
+            "ALTER TABLE outline_servers ADD COLUMN lifecycle_changed_at TEXT",
+            "CREATE INDEX IF NOT EXISTS outline_servers_lifecycle ON outline_servers(enabled, lifecycle_state)",
+        ),
+        postgres_statements=(
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle_state IN ('active', 'draining', 'retired'))",
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS lifecycle_reason TEXT",
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS lifecycle_changed_at TEXT",
+            "CREATE INDEX IF NOT EXISTS outline_servers_lifecycle ON outline_servers(enabled, lifecycle_state)",
+        ),
+    ),
 )
 
 

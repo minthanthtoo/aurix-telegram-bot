@@ -1050,6 +1050,49 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(server["health_failure_streak"], 0)
         self.assertIsNotNone(server["health_last_latency_ms"])
 
+    def test_endpoint_drain_blocks_new_issuance_but_preserves_existing_state(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        self.service.configure_server_capacity(
+            "default", 999, max_keys=10, reserved_keys=1,
+            monthly_traffic_bytes=1_000_000_000_000,
+        )
+        self.service.configure_plan_allocation("default", "basic_50gb", 5, 999)
+
+        result = self.service.set_server_lifecycle("default", "draining", 999, reason="maintenance")
+        self.assertTrue(result["changed"])
+        snapshot = self.service.capacity_snapshot(self.now, refresh_inventory=False)
+        server = snapshot["servers"][0]
+        self.assertEqual(server["lifecycle_state"], "draining")
+        self.assertEqual(server["admission_status"], "blocked")
+        self.assertIn("draining", server["admission_blockers"])
+        self.assertEqual(snapshot["scale_advice"]["status"], "unconfigured")
+        with self.assertRaisesRegex(CommerceError, "temporarily full"):
+            self.service.create_order(456, "Draining", "basic_50gb", self.now)
+
+        resumed = self.service.set_server_lifecycle("default", "active", 999)
+        self.assertEqual(resumed["lifecycle_state"], "active")
+
+    def test_endpoint_retirement_fails_closed_until_remote_inventory_is_empty(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.outline.add_key("legacy", "legacy operator key")
+        self.service.refresh_server_inventory(self.now)
+        self.service.set_server_lifecycle("default", "draining", 999)
+        readiness = self.service.server_drain_readiness("default")
+        self.assertFalse(readiness["ready_to_retire"])
+        self.assertIn("remote_keys_present", readiness["blockers"])
+        with self.assertRaisesRegex(CommerceError, "remote inventory still has"):
+            self.service.set_server_lifecycle("default", "retired", 999)
+
+        self.outline.keys.clear()
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=1))
+        readiness = self.service.server_drain_readiness("default")
+        self.assertTrue(readiness["ready_to_retire"])
+        retired = self.service.set_server_lifecycle("default", "retired", 999)
+        self.assertEqual(retired["lifecycle_state"], "retired")
+        snapshot = self.service.capacity_snapshot(self.now + timedelta(minutes=1), refresh_inventory=False)
+        self.assertEqual(snapshot["servers"][0]["admission_status"], "blocked")
+
 
 class FakeRawPostgresCursor:
     rowcount = 1
@@ -1249,15 +1292,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "7708bf6355a9d89b54349b1c0666cce9bf5be5b390bc914488da2d842037e78b",
+            "5401238879ec6ddb6d05133e3309c70f9ba4dfb9ffd9d8057d7ae839268e60b2",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "4446ff6375260edbc7e856c1a500278cef77b31a158e09f7208018aa2531f3fa",
+            "e58ea19a9eafd8aacaa36710d6ee8e62e7cb97275ee5285b4efa11bad872c74b",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "ff243a45c79fda07f0faa9db8156c8dac82f582b4d9e7a623c64fdc651b81715",
+            "7c15ec45930108c8ed913ea4e86b6527456b0534962ebd51779b28c50d1188c9",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

@@ -433,7 +433,21 @@ The intent remains provider-gated and does not itself create a Droplet.
 
 ## 14. Drain and scale-in
 
-There is no automatic destroy path. The safe sequence is:
+Endpoint lifecycle is now durable and explicit: `active` admits new
+entitlements, `draining` blocks new assignments while existing credentials
+continue to work, and `retired` disables admission and marks the endpoint as
+ready for a separate provider-console decision. The Telegram owner panel shows
+the drain checklist and exposes **Start drain**, **Resume admission**, and
+**Retire when empty** behind a state-bound confirmation. No lifecycle action
+creates, deletes, rebuilds, or disconnects a provider VM.
+
+Retirement is rejected until AuriX sees no active free/paid keys, open orders,
+pending provisioning intents, remotely observed keys, or unreviewed remote
+keys. A recent successful inventory reconciliation is required; stale or
+unknown remote state fails closed. This protects against accidentally retiring
+an endpoint whose data-plane credentials still exist outside the database.
+
+The safe sequence is:
 
 1. set every plan/tier allocation on the endpoint to zero;
 2. mark it unavailable for new assignments;

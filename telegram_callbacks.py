@@ -504,6 +504,31 @@ class TelegramCallbackMixin:
                     server_id,
                     message_id=message.get("message_id"),
                 )
+            elif action == "L":
+                if not self._is_owner(telegram_id):
+                    self._send_customer_fallback(chat_id, telegram_id)
+                    return
+                try:
+                    server_id, requested_state = entity_id.split("|", 1)
+                    requested_state = requested_state.lower()
+                except ValueError:
+                    self.send(chat_id, "That endpoint lifecycle action is no longer valid.")
+                    return
+                if requested_state not in {"active", "draining", "retired"} or not server_id:
+                    self.send(chat_id, "That endpoint lifecycle action is no longer valid.")
+                    return
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/serverstate",
+                    [server_id, requested_state],
+                    (
+                        f"Change endpoint {server_id} to {requested_state}? "
+                        "This changes AuriX admission only; it never destroys a VM or key."
+                    ),
+                    "✅ Confirm Endpoint State",
+                    cancel_data=f"a:S:{server_id}",
+                )
             elif action == "m":
                 if entity_id not in {"manual", "assisted"}:
                     self.send(chat_id, "That receipt mode is unavailable.")

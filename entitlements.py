@@ -178,7 +178,8 @@ class ClaimService:
         fresh_after = (now - timedelta(seconds=max_age)).astimezone(UTC).isoformat()
         servers = connection.execute(
             """SELECT * FROM outline_servers
-               WHERE enabled = 1 AND health_status = 'healthy'
+               WHERE enabled = 1 AND lifecycle_state = 'active'
+                 AND health_status = 'healthy'
                  AND last_synced_at IS NOT NULL AND last_synced_at >= ?
                ORDER BY server_id""",
             (fresh_after,),

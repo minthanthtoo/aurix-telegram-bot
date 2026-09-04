@@ -47,7 +47,7 @@ class AdminOperations:
             "queue_infrastructure_provision",
         }
     )
-    OWNER_COMMERCE_OPERATIONS = frozenset({"review_remote_key"})
+    OWNER_COMMERCE_OPERATIONS = frozenset({"review_remote_key", "set_server_lifecycle", "server_drain_readiness"})
     SERVICE_OPERATIONS = frozenset(
         {
             "termination_summary",

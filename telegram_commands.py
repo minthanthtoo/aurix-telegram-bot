@@ -231,6 +231,8 @@ class TelegramCommandMixin:
                 pass
             elif command in {"/addadmin", "/removeadmin"} and len(args) != 1:
                 pass
+            elif command == "/serverstate" and len(args) != 2:
+                pass
             else:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
@@ -245,6 +247,7 @@ class TelegramCommandMixin:
                     "/receiptmode": lambda: f"Change receipt analysis mode to {args[0]}?",
                     "/addadmin": lambda: f"Grant AuriX administrator access to Telegram user {args[0]}?",
                     "/removeadmin": lambda: f"Revoke AuriX administrator access from Telegram user {args[0]}?",
+                    "/serverstate": lambda: f"Change endpoint {args[0]} lifecycle to {args[1]}?",
                 }[command]()
                 self._queue_admin_confirmation(
                     chat["id"],
@@ -265,6 +268,7 @@ class TelegramCommandMixin:
                         "/receiptmode": "✅ Confirm Mode Change",
                         "/addadmin": "✅ Confirm Add Admin",
                         "/removeadmin": "🛑 Confirm Remove Admin",
+                        "/serverstate": "✅ Confirm Endpoint State",
                     }[command],
                 )
                 return
@@ -498,6 +502,36 @@ class TelegramCommandMixin:
                     self.send(
                         chat["id"],
                         f"Administrator {target_id} was revoked immediately.",
+                        self._owner_keyboard(),
+                    )
+        elif command == "/serverstate":
+            if len(args) != 2 or args[1].lower() not in {"active", "draining", "retired"}:
+                self.send(
+                    chat["id"],
+                    "Usage: /serverstate <server-id> active|draining|retired",
+                    self._owner_keyboard(),
+                )
+            else:
+                try:
+                    result = self._admin_owner_call(
+                        telegram_id,
+                        "set_server_lifecycle",
+                        args[0],
+                        args[1].lower(),
+                        telegram_id,
+                        reason="owner Telegram lifecycle control",
+                    )
+                except Exception as exc:
+                    self.send(
+                        chat["id"],
+                        str(exc) or "Endpoint lifecycle change was not saved.",
+                        self._owner_keyboard(),
+                    )
+                else:
+                    self.send(
+                        chat["id"],
+                        f"✅ Endpoint {args[0]} is now {result.get('lifecycle_state', args[1]).title()}. "
+                        "No provider VM action was performed.",
                         self._owner_keyboard(),
                     )
         elif command == "/groupsync":

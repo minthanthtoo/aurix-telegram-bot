@@ -102,9 +102,10 @@ class TelegramBot(
             "/receipttest",
             "/staff",
             "/notifications",
+            "/serverstate",
         }
     )
-    OWNER_ONLY_COMMANDS = frozenset({"/owner", "/staff", "/addadmin", "/removeadmin", "/groupsync"})
+    OWNER_ONLY_COMMANDS = frozenset({"/owner", "/staff", "/addadmin", "/removeadmin", "/groupsync", "/serverstate"})
     ADMIN_CONFIRMATION_COMMANDS = frozenset(
         {
             "/retry",
@@ -119,6 +120,7 @@ class TelegramBot(
             "/receiptmode",
             "/addadmin",
             "/removeadmin",
+            "/serverstate",
         }
     )
     UNKNOWN_ACTION_TEXT = "Use the menu to choose an AuriX action."

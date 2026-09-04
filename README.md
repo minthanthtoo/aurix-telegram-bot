@@ -397,6 +397,14 @@ inline panel; only `/admin` is advertised in the administrator command menu):
 - `/ledger <telegram-id>` (admin; inspect wallet balance and immutable events)
 - `/refund <order-id> [reason]` (admin; issue a wallet reversal and revoke access)
 
+Owner-only endpoint operations are available from **Capacity → server policy**:
+**Start drain** stops new assignments while existing keys continue to work;
+**Resume admission** reopens a drained endpoint; **Retire when empty** is
+accepted only after local orders/keys, pending setup, and the latest remote
+inventory are empty. The equivalent confirmed command is
+`/serverstate <server-id> active|draining|retired`. These controls never delete
+or rebuild a provider VM.
+
 Owner-only `/owner` provides Staff & Access, group-sync preview and receipt
 controls. A new administrator must first open the bot and use `/whoami`; the
 owner then uses `/addadmin ID` (or the Staff panel) with a durable confirmation.

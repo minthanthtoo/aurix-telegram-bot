@@ -1087,6 +1087,44 @@ class CommerceWorkerMixin:
             item["reserved_order_count"] = reserved_orders
             item["pending_key_count"] = pending_keys
             item["committed_traffic_bytes"] = committed_traffic
+            # Drain/retirement evidence is kept beside capacity so the owner
+            # can see exactly why an endpoint is still unsafe to remove.
+            with self.database.connect() as readiness_connection:
+                item["active_free_key_count"] = int(
+                    readiness_connection.execute(
+                        "SELECT COUNT(*) AS n FROM keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
+                        (item["server_id"],),
+                    ).fetchone()["n"]
+                ) if self._table_exists(readiness_connection, "keys") else 0
+                item["active_paid_key_count"] = int(
+                    readiness_connection.execute(
+                        "SELECT COUNT(*) AS n FROM paid_vpn_keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
+                        (item["server_id"],),
+                    ).fetchone()["n"]
+                )
+                item["open_order_count"] = int(
+                    readiness_connection.execute(
+                        "SELECT COUNT(*) AS n FROM orders WHERE server_id = ? AND status IN ('awaiting_payment', 'payment_submitted')",
+                        (item["server_id"],),
+                    ).fetchone()["n"]
+                )
+                item["pending_provisioning_count"] = int(
+                    readiness_connection.execute(
+                        "SELECT COUNT(*) AS n FROM free_provisioning_intents WHERE server_id = ? AND status IN ('pending', 'running')",
+                        (item["server_id"],),
+                    ).fetchone()["n"]
+                ) if self._table_exists(readiness_connection, "free_provisioning_intents") else 0
+            item["drain_ready_to_retire"] = not any(
+                (
+                    item["active_free_key_count"],
+                    item["active_paid_key_count"],
+                    item["open_order_count"],
+                    item["pending_provisioning_count"],
+                    item.get("remote_key_count") is None,
+                    int(item.get("remote_key_count") or 0),
+                    int(item.get("remote_orphan_key_count") or 0),
+                )
+            )
             item["remaining_traffic_bytes"] = (
                 None
                 if item.get("monthly_traffic_bytes") is None
@@ -1134,6 +1172,11 @@ class CommerceWorkerMixin:
             admission_blockers: list[str] = []
             if not int(item.get("enabled") or 0):
                 admission_blockers.append("disabled")
+            lifecycle = str(item.get("lifecycle_state") or "active")
+            if lifecycle == "draining":
+                admission_blockers.append("draining")
+            elif lifecycle == "retired":
+                admission_blockers.append("retired")
             if str(item.get("health_status") or "") != "healthy":
                 admission_blockers.append("unhealthy")
             if item.get("last_synced_at") is None:
@@ -1184,7 +1227,9 @@ class CommerceWorkerMixin:
         configured = [
             item
             for item in servers
-            if item.get("enabled") and item.get("saleable_key_capacity") is not None
+            if item.get("enabled")
+            and str(item.get("lifecycle_state") or "active") == "active"
+            and item.get("saleable_key_capacity") is not None
         ]
         healthy = [item for item in configured if item.get("health_status") == "healthy"]
         if not configured:

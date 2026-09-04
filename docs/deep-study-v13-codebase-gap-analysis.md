@@ -34,7 +34,7 @@ multi-node Outline control plane with conservative health evidence, not a
 complete adaptive V13 connectivity platform and not something that should be
 replaced wholesale.
 
-Current evidence is strong for code and controlled operations (348 tests, live
+Current evidence is strong for code and controlled operations (350 tests, live
 three-node health, CI-gated deployment, and verified encrypted archives), but
 not yet for unrestricted customer admission: allocation normalization, orphan
 classification, stable DNS, real Telegram/payment canaries, and sustained
@@ -141,6 +141,10 @@ following facts supersede its Outline-fleet rows for release decisions:
   latency, state-before/state-after, and bounded success/failure streaks;
   degraded and unreachable nodes are excluded from new issuance. This still
   does not prove Myanmar ISP data-plane reachability.
+- Endpoint lifecycle is now durable and owner-controlled: `active` admits new
+  entitlements, `draining` blocks new assignments while existing keys remain
+  usable, and `retired` is accepted only after local and remotely observed
+  credentials are empty. Provider VM deletion remains a separate action.
 - Backups, CI-gated immutable releases, and a restore drill are present. The
   live release still uses one SQLite writer; moving to hosted PostgreSQL and an
   independent second writer remains a deliberate migration gate.
@@ -389,7 +393,7 @@ scope and release-count wording, not an active lint failure.
 Documentation drift is more consequential:
 
 - [`MVP_STATUS.md`](MVP_STATUS.md) and this document now report the verified
-  348-test suite; update both whenever a release changes the test baseline.
+  350-test suite; update both whenever a release changes the test baseline.
 - [`FINAL_ARCHITECTURE.md`](FINAL_ARCHITECTURE.md) calls an Outline-centric target canonical/final, while the later conversations redefine the north star as transport-agnostic V13.
 - The Outline fleet registry is implemented; the remaining documentation gap is
   the generic transport/profile registry required for Xray/V10–V13.
@@ -455,7 +459,7 @@ while assignment/credential/config/endpoint can change
 Do this before structural V3 work:
 
 1. Commit the current application, tests, docs, and deployment files in a reviewable baseline. **Done for the current release line.**
-2. Add CI using the declared Python version and run the full 348-test suite plus Ruff. **Done for the current release line.**
+2. Add CI using the declared Python version and run the full 350-test suite plus Ruff. **Done for the current release line.**
 3. Add a migration tool or explicit numbered migrations for SQLite/PostgreSQL. **Done for the current release line.**
 4. Unify free/trial provisioning with the paid durable job/reconcile path. **Done for the current release line.**
 5. Make control-plane startup degrade gracefully when Outline management is temporarily unavailable. **Done for the current release line.**
@@ -475,7 +479,7 @@ Add only the minimum generic connectivity model:
 4. Store endpoint ID on each credential and provisioning intent.
 5. Add endpoint states: `PROVISIONING`, `ACTIVE`, `DEGRADED`, `DRAINING`, `FAILED`, `RETIRED`.
 6. Implement deterministic allocation using only health freshness, capacity headroom, plan/region eligibility, and stable tie-breaking.
-7. Add admin commands to register, inspect, stop allocation, drain, and manually reassign an endpoint.
+7. Add admin commands to register, inspect, stop allocation, and drain an endpoint; manual reassignment remains.
 8. Add two-endpoint fake and live tests, including one endpoint unavailable during create/revoke.
 
 Exit condition: new users can be safely allocated across 2–3 Outline endpoints, and an operator can identify and manually migrate the affected cohort without corrupting entitlements or money.
@@ -486,7 +490,7 @@ Exit condition: new users can be safely allocated across 2–3 Outline endpoints
 2. Separate management, data-plane, network-specific, and capacity health.
 3. Add hysteresis, cooldown, circuit breaker, load shedding, and a per-window migration budget.
 4. Add credential/config versioning and a verified manual replacement workflow.
-5. Implement drain-before-retire and rollback.
+5. Implement drain-before-retire and rollback. **Drain-before-retire is implemented; rollback/migration remains.**
 6. Add outage simulation and failure-domain tests.
 
 Without a custom client, keep customer migration explicit and assisted. Do not label it seamless automatic failover.

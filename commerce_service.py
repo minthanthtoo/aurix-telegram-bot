@@ -280,8 +280,17 @@ class CommerceService(CommerceWorkerMixin):
                 )
             placeholders = ",".join("?" for _ in server_ids)
             connection.execute(
-                f"UPDATE outline_servers SET enabled = 0, updated_at = ? WHERE server_id NOT IN ({placeholders})",
-                (now_text, *server_ids),
+                f"""UPDATE outline_servers
+                       SET enabled = 0,
+                           lifecycle_state = 'retired',
+                           lifecycle_reason = COALESCE(lifecycle_reason, 'removed from OUTLINE_SERVERS_JSON'),
+                           lifecycle_changed_at = CASE
+                               WHEN lifecycle_state != 'retired' OR enabled = 1 THEN ?
+                               ELSE lifecycle_changed_at
+                           END,
+                           updated_at = ?
+                     WHERE server_id NOT IN ({placeholders})""",
+                (now_text, now_text, *server_ids),
             )
             default_server_id = getattr(self.outline, "default_server_id", server_ids[0])
             connection.execute(
@@ -311,6 +320,188 @@ class CommerceService(CommerceWorkerMixin):
     def _outline_client(self, server_id: str | None = None) -> Any:
         getter = getattr(self.outline, "client", None)
         return getter(server_id) if callable(getter) else self.outline
+
+    def set_server_lifecycle(
+        self,
+        server_id: str,
+        lifecycle_state: str,
+        actor_id: int,
+        *,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Change an endpoint's admission lifecycle without touching its VM.
+
+        ``draining`` stops new assignments while existing credentials continue
+        to work. ``retired`` is only accepted after local entitlements,
+        reservations, pending intents, and the last authoritative remote
+        inventory are empty. Provider deletion remains a separate, explicit
+        operation outside this method.
+        """
+        state = str(lifecycle_state or "").strip().lower()
+        if state not in {"active", "draining", "retired"}:
+            raise CommerceError("Endpoint lifecycle must be active, draining or retired")
+        server = str(server_id or "").strip()
+        if not server:
+            raise CommerceError("Endpoint identity is required")
+        now_text = _now_text()
+        clean_reason = str(reason or "").strip()[:512] or None
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            row = connection.execute(
+                "SELECT * FROM outline_servers WHERE server_id = ?",
+                (server,),
+            ).fetchone()
+            if row is None:
+                raise CommerceError("Outline server is not configured")
+            previous = str(row.get("lifecycle_state") if hasattr(row, "get") else row["lifecycle_state"] or "active")
+            if previous == state:
+                return {
+                    "server_id": server,
+                    "lifecycle_state": state,
+                    "previous_state": previous,
+                    "changed": False,
+                }
+            if state == "retired":
+                blockers: list[str] = []
+                active_free = int(
+                    connection.execute(
+                        "SELECT COUNT(*) AS n FROM keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
+                        (server,),
+                    ).fetchone()["n"]
+                ) if self._table_exists(connection, "keys") else 0
+                active_paid = int(
+                    connection.execute(
+                        "SELECT COUNT(*) AS n FROM paid_vpn_keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
+                        (server,),
+                    ).fetchone()["n"]
+                )
+                pending_orders = int(
+                    connection.execute(
+                        """SELECT COUNT(*) AS n FROM orders
+                           WHERE server_id = ? AND status IN ('awaiting_payment', 'payment_submitted')""",
+                        (server,),
+                    ).fetchone()["n"]
+                )
+                pending_subscriptions = int(
+                    connection.execute(
+                        "SELECT COUNT(*) AS n FROM subscriptions WHERE server_id = ? AND status IN ('pending', 'active')",
+                        (server,),
+                    ).fetchone()["n"]
+                )
+                pending_intents = 0
+                if self._table_exists(connection, "free_provisioning_intents"):
+                    pending_intents += int(
+                        connection.execute(
+                            """SELECT COUNT(*) AS n FROM free_provisioning_intents
+                               WHERE server_id = ? AND status IN ('pending', 'running')""",
+                            (server,),
+                        ).fetchone()["n"]
+                    )
+                if active_free:
+                    blockers.append(f"{active_free} active free/promo key(s)")
+                if active_paid:
+                    blockers.append(f"{active_paid} active paid key(s)")
+                if pending_orders:
+                    blockers.append(f"{pending_orders} open order(s)")
+                if pending_subscriptions:
+                    blockers.append(f"{pending_subscriptions} active/pending subscription(s)")
+                if pending_intents:
+                    blockers.append(f"{pending_intents} pending provisioning intent(s)")
+                remote_count = row["remote_key_count"]
+                orphan_count = int(row["remote_orphan_key_count"] or 0)
+                if remote_count is None:
+                    blockers.append("remote inventory has not been reconciled")
+                elif int(remote_count or 0) != 0:
+                    blockers.append(f"remote inventory still has {int(remote_count)} key(s)")
+                if orphan_count:
+                    blockers.append(f"{orphan_count} unreviewed remote key(s)")
+                if blockers:
+                    raise CommerceError("Endpoint cannot be retired yet: " + "; ".join(blockers))
+            enabled = 1 if state in {"active", "draining"} else 0
+            connection.execute(
+                """UPDATE outline_servers
+                      SET enabled = ?, lifecycle_state = ?, lifecycle_reason = ?,
+                          lifecycle_changed_at = ?, updated_at = ?
+                    WHERE server_id = ?""",
+                (enabled, state, clean_reason, now_text, now_text, server),
+            )
+            self._audit(
+                connection,
+                "server_lifecycle_changed",
+                "outline_server",
+                server,
+                "owner",
+                str(actor_id),
+                {
+                    "previous_state": previous,
+                    "lifecycle_state": state,
+                    "reason": clean_reason,
+                },
+            )
+        return {
+            "server_id": server,
+            "lifecycle_state": state,
+            "previous_state": previous,
+            "changed": True,
+            "changed_at": now_text,
+            "reason": clean_reason,
+        }
+
+    def server_drain_readiness(self, server_id: str) -> dict[str, Any]:
+        """Return a non-mutating, safe drain/retirement checklist."""
+        server = str(server_id or "").strip()
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT lifecycle_state, enabled, remote_key_count, remote_orphan_key_count, last_synced_at FROM outline_servers WHERE server_id = ?",
+                (server,),
+            ).fetchone()
+            if row is None:
+                raise CommerceError("Outline server is not configured")
+            active_free = int(connection.execute(
+                "SELECT COUNT(*) AS n FROM keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
+                (server,),
+            ).fetchone()["n"]) if self._table_exists(connection, "keys") else 0
+            active_paid = int(connection.execute(
+                "SELECT COUNT(*) AS n FROM paid_vpn_keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
+                (server,),
+            ).fetchone()["n"])
+            open_orders = int(connection.execute(
+                "SELECT COUNT(*) AS n FROM orders WHERE server_id = ? AND status IN ('awaiting_payment', 'payment_submitted')",
+                (server,),
+            ).fetchone()["n"])
+            pending_intents = int(connection.execute(
+                "SELECT COUNT(*) AS n FROM free_provisioning_intents WHERE server_id = ? AND status IN ('pending', 'running')",
+                (server,),
+            ).fetchone()["n"]) if self._table_exists(connection, "free_provisioning_intents") else 0
+        blockers = []
+        if active_free:
+            blockers.append("active_free_keys")
+        if active_paid:
+            blockers.append("active_paid_keys")
+        if open_orders:
+            blockers.append("open_orders")
+        if pending_intents:
+            blockers.append("pending_provisioning")
+        if row["remote_key_count"] is None:
+            blockers.append("inventory_not_reconciled")
+        elif int(row["remote_key_count"] or 0):
+            blockers.append("remote_keys_present")
+        if int(row["remote_orphan_key_count"] or 0):
+            blockers.append("unreviewed_remote_keys")
+        return {
+            "server_id": server,
+            "lifecycle_state": str(row["lifecycle_state"] or "active"),
+            "enabled": bool(row["enabled"]),
+            "active_free_keys": active_free,
+            "active_paid_keys": active_paid,
+            "open_orders": open_orders,
+            "pending_provisioning": pending_intents,
+            "remote_key_count": row["remote_key_count"],
+            "remote_orphan_key_count": int(row["remote_orphan_key_count"] or 0),
+            "last_synced_at": row["last_synced_at"],
+            "ready_to_retire": not blockers,
+            "blockers": blockers,
+        }
 
     @staticmethod
     def _table_exists(connection: Any, name: str) -> bool:
@@ -1098,7 +1289,8 @@ class CommerceService(CommerceWorkerMixin):
         fresh_after = _now_text(selection_time - timedelta(seconds=health_max_age))
         servers = connection.execute(
             """SELECT * FROM outline_servers
-               WHERE enabled = 1 AND health_status = 'healthy'
+               WHERE enabled = 1 AND lifecycle_state = 'active'
+                 AND health_status = 'healthy'
                  AND last_synced_at IS NOT NULL AND last_synced_at >= ?
                ORDER BY server_id""",
             (fresh_after,),
