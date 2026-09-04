@@ -1790,6 +1790,37 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(bot._maintenance_last_status["status"], "error")
         self.assertIn("free_quota", bot._maintenance_last_status["last_error"])
 
+    def test_termination_notice_explains_existing_session_limit(self):
+        class NoticeService:
+            def __init__(self):
+                self.marked = []
+
+            def pending_termination_notices(self, audience):
+                if audience != "user" or self.marked:
+                    return []
+                return [
+                    {
+                        "id": 1,
+                        "telegram_id": 123,
+                        "reason": "quota",
+                        "remote_state": "deleted_verified",
+                        "used_bytes": 300_000_000,
+                        "quota_bytes": 300_000_000,
+                        "expires_at": "2026-09-04T00:00:00+00:00",
+                    }
+                ]
+
+            def mark_termination_notice(self, event_id, audience, state):
+                self.marked.append((event_id, audience, state))
+
+        bot = RecordingTelegramBot("test-token", object())
+        bot.service = NoticeService()
+        bot._send_termination_notices()
+
+        self.assertIn("New connections are blocked", bot.sent[-1][1])
+        self.assertIn("already-established session may linger", bot.sent[-1][1])
+        self.assertIn("no documented per-key force-disconnect", bot.sent[-1][1])
+
     def test_maintenance_heartbeat_is_persisted(self):
         bot = self.bot
         bot._send_termination_notices = lambda: None

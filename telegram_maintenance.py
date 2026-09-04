@@ -142,6 +142,11 @@ class TelegramMaintenanceMixin:
                 if event["remote_state"] == "retrying"
                 else "Outline accepted the deletion request."
             )
+            if event["remote_state"] in {"deleted_verified", "delete_accepted"}:
+                remote += (
+                    "\nNew connections are blocked. An already-established session may "
+                    "linger briefly; Outline has no documented per-key force-disconnect control."
+                )
             usage = ""
             if event.get("used_bytes") is not None:
                 usage = f"\nObserved usage: {self._format_bytes(int(event['used_bytes']))} / {self._format_bytes(int(event['quota_bytes']))}"
@@ -160,7 +165,9 @@ class TelegramMaintenanceMixin:
                 f"VPN enforcement | tg:{event['telegram_id']} | key:{event['outline_key_id']}\n"
                 f"Reason: {event['reason']} | remote:{event['remote_state']} | attempts:{event['delete_attempts']}\n"
                 f"Used/quota: {event.get('used_bytes') or '-'} / {event['quota_bytes']} | "
-                f"detected:{format_user_datetime(event.get('detected_at'))} | error:{event.get('last_error') or '-'}"
+                f"detected:{format_user_datetime(event.get('detected_at'))} | error:{event.get('last_error') or '-'}\n"
+                "Enforcement note: deletion blocks new connections; an existing session may "
+                "linger because Outline has no documented per-key force-disconnect control."
             )
             delivered = False
             for admin_id in self.admin_ids:
