@@ -297,6 +297,7 @@ def _validate_configuration() -> dict[str, str]:
 
     return {
         "telegram_token": token,
+        "provider_token": os.environ.get("DIGITALOCEAN_API_TOKEN", "").strip(),
         "database_url": database_url,
         "database_path": database_path,
         "supabase_url": supabase_url.rstrip("/"),
@@ -341,6 +342,20 @@ def _validate_live(values: dict[str, str]) -> None:
     )
     if not isinstance(models, dict) or not isinstance(models.get("data"), list):
         fail("receipt vision model listing returned an invalid response")
+
+    provider_token = values.get("provider_token", "")
+    if provider_token:
+        # Inventory is a read-only, low-cost provider canary.  It verifies
+        # that the worker token is still authorized without creating, resizing,
+        # deleting, or otherwise mutating a Droplet.
+        try:
+            from infrastructure import DigitalOceanClient
+
+            inventory = DigitalOceanClient(provider_token).list_droplets()
+        except Exception as exc:
+            fail(f"DigitalOcean inventory check failed: {type(exc).__name__}")
+        if not isinstance(inventory, list):
+            fail("DigitalOcean inventory check returned an invalid response")
 
     if values["database_url"]:
         try:

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
-from deploy.digitalocean_preflight import main
+from deploy.digitalocean_preflight import _validate_configuration, _validate_live, main
 
 
 class DigitalOceanPreflightTest(unittest.TestCase):
@@ -107,6 +107,18 @@ class DigitalOceanPreflightTest(unittest.TestCase):
         )
         with patch.dict(os.environ, environment, clear=True):
             main([])
+
+    def test_live_preflight_canary_checks_provider_inventory_read_only(self):
+        environment = dict(self.environment)
+        environment["DIGITALOCEAN_API_TOKEN"] = "dop_v1_test"
+        with patch.dict(os.environ, environment, clear=True), \
+                patch(
+                    "deploy.digitalocean_preflight._json_request",
+                    side_effect=[{"ok": True}, {}, {"data": []}],
+                ), \
+                patch("infrastructure.DigitalOceanClient.list_droplets", return_value=[]):
+            values = _validate_configuration()
+            _validate_live(values)
 
     def fleet_environment(self):
         ssh_key = Path(self.tmp.name) / "fleet_key"

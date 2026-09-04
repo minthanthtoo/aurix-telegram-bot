@@ -231,6 +231,9 @@ service environment.
 Before declaring a release production-ready, run the source-controlled
 acceptance audit. It is intentionally a gate: warnings for allocation policy,
 DNS, canaries, or sustained observation keep the result non-passing.
+When a DigitalOcean token is present, `digitalocean_preflight.py --live` also
+performs a read-only provider inventory canary; it never creates or deletes a
+Droplet.
 
 Stable DNS reconciliation is packaged as `aurix-dns-sync.timer`, but remains
 disabled unless `AURIX_DNS_SYNC_ENABLED=1` is present in the canonical env file.
