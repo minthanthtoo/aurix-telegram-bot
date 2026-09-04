@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily encrypted AuriX SQLite database backup
+Description=Daily encrypted AuriX database backup
 
 [Timer]
 OnCalendar=*-*-* 03:20:00

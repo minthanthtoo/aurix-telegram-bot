@@ -287,14 +287,32 @@ Fleet reconciliation treats the explicit `--env-file` as authoritative over
 inherited systemd or shell variables. This prevents stale endpoint, allocation,
 or SSH-trust values from shadowing the reviewed recovery configuration.
 
-SQLite commerce backups use the same fail-closed pattern:
+Commerce database backups use the same fail-closed pattern. SQLite deployments
+use an authenticated snapshot; PostgreSQL deployments use an encrypted custom
+`pg_dump` archive through the same command and timer:
 
 ```bash
 .venv/bin/python deploy/database_backup.py backup --env-file /etc/aurix-bot/aurix.env
 .venv/bin/python deploy/database_backup.py verify --env-file /etc/aurix-bot/aurix.env
 ```
 
-`aurix-database-backup.timer` is installed automatically for SQLite deployments.
+When `COMMERCE_DATABASE_URL` is set, `database_backup.py` dispatches to the
+PostgreSQL wrapper. It passes credentials through a mode-0600 temporary
+`.pgpass` file (never the process argument list), verifies archives with
+`pg_restore --list`, and mirrors the encrypted archive/metadata pair to the
+configured off-site backend. A restore is deliberately explicit:
+
+```bash
+.venv/bin/python deploy/database_backup.py restore \
+  --env-file /etc/aurix-bot/aurix.env \
+  --confirm-postgres
+```
+
+Add `--allow-existing` only for an intentional replacement of an existing
+PostgreSQL database. The recovery script installs `postgresql-client` on a
+fresh Ubuntu host when the PostgreSQL mode is selected. The
+`aurix-database-backup.timer` is installed automatically for both SQLite and
+PostgreSQL deployments.
 Set `AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE=1` after configuring object storage
 or mounting/syncing `AURIX_DATABASE_BACKUP_OFFSITE_DIR`; otherwise the timer can
 create local encrypted backups but readiness remains incomplete.

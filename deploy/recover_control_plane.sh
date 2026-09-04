@@ -168,6 +168,20 @@ python3 -m venv "$build_dir/.venv"
 "$build_dir/.venv/bin/python" -m pip install \
   --disable-pip-version-check --no-cache-dir --requirement "$build_dir/requirements.txt"
 "$build_dir/.venv/bin/python" -m compileall -q "$build_dir"
+if [[ -n "${COMMERCE_DATABASE_URL:-}" ]]; then
+  # The PostgreSQL backup wrapper uses the standard client binaries for a
+  # portable, encrypted logical archive. Install them during recovery rather
+  # than leaving the database timer silently broken on a fresh Ubuntu host.
+  if ! command -v pg_dump >/dev/null 2>&1 || ! command -v pg_restore >/dev/null 2>&1; then
+    command -v apt-get >/dev/null 2>&1 || {
+      echo "postgresql-client is required for PostgreSQL recovery" >&2
+      exit 1
+    }
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq postgresql-client >/dev/null
+  fi
+fi
 "$build_dir/.venv/bin/python" "$build_dir/deploy/digitalocean_preflight.py" \
   --live --env-file "$env_file"
 
@@ -189,6 +203,10 @@ if [[ -n "${DATABASE_PATH:-}" && -z "${COMMERCE_DATABASE_URL:-}" ]]; then
     "$build_dir/.venv/bin/python" "$build_dir/deploy/database_backup.py" restore \
       --env-file "$env_file" --confirm-path "$DATABASE_PATH"
   fi
+fi
+if [[ -n "${COMMERCE_DATABASE_URL:-}" ]]; then
+  "$build_dir/.venv/bin/python" "$build_dir/deploy/database_backup.py" verify \
+    --env-file "$env_file"
 fi
 
 if [[ "$fleet_configured" == "1" && "$skip_fleet_check" == "0" ]]; then
@@ -222,7 +240,7 @@ for unit in aurix-fleet-backup.service aurix-fleet-backup.timer aurix-fleet-reco
 done
 systemctl daemon-reload
 systemctl enable aurix-autodeploy.timer >/dev/null
-if [[ -n "${DATABASE_PATH:-}" && -z "${COMMERCE_DATABASE_URL:-}" ]]; then
+if [[ -n "${DATABASE_PATH:-}" || -n "${COMMERCE_DATABASE_URL:-}" ]]; then
   systemctl enable aurix-database-backup.timer >/dev/null
 fi
 if [[ "$fleet_configured" == "1" ]]; then

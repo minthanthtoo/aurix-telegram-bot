@@ -1,5 +1,5 @@
 [Unit]
-Description=Encrypt and retain AuriX SQLite database backups
+Description=Encrypt and retain AuriX database backups (SQLite or PostgreSQL)
 After=network-online.target
 Wants=network-online.target
 

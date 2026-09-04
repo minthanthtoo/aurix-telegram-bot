@@ -348,11 +348,42 @@ def main() -> None:
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--confirm-path")
     parser.add_argument("--allow-existing", action="store_true")
+    parser.add_argument(
+        "--confirm-postgres",
+        action="store_true",
+        help="confirm an explicit PostgreSQL restore when COMMERCE_DATABASE_URL is set",
+    )
     parser.add_argument("--env-file", default=os.environ.get(
         "AURIX_FLEET_ENV_FILE", "/etc/aurix-bot/aurix.env"))
     args = parser.parse_args()
     try:
         env = load_dotenv(Path(args.env_file), overwrite=False)
+        if env.get("COMMERCE_DATABASE_URL", "").strip():
+            # Keep the systemd unit and operator muscle memory identical for
+            # SQLite and PostgreSQL, while routing the latter to pg_dump/
+            # pg_restore.  PostgreSQL restore is never implicit: it requires
+            # an explicit confirmation flag and only uses --clean when the
+            # caller additionally opts into --allow-existing.
+            from deploy import postgres_backup
+
+            if args.command == "backup":
+                print(json.dumps({"status": "complete", "archive": str(postgres_backup.backup(env))}, indent=2))
+            elif args.command == "verify":
+                print(json.dumps({"status": "verified", **postgres_backup.verify(env)}, indent=2))
+            else:
+                if not args.confirm_postgres:
+                    raise FleetError(
+                        "PostgreSQL restore requires --confirm-postgres"
+                    )
+                if args.archive is not None and not args.archive.is_absolute():
+                    raise FleetError("--archive must be an absolute path")
+                print(json.dumps({
+                    "status": "restored",
+                    **postgres_backup.restore(
+                        env, args.archive, allow_existing=args.allow_existing
+                    ),
+                }, indent=2))
+            return
         if args.command == "backup":
             print(json.dumps({"status": "complete", "archive": str(backup(env))}, indent=2))
         elif args.command == "verify":
