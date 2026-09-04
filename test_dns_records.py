@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from deploy.dns_records import CloudflareClient, FleetError, desired_records, from_env, sync
+from deploy.dns_sync_worker import run_once
 from deploy.fleet_reconcile import parse_manifest
 
 
@@ -94,6 +97,32 @@ class DnsRecordTests(unittest.TestCase):
                         "content": record.content, "ttl": 300, "proxied": False}],
         }):
             self.assertEqual(client.upsert(record), "unchanged")
+
+    def test_dns_worker_is_noop_until_explicitly_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / "aurix.env"
+            env_file.write_text("AURIX_DNS_SYNC_ENABLED=0\n", encoding="utf-8")
+            with patch("deploy.dns_sync_worker.sync") as sync_mock:
+                self.assertEqual(run_once(env_file), 0)
+                sync_mock.assert_not_called()
+
+    def test_dns_worker_writes_only_when_enabled_and_reports_sanitized_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / "aurix.env"
+            env_file.write_text(
+                "AURIX_DNS_SYNC_ENABLED=1\n"
+                "AURIX_DNS_PROVIDER=cloudflare\n"
+                "AURIX_DNS_ZONE_ID=zone-test\n"
+                "AURIX_DNS_API_TOKEN=secret-token\n"
+                "AURIX_FLEET_NODES_JSON='" + env()["AURIX_FLEET_NODES_JSON"] + "'\n",
+                encoding="utf-8",
+            )
+            with patch(
+                "deploy.dns_sync_worker.sync",
+                return_value={"status": "synced", "records": [{"action": "unchanged"}]},
+            ) as sync_mock:
+                self.assertEqual(run_once(env_file), 0)
+                sync_mock.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -51,6 +51,8 @@ VERSIONED_UNIT_NAMES = (
     "aurix-fleet-backup.timer",
     "aurix-infrastructure-worker.service",
     "aurix-infrastructure-worker.timer",
+    "aurix-dns-sync.service",
+    "aurix-dns-sync.timer",
 )
 
 
@@ -306,6 +308,10 @@ def install_fleet_automation(target: Path) -> None:
     if os.environ.get("AURIX_FLEET_NODES_JSON", "").strip():
         run("systemctl", "enable", "--now", "aurix-fleet-reconcile.timer", timeout=30)
         run("systemctl", "enable", "--now", "aurix-fleet-backup.timer", timeout=30)
+    if os.environ.get("AURIX_DNS_SYNC_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        run("systemctl", "enable", "--now", "aurix-dns-sync.timer", timeout=30)
 
 
 def _write_state(sha: str) -> None:

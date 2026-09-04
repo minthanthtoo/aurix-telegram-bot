@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic opt-in AuriX fleet DNS reconciliation
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+RandomizedDelaySec=45s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
