@@ -17,11 +17,16 @@ from urllib.parse import quote, urlsplit
 from cryptography.fernet import Fernet
 
 try:
-    from deploy.fleet_reconcile import FleetError, load_dotenv, parse_manifest
+    from deploy.fleet_reconcile import (
+        FleetError,
+        load_dotenv,
+        materialize_trust_files,
+        parse_manifest,
+    )
     from deploy import dns_records
     from deploy import offsite_storage
 except ModuleNotFoundError:  # Direct execution sets deploy/ as sys.path[0].
-    from fleet_reconcile import FleetError, load_dotenv, parse_manifest
+    from fleet_reconcile import FleetError, load_dotenv, materialize_trust_files, parse_manifest
     import dns_records
     import offsite_storage
 
@@ -41,6 +46,16 @@ def _required(name: str) -> str:
 
 
 def _validate_configuration() -> dict[str, str]:
+    # Keep preflight aligned with the portable recovery path.  The reconciler
+    # intentionally restores root-only SSH material from the private dotenv
+    # before opening an SSH session; rejecting that same configuration here
+    # would make a source + .env rebuild fail before it can start.  Materialize
+    # only when inline copies are supplied; path-only deployments still fail
+    # closed below if their files are absent.
+    try:
+        materialize_trust_files(dict(os.environ))
+    except FleetError as exc:
+        fail(str(exc))
     token = _required("TELEGRAM_BOT_TOKEN")
     access_key = _required("AURIX_ACCESS_URL_KEY")
     try:

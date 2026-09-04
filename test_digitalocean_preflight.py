@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import sqlite3
@@ -198,6 +199,29 @@ class DigitalOceanPreflightTest(unittest.TestCase):
         environment["AURIX_BACKUP_OBJECT_STORE_SECRET_ACCESS_KEY"] = "secret"
         with patch.dict(os.environ, environment, clear=True):
             main([])
+
+    def test_portable_base64_trust_material_is_materialized_before_path_checks(self):
+        ssh_key = b"-----BEGIN OPENSSH PRIVATE KEY-----\nrecovery\n-----END OPENSSH PRIVATE KEY-----\n"
+        known_hosts = b"192.0.2.10 ssh-ed25519 test\n"
+        environment = self.fleet_environment()
+        key_path = Path(self.tmp.name) / "portable_key"
+        hosts_path = Path(self.tmp.name) / "portable_known_hosts"
+        key_path.unlink(missing_ok=True)
+        hosts_path.unlink(missing_ok=True)
+        environment.update(
+            {
+                "AURIX_FLEET_SSH_KEY": str(key_path),
+                "AURIX_FLEET_KNOWN_HOSTS": str(hosts_path),
+                "AURIX_FLEET_SSH_PRIVATE_KEY_B64": base64.b64encode(ssh_key).decode(),
+                "AURIX_FLEET_KNOWN_HOSTS_B64": base64.b64encode(known_hosts).decode(),
+            }
+        )
+        with patch.dict(os.environ, environment, clear=True):
+            main([])
+        self.assertEqual(key_path.read_bytes(), ssh_key)
+        self.assertEqual(hosts_path.read_bytes(), known_hosts)
+        self.assertEqual(key_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(hosts_path.stat().st_mode & 0o777, 0o600)
 
     def test_dns_configuration_requires_node_dns_names(self):
         environment = self.fleet_environment()
