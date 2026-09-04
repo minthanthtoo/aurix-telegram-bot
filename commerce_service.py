@@ -2485,7 +2485,10 @@ class CommerceService(CommerceWorkerMixin):
         provider_reference: str,
         now: datetime | None = None,
     ) -> str:
-        provider = provider.strip()[:64]
+        # Provider identity is canonicalized alongside the reference so the
+        # database uniqueness constraint, legacy rows, and application checks
+        # all agree on values such as ``Manual`` vs `` manual ``.
+        provider = _normalize_reference(provider)[:64]
         provider_reference = provider_reference.strip()[:128]
         normalized_reference = _normalize_reference(provider_reference)
         if not provider or not provider_reference:
@@ -2662,7 +2665,7 @@ class CommerceService(CommerceWorkerMixin):
         tx_id = extraction.get("transaction_id") if extraction else None
         # The customer-selected method is authoritative workflow state. Model
         # output may describe a different provider, but must never overwrite it.
-        provider_name = str(provider).strip().lower()[:64]
+        provider_name = _normalize_reference(provider)[:64]
         tx_candidate = str(tx_id).strip()[:128] if tx_id else ""
         status = "parsed" if tx_id else "needs_review"
         submitted_at = _now_text(now)
@@ -3232,7 +3235,7 @@ class CommerceService(CommerceWorkerMixin):
                    ORDER BY submitted_at DESC LIMIT 1""",
                 (evidence["order_id"],),
             ).fetchone()
-            provider = str(evidence["provider"] or "manual")[:64]
+            provider = _normalize_reference(str(evidence["provider"] or "manual"))[:64]
             normalized_provider = _normalize_reference(provider)
             normalized_reference = _normalize_reference(provider_reference)
             conflicts = connection.execute(

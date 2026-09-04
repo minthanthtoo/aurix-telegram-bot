@@ -46,21 +46,35 @@ def telegram_json(token: str, method: str, payload: dict[str, Any]) -> Any:
     return result.get("result")
 
 
-def latest_receipt(database_path: Path) -> dict[str, Any]:
-    database_uri = f"file:{database_path.resolve()}?mode=ro"
-    try:
-        with sqlite3.connect(database_uri, uri=True, timeout=5) as connection:
-            connection.row_factory = sqlite3.Row
-            row = connection.execute(
-                """SELECT e.id, e.telegram_file_id, e.mime_type, e.submitted_at,
-                          e.extraction_status, e.review_status, e.provider,
-                          o.amount_minor, o.currency
-                   FROM payment_evidence e
-                   JOIN orders o ON o.id = e.order_id
-                   ORDER BY e.submitted_at DESC LIMIT 1"""
-            ).fetchone()
-    except sqlite3.Error as exc:
-        raise RuntimeError(f"Receipt database read failed: {type(exc).__name__}") from exc
+def latest_receipt(
+    database_path: Path | None = None, database_url: str | None = None
+) -> dict[str, Any]:
+    """Read the newest receipt from the configured SQLite or PostgreSQL authority."""
+    query = """SELECT e.id, e.telegram_file_id, e.mime_type, e.submitted_at,
+                      e.extraction_status, e.review_status, e.provider,
+                      o.amount_minor, o.currency
+               FROM payment_evidence e
+               JOIN orders o ON o.id = e.order_id
+               ORDER BY e.submitted_at DESC LIMIT 1"""
+    if database_url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(database_url, connect_timeout=10, row_factory=dict_row) as connection:
+                row = connection.execute(query).fetchone()
+        except Exception as exc:
+            raise RuntimeError(f"Receipt database read failed: {type(exc).__name__}") from exc
+    else:
+        if database_path is None:
+            raise RuntimeError("Receipt database path is not configured")
+        database_uri = f"file:{database_path.resolve()}?mode=ro"
+        try:
+            with sqlite3.connect(database_uri, uri=True, timeout=5) as connection:
+                connection.row_factory = sqlite3.Row
+                row = connection.execute(query).fetchone()
+        except sqlite3.Error as exc:
+            raise RuntimeError(f"Receipt database read failed: {type(exc).__name__}") from exc
     if row is None:
         raise RuntimeError("No receipt evidence is available for the smoke test")
     return dict(row)
@@ -69,14 +83,18 @@ def latest_receipt(database_path: Path) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--database", default=os.environ.get("DATABASE_PATH", ""))
+    parser.add_argument("--database-url", default=os.environ.get("COMMERCE_DATABASE_URL", ""))
     args = parser.parse_args()
-    if not args.database:
-        raise SystemExit("Receipt smoke test failed: DATABASE_PATH is not configured")
+    if not args.database and not args.database_url:
+        raise SystemExit("Receipt smoke test failed: configure DATABASE_PATH or COMMERCE_DATABASE_URL")
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         raise SystemExit("Receipt smoke test failed: TELEGRAM_BOT_TOKEN is not configured")
 
-    receipt = latest_receipt(Path(args.database))
+    receipt = latest_receipt(
+        Path(args.database) if args.database and not args.database_url else None,
+        args.database_url or None,
+    )
     file_info = telegram_json(token, "getFile", {"file_id": receipt["telegram_file_id"]})
     file_path = file_info.get("file_path") if isinstance(file_info, dict) else None
     if not isinstance(file_path, str) or not file_path:

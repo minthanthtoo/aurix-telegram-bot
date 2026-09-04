@@ -533,6 +533,15 @@ class CommerceServiceTest(unittest.TestCase):
         with self.assertRaisesRegex(CommerceError, "already been submitted"):
             self.service.submit_payment(456, second.order_id, "Manual", " tx-42/ab ", self.now)
 
+    def test_payment_provider_is_stored_in_canonical_form(self):
+        order = self.service.create_order(321, "Provider", "basic_50gb", self.now)
+        self.service.submit_payment(321, order.order_id, " Manual ", "provider-ref", self.now)
+        with self.database.connect() as connection:
+            provider = connection.execute(
+                "SELECT provider FROM payments WHERE order_id = ?", (order.order_id,)
+            ).fetchone()[0]
+        self.assertEqual(provider, "manual")
+
     def test_consistency_report_surfaces_legacy_duplicate_payment_references(self):
         first = self.service.create_order(123, "Min", "basic_50gb", self.now)
         second = self.service.create_order(456, "Other", "basic_50gb", self.now)

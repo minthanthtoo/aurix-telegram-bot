@@ -9,9 +9,10 @@ usage() {
   cat <<'USAGE'
 Usage: deploy/recover_control_plane.sh [--env-file PATH] [--skip-service-start] [--skip-fleet-check]
 
-Rebuild this host as an AuriX control plane from the current source checkout
-and a private environment file. Run after cloning the repository on a fresh
-Ubuntu control-plane VM and restoring the private .env/recovery bundle.
+Rebuild this host as an AuriX control plane from the configured GitHub source
+and a private environment file. When the script is not running from a Git
+checkout, it clones AURIX_DEPLOY_REPOSITORY/AURIX_DEPLOY_BRANCH into a private
+staging directory automatically before building the immutable release.
 USAGE
 }
 
@@ -91,8 +92,54 @@ command -v python3 >/dev/null || {
   exit 1
 }
 
+source_clone_dir=""
+source_is_git=0
+if command -v git >/dev/null 2>&1 && \
+  git -C "$source_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  source_is_git=1
+fi
+
+# A fresh recovery VM may only have this entrypoint and the private env bundle.
+# Resolve the reviewed GitHub source automatically so recovery does not depend
+# on an operator manually cloning the repository first. Restrict the remote to
+# the same HTTPS GitHub shape enforced by recovery_readiness.py; this prevents
+# an env-file typo from turning a root recovery run into an arbitrary checkout.
+if [[ "$source_is_git" == "0" ]]; then
+  deploy_repository="${AURIX_DEPLOY_REPOSITORY:-https://github.com/minthanthtoo/aurix-telegram-bot.git}"
+  deploy_branch="${AURIX_DEPLOY_BRANCH:-main}"
+  [[ "$deploy_repository" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$ ]] || {
+    echo "AURIX_DEPLOY_REPOSITORY must be an HTTPS GitHub URL" >&2
+    exit 1
+  }
+  [[ "$deploy_branch" =~ ^[A-Za-z0-9._/-]{1,160}$ ]] || {
+    echo "AURIX_DEPLOY_BRANCH has invalid characters" >&2
+    exit 1
+  }
+  if ! command -v git >/dev/null 2>&1; then
+    command -v apt-get >/dev/null 2>&1 || {
+      echo "git is required when recovery source is not a checkout" >&2
+      exit 1
+    }
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq git ca-certificates >/dev/null
+  fi
+  install -d -o root -g root -m 0755 /var/lib/aurix-deploy
+  source_clone_dir="/var/lib/aurix-deploy/recovery-source-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  cleanup_source_clone() {
+    if [[ -n "$source_clone_dir" && -d "$source_clone_dir" ]]; then
+      rm -rf -- "$source_clone_dir"
+    fi
+  }
+  trap cleanup_source_clone EXIT
+  git clone --depth 1 --single-branch --branch "$deploy_branch" \
+    "$deploy_repository" "$source_clone_dir"
+  source_root="$source_clone_dir"
+  source_is_git=1
+fi
+
 release_id="$(date -u +%Y%m%dT%H%M%SZ)"
-if git -C "$source_root" rev-parse --verify HEAD >/dev/null 2>&1; then
+if [[ "$source_is_git" == "1" ]]; then
   release_id="$(git -C "$source_root" rev-parse HEAD)"
 fi
 
@@ -110,7 +157,7 @@ install -d -o aurix -g aurix -m 0750 /var/lib/aurix-bot
 
 rm -rf "$build_dir"
 mkdir -p "$build_dir"
-if git -C "$source_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if [[ "$source_is_git" == "1" ]]; then
   git -C "$source_root" archive --format=tar HEAD | tar -C "$build_dir" -xf -
 else
   tar --exclude=.git --exclude=.venv --exclude=__pycache__ -C "$source_root" -cf - . |

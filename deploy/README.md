@@ -343,6 +343,16 @@ RECEIPT_LLM_MODEL=vision-model-id
 RECEIPT_LLM_API_KEY=gateway-secret
 ```
 
+The Render and DigitalOcean preflight canaries also query the gateway's
+`/models` endpoint and fail closed if the configured primary or fallback model
+ID is not advertised. This catches model-name drift before a customer receipt
+is accepted.
+
+To inspect the latest stored receipt without changing its review state, run
+`deploy/receipt_pipeline_smoke.py`. It reads `COMMERCE_DATABASE_URL` when the
+control plane uses hosted PostgreSQL, or `DATABASE_PATH` for SQLite, downloads
+the Telegram evidence, and prints only masked IDs plus extraction diagnostics.
+
 If using the optional Supabase recovery backend, bootstrap its separate private
 bucket once before enabling the off-site requirements:
 

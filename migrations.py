@@ -271,6 +271,33 @@ def _add_normalized_payment_reference_guard(connection: Any) -> None:
     )
 
 
+def _canonicalize_payment_provider_identity(connection: Any) -> None:
+    """Canonicalize provider names before relying on the reference index.
+
+    Older rows could contain harmless casing/spacing variants such as
+    ``Manual`` and `` manual ``.  Canonicalizing the stored provider makes the
+    database constraint and application comparison agree.  Any collision is
+    reported before updates begin so no payment record is silently merged.
+    """
+    rows = connection.execute("SELECT id, provider, normalized_reference FROM payments").fetchall()
+    seen: set[tuple[str, str]] = set()
+    for payment in rows:
+        provider = _normalize_reference(payment["provider"])
+        reference = str(payment["normalized_reference"] or "")
+        if reference:
+            identity = (provider, reference)
+            if identity in seen:
+                raise MigrationError(
+                    "Duplicate normalized payment providers/references require manual reconciliation"
+                )
+            seen.add(identity)
+        if provider and provider != str(payment["provider"] or ""):
+            connection.execute(
+                "UPDATE payments SET provider = ? WHERE id = ?",
+                (provider, payment["id"]),
+            )
+
+
 FREE_ACCESS_MIGRATIONS = (
     Migration(1, "legacy_free_access_schema"),
     Migration(
@@ -1349,6 +1376,18 @@ COMMERCE_MIGRATIONS = (
             """CREATE UNIQUE INDEX IF NOT EXISTS payments_normalized_reference_unique
                ON payments(lower(provider), normalized_reference)
                WHERE normalized_reference <> ''""",
+        ),
+    ),
+    Migration(
+        19,
+        "canonical_payment_provider_identity",
+        # The migration is deliberately separate from version 18 so
+        # deployments that already applied the reference guard also receive
+        # the provider canonicalization.
+        sqlite_hook=_canonicalize_payment_provider_identity,
+        postgres_statements=(
+            """UPDATE payments
+               SET provider = lower(regexp_replace(provider, '[[:space:]]+', '', 'g'))""",
         ),
     ),
 )

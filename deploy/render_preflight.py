@@ -68,6 +68,28 @@ def _validate_live(values: dict[str, object]) -> None:
     )
     if not isinstance(models, dict) or not isinstance(models.get("data"), list):
         fail("receipt vision model listing returned an invalid response")
+    # A reachable gateway is not enough: some OpenAI-compatible providers
+    # return 200 for /models while silently rejecting an unknown model at
+    # inference time.  Verify every configured route is advertised before the
+    # worker starts accepting receipts.  Keep this conditional for lightweight
+    # compatibility callers that only exercise the dependency probe itself.
+    configured_models = [str(values.get("llm_model") or "").strip()]
+    configured_models.extend(
+        str(item).strip()
+        for item in (values.get("llm_fallback_models") or [])
+        if str(item).strip()
+    )
+    if any(configured_models):
+        advertised_models = {
+            str(item.get("id") or "").strip()
+            for item in models["data"]
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        }
+        if not advertised_models:
+            fail("receipt vision model listing contains no usable model IDs")
+        missing_models = [item for item in configured_models if item and item not in advertised_models]
+        if missing_models:
+            fail("configured receipt vision model is not advertised by the gateway")
 
     database_url = str(values["database_url"])
     if database_url:
@@ -338,6 +360,8 @@ def main(argv: list[str] | None = None) -> None:
         "bucket": bucket,
         "llm_url": os.environ.get("RECEIPT_LLM_BASE_URL", "").strip().rstrip("/"),
         "llm_key": os.environ.get("RECEIPT_LLM_API_KEY", "").strip(),
+        "llm_model": os.environ.get("RECEIPT_LLM_MODEL", "").strip(),
+        "llm_fallback_models": fallback_models,
         "database_url": os.environ.get("COMMERCE_DATABASE_URL", "").strip(),
         "database_path": os.environ.get("DATABASE_PATH", "").strip(),
         "outline_servers": outline_servers,

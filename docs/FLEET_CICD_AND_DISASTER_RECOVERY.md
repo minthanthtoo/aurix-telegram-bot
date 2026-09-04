@@ -328,19 +328,20 @@ rollback directory, restores, starts Shadowbox, and checks identity:
 
 Full control-plane revival order:
 
-1. provision Ubuntu 24.04 and restore the private `.env`, fleet SSH key,
-   verified `known_hosts`, backup key, and encrypted node archives from the
-   offsite recovery store; the recovery entrypoint restores the SQLite database
-   automatically when its destination is absent;
-2. clone GitHub `main` on the fresh VM;
-3. run the recovery entrypoint:
+1. provision Ubuntu 24.04 and restore the recovery entrypoint plus private
+   `.env`, fleet SSH key, verified `known_hosts`, backup key, and encrypted node
+   archives from the offsite recovery store; the recovery entrypoint restores the
+   SQLite database automatically when its destination is absent;
+2. run the recovery entrypoint:
 
 ```bash
 sudo deploy/recover_control_plane.sh --env-file /etc/aurix-bot/aurix.env
 ```
 
-The script builds a versioned `/opt/aurix-current` release from the cloned
-source, installs Python dependencies, runs live deploy preflight, verifies
+When invoked outside a Git checkout, the script securely clones the configured
+HTTPS GitHub repository/branch into a private staging directory and removes the
+staging copy after the release is built. It then builds a versioned
+`/opt/aurix-current` release from that source, installs Python dependencies, runs live deploy preflight, verifies
 SQLite database backups when SQLite is configured, verifies the newest encrypted
 local/offsite node backups, runs fleet `validate` and `check`, installs systemd
 units, enables deploy/fleet timers, and starts `aurix-bot`.

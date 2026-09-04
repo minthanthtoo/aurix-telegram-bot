@@ -115,11 +115,21 @@ class DigitalOceanPreflightTest(unittest.TestCase):
         with patch.dict(os.environ, environment, clear=True), \
                 patch(
                     "deploy.digitalocean_preflight._json_request",
-                    side_effect=[{"ok": True}, {}, {"data": []}],
+                    side_effect=[{"ok": True}, {}, {"data": [{"id": "vision-model"}]}],
                 ), \
                 patch("infrastructure.DigitalOceanClient.list_droplets", return_value=[]):
             values = _validate_configuration()
             _validate_live(values)
+
+    def test_live_preflight_rejects_unadvertised_receipt_model(self):
+        environment = dict(self.environment)
+        with patch.dict(os.environ, environment, clear=True), patch(
+            "deploy.digitalocean_preflight._json_request",
+            side_effect=[{"ok": True}, {}, {"data": [{"id": "different-model"}]}],
+        ):
+            values = _validate_configuration()
+            with self.assertRaisesRegex(SystemExit, "not advertised"):
+                _validate_live(values)
 
     def fleet_environment(self):
         ssh_key = Path(self.tmp.name) / "fleet_key"

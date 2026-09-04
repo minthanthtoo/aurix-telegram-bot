@@ -116,6 +116,31 @@ class RenderPreflightTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "must remain private"):
                 _validate_live(values)
 
+    def test_live_canary_rejects_unadvertised_receipt_model(self):
+        values = {
+            "telegram_token": "test-token",
+            "supabase_url": "https://project.supabase.co",
+            "supabase_key": "service-role-key",
+            "bucket": "payment-receipts",
+            "llm_url": "https://vision.example/v1",
+            "llm_key": "vision-key",
+            "llm_model": "missing-vision-model",
+            "llm_fallback_models": ["fallback-model"],
+            "database_url": "",
+            "database_path": "/tmp/does-not-need-to-exist",
+            "outline_servers": [],
+        }
+        with patch(
+            "deploy.render_preflight._json_request",
+            side_effect=[
+                {"ok": True},
+                {"public": False},
+                {"data": [{"id": "other-model"}, {"id": "fallback-model"}]},
+            ],
+        ):
+            with self.assertRaisesRegex(SystemExit, "not advertised"):
+                _validate_live(values)
+
     def test_missing_required_value_reports_only_its_variable_name(self):
         environment = valid_environment()
         environment["SUPABASE_SERVICE_ROLE_KEY"] = ""

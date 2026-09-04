@@ -356,6 +356,8 @@ def _validate_configuration() -> dict[str, str]:
         "bucket": bucket,
         "llm_url": llm_url.rstrip("/"),
         "llm_key": llm_key,
+        "llm_model": llm_model,
+        "llm_fallback_models": fallback_models,
     }
 
 
@@ -393,6 +395,21 @@ def _validate_live(values: dict[str, str]) -> None:
     )
     if not isinstance(models, dict) or not isinstance(models.get("data"), list):
         fail("receipt vision model listing returned an invalid response")
+    advertised_models = {
+        str(item.get("id") or "").strip()
+        for item in models["data"]
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    if not advertised_models:
+        fail("receipt vision model listing contains no usable model IDs")
+    configured_models = [str(values.get("llm_model") or "").strip()]
+    configured_models.extend(
+        str(item).strip()
+        for item in (values.get("llm_fallback_models") or [])
+        if str(item).strip()
+    )
+    if any(item and item not in advertised_models for item in configured_models):
+        fail("configured receipt vision model is not advertised by the gateway")
 
     provider_token = values.get("provider_token", "")
     if provider_token:

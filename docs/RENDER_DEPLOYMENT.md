@@ -111,9 +111,10 @@ Automatic transaction-ID extraction requires all three values:
 
 For local/manual-review development all three may remain blank. Hosted Render
 profiles set `RECEIPT_VISION_REQUIRED=1`; preflight then refuses to start until
-all three are configured, the five merchant profiles are present, and the live
-startup canary reaches the gateway. Model output is untrusted evidence only and
-can never approve or credit a payment.
+all three are configured, the five merchant profiles are present, the live
+startup canary reaches the gateway, and the primary/fallback model IDs are
+advertised by that gateway's `/models` response. Model output is untrusted
+evidence only and can never approve or credit a payment.
 
 ## 4. Verify and publish the source repository
 

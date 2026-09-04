@@ -32,6 +32,25 @@ class MigrationRegistryTest(unittest.TestCase):
                 with self.assertRaisesRegex(MigrationError, "manual reconciliation"):
                     _add_normalized_payment_reference_guard(connection)
 
+    def test_provider_identity_migration_fails_closed_on_spacing_collision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "providers.db"
+            with open_sqlite_connection(path) as connection:
+                connection.executescript(
+                    """CREATE TABLE payments (
+                           id TEXT PRIMARY KEY,
+                           provider TEXT NOT NULL,
+                           provider_reference TEXT NOT NULL,
+                           normalized_reference TEXT NOT NULL
+                       );
+                       INSERT INTO payments VALUES ('payment-1', 'Manual', 'tx-1', 'tx-1');
+                       INSERT INTO payments VALUES ('payment-2', ' manual ', 'tx-1', 'tx-1');"""
+                )
+                with self.assertRaisesRegex(MigrationError, "providers/references"):
+                    from migrations import _canonicalize_payment_provider_identity
+
+                    _canonicalize_payment_provider_identity(connection)
+
     def test_component_history_is_idempotent_and_applies_statements_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "migrations.db"
@@ -151,6 +170,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 16, "fleet_enrollment_tokens"),
                     ("commerce", 17, "termination_events_rls"),
                     ("commerce", 18, "normalized_payment_reference_uniqueness"),
+                    ("commerce", 19, "canonical_payment_provider_identity"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),
