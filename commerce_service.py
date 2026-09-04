@@ -2559,6 +2559,25 @@ class CommerceService(CommerceWorkerMixin):
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def open_order_ids_for_user(self, telegram_id: int, limit: int = 20) -> list[str]:
+        """Return open order IDs for uncaptioned receipt routing.
+
+        A customer may intentionally purchase multiple keys.  The Telegram
+        transport uses this list to refuse ambiguous uncaptioned screenshots;
+        an order-specific Upload Receipt button or an explicit caption then
+        selects the intended order.
+        """
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT id FROM orders
+                   WHERE telegram_id = ?
+                     AND status IN ('awaiting_payment', 'payment_submitted')
+                     AND COALESCE(refund_status, 'none') != 'refunded'
+                   ORDER BY created_at LIMIT ?""",
+                (telegram_id, max(1, min(int(limit), 100))),
+            ).fetchall()
+        return [str(row["id"]) for row in rows]
+
     def receipt_duplicate_status(
         self,
         telegram_id: int,
@@ -3428,6 +3447,14 @@ class CommerceService(CommerceWorkerMixin):
                      WHERE status IN ('awaiting_payment', 'payment_submitted')
                      GROUP BY telegram_id HAVING COUNT(*) > 1)"""
             ).fetchone()["n"]
+            duplicate_payment_references = connection.execute(
+                """SELECT COUNT(*) AS n FROM (
+                     SELECT lower(provider), normalized_reference
+                     FROM payments
+                     WHERE normalized_reference <> ''
+                     GROUP BY lower(provider), normalized_reference
+                     HAVING COUNT(*) > 1)"""
+            ).fetchone()["n"]
             approved_missing_subscription = connection.execute(
                 """SELECT COUNT(*) AS n FROM orders o
                    LEFT JOIN subscriptions s ON s.order_id = o.id
@@ -3487,6 +3514,7 @@ class CommerceService(CommerceWorkerMixin):
                     wallet_mismatches += 1
         return {
             "duplicate_open_orders": int(duplicate_open),
+            "duplicate_payment_references": int(duplicate_payment_references),
             "approved_missing_subscription": int(approved_missing_subscription),
             "approved_missing_provision_job": int(approved_missing_job),
             "pending_receipts": int(pending_reviews),

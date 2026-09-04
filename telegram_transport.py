@@ -194,6 +194,7 @@ class TelegramBot(
         self._receipt_test_providers: dict[int, str] = {}
         self._admin_add_waiting: set[int] = set()
         self._customer_inputs: dict[int, dict[str, Any]] = {}
+        self._receipt_order_context: dict[int, dict[str, Any]] = {}
         self._interaction_state_checked: set[tuple[int, str]] = set()
         self._maintenance_last_status: dict[str, Any] = {
             "status": "never_run",
@@ -641,6 +642,17 @@ class TelegramBot(
             "expires_at": time.monotonic() + 600,
         }
         self._save_interaction_state(telegram_id, "customer_input", {"action": str(action)})
+
+    def _expect_receipt_order(self, telegram_id: int, order_id: str) -> None:
+        """Bind the next uncaptioned receipt to the order the user selected."""
+        normalized = str(order_id or "").strip()
+        if not normalized:
+            return
+        self._receipt_order_context[int(telegram_id)] = {
+            "order_id": normalized,
+            "expires_at": time.monotonic() + INTERACTION_STATE_TTL.total_seconds(),
+        }
+        self._save_interaction_state(telegram_id, "receipt_order", {"order_id": normalized})
 
     def configure_commands(self) -> None:
         # Startup configures scopes asynchronously while maintenance starts
@@ -1151,9 +1163,36 @@ class TelegramBot(
     def _pending_order_id(self, telegram_id: int, caption: str = "") -> str | None:
         candidate = caption.split()
         if candidate and candidate[0].startswith("/") and len(candidate) > 1:
+            self._receipt_order_context.pop(int(telegram_id), None)
+            self._clear_interaction_state(telegram_id, "receipt_order")
             return candidate[1]
         if self.commerce is None:
             return None
+        context = self._receipt_order_context.get(int(telegram_id))
+        if context is not None:
+            if float(context.get("expires_at", 0)) > time.monotonic():
+                return str(context.get("order_id") or "") or None
+            self._receipt_order_context.pop(int(telegram_id), None)
+            self._clear_interaction_state(telegram_id, "receipt_order")
+        persisted = self._load_interaction_state(telegram_id, "receipt_order")
+        if isinstance(persisted, dict) and str(persisted.get("order_id") or "").strip():
+            order_id = str(persisted["order_id"]).strip()
+            self._receipt_order_context[int(telegram_id)] = {
+                "order_id": order_id,
+                "expires_at": time.monotonic() + INTERACTION_STATE_TTL.total_seconds(),
+            }
+            return order_id
+        list_open = getattr(self.commerce, "open_order_ids_for_user", None)
+        if callable(list_open):
+            try:
+                order_ids = [str(value).strip() for value in list_open(telegram_id, limit=20)]
+            except Exception:
+                order_ids = []
+            if len(order_ids) != 1:
+                return None
+            return order_ids[0]
+        # Compatibility fallback for lightweight test doubles and older
+        # deployments that do not yet expose the ambiguity-safe query.
         pending = self.commerce.pending_order_for_user(telegram_id)
         return pending["id"] if pending else None
 
@@ -1182,9 +1221,25 @@ class TelegramBot(
             return
         order_id = self._pending_order_id(telegram_id, str(message.get("caption") or ""))
         if not order_id:
-            self.send(
-                chat_id, "Create an order with /buy basic_50gb, then send its receipt screenshot."
-            )
+            list_open = getattr(self.commerce, "open_order_ids_for_user", None)
+            try:
+                open_count = len(list_open(telegram_id, limit=20)) if callable(list_open) else 0
+            except Exception:
+                open_count = 0
+            if open_count > 1:
+                self.send(
+                    chat_id,
+                    "I found more than one open order. Open My Orders and tap “Upload Receipt” "
+                    "on the exact order, or send the screenshot with /paid <order-id> in its caption.",
+                    self._customer_keyboard(telegram_id),
+                )
+            else:
+                self.send(
+                    chat_id,
+                    "Create an order with Plans, then send its receipt screenshot. "
+                    "Use the order’s Upload Receipt button or caption it with /paid <order-id>.",
+                    self._customer_keyboard(telegram_id),
+                )
             return
         try:
             order = self.commerce.order_detail(order_id, telegram_id)
@@ -1226,6 +1281,8 @@ class TelegramBot(
         except (CommerceError, RuntimeError, urllib.error.URLError) as exc:
             self.send(chat_id, str(exc) or "Receipt could not be recorded. Try again later.")
             return
+        self._receipt_order_context.pop(int(telegram_id), None)
+        self._clear_interaction_state(telegram_id, "receipt_order")
         duplicate_image_candidate = "duplicate_image_candidate" in set(
             result.get("flags") or []
         )

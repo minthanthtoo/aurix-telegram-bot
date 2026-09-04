@@ -1276,6 +1276,24 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIn("AuriX Order", self.bot.sent[-1][1])
         self.assertIn("Payment: not submitted", self.bot.sent[-1][1])
 
+    def test_uncaptioned_receipt_routing_refuses_ambiguous_multiple_orders(self):
+        first = self.commerce.create_order(123, "Min", "basic_50gb")
+        second_id = "manually-created-open-order"
+        with self.commerce.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO orders
+                   (id, telegram_id, plan_code, amount_minor, currency, plan_name,
+                    quota_bytes_snapshot, duration_days_snapshot, status, created_at)
+                   VALUES (?, 123, 'standard_100gb', 6000, 'MMK', '100 GB',
+                           100000000000, 30, 'awaiting_payment', ?)""",
+                (second_id, datetime.now(UTC).isoformat()),
+            )
+
+        self.assertIsNone(self.bot._pending_order_id(123))
+        self.bot._expect_receipt_order(123, second_id)
+        self.assertEqual(self.bot._pending_order_id(123), second_id)
+        self.assertNotEqual(first.order_id, second_id)
+
     def test_wallet_topup_presets_and_manual_amount_use_local_payment_qr(self):
         self.bot.handle(self.message(123, "/wallet"))
         self.bot.request = lambda _method, _payload: True

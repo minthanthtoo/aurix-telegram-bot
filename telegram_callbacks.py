@@ -199,9 +199,12 @@ class TelegramCallbackMixin:
             if order is None:
                 self.send(chat_id, "Order not found.")
             else:
+                self._expect_receipt_order(telegram_id, entity_id)
                 self.send(
                     chat_id,
-                    f"Send the receipt screenshot now. Caption it with:\n/paid {entity_id}",
+                    f"Send the receipt screenshot for order #{str(entity_id)[:8]} now.\n\n"
+                    "This button has selected the order, so no caption is needed. You can also "
+                    f"caption it with /paid {entity_id} if you prefer.",
                     self._inline_keyboard([[("🔄 Refresh Order", f"o:v:{entity_id}")]]),
                 )
         elif scope == "o" and action == "u":
@@ -211,6 +214,7 @@ class TelegramCallbackMixin:
             elif not order.get("payment_method"):
                 self._send_payment_method_chooser(chat_id, telegram_id, entity_id)
             else:
+                self._expect_receipt_order(telegram_id, entity_id)
                 self.send(
                     chat_id,
                     f"📷 Send the completed receipt screenshot for order #{str(entity_id)[:8]} now.\n\n"
