@@ -170,6 +170,24 @@ def run_once() -> int:
         "infrastructure_worker: inventory="
         f"{inventory['managed']} managed/{inventory['matched']} registered"
     )
+    # Orphan cleanup is a separate, exact-confirmation gate.  Calling the
+    # method on every pass keeps the audit visible while its default remains a
+    # no-op; it can never delete a node merely because provider inventory is
+    # temporarily unavailable or an activation job is still in flight.
+    try:
+        orphan_cleanup = controller.cleanup_provider_orphans()
+        print(
+            "infrastructure_worker: orphan_cleanup="
+            f"{orphan_cleanup['status']} candidates={orphan_cleanup['candidates']} "
+            f"deleted={orphan_cleanup['deleted']} failed={orphan_cleanup['failed']}"
+        )
+    except InfrastructureError as exc:
+        # A bad confirmation/configuration should be visible but must not
+        # prevent ordinary provisioning reconciliation from running.
+        print(
+            f"infrastructure_worker: orphan_cleanup_failed={type(exc).__name__}",
+            file=sys.stderr,
+        )
     jobs = _due_jobs(database)
     if not jobs:
         print("infrastructure_worker: no due jobs")

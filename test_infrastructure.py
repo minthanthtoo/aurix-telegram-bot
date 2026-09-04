@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ class FakeProvider:
         self.usage = usage
         self.specifications = []
         self.droplets = list(droplets or [])
+        self.deleted = []
 
     def billing_balance(self):
         return {"month_to_date_usage": self.usage}
@@ -36,6 +38,9 @@ class FakeProvider:
             "status": "active",
             "networks": {"v4": [{"type": "public", "ip_address": "203.0.113.10"}]},
         }
+
+    def delete_droplet(self, droplet_id):
+        self.deleted.append(str(droplet_id))
 
 
 class AmbiguousCreateProvider(FakeProvider):
@@ -297,6 +302,103 @@ class FleetControllerTest(unittest.TestCase):
                 "SELECT COUNT(*) AS n FROM infrastructure_events WHERE event_type = 'provider_inventory_observed'"
             ).fetchone()["n"]
         self.assertEqual(event_count, 1)
+
+    def test_provider_orphan_candidates_require_two_old_observations_and_ignore_jobs(self):
+        provider = FakeProvider(
+            droplets=[
+                {"id": 101, "status": "active", "tags": ["aurix-vpn-node"], "name": "old"},
+                {"id": 102, "status": "active", "tags": ["aurix-vpn-node"], "name": "job"},
+                {"id": 103, "status": "active", "tags": ["unrelated"], "name": "other"},
+            ]
+        )
+        controller = FleetController(self.database, provider)
+        first = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
+        second = datetime(2026, 9, 1, 2, 0, tzinfo=UTC)
+        with self.database.connect() as connection:
+            for provider_id, observed_at in (("101", first), ("101", second), ("102", first), ("102", second)):
+                connection.execute(
+                    """INSERT INTO infrastructure_events
+                       (id, event_type, metadata_json, created_at) VALUES (?, ?, ?, ?)""",
+                    (
+                        f"event-{provider_id}-{observed_at.hour}",
+                        "provider_inventory_observed",
+                        json.dumps({"provider_resource_id": provider_id}, sort_keys=True),
+                        observed_at.isoformat(),
+                    ),
+                )
+            connection.execute(
+                """INSERT INTO infrastructure_jobs
+                   (id, operation, status, attempts, next_attempt_at, provider_resource_id,
+                    request_fingerprint, created_at)
+                   VALUES (?, 'provision', 'awaiting_verification', 1, ?, ?, ?, ?)""",
+                (
+                    "job-102", second.isoformat(), "102", "fingerprint-102", second.isoformat()
+                ),
+            )
+        candidates = controller.provider_orphan_candidates(
+            now=datetime(2026, 9, 2, 0, 0, tzinfo=UTC), min_age_seconds=3600
+        )
+        self.assertEqual([item["provider_resource_id"] for item in candidates], ["101"])
+        self.assertEqual(candidates[0]["observation_count"], 2)
+
+    def test_provider_orphan_cleanup_is_gated_and_audited(self):
+        provider = FakeProvider(
+            droplets=[{"id": 101, "status": "active", "tags": ["aurix-vpn-node"], "name": "old"}]
+        )
+        controller = FleetController(self.database, provider)
+        first = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
+        second = datetime(2026, 9, 1, 2, 0, tzinfo=UTC)
+        with self.database.connect() as connection:
+            for index, observed_at in enumerate((first, second)):
+                connection.execute(
+                    """INSERT INTO infrastructure_events
+                       (id, event_type, metadata_json, created_at) VALUES (?, ?, ?, ?)""",
+                    (
+                        f"orphan-event-{index}",
+                        "provider_inventory_observed",
+                        json.dumps({"provider_resource_id": "101"}, sort_keys=True),
+                        observed_at.isoformat(),
+                    ),
+                )
+        fixed_now = datetime(2026, 9, 2, 0, 0, tzinfo=UTC)
+        with patch.dict(os.environ, {"AURIX_ORPHAN_CLEANUP_MIN_AGE_SECONDS": "3600"}, clear=False):
+            with patch.dict(os.environ, {}, clear=True):
+                disabled = controller.cleanup_provider_orphans(now=fixed_now)
+            self.assertEqual(disabled["status"], "disabled")
+            self.assertEqual(provider.deleted, [])
+            environment = {
+                "AURIX_ORPHAN_CLEANUP_ENABLED": "1",
+                "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+                "AURIX_ORPHAN_CLEANUP_CONFIRMATION": "DELETE-UNREGISTERED-AURIX-NODES",
+                "AURIX_ORPHAN_CLEANUP_MIN_AGE_SECONDS": "3600",
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                cleaned = controller.cleanup_provider_orphans(now=fixed_now)
+        self.assertEqual(cleaned["status"], "completed")
+        self.assertEqual(cleaned["deleted"], 1)
+        self.assertEqual(provider.deleted, ["101"])
+        with self.database.connect() as connection:
+            event = connection.execute(
+                "SELECT event_type, metadata_json FROM infrastructure_events "
+                "WHERE event_type = 'provider_orphan_deleted'"
+            ).fetchone()
+        self.assertIsNotNone(event)
+        self.assertIn("101", event["metadata_json"])
+
+    def test_provider_orphan_cleanup_requires_exact_confirmation(self):
+        provider = FakeProvider()
+        controller = FleetController(self.database, provider)
+        with patch.dict(
+            os.environ,
+            {
+                "AURIX_ORPHAN_CLEANUP_ENABLED": "1",
+                "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+                "AURIX_ORPHAN_CLEANUP_CONFIRMATION": "yes",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(InfrastructureError, "exactly equal"):
+                controller.cleanup_provider_orphans()
 
     def test_digitalocean_inventory_follows_pagination(self):
         client = DigitalOceanClient("token")

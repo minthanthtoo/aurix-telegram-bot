@@ -100,6 +100,13 @@ class DigitalOceanClient:
             raise InfrastructureError("DigitalOcean response lacks a Droplet")
         return droplet
 
+    def delete_droplet(self, droplet_id: str) -> None:
+        """Delete one Droplet after the fleet controller's safety gates pass."""
+        normalized = str(droplet_id).strip()
+        if not normalized:
+            raise InfrastructureError("DigitalOcean Droplet ID is required")
+        self._request("DELETE", f"/droplets/{urllib.parse.quote(normalized, safe='')}")
+
     def action(self, action_id: str) -> dict[str, Any]:
         payload = self._request("GET", f"/actions/{urllib.parse.quote(action_id, safe='')}")
         action = payload.get("action") if isinstance(payload, dict) else None
@@ -236,6 +243,10 @@ class FleetController:
                         "status": status,
                         "region": str(region.get("slug") or "")[:32],
                         "size": str(droplet.get("size_slug") or "")[:64],
+                        "name": str(droplet.get("name") or "")[:96],
+                        "managed_tag": os.environ.get(
+                            "AURIX_MANAGED_DROPLET_TAG", "aurix-vpn-node"
+                        ).strip(),
                     },
                     sort_keys=True,
                 )
@@ -253,6 +264,189 @@ class FleetController:
                         (uuid.uuid4().hex, metadata, now_text),
                     )
         return {"managed": len(inventory), "matched": matched, "unmatched": unmatched}
+
+    def provider_orphan_candidates(
+        self,
+        *,
+        inventory: list[dict[str, Any]] | None = None,
+        now: datetime | None = None,
+        min_age_seconds: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return stale, unregistered managed Droplets without mutating anything.
+
+        A provider resource is a candidate only when it is managed by AuriX,
+        absent from both the endpoint registry and every infrastructure job,
+        and has appeared in at least two persisted inventory observations over
+        the configured minimum age.  This deliberately excludes a freshly
+        created node that is still waiting for endpoint verification.
+        """
+        if self.provider is None:
+            raise InfrastructureError("DigitalOcean provider is not configured")
+        observed = inventory if inventory is not None else self._provider_inventory()
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        try:
+            age_seconds = max(
+                0,
+                int(
+                    os.environ.get(
+                        "AURIX_ORPHAN_CLEANUP_MIN_AGE_SECONDS", "3600"
+                    )
+                    if min_age_seconds is None
+                    else min_age_seconds
+                ),
+            )
+        except (TypeError, ValueError) as exc:
+            raise InfrastructureError("AURIX_ORPHAN_CLEANUP_MIN_AGE_SECONDS is invalid") from exc
+        managed_tag = os.environ.get("AURIX_MANAGED_DROPLET_TAG", "aurix-vpn-node").strip()
+        explicit_ids = self._managed_provider_ids()
+        with self.database.connect() as connection:
+            registered_rows = connection.execute(
+                "SELECT provider_resource_id FROM outline_servers "
+                "WHERE provider_resource_id IS NOT NULL"
+            ).fetchall()
+            job_rows = connection.execute(
+                "SELECT provider_resource_id FROM infrastructure_jobs "
+                "WHERE provider_resource_id IS NOT NULL "
+                "AND status NOT IN ('failed', 'completed')"
+            ).fetchall()
+            event_rows = connection.execute(
+                """SELECT metadata_json, created_at FROM infrastructure_events
+                   WHERE event_type = 'provider_inventory_observed'
+                   ORDER BY created_at DESC LIMIT 2000"""
+            ).fetchall()
+        registered = {str(row["provider_resource_id"]) for row in registered_rows}
+        referenced_by_job = {str(row["provider_resource_id"]) for row in job_rows}
+        observations: dict[str, list[datetime]] = {}
+        for row in event_rows:
+            try:
+                metadata = json.loads(str(row["metadata_json"]))
+                provider_id = str(metadata.get("provider_resource_id") or "")
+                observed_at = datetime.fromisoformat(str(row["created_at"])).astimezone(UTC)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if provider_id:
+                observations.setdefault(provider_id, []).append(observed_at)
+        candidates: list[dict[str, Any]] = []
+        for droplet in observed:
+            provider_id = str(droplet.get("id") or "").strip()
+            if not provider_id or provider_id in registered or provider_id in referenced_by_job:
+                continue
+            tags = {str(tag) for tag in (droplet.get("tags") or [])}
+            if managed_tag not in tags and provider_id not in explicit_ids:
+                continue
+            seen = sorted(observations.get(provider_id, []))
+            if len(seen) < 2:
+                continue
+            first_seen = seen[0]
+            age = max(0, int((current - first_seen).total_seconds()))
+            if age < age_seconds:
+                continue
+            region = droplet.get("region") if isinstance(droplet.get("region"), dict) else {}
+            candidates.append(
+                {
+                    "provider_resource_id": provider_id,
+                    "name": str(droplet.get("name") or "")[:96],
+                    "status": str(droplet.get("status") or "unknown")[:32],
+                    "region": str(region.get("slug") or "")[:32],
+                    "size": str(droplet.get("size_slug") or "")[:64],
+                    "observation_count": len(seen),
+                    "first_seen_at": first_seen.isoformat(),
+                    "last_seen_at": seen[-1].isoformat(),
+                    "age_seconds": age,
+                }
+            )
+        return candidates
+
+    def cleanup_provider_orphans(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Delete only fully-audited provider orphans under explicit gates.
+
+        Cleanup is opt-in and requires both the normal provider mutation gate
+        and an exact operator confirmation phrase.  The candidate is checked
+        against the database again immediately before deletion so a concurrent
+        registration or provisioning job cannot be deleted accidentally.
+        """
+        candidates = self.provider_orphan_candidates(now=now)
+        result: dict[str, Any] = {
+            "status": "disabled",
+            "candidates": len(candidates),
+            "deleted": 0,
+            "failed": 0,
+        }
+        if not _enabled("AURIX_ORPHAN_CLEANUP_ENABLED"):
+            return result
+        if not _enabled("AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED"):
+            result["status"] = "mutations_disabled"
+            return result
+        if os.environ.get("AURIX_ORPHAN_CLEANUP_CONFIRMATION", "") != (
+            "DELETE-UNREGISTERED-AURIX-NODES"
+        ):
+            raise InfrastructureError(
+                "AURIX_ORPHAN_CLEANUP_CONFIRMATION must exactly equal "
+                "DELETE-UNREGISTERED-AURIX-NODES"
+            )
+        if self.provider is None or not callable(getattr(self.provider, "delete_droplet", None)):
+            raise InfrastructureError("DigitalOcean provider does not support Droplet deletion")
+        result["status"] = "completed"
+        for candidate in candidates:
+            provider_id = str(candidate["provider_resource_id"])
+            with self.database.connect() as connection:
+                protected = connection.execute(
+                    """SELECT 1 FROM outline_servers
+                       WHERE provider_resource_id = ?
+                       UNION ALL
+                       SELECT 1 FROM infrastructure_jobs
+                       WHERE provider_resource_id = ?
+                         AND status NOT IN ('failed', 'completed')
+                       LIMIT 1""",
+                    (provider_id, provider_id),
+                ).fetchone()
+            if protected is not None:
+                continue
+            try:
+                self.provider.delete_droplet(provider_id)
+            except Exception as exc:
+                result["failed"] += 1
+                now_text = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+                with self.database.connect() as connection:
+                    self.database.begin_write(connection)
+                    connection.execute(
+                        """INSERT INTO infrastructure_events
+                           (id, event_type, metadata_json, created_at)
+                           VALUES (?, 'provider_orphan_delete_failed', ?, ?)""",
+                        (
+                            uuid.uuid4().hex,
+                            json.dumps(
+                                {
+                                    "provider_resource_id": provider_id,
+                                    "error_type": type(exc).__name__,
+                                },
+                                sort_keys=True,
+                            ),
+                            now_text,
+                        ),
+                    )
+                continue
+            result["deleted"] += 1
+            now_text = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+            with self.database.connect() as connection:
+                self.database.begin_write(connection)
+                connection.execute(
+                    """INSERT INTO infrastructure_events
+                       (id, event_type, metadata_json, created_at)
+                       VALUES (?, 'provider_orphan_deleted', ?, ?)""",
+                    (
+                        uuid.uuid4().hex,
+                        json.dumps(
+                            {
+                                "provider_resource_id": provider_id,
+                                "observation_count": candidate["observation_count"],
+                            },
+                            sort_keys=True,
+                        ),
+                        now_text,
+                    ),
+                )
+        return result
 
     def queue_provision(
         self,

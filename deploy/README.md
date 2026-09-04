@@ -205,6 +205,24 @@ gate. It still cannot create a Droplet unless the separate infrastructure
 worker has a scoped provider token, a valid budget, and
 `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1`.
 
+Each infrastructure-worker pass also performs a provider-orphan audit. A
+managed Droplet is eligible for cleanup only after two inventory observations
+older than `AURIX_ORPHAN_CLEANUP_MIN_AGE_SECONDS` (default `3600`), is absent
+from `outline_servers`, and is not referenced by any unfinished provisioning
+job. Discovery is always safe and read-only. Destruction remains disabled
+unless all of the following are set in the worker-only environment:
+
+```sh
+AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1
+AURIX_ORPHAN_CLEANUP_ENABLED=1
+AURIX_ORPHAN_CLEANUP_CONFIRMATION=DELETE-UNREGISTERED-AURIX-NODES
+```
+
+The worker rechecks the registry immediately before each delete and records a
+sanitized `provider_orphan_deleted` or `provider_orphan_delete_failed` event.
+Do not put the confirmation phrase or DigitalOcean token in the Telegram bot
+service environment.
+
 Before declaring a release production-ready, run the source-controlled
 acceptance audit. It is intentionally a gate: warnings for allocation policy,
 DNS, canaries, or sustained observation keep the result non-passing.

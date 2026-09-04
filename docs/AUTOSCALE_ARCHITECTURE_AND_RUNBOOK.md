@@ -632,6 +632,16 @@ completion.
 - A queued provision is an idempotent intent only; the worker is the sole actor
   allowed to call DigitalOcean. It stops at `awaiting_verification` unless the
   explicit, identity-pinned auto-activation gate is enabled.
+- Every worker pass records provider inventory and derives stale orphan
+  candidates without mutating anything. A candidate must be a managed AuriX
+  Droplet, absent from the endpoint registry and unfinished jobs, and observed
+  twice across the configured minimum age. This protects new provisioning and
+  endpoint registration from accidental deletion.
+- Optional orphan destruction requires the normal provider mutation gate, the
+  separate `AURIX_ORPHAN_CLEANUP_ENABLED=1` gate, and the exact
+  `DELETE-UNREGISTERED-AURIX-NODES` confirmation in the root-only worker
+  environment. The worker rechecks protection immediately before each delete
+  and writes a sanitized audit event. The default remains read-only.
 - Scale-in is proven by a drain rehearsal: allocations zero, no active keys or
   reservations, final inventory captured, endpoint removed, then manual destroy.
 
