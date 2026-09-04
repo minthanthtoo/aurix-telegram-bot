@@ -88,6 +88,7 @@ class TelegramBot(
             "/stoppromo",
             "/resumepromo",
             "/failed",
+            "/migrations",
             "/retry",
             "/retryjob",
             "/refund",
@@ -103,9 +104,10 @@ class TelegramBot(
             "/staff",
             "/notifications",
             "/serverstate",
+            "/migratekey",
         }
     )
-    OWNER_ONLY_COMMANDS = frozenset({"/owner", "/staff", "/addadmin", "/removeadmin", "/groupsync", "/serverstate"})
+    OWNER_ONLY_COMMANDS = frozenset({"/owner", "/staff", "/addadmin", "/removeadmin", "/groupsync", "/serverstate", "/migratekey"})
     ADMIN_CONFIRMATION_COMMANDS = frozenset(
         {
             "/retry",
@@ -121,6 +123,7 @@ class TelegramBot(
             "/addadmin",
             "/removeadmin",
             "/serverstate",
+            "/migratekey",
         }
     )
     UNKNOWN_ACTION_TEXT = "Use the menu to choose an AuriX action."
@@ -579,11 +582,22 @@ class TelegramBot(
                             }
                         )
                     elif view == "failed":
-                        self._send_order_detail(
+                        order_id = item.get("order_id")
+                        if order_id:
+                            self._send_order_detail(
+                                chat_id,
+                                telegram_id,
+                                str(order_id),
+                                admin_view=True,
+                                message_id=message.get("message_id"),
+                            )
+                        else:
+                            self.send(chat_id, "This worker item has no customer order reference.")
+                    elif view == "migrations":
+                        self._show_migration_detail(
                             chat_id,
                             telegram_id,
-                            str(item.get("order_id")),
-                            admin_view=True,
+                            item,
                             message_id=message.get("message_id"),
                         )
                     return True
@@ -699,6 +713,7 @@ class TelegramBot(
 
         admin_commands = customer_commands + [
             {"command": "admin", "description": "Open the admin panel"},
+            {"command": "migrations", "description": "Monitor endpoint migrations"},
             {"command": "notifications", "description": "Choose operational alerts"},
         ]
         for admin_id in self.admin_ids:

@@ -2675,6 +2675,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "whoami",
                 "help",
                 "admin",
+                "migrations",
                 "notifications",
             },
         )

@@ -233,6 +233,8 @@ class TelegramCommandMixin:
                 pass
             elif command == "/serverstate" and len(args) != 2:
                 pass
+            elif command == "/migratekey" and len(args) != 3:
+                pass
             else:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
@@ -248,6 +250,7 @@ class TelegramCommandMixin:
                     "/addadmin": lambda: f"Grant AuriX administrator access to Telegram user {args[0]}?",
                     "/removeadmin": lambda: f"Revoke AuriX administrator access from Telegram user {args[0]}?",
                     "/serverstate": lambda: f"Change endpoint {args[0]} lifecycle to {args[1]}?",
+                    "/migratekey": lambda: f"Move credential {args[1]} from {args[0]} to {args[2]} while preserving remaining quota and expiry?",
                 }[command]()
                 self._queue_admin_confirmation(
                     chat["id"],
@@ -269,6 +272,7 @@ class TelegramCommandMixin:
                         "/addadmin": "✅ Confirm Add Admin",
                         "/removeadmin": "🛑 Confirm Remove Admin",
                         "/serverstate": "✅ Confirm Endpoint State",
+                        "/migratekey": "🔁 Confirm Key Migration",
                     }[command],
                 )
                 return
@@ -532,6 +536,35 @@ class TelegramCommandMixin:
                         chat["id"],
                         f"✅ Endpoint {args[0]} is now {result.get('lifecycle_state', args[1]).title()}. "
                         "No provider VM action was performed.",
+                        self._owner_keyboard(),
+                    )
+        elif command == "/migratekey":
+            if len(args) != 3:
+                self.send(
+                    chat["id"],
+                    "Usage: /migratekey <source-server> <outline-key-id> <target-server>",
+                    self._owner_keyboard(),
+                )
+            else:
+                try:
+                    result = self._admin_owner_call(
+                        telegram_id,
+                        "queue_endpoint_migration",
+                        args[0],
+                        args[1],
+                        args[2],
+                        telegram_id,
+                    )
+                except Exception as exc:
+                    self.send(
+                        chat["id"],
+                        str(exc) or "Endpoint migration could not be queued.",
+                        self._owner_keyboard(),
+                    )
+                else:
+                    self.send(
+                        chat["id"],
+                        "✅ Credential migration queued. A fresh source-usage check will run before cutover; the old key is deleted only after the replacement is persisted.",
                         self._owner_keyboard(),
                     )
         elif command == "/groupsync":
@@ -1135,6 +1168,21 @@ class TelegramCommandMixin:
                     )
                 else:
                     self._open_admin_panel(chat["id"], telegram_id, "failed")
+        elif command == "/migrations":
+            if not self._is_admin(telegram_id):
+                self._send_customer_fallback(chat["id"], telegram_id)
+            elif self.commerce is None:
+                self.send(chat["id"], "Commerce is not configured.")
+            else:
+                jobs = self._admin_call(telegram_id, "endpoint_migration_jobs", limit=100)
+                if not jobs:
+                    self.send(
+                        chat["id"],
+                        "No open endpoint migrations.",
+                        self._admin_keyboard(telegram_id),
+                    )
+                else:
+                    self._open_admin_panel(chat["id"], telegram_id, "migrations")
         elif command == "/retry":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)

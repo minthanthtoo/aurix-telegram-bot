@@ -667,3 +667,13 @@ only an active, healthy endpoint accepts new assignments; degraded, draining,
 failed, or retired endpoints remain visible for audit and migration planning.
 This is an identity/state foundation, not a claim that non-Outline adapters,
 cross-node live migration, or customer protocol conversion are implemented.
+
+Migration 15 adds a durable `connectivity_migration_jobs` queue.  The owner can
+select a managed credential from **Server policy → Migrate active keys**, choose
+another healthy admitting endpoint, and confirm the operation.  The worker
+rechecks fresh source usage, creates a deterministic replacement, limits it to
+the remaining bytes, commits the local/registry cutover, queues a customer key
+notification, and then deletes the source key.  Source deletion remains a
+retryable state if the remote call is ambiguous or unavailable; a restart never
+creates a second replacement.  This is a controlled credential migration
+workflow, not automatic failover, protocol conversion, or provider VM scaling.

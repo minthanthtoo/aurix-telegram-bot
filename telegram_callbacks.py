@@ -339,6 +339,7 @@ class TelegramCallbackMixin:
                     "prepare": "/capacity",
                     "reconcile": "/reconcile",
                     "failed": "/failed",
+                    "migrations": "/migrations",
                     "enforcement": "/enforcement",
                     "promo": "/promo",
                 }
@@ -357,7 +358,7 @@ class TelegramCallbackMixin:
                         telegram_id,
                         message_id=message_id if can_edit_text else None,
                     )
-                elif entity_id in {"orders", "receipts", "failed", "enforcement"}:
+                elif entity_id in {"orders", "receipts", "failed", "migrations", "enforcement"}:
                     if self.commerce is None and entity_id != "enforcement":
                         self.send(chat_id, "Commerce is not configured.")
                     else:
@@ -415,6 +416,64 @@ class TelegramCallbackMixin:
                     message_id=message.get("message_id")
                     if can_edit_text
                     else None,
+                )
+            elif action == "G":
+                try:
+                    source_server_id, mode, raw_value = entity_id.split(":", 2)
+                    value = max(0, int(raw_value))
+                except (TypeError, ValueError):
+                    self.send(chat_id, "That migration view is no longer valid.")
+                    return
+                if mode == "p":
+                    self._show_migration_candidates(
+                        chat_id,
+                        telegram_id,
+                        source_server_id,
+                        page=value,
+                        message_id=message_id if can_edit_text else None,
+                    )
+                elif mode == "c":
+                    self._show_migration_targets(
+                        chat_id,
+                        telegram_id,
+                        source_server_id,
+                        candidate_index=value,
+                        page=0,
+                        message_id=message_id if can_edit_text else None,
+                    )
+                else:
+                    self.send(chat_id, "That migration view is no longer valid.")
+            elif action == "H":
+                if not self._is_owner(telegram_id):
+                    self._send_customer_fallback(chat_id, telegram_id)
+                    return
+                try:
+                    source_server_id, raw_index, target_server_id, raw_page = entity_id.split("|", 3)
+                    candidate_index = max(0, int(raw_index))
+                    page = max(0, int(raw_page))
+                    candidates = list(
+                        self._admin_call(
+                            telegram_id,
+                            "migratable_credentials",
+                            source_server_id,
+                        )
+                        or []
+                    )
+                    candidate = candidates[candidate_index]
+                    external_id = str(candidate.get("external_id") or "").strip()
+                    if not external_id:
+                        raise ValueError("credential identity missing")
+                except Exception as exc:
+                    self.send(chat_id, str(exc) or "That migration target is no longer valid.")
+                    return
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/migratekey",
+                    [source_server_id, external_id, target_server_id],
+                    "Move this active credential to the selected healthy endpoint?",
+                    "🔁 Confirm Key Migration",
+                    cancel_data=f"a:G:{source_server_id}:p:{page}",
                 )
             elif action == "R":
                 if not self._is_owner(telegram_id):

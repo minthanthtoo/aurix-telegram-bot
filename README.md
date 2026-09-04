@@ -393,6 +393,7 @@ inline panel; only `/admin` is advertised in the administrator command menu):
 - `/capacity` (admin)
 - `/reconcile` (admin; scan order, job, receipt, and wallet invariants)
 - `/failed` (admin; review terminal provisioning/revocation failures)
+- `/migrations` (admin; monitor endpoint credential migrations and retries)
 - `/retry <order-id>` (admin; requeue one reviewed terminal worker failure)
 - `/ledger <telegram-id>` (admin; inspect wallet balance and immutable events)
 - `/refund <order-id> [reason]` (admin; issue a wallet reversal and revoke access)
@@ -404,6 +405,14 @@ accepted only after local orders/keys, pending setup, and the latest remote
 inventory are empty. The equivalent confirmed command is
 `/serverstate <server-id> active|draining|retired`. These controls never delete
 or rebuild a provider VM.
+
+The owner can also open **Capacity → server policy → Migrate active keys**. The
+bot lists only active, registry-bound credentials, shows only healthy admitting
+targets, and asks for confirmation. The worker rechecks source usage, creates a
+replacement with only the remaining quota, persists the local cutover, notifies
+the customer, and retries old-key deletion until verified. **Migrations** in the
+admin panel shows pending, failed, and source-delete-pending operations without
+exposing any management URL or access-key secret.
 
 Owner-only `/owner` provides Staff & Access, group-sync preview and receipt
 controls. A new administrator must first open the bot and use `/whoami`; the

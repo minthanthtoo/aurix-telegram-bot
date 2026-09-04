@@ -285,6 +285,9 @@ class TelegramMaintenanceMixin:
             refresh_inventory = getattr(self.commerce, "refresh_server_inventory", None)
             if callable(refresh_inventory):
                 run_stage("server_inventory", refresh_inventory)
+            process_endpoint_migrations = getattr(self.commerce, "process_endpoint_migrations", None)
+            if callable(process_endpoint_migrations):
+                run_stage("endpoint_migrations", process_endpoint_migrations)
             capacity_snapshot = getattr(self.commerce, "capacity_snapshot", None)
             capacity_snapshot_result = None
             if callable(capacity_snapshot):

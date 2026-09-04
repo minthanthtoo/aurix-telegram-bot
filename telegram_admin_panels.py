@@ -69,6 +69,16 @@ class TelegramAdminMixin:
             text = f"Receipt {short_id} · order:{str(item.get('order_id') or '-')[:10]}\ntg:{str(item.get('telegram_id') or '-')[-6:]} · {int(item.get('amount_minor') or 0):,} {item.get('currency') or ''}"
         elif view == "failed":
             text = f"{item.get('operation') or '-'} · job:{short_id}\norder:{str(item.get('order_id') or '-')[:10]} · attempts:{item.get('attempts') or 0}"
+        elif view == "migrations":
+            source = str(item.get("source_server_id") or "-")[:18]
+            target = str(item.get("target_server_id") or "-")[:18]
+            error = str(item.get("last_error") or "")[:180]
+            text = (
+                f"{str(item.get('job_status') or '-').replace('_', ' ').title()} · job:{short_id}\n"
+                f"{str(item.get('profile_kind') or '-').upper()} · tg:{str(item.get('telegram_id') or '-')[-6:]} · attempts:{item.get('attempts') or 0}\n"
+                f"{source} → {target}"
+                + (f"\n{error}" if error else "")
+            )
         else:
             text = f"tg:{str(item.get('telegram_id') or '-')[-6:]} · key:{str(item.get('outline_key_id') or '-')[:12]}\n{item.get('reason') or '-'} · {item.get('remote_state') or '-'}"
         return text[:700], short_id
@@ -81,6 +91,11 @@ class TelegramAdminMixin:
         if view == "failed":
             return list(
                 self._admin_call(telegram_id, "failed_jobs", limit=100, include_nonterminal=True)
+                or []
+            )
+        if view == "migrations":
+            return list(
+                self._admin_call(telegram_id, "endpoint_migration_jobs", limit=100)
                 or []
             )
         if view == "enforcement":
@@ -111,6 +126,7 @@ class TelegramAdminMixin:
             "orders": "📥 Pending Orders",
             "receipts": "🧾 Receipt Review",
             "failed": "🔁 Worker Jobs",
+            "migrations": "🔁 Endpoint Migrations",
             "enforcement": "🚨 Enforcement",
         }.get(view, "AuriX Admin")
         text = f"{title} · {len(items)} open\nPage {page + 1}/{pages} · updated {datetime.now(UTC).strftime('%H:%M UTC')}"
@@ -138,6 +154,7 @@ class TelegramAdminMixin:
                 "orders": "No pending orders.",
                 "receipts": "No unreviewed receipts.",
                 "failed": "No terminal worker failures.",
+                "migrations": "No open endpoint migrations.",
                 "enforcement": "No free/trial termination events recorded.",
             }.get(view, "Nothing needs attention.")
             if message_id is not None:
@@ -165,7 +182,11 @@ class TelegramAdminMixin:
             [
                 [("📥 Pending Orders", "a:n:orders"), ("🧾 Receipt Review", "a:n:receipts")],
                 [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
-                [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
+                [
+                    ("🔁 Failed Jobs", "a:n:failed"),
+                    ("🔁 Migrations", "a:n:migrations"),
+                    ("🚨 Enforcement", "a:n:enforcement"),
+                ],
                 [("🧪 Receipt System", "a:n:receiptsystem"), ("🎁 Promotions", "a:n:promo")],
                 [("🔔 My Alerts", "a:n:notifications")],
                 *([[("👑 Owner Controls", "a:n:owner")]] if self._is_owner(telegram_id) else []),
@@ -402,6 +423,7 @@ class TelegramAdminMixin:
         ]
         rows: list[list[tuple[str, str]]] = [
             [("🔎 Remote inventory", f"a:I:{server_id}:present:0")],
+            [("🔁 Migrate active keys", f"a:G:{server_id}:0")],
             [
                 ("Keys 25", f"a:C:{server_id}|keys|25"),
                 ("50", f"a:C:{server_id}|keys|50"),
@@ -599,6 +621,170 @@ class TelegramAdminMixin:
                 pass
         self.send(chat_id, text, markup)
 
+    def _show_migration_candidates(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        source_server_id: str,
+        page: int = 0,
+        message_id: int | None = None,
+    ) -> None:
+        """Show owner-only active credentials eligible for endpoint migration."""
+        if not self._is_owner(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        try:
+            candidates = list(
+                self._admin_call(telegram_id, "migratable_credentials", source_server_id) or []
+            )
+        except Exception as exc:
+            self.send(chat_id, str(exc) or "Migration inventory is unavailable.")
+            return
+        page_size = 5
+        pages = max(1, (len(candidates) + page_size - 1) // page_size)
+        current_page = max(0, min(int(page or 0), pages - 1))
+        current = candidates[current_page * page_size : (current_page + 1) * page_size]
+        lines = [
+            f"🔁 Endpoint migration · {source_server_id}",
+            "",
+            "Choose an active managed credential. A healthy target is selected next.",
+            f"Active credentials: {len(candidates)} · Page {current_page + 1}/{pages}",
+            "Usage is rechecked before replacement creation; old access is removed only after cutover.",
+        ]
+        rows: list[list[tuple[str, str]]] = []
+        for index, item in enumerate(current):
+            absolute = current_page * page_size + index
+            external_id = str(item.get("external_id") or "-")
+            kind = str(item.get("profile_kind") or "-").upper()
+            customer = str(item.get("telegram_id") or "-")[-6:]
+            lines.extend(["", f"#{absolute + 1} · {kind} · tg:{customer}", f"Key: {external_id[:24]}"])
+            rows.append([(f"#{absolute + 1} · Choose target", f"a:G:{source_server_id}:c:{absolute}")])
+        if not current:
+            lines.extend(["", "No active managed credentials are available on this endpoint."])
+        navigation: list[tuple[str, str]] = []
+        if current_page > 0:
+            navigation.extend(
+                [
+                    ("⏮ First", f"a:G:{source_server_id}:p:0"),
+                    ("◀ Previous", f"a:G:{source_server_id}:p:{current_page - 1}"),
+                ]
+            )
+        navigation.append((f"{current_page + 1}/{pages}", f"a:G:{source_server_id}:p:{current_page}"))
+        if current_page + 1 < pages:
+            navigation.extend(
+                [
+                    ("Next ▶", f"a:G:{source_server_id}:p:{current_page + 1}"),
+                    ("Last ⏭", f"a:G:{source_server_id}:p:{pages - 1}"),
+                ]
+            )
+        rows.append(navigation)
+        rows.append([("🔄 Refresh", f"a:G:{source_server_id}:p:{current_page}"), ("⬅ Server policy", f"a:S:{source_server_id}")])
+        markup = self._inline_keyboard(rows)
+        text = "\n".join(lines)[:4096]
+        if message_id is not None:
+            try:
+                self.edit_message(chat_id, int(message_id), text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+
+    def _show_migration_targets(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        source_server_id: str,
+        candidate_index: int,
+        page: int = 0,
+        message_id: int | None = None,
+    ) -> None:
+        if not self._is_owner(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        try:
+            candidates = list(
+                self._admin_call(telegram_id, "migratable_credentials", source_server_id) or []
+            )
+            candidate = candidates[int(candidate_index)]
+            endpoints = list(self._admin_call(telegram_id, "connectivity_snapshot") or [])
+        except Exception as exc:
+            self.send(chat_id, str(exc) or "Migration target list is unavailable.")
+            return
+        target_endpoints = [
+            item
+            for item in endpoints
+            if str(item.get("outline_server_id")) != str(source_server_id)
+            and str(item.get("status")) == "active"
+            and bool(item.get("accepts_new_keys"))
+        ]
+        external_id = str(candidate.get("external_id") or "")
+        lines = [
+            "🔁 Choose migration target",
+            "",
+            f"Credential: {external_id[:32]} · {str(candidate.get('profile_kind') or '-').upper()}",
+            f"Customer: tg:{str(candidate.get('telegram_id') or '-')[-6:]}",
+            "Only active, healthy, admitting endpoints are shown.",
+            "",
+            "A confirmation screen will appear before any remote key change.",
+        ]
+        rows: list[list[tuple[str, str]]] = []
+        for endpoint in target_endpoints:
+            target = str(endpoint.get("outline_server_id") or "")
+            label = str(endpoint.get("provider_name") or target)[:16]
+            region = str(endpoint.get("region_name") or "")[:16]
+            rows.append([(f"✅ {target} · {label} {region}", f"a:H:{source_server_id}|{candidate_index}|{target}|{page}")])
+        if not target_endpoints:
+            lines.extend(["", "No healthy target endpoint currently accepts new keys."])
+        rows.append([("⬅ Credentials", f"a:G:{source_server_id}:p:{page}"), ("🏠 Owner Home", "a:n:owner")])
+        markup = self._inline_keyboard(rows)
+        text = "\n".join(lines)[:4096]
+        if message_id is not None:
+            try:
+                self.edit_message(chat_id, int(message_id), text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+
+    def _show_migration_detail(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        job: dict[str, Any],
+        message_id: int | None = None,
+    ) -> None:
+        """Render one migration operation without exposing credential secrets."""
+        job_id = str(job.get("job_id") or "-")
+        status = str(job.get("job_status") or "unknown").replace("_", " ").title()
+        lines = [
+            "🔁 Endpoint migration",
+            "",
+            f"Job: {job_id[:16]}",
+            f"Status: {status} · attempts: {int(job.get('attempts') or 0)}",
+            f"Customer: tg:{str(job.get('telegram_id') or '-')[-6:]} · {str(job.get('profile_kind') or '-').upper()}",
+            f"Endpoint: {str(job.get('source_server_id') or '-')[:24]} → {str(job.get('target_server_id') or '-')[:24]}",
+            f"Credential: {str(job.get('source_external_id') or '-')[:32]}",
+            f"Replacement: {str(job.get('target_external_id') or '-')[:32]}",
+            f"Quota at queue: {int(job.get('quota_bytes') or 0):,} bytes",
+        ]
+        if job.get("source_used_bytes") is not None:
+            lines.append(f"Source usage at cutover: {int(job.get('source_used_bytes') or 0):,} bytes")
+        if job.get("last_error"):
+            lines.extend(["", f"Last error: {str(job.get('last_error'))[:500]}"])
+        if status.lower() in {"failed", "source delete pending"}:
+            lines.extend(["", "The worker retries safely; source access is retained until replacement cutover and verified deletion."])
+        markup = self._inline_keyboard(
+            [[("🔄 Refresh", "a:n:migrations"), ("⬅ Admin Home", "a:n:admin")]]
+        )
+        text = "\n".join(lines)[:4096]
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+
     def _owner_keyboard(self) -> dict[str, Any]:
         return self._inline_keyboard(
             [
@@ -607,7 +793,11 @@ class TelegramAdminMixin:
                 [("🧪 Receipt System", "a:n:receiptsystem"), ("🎁 Promotions", "a:n:promo")],
                 [("🔔 My Alerts", "a:n:notifications")],
                 [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
-                [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
+                [
+                    ("🔁 Failed Jobs", "a:n:failed"),
+                    ("🔁 Migrations", "a:n:migrations"),
+                    ("🚨 Enforcement", "a:n:enforcement"),
+                ],
                 [("🏢 Control Group", "a:s:group"), ("🔄 Group Sync", "a:n:groupsync")],
                 [("🏠 Customer Menu", "n:start")],
             ]
@@ -791,7 +981,37 @@ class TelegramAdminMixin:
             snapshot["state"] = "missing"
             return snapshot
         try:
-            if command == "/serverstate":
+            if command == "/migratekey":
+                if len(args) != 3:
+                    snapshot["state"] = "missing"
+                else:
+                    source, external_id, target = (str(value).strip() for value in args)
+                    candidates = self._admin_call(telegram_id, "migratable_credentials", source)
+                    candidate = next(
+                        (item for item in candidates if str(item.get("external_id")) == external_id),
+                        None,
+                    )
+                    endpoints = self._admin_call(telegram_id, "connectivity_snapshot")
+                    endpoint = next(
+                        (item for item in endpoints if str(item.get("outline_server_id")) == target),
+                        None,
+                    )
+                    if candidate is None or endpoint is None:
+                        snapshot["state"] = "missing"
+                    else:
+                        snapshot.update(
+                            {
+                                "state": "present",
+                                "source_server_id": source,
+                                "target_server_id": target,
+                                "external_id": external_id,
+                                "profile_kind": candidate.get("profile_kind"),
+                                "telegram_id": candidate.get("telegram_id"),
+                                "target_status": endpoint.get("status"),
+                                "target_accepts_new_keys": endpoint.get("accepts_new_keys"),
+                            }
+                        )
+            elif command == "/serverstate":
                 if len(args) != 2 or str(args[1]).lower() not in {"active", "draining", "retired"}:
                     snapshot["state"] = "missing"
                 else:
@@ -980,6 +1200,17 @@ class TelegramAdminMixin:
             else:
                 lines.append("Result: change admission state only; no provider VM action is performed.")
             return "\n".join(lines)
+        if command == "/migratekey":
+            return "\n".join(
+                [
+                    f"Credential: {snapshot.get('external_id') or (args[1] if len(args) > 1 else '-')} · {snapshot.get('profile_kind') or '-'}",
+                    f"Customer: {snapshot.get('telegram_id') or '-'}",
+                    f"Source endpoint: {snapshot.get('source_server_id') or (args[0] if args else '-')}",
+                    f"Target endpoint: {snapshot.get('target_server_id') or (args[2] if len(args) > 2 else '-')}",
+                    f"Target state: {snapshot.get('target_status') or '-'} · admission {'enabled' if snapshot.get('target_accepts_new_keys') else 'blocked'}",
+                    "Result: create a replacement with fresh source-usage accounting, cut over locally, notify the customer, then delete the old remote key.",
+                ]
+            )
         if command == "/retryjob":
             return "\n".join(
                 [

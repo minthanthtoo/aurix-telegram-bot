@@ -32,6 +32,8 @@ class AdminOperations:
             "consistency_report",
             "capacity_snapshot",
             "connectivity_snapshot",
+            "endpoint_migration_jobs",
+            "migratable_credentials",
             "refresh_server_inventory",
             "remote_key_inventory",
             "configure_server_capacity",
@@ -48,7 +50,12 @@ class AdminOperations:
             "queue_infrastructure_provision",
         }
     )
-    OWNER_COMMERCE_OPERATIONS = frozenset({"review_remote_key", "set_server_lifecycle", "server_drain_readiness"})
+    OWNER_COMMERCE_OPERATIONS = frozenset({
+        "review_remote_key",
+        "set_server_lifecycle",
+        "server_drain_readiness",
+        "queue_endpoint_migration",
+    })
     SERVICE_OPERATIONS = frozenset(
         {
             "termination_summary",

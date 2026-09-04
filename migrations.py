@@ -1175,6 +1175,78 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS connectivity_credentials_profile ON connectivity_credentials(profile_id, status)",
         ),
     ),
+    Migration(
+        15,
+        "connectivity_migration_jobs",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS connectivity_migration_jobs (
+                   id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES connectivity_profiles(profile_id),
+                   credential_id TEXT NOT NULL REFERENCES connectivity_credentials(credential_id),
+                   source_endpoint_id TEXT NOT NULL REFERENCES connectivity_endpoints(endpoint_id),
+                   target_endpoint_id TEXT NOT NULL REFERENCES connectivity_endpoints(endpoint_id),
+                   source_server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   target_server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   source_external_id TEXT NOT NULL,
+                   target_external_id TEXT NOT NULL,
+                   target_name TEXT NOT NULL,
+                   profile_kind TEXT NOT NULL CHECK (profile_kind IN ('free', 'paid', 'trial', 'promo')),
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                   expires_at TEXT NOT NULL,
+                   source_used_bytes INTEGER,
+                   target_access_url_ciphertext TEXT,
+                   status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                       status IN ('pending', 'creating', 'source_delete_pending', 'completed', 'failed', 'cancelled')
+                   ),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   last_error TEXT,
+                   requested_by INTEGER NOT NULL,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   UNIQUE (credential_id, target_endpoint_id)
+               )""",
+            "CREATE INDEX IF NOT EXISTS connectivity_migrations_due ON connectivity_migration_jobs(status, next_attempt_at)",
+            "CREATE INDEX IF NOT EXISTS connectivity_migrations_source ON connectivity_migration_jobs(source_endpoint_id, status)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS connectivity_migration_jobs (
+                   id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES connectivity_profiles(profile_id),
+                   credential_id TEXT NOT NULL REFERENCES connectivity_credentials(credential_id),
+                   source_endpoint_id TEXT NOT NULL REFERENCES connectivity_endpoints(endpoint_id),
+                   target_endpoint_id TEXT NOT NULL REFERENCES connectivity_endpoints(endpoint_id),
+                   source_server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   target_server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   source_external_id TEXT NOT NULL,
+                   target_external_id TEXT NOT NULL,
+                   target_name TEXT NOT NULL,
+                   profile_kind TEXT NOT NULL CHECK (profile_kind IN ('free', 'paid', 'trial', 'promo')),
+                   telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
+                   quota_bytes BIGINT NOT NULL CHECK (quota_bytes > 0),
+                   expires_at TEXT NOT NULL,
+                   source_used_bytes BIGINT,
+                   target_access_url_ciphertext TEXT,
+                   status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                       status IN ('pending', 'creating', 'source_delete_pending', 'completed', 'failed', 'cancelled')
+                   ),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   last_error TEXT,
+                   requested_by BIGINT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   UNIQUE (credential_id, target_endpoint_id)
+               )""",
+            "CREATE INDEX IF NOT EXISTS connectivity_migrations_due ON connectivity_migration_jobs(status, next_attempt_at)",
+            "CREATE INDEX IF NOT EXISTS connectivity_migrations_source ON connectivity_migration_jobs(source_endpoint_id, status)",
+        ),
+    ),
 )
 
 
