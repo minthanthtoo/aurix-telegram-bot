@@ -13,6 +13,7 @@ from typing import Any
 
 from ports import OutlineGateway
 from commerce_models import CommerceError
+from connectivity_registry import ConnectivityRegistry
 from quota_alerts import (
     get_quota_alert_preferences,
     reached_alert,
@@ -592,6 +593,19 @@ class ClaimService:
                          WHERE code = ?""",
                         (now_text, campaign_code),
                     )
+            ConnectivityRegistry.bind_credential(
+                connection,
+                telegram_id=int(intent["telegram_id"]),
+                server_id=str(intent["server_id"]),
+                external_id=remote_id,
+                secret_ciphertext=None,
+                now_text=now_text,
+                profile_kind=(
+                    "promo" if intent["kind"] == "promo"
+                    else "trial" if intent["kind"] == "trial"
+                    else "free"
+                ),
+            )
             connection.execute(
                 """UPDATE free_provisioning_intents
                    SET status = 'done', locked_at = NULL, last_error = NULL,
@@ -1650,6 +1664,12 @@ class ClaimService:
             connection.execute("UPDATE keys SET status = 'revoked' WHERE id = ?", (row["id"],))
             self._adjust_remote_key_count(
                 connection, str(row["server_id"] or self._default_server_id()), -1
+            )
+            ConnectivityRegistry.revoke_credential(
+                connection,
+                server_id=str(row["server_id"] or self._default_server_id()),
+                external_id=str(row["outline_key_id"]),
+                now_text=now_text,
             )
             connection.execute(
                 """UPDATE key_termination_events

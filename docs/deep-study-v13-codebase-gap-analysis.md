@@ -34,13 +34,13 @@ multi-node Outline control plane with conservative health evidence, not a
 complete adaptive V13 connectivity platform and not something that should be
 replaced wholesale.
 
-Current evidence is strong for code and controlled operations (350 tests, live
+Current evidence is strong for code and controlled operations (353 tests, live
 three-node health, CI-gated deployment, and verified encrypted archives), but
 not yet for unrestricted customer admission: allocation normalization, orphan
 classification, stable DNS, real Telegram/payment canaries, and sustained
 observation remain explicit gates.
 
-The correct next technical target is **V3: a small multi-node Outline control plane with explicit endpoint records and manual/controlled migration**. Xray, automatic failover, custom clients, multi-provider provisioning, and predictive routing should remain gated behind measured failures and real customer evidence.
+The correct next technical target is **V3: a small multi-node Outline control plane with explicit endpoint records and manual/controlled migration**. The code now also has the migration-14 provider/region/transport registry foundation needed to introduce other adapters without rewriting commerce state. Xray, automatic failover, custom clients, multi-provider provisioning, and predictive routing should remain gated behind measured failures and real customer evidence.
 
 ## Sources and study boundary
 

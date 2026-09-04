@@ -27,6 +27,7 @@ from commerce_repositories import _PostgresConnection
 from ports import OutlineGateway, ReceiptStorageGateway
 from repositories import RepositoryDatabase
 from commerce_worker import CommerceWorkerMixin
+from connectivity_registry import ConnectivityRegistry
 from receipt_rules import evaluate_receipt_candidate, load_recipient_profiles
 from receipt_fingerprint import (
     NEAR_DUPLICATE_DISTANCE,
@@ -227,10 +228,12 @@ class CommerceService(CommerceWorkerMixin):
         labels: dict[str, str] | None = None,
         *,
         provider_resource_ids: dict[str, str] | None = None,
+        endpoint_metadata: dict[str, dict[str, str]] | None = None,
     ) -> None:
         """Persist non-secret metadata for every environment-configured server."""
         labels = labels or {}
         provider_resource_ids = provider_resource_ids or {}
+        endpoint_metadata = endpoint_metadata or {}
         server_ids = (
             self.outline.server_ids()
             if callable(getattr(self.outline, "server_ids", None))
@@ -278,6 +281,21 @@ class CommerceService(CommerceWorkerMixin):
                         now_text,
                     ),
                 )
+                metadata = endpoint_metadata.get(server_id) or {}
+                state_row = connection.execute(
+                    "SELECT lifecycle_state, health_status FROM outline_servers WHERE server_id = ?",
+                    (server_id,),
+                ).fetchone()
+                ConnectivityRegistry.sync_outline_endpoint(
+                    connection,
+                    server_id=str(server_id),
+                    label=str(labels.get(server_id, server_id)),
+                    provider=str(metadata.get("provider") or "manual"),
+                    region=str(metadata.get("region") or "unknown"),
+                    lifecycle_state=str(state_row["lifecycle_state"] if state_row else "active"),
+                    health_status=str(state_row["health_status"] if state_row else "unknown"),
+                    now_text=now_text,
+                )
             placeholders = ",".join("?" for _ in server_ids)
             connection.execute(
                 f"""UPDATE outline_servers
@@ -316,6 +334,7 @@ class CommerceService(CommerceWorkerMixin):
                    WHERE server_id IS NULL AND status IN ('awaiting_payment', 'payment_submitted')""",
                 (default_server_id, _now_text(datetime.now(UTC) + timedelta(hours=24))),
             )
+            ConnectivityRegistry.rebuild_from_legacy(connection, now_text=now_text)
 
     def _outline_client(self, server_id: str | None = None) -> Any:
         getter = getattr(self.outline, "client", None)
@@ -424,6 +443,13 @@ class CommerceService(CommerceWorkerMixin):
                           lifecycle_changed_at = ?, updated_at = ?
                     WHERE server_id = ?""",
                 (enabled, state, clean_reason, now_text, now_text, server),
+            )
+            ConnectivityRegistry.sync_outline_health(
+                connection,
+                server_id=server,
+                lifecycle_state=state,
+                health_status=str(row["health_status"] or "unknown"),
+                now_text=now_text,
             )
             self._audit(
                 connection,
@@ -681,6 +707,11 @@ class CommerceService(CommerceWorkerMixin):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def connectivity_snapshot(self) -> list[dict[str, Any]]:
+        """Return provider/region/transport dimensions without secrets."""
+        with self.database.connect() as connection:
+            return ConnectivityRegistry.endpoint_snapshot(connection)
+
     def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str, Any]]:
         """Reconcile remote inventory and telemetry without storing access URLs."""
         observed_at = _now_text(now)
@@ -822,6 +853,17 @@ class CommerceService(CommerceWorkerMixin):
                             server_id,
                         ),
                     )
+                    lifecycle_row = connection.execute(
+                        "SELECT lifecycle_state FROM outline_servers WHERE server_id = ?",
+                        (server_id,),
+                    ).fetchone()
+                    ConnectivityRegistry.sync_outline_health(
+                        connection,
+                        server_id=server_id,
+                        lifecycle_state=str(lifecycle_row["lifecycle_state"] if lifecycle_row else "active"),
+                        health_status=str(health["state"]),
+                        now_text=observed_at,
+                    )
                 results.append(
                     {
                         "server_id": server_id,
@@ -845,6 +887,17 @@ class CommerceService(CommerceWorkerMixin):
                         observed_status="unreachable",
                         latency_ms=latency_ms,
                         error_type=type(exc).__name__,
+                    )
+                    lifecycle_row = connection.execute(
+                        "SELECT lifecycle_state FROM outline_servers WHERE server_id = ?",
+                        (server_id,),
+                    ).fetchone()
+                    ConnectivityRegistry.sync_outline_health(
+                        connection,
+                        server_id=server_id,
+                        lifecycle_state=str(lifecycle_row["lifecycle_state"] if lifecycle_row else "active"),
+                        health_status=str(health["state"]),
+                        now_text=observed_at,
                     )
                 results.append(
                     {

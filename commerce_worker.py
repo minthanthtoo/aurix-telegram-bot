@@ -21,6 +21,7 @@ from commerce_models import (
     _paid_outline_key_name,
 )
 from commerce_repositories import _PostgresConnection
+from connectivity_registry import ConnectivityRegistry
 from quota_alerts import get_quota_alert_preferences, reached_alert
 
 
@@ -237,12 +238,18 @@ class CommerceWorkerMixin:
                     with self.database.connect() as connection:
                         self.database.begin_write(connection)
                         local = connection.execute(
-                            "SELECT id, telegram_id, data_limit_bytes, expires_at FROM keys WHERE outline_key_id = ?",
+                            "SELECT id, telegram_id, server_id, data_limit_bytes, expires_at FROM keys WHERE outline_key_id = ?",
                             (str(item["id"]),),
                         ).fetchone()
                         if local is not None:
                             connection.execute(
                                 "UPDATE keys SET status = 'revoked' WHERE id = ?", (local["id"],)
+                            )
+                            ConnectivityRegistry.revoke_credential(
+                                connection,
+                                server_id=str(local["server_id"]),
+                                external_id=str(item["id"]),
+                                now_text=_now_text(),
                             )
                             connection.execute(
                                 """INSERT INTO key_termination_events
@@ -268,7 +275,7 @@ class CommerceWorkerMixin:
                     with self.database.connect() as connection:
                         self.database.begin_write(connection)
                         local = connection.execute(
-                            "SELECT id, telegram_id, data_limit_bytes, expires_at FROM keys WHERE outline_key_id = ?",
+                            "SELECT id, telegram_id, server_id, data_limit_bytes, expires_at FROM keys WHERE outline_key_id = ?",
                             (str(item.get("id")),),
                         ).fetchone()
                         if local is not None:
@@ -412,6 +419,7 @@ class CommerceWorkerMixin:
             activated_expires_at = (
                 current_dt + timedelta(days=int(subscription["duration_days"] or 0))
             ).isoformat()
+            encrypted_access_url = self._encrypt_access_url(str(key["accessUrl"]))
             with self.database.connect() as connection:
                 self.database.begin_write(connection)
                 connection.execute(
@@ -424,7 +432,7 @@ class CommerceWorkerMixin:
                         subscription["id"],
                         subscription["telegram_id"],
                         str(key["id"]),
-                        self._encrypt_access_url(str(key["accessUrl"])),
+                        encrypted_access_url,
                         desired_quota,
                         created_at,
                         server_id,
@@ -447,7 +455,7 @@ class CommerceWorkerMixin:
                         f"vpn-ready:{subscription['id']}",
                         subscription["telegram_id"],
                         f"Your {desired_plan_name} AuriX VPN is ready.\n\nExpires: {activated_expires_at}",
-                        self._encrypt_access_url(str(key["accessUrl"])),
+                        encrypted_access_url,
                         created_at,
                         created_at,
                     ),
@@ -464,6 +472,16 @@ class CommerceWorkerMixin:
                         "activated_at": activated_at,
                         "server_id": server_id,
                     },
+                )
+                ConnectivityRegistry.bind_credential(
+                    connection,
+                    telegram_id=int(subscription["telegram_id"]),
+                    server_id=str(server_id),
+                    external_id=str(key["id"]),
+                    secret_ciphertext=encrypted_access_url,
+                    now_text=created_at,
+                    profile_kind="paid",
+                    subscription_id=str(subscription["id"]),
                 )
                 connection.execute(
                     """UPDATE provisioning_jobs SET status = 'done', locked_at = NULL, last_error = NULL
@@ -548,6 +566,12 @@ class CommerceWorkerMixin:
                     """UPDATE paid_vpn_keys SET status = 'revoked', revoked_at = ?
                        WHERE id = ?""",
                     (_now_text(now), key["id"]),
+                )
+                ConnectivityRegistry.revoke_credential(
+                    connection,
+                    server_id=str(server_id),
+                    external_id=str(key["outline_key_id"]),
+                    now_text=_now_text(now),
                 )
                 connection.execute(
                     "UPDATE provisioning_jobs SET status = 'done', locked_at = NULL WHERE id = ?",
@@ -968,6 +992,10 @@ class CommerceWorkerMixin:
             server_rows = connection.execute(
                 "SELECT * FROM outline_servers ORDER BY enabled DESC, label, server_id"
             ).fetchall()
+            registry_by_server = {
+                str(item["outline_server_id"]): item
+                for item in ConnectivityRegistry.endpoint_snapshot(connection)
+            }
             allocation_rows = connection.execute(
                 """SELECT a.server_id, a.plan_code, a.slot_limit, p.name,
                           (SELECT COUNT(*) FROM subscriptions s
@@ -1051,6 +1079,21 @@ class CommerceWorkerMixin:
         ).strip().lower() in {"1", "true", "yes", "on"}
         for row in server_rows:
             item = dict(row)
+            registry = registry_by_server.get(str(item["server_id"]))
+            if registry:
+                item["connectivity"] = {
+                    "endpoint_id": registry["endpoint_id"],
+                    "provider_id": registry["provider_id"],
+                    "provider_name": registry["provider_name"],
+                    "region_id": registry["region_id"],
+                    "region_name": registry["region_name"],
+                    "transport_id": registry["transport_id"],
+                    "protocol": registry["protocol"],
+                    "transport_name": registry["transport_name"],
+                    "status": registry["status"],
+                    "accepts_new_keys": bool(registry["accepts_new_keys"]),
+                    "updated_at": registry["updated_at"],
+                }
             max_keys = item.get("max_keys")
             usable = (
                 None

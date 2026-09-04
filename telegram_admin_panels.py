@@ -220,6 +220,14 @@ class TelegramAdminMixin:
             orphan_count = int(item.get("remote_orphan_key_count") or 0)
             budget = item.get("monthly_traffic_bytes")
             commitment = int(item.get("committed_traffic_bytes") or 0)
+            connectivity = item.get("connectivity") or {}
+            connectivity_text = (
+                f"Connectivity: {connectivity.get('provider_name', connectivity.get('provider_id', 'unknown'))} · "
+                f"{connectivity.get('region_name', connectivity.get('region_id', 'unknown'))} · "
+                f"{connectivity.get('transport_name', connectivity.get('protocol', 'unknown'))}"
+                if connectivity
+                else "Connectivity: registry pending"
+            )
             lines.extend(
                 [
                     "",
@@ -231,6 +239,7 @@ class TelegramAdminMixin:
                         if item.get("health_last_latency_ms") is not None
                         else "Health evidence: no latency recorded"
                     ),
+                    connectivity_text,
                     (
                         "Admission: ✅ eligible"
                         if item.get("admission_status") == "eligible"
@@ -364,6 +373,12 @@ class TelegramAdminMixin:
         lines = [
             f"⚙️ {server.get('label') or server_id}",
             f"Lifecycle: {str(server.get('lifecycle_state') or 'active').title()} · {'admission enabled' if server.get('enabled') else 'admission disabled'}",
+            (
+                "Connectivity: "
+                f"{(server.get('connectivity') or {}).get('provider_name', 'unknown')} · "
+                f"{(server.get('connectivity') or {}).get('region_name', 'unknown')} · "
+                f"{(server.get('connectivity') or {}).get('transport_name', 'unknown')}"
+            ),
             f"Health: {server.get('health_status')} · remote keys: {server.get('remote_key_count') or 0}",
             (
                 "Probe: "

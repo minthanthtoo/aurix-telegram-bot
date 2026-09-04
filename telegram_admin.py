@@ -31,6 +31,7 @@ class AdminOperations:
             "failed_jobs",
             "consistency_report",
             "capacity_snapshot",
+            "connectivity_snapshot",
             "refresh_server_inventory",
             "remote_key_inventory",
             "configure_server_capacity",

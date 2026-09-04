@@ -23,6 +23,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Usage/capacity operations | Implemented locally | Admin `/capacity`, stable transfer-metrics adapter, mapped active-key totals, and read-only per-node admission/policy posture (freshness, headroom, over-allocation, orphan audit) |
 | Endpoint health evidence | Implemented locally | Durable management/inventory observations with latency, state transitions, failure/recovery streaks, and conservative hysteresis; degraded/unreachable nodes are blocked from new admission while other nodes continue |
 | Endpoint drain/retirement lifecycle | Implemented locally | Owner-confirmed active/draining/retired state; draining blocks new assignments, and retirement fails closed until local and remotely observed keys, orders, and setup intents are empty |
+| Provider/region/transport registry | Implemented foundation | Migration 14 mirrors Outline endpoints into stable provider, region, transport, profile, assignment, and credential identities; legacy paid/free rows backfill idempotently without storing management URLs or plaintext access URLs; non-Outline adapters and live migration remain gated |
 | Remote inventory review | Implemented locally | Owner-only in-place classification of untracked present keys as reviewed external or unreviewed; never adopts/deletes credentials and never hides capacity usage |
 | Auditability | Implemented locally | Order, payment, approval, rejection, provision, revoke events |
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
@@ -44,7 +45,7 @@ engineering estimates, not production traffic or revenue metrics.
   wallet, restart-safe interaction, receipt-fingerprint, Telegram timestamp
   formatting, notification-lease, deterministic-entitlement-recovery, receipt-model-selection, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (350 tests
+  production-acceptance suite (353 tests
   passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local

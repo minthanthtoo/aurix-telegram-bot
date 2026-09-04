@@ -318,6 +318,9 @@ def server_config(nodes: list[FleetNode], identities: dict[str, dict[str, str]])
         item = {"id": node.node_id, "label": node.label, **identities[node.node_id]}
         if node.provider_resource_id:
             item["provider_resource_id"] = node.provider_resource_id
+        item["provider"] = node.provider or "manual"
+        item["region"] = node.region or "unknown"
+        item["transport"] = "outline"
         result.append(item)
     return result
 
@@ -380,7 +383,19 @@ def apply_policy(nodes: list[FleetNode], identities: dict[str, dict[str, str]], 
     service.initialize()
     labels = {node.node_id: node.label for node in nodes}
     provider_ids = {node.node_id: node.provider_resource_id for node in nodes if node.provider_resource_id}
-    service.register_outline_servers(labels, provider_resource_ids=provider_ids)
+    endpoint_metadata = {
+        node.node_id: {
+            "provider": node.provider or "manual",
+            "region": node.region or "unknown",
+            "transport": "outline",
+        }
+        for node in nodes
+    }
+    service.register_outline_servers(
+        labels,
+        provider_resource_ids=provider_ids,
+        endpoint_metadata=endpoint_metadata,
+    )
     health = {item["server_id"]: item["status"] for item in service.refresh_server_inventory()}
     if any(health.get(node.node_id) != "healthy" for node in nodes):
         raise FleetError("policy activation refused because a node is unhealthy")
