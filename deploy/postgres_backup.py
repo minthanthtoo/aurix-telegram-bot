@@ -320,7 +320,18 @@ def _verify_archive_bytes(
 
 
 def verify(env: dict[str, str]) -> dict[str, Any]:
-    result: dict[str, Any] = {"local": _verify_archive(env, latest_archive(local_root(env)))}
+    """Verify every available PostgreSQL recovery source.
+
+    A rebuilt control plane commonly has no local backup directory yet.  In
+    that case an authenticated off-site archive is sufficient evidence and
+    must be checked directly instead of failing while looking for a local
+    file first.  If a local archive exists, it is still verified so local
+    corruption is never silently hidden by a healthy mirror.
+    """
+    result: dict[str, Any] = {}
+    local = local_root(env)
+    if local.is_dir() and any(local.glob(f"*{ARCHIVE_SUFFIX}")):
+        result["local"] = _verify_archive(env, latest_archive(local))
     if offsite_storage.configured(env):
         key = offsite_storage.latest_key(env, "database/", ARCHIVE_SUFFIX)
         result["offsite"] = _verify_archive_bytes(
@@ -337,6 +348,10 @@ def verify(env: dict[str, str]) -> dict[str, Any]:
             raise FleetError(
                 "database offsite backups are required but AURIX_DATABASE_BACKUP_OFFSITE_DIR is empty"
             )
+    if not result:
+        raise FleetError(
+            "no authenticated PostgreSQL backup archive is available for verification"
+        )
     return result
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import stat
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,8 +14,13 @@ from deploy.fleet_reconcile import FleetError
 
 class PostgresBackupTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
         self.key = Fernet.generate_key().decode()
         self.url = "postgresql://postgres.project:pa%3Ass@example.invalid:5432/postgres?sslmode=require"
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
 
     def test_database_url_requires_a_complete_postgres_uri(self) -> None:
         self.assertEqual(
@@ -61,6 +67,30 @@ class PostgresBackupTests(unittest.TestCase):
         command = captured[0]
         self.assertNotIn("--file", command)
         self.assertTrue(command[-1].endswith("/commerce.dump"))
+
+    def test_verify_uses_offsite_when_fresh_host_has_no_local_archive(self) -> None:
+        offsite = self.root / "offsite"
+        offsite.mkdir()
+        archive = offsite / f"20260904T000000Z{postgres_backup.ARCHIVE_SUFFIX}"
+        archive.write_bytes(b"ciphertext")
+        postgres_backup.metadata_path(archive).write_text("{}", encoding="utf-8")
+        env = {
+            "AURIX_DATABASE_BACKUP_KEY": self.key,
+            "AURIX_DATABASE_BACKUP_DIR": str(self.root / "local-missing"),
+            "AURIX_DATABASE_BACKUP_OFFSITE_DIR": str(offsite),
+        }
+        with patch.object(postgres_backup, "_verify_archive", return_value={"ok": True}):
+            report = postgres_backup.verify(env)
+        self.assertNotIn("local", report)
+        self.assertEqual(report["offsite"], {"ok": True})
+
+    def test_verify_fails_when_no_local_or_offsite_archive_exists(self) -> None:
+        env = {
+            "AURIX_DATABASE_BACKUP_KEY": self.key,
+            "AURIX_DATABASE_BACKUP_DIR": str(self.root / "local-missing"),
+        }
+        with self.assertRaises(FleetError):
+            postgres_backup.verify(env)
 
 
 if __name__ == "__main__":

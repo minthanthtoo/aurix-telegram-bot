@@ -183,6 +183,30 @@ class RecoveryReadinessTests(unittest.TestCase):
         self.assertEqual(checks["fleet_enrollment"]["status"], "fail")
         self.assertIn("HTTPS", checks["fleet_enrollment"]["detail"])
 
+    def test_postgres_readiness_verifies_archive_when_requested(self) -> None:
+        values = self.base_env()
+        values["COMMERCE_DATABASE_URL"] = "postgresql://user:password@database.example/aurix"
+        values["AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE"] = "1"
+        self.write_env(values)
+        with patch(
+            "deploy.recovery_readiness.database_backup.verify",
+            return_value={"offsite": {"archive": "object://database/archive"}},
+        ) as verify:
+            report = run_audit(self.env_file, verify_archives=True)
+        verify.assert_called_once()
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["database_recovery"]["status"], "pass")
+        self.assertIn("encrypted backup archive", checks["database_recovery"]["detail"])
+
+    def test_postgres_readiness_rejects_missing_database_name(self) -> None:
+        values = self.base_env()
+        values["COMMERCE_DATABASE_URL"] = "postgresql://user:password@database.example/"
+        self.write_env(values)
+        report = run_audit(self.env_file, verify_archives=False)
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["database_recovery"]["status"], "fail")
+        self.assertIn("database user and name", checks["database_recovery"]["detail"])
+
     def test_object_store_satisfies_recovery_offsite_checks(self) -> None:
         values = self.fleet_env()
         values.pop("AURIX_DATABASE_BACKUP_OFFSITE_DIR")

@@ -75,9 +75,54 @@ def check_database(env: dict[str, str], verify_archives: bool) -> Check:
     database_url = env.get("COMMERCE_DATABASE_URL", "").strip()
     if database_url:
         parsed = urlsplit(database_url)
-        if parsed.scheme in {"postgres", "postgresql"} and parsed.hostname:
-            return Check("database_recovery", PASS, "external PostgreSQL is configured")
-        return Check("database_recovery", FAIL, "COMMERCE_DATABASE_URL must be PostgreSQL")
+        if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
+            return Check("database_recovery", FAIL, "COMMERCE_DATABASE_URL must be PostgreSQL")
+        if parsed.username is None or parsed.path in {"", "/"}:
+            return Check(
+                "database_recovery",
+                FAIL,
+                "COMMERCE_DATABASE_URL must include a database user and name",
+            )
+
+        # Hosted PostgreSQL survives loss of the control-plane VM, but a
+        # complete recovery contract should also prove the encrypted logical
+        # archive whenever the operator requests archive verification or has
+        # explicitly made the archive/off-site path mandatory.  Without that
+        # opt-in, provider durability remains the authoritative control-plane
+        # recovery source and no network call is made by this audit.
+        backup_settings = (
+            "AURIX_DATABASE_BACKUP_DIR",
+            "AURIX_DATABASE_BACKUP_KEY",
+            "AURIX_DATABASE_BACKUP_OFFSITE_DIR",
+            "AURIX_BACKUP_OBJECT_STORE_URL",
+            "AURIX_BACKUP_SUPABASE_BUCKET",
+            "AURIX_BACKUP_SUPABASE_PREFIX",
+        )
+        archive_required = verify_archives or truthy(
+            env.get("AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE")
+        )
+        archive_configured = any(has_value(env, name) for name in backup_settings)
+        if archive_required:
+            try:
+                database_backup.verify(env)
+            except (FleetError, OSError, ValueError) as exc:
+                return Check("database_recovery", FAIL, str(exc))
+            return Check(
+                "database_recovery",
+                PASS,
+                "external PostgreSQL and encrypted backup archive are verified",
+            )
+        if archive_configured:
+            return Check(
+                "database_recovery",
+                WARN,
+                "external PostgreSQL is configured; run with --verify-archives to prove the encrypted archive",
+            )
+        return Check(
+            "database_recovery",
+            PASS,
+            "external PostgreSQL is configured as the control-plane recovery source",
+        )
     if has_value(env, "DATABASE_PATH") and offsite_storage.configured(env):
         try:
             offsite_storage.from_env(env)
