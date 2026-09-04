@@ -194,6 +194,79 @@ class TelegramAdminMixin:
             ]
         )
 
+    def _send_admin_home(
+        self, chat_id: int, telegram_id: int, *, message_id: int | None = None
+    ) -> None:
+        """Render the admin dashboard, editing the active message when possible."""
+        if not self._is_admin(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        summary = ""
+        if self.commerce is not None:
+            try:
+                report = self._admin_call(telegram_id, "consistency_report")
+                summary = (
+                    f"\n\nQueue: {report.get('pending_receipts', 0)} receipt(s) pending · "
+                    f"{report.get('pending_receipt_uploads', 0)} upload(s) pending · "
+                    f"{report.get('failed_receipt_uploads', 0)} upload(s) failed · "
+                    f"{report.get('failed_jobs', 0)} failed job(s) · "
+                    f"{report.get('stale_receipts', 0)} stale review(s) · "
+                    f"{report.get('dead_notifications', 0)} dead notification(s)"
+                )
+            except Exception as exc:
+                print(f"admin dashboard error: {type(exc).__name__}", file=sys.stderr)
+        text = (
+            "AuriX Admin\n\n"
+            "Daily flow: Pending Orders → open receipt → verify the transaction "
+            "against your receiving account → Approve.\n"
+            "Use Failed Jobs to retry a reviewed Outline failure, open an order "
+            "to inspect its wallet ledger, and run Consistency before taking "
+            "payment decisions."
+            + summary
+        )
+        markup = self._admin_keyboard(telegram_id)
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+
+    def _send_owner_home(
+        self, chat_id: int, telegram_id: int, *, message_id: int | None = None
+    ) -> None:
+        """Render the owner control center without creating duplicate messages."""
+        if not self._is_owner(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        staff = self.staff_access.list_staff() if self.staff_access is not None else []
+        admins = sum(1 for item in staff if item.get("role") == "admin")
+        control_group = self.staff_access.control_group() if self.staff_access is not None else None
+        snapshot = self._admin_call(telegram_id, "receipt_system_snapshot")
+        mode = str((snapshot.get("policy") or {}).get("mode") or "manual")
+        text = (
+            "👑 AuriX Owner\n\n"
+            f"Receipt workflow  {mode.title()}\n"
+            f"Receipt storage   {'Ready' if snapshot.get('storage_configured') else 'Not configured'}\n"
+            f"Administrators    {admins} active\n"
+            f"Control group     {(control_group or {}).get('title') or 'Not connected'}\n"
+            f"Review queue      {snapshot.get('pending_receipts', 0)} receipt(s)\n\n"
+            "Full owner access is active. Use the controls below for operations, "
+            "orders, receipts, promotions, enforcement and administrator management.\n\n"
+            "Staff access is database-backed. Initial human administrators are imported "
+            "only when you connect a group with no active admin roster; later role changes "
+            "stay preview-only until owner review."
+        )
+        markup = self._owner_keyboard()
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+
     @staticmethod
     def _capacity_text(snapshot: dict[str, Any]) -> str:
         servers = snapshot.get("servers") or []
@@ -802,6 +875,50 @@ class TelegramAdminMixin:
                 [("🏠 Customer Menu", "n:start")],
             ]
         )
+
+    def _send_staff_panel(
+        self, chat_id: int, telegram_id: int, *, message_id: int | None = None
+    ) -> None:
+        """Render owner staff management in one editable, role-gated panel."""
+        if not self._is_owner(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        staff = self.staff_access.list_staff() if self.staff_access is not None else []
+        lines = [
+            "👥 Staff & Access",
+            "",
+            "Owner-only controls · changes are audited and take effect immediately.",
+        ]
+        rows: list[list[tuple[str, str]]] = []
+        for item in staff:
+            staff_id = int(item["telegram_id"])
+            role = str(item["role"])
+            name = item.get("effective_username") or item.get("effective_name") or str(staff_id)
+            prefix = "👑" if role == "owner" else "🛠"
+            lines.append(f"{prefix} {name} · {role} · tg:{staff_id}")
+            if role == "admin":
+                rows.append([(f"🛑 Remove {str(name)[:22]}", f"a:s:remove:{staff_id}")])
+        if not staff:
+            lines.append("No active staff accounts are configured.")
+        lines.extend(
+            [
+                "",
+                "To add someone, ask them to open this bot and use /whoami first.",
+                "Group sync is preview-only; it never changes roles without owner review.",
+            ]
+        )
+        rows.append([("➕ Add Administrator", "a:s:add")])
+        rows.append([("🏢 Choose Control Group", "a:s:group"), ("🔄 Sync Preview", "a:n:groupsync")])
+        rows.append([("🔄 Refresh", "a:n:staff"), ("⬅ Owner Home", "a:n:owner")])
+        text = "\n".join(lines)[:4096]
+        markup = self._inline_keyboard(rows)
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
 
     def _send_staff_notifications(
         self, chat_id: int, telegram_id: int, *, message_id: int | None = None

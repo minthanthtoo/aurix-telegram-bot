@@ -1182,6 +1182,64 @@ class TelegramBotCommerceTest(unittest.TestCase):
             }.issubset(labels)
         )
 
+    def test_staff_panel_refresh_reuses_same_message(self):
+        access = StaffAccessControl(self.db, 999)
+        access.bootstrap(owner_id=999)
+        bot_service = ClaimService(self.db, self.outline)
+        bot_service.track_user(123, "Member", username="member")
+        access.add_admin(123, 999)
+        bot = RecordingTelegramBot(
+            "test-token",
+            bot_service,
+            self.commerce,
+            {999},
+            {123},
+            staff_access=access,
+        )
+        bot.handle(self.message(999, "/staff"))
+        self.assertIn("Staff & Access", bot.sent[-1][1])
+        refresh = next(
+            button["callback_data"]
+            for row in bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["text"] == "🔄 Refresh"
+        )
+        requests = []
+        bot.request = lambda method, payload: requests.append((method, payload)) or True
+        bot.handle_callback(
+            {
+                "id": "staff-refresh",
+                "from": {"id": 999, "first_name": "Owner"},
+                "message": {
+                    "chat": {"id": 999, "type": "private"},
+                    "message_id": 42,
+                    "text": bot.sent[-1][1],
+                },
+                "data": refresh,
+            }
+        )
+        self.assertTrue(any(method == "editMessageText" for method, _ in requests))
+        self.assertFalse(any(method == "sendMessage" for method, _ in requests))
+
+    def test_admin_home_navigation_reuses_same_message(self):
+        self.bot.handle(self.message(999, "/admin"))
+        requests = []
+        self.bot.request = lambda method, payload: requests.append((method, payload)) or True
+        self.bot.handle_callback(
+            {
+                "id": "admin-home",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {
+                    "chat": {"id": 999, "type": "private"},
+                    "message_id": 43,
+                    "text": self.bot.sent[-1][1],
+                },
+                "data": "a:n:admin",
+            }
+        )
+        self.assertTrue(any(method == "editMessageText" for method, _ in requests))
+        self.assertFalse(any(method == "sendMessage" for method, _ in requests))
+
     def test_customer_can_create_and_submit_a_paid_order(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
         order = self.commerce.list_pending_orders()[0]

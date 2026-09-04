@@ -356,8 +356,26 @@ class TelegramCallbackMixin:
                         telegram_id,
                         message_id=message_id if can_edit_text else None,
                     )
+                elif entity_id == "admin":
+                    self._send_admin_home(
+                        chat_id,
+                        telegram_id,
+                        message_id=message_id if can_edit_text else None,
+                    )
+                elif entity_id == "owner":
+                    self._send_owner_home(
+                        chat_id,
+                        telegram_id,
+                        message_id=message_id if can_edit_text else None,
+                    )
                 elif entity_id == "notifications":
                     self._send_staff_notifications(
+                        chat_id,
+                        telegram_id,
+                        message_id=message_id if can_edit_text else None,
+                    )
+                elif entity_id == "staff":
+                    self._send_staff_panel(
                         chat_id,
                         telegram_id,
                         message_id=message_id if can_edit_text else None,

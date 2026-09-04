@@ -406,75 +406,11 @@ class TelegramCommandMixin:
             else:
                 self.send(chat["id"], "This promo's current giveaway window is fully claimed.")
         elif command == "/admin":
-            if not self._is_admin(telegram_id):
-                self._send_customer_fallback(chat["id"], telegram_id)
-            else:
-                summary = ""
-                if self.commerce is not None:
-                    try:
-                        report = self._admin_call(telegram_id, "consistency_report")
-                        summary = (
-                            f"\n\nQueue: {report.get('pending_receipts', 0)} receipt(s) pending · "
-                            f"{report.get('pending_receipt_uploads', 0)} upload(s) pending · "
-                            f"{report.get('failed_receipt_uploads', 0)} upload(s) failed · "
-                            f"{report.get('failed_jobs', 0)} failed job(s) · "
-                            f"{report.get('stale_receipts', 0)} stale review(s) · "
-                            f"{report.get('dead_notifications', 0)} dead notification(s)"
-                        )
-                    except Exception as exc:
-                        print(f"admin dashboard error: {type(exc).__name__}", file=sys.stderr)
-                self.send(
-                    chat["id"],
-                    "AuriX Admin\n\n"
-                    "Daily flow: Pending Orders → open receipt → verify the transaction "
-                    "against your receiving account → Approve.\n"
-                    "Use Failed Jobs to retry a reviewed Outline failure, open an order "
-                    "to inspect its wallet ledger, and run Consistency before taking "
-                    "payment decisions." + summary,
-                    self._admin_keyboard(telegram_id),
-                )
+            self._send_admin_home(chat["id"], telegram_id)
         elif command == "/owner":
-            staff = self.staff_access.list_staff() if self.staff_access is not None else []
-            admins = sum(1 for item in staff if item.get("role") == "admin")
-            control_group = (
-                self.staff_access.control_group() if self.staff_access is not None else None
-            )
-            snapshot = self._admin_call(telegram_id, "receipt_system_snapshot")
-            mode = str((snapshot.get("policy") or {}).get("mode") or "manual")
-            self.send(
-                chat["id"],
-                "👑 AuriX Owner\n\n"
-                f"Receipt workflow  {mode.title()}\n"
-                f"Receipt storage   {'Ready' if snapshot.get('storage_configured') else 'Not configured'}\n"
-                f"Administrators    {admins} active\n"
-                f"Control group     {(control_group or {}).get('title') or 'Not connected'}\n"
-                f"Review queue      {snapshot.get('pending_receipts', 0)} receipt(s)\n\n"
-                "Full owner access is active. Use the controls below for operations, "
-                "orders, receipts, promotions, enforcement and administrator management.\n\n"
-                "Staff access is database-backed. Initial human administrators are imported "
-                "only when you connect a group with no active admin roster; later role changes "
-                "stay preview-only until owner review.",
-                self._owner_keyboard(),
-            )
+            self._send_owner_home(chat["id"], telegram_id)
         elif command == "/staff":
-            staff = self.staff_access.list_staff() if self.staff_access is not None else []
-            lines = ["👥 Staff & Access", ""]
-            rows = []
-            for item in staff:
-                staff_id = int(item["telegram_id"])
-                role = str(item["role"])
-                name = item.get("effective_username") or item.get("effective_name") or str(staff_id)
-                prefix = "👑" if role == "owner" else "🛠"
-                lines.append(f"{prefix} {name} · {role} · {staff_id}")
-                if role == "admin":
-                    rows.append([(f"Remove {str(name)[:24]}", f"a:s:remove:{staff_id}")])
-            lines.extend(["", "To add someone, ask them to open this bot and use /whoami first."])
-            rows.append([("➕ Add Administrator", "a:s:add")])
-            rows.append(
-                [("🏢 Choose Control Group", "a:s:group"), ("🔄 Sync Preview", "a:n:groupsync")]
-            )
-            rows.append([("⬅ Owner Home", "a:n:owner")])
-            self.send(chat["id"], "\n".join(lines), self._inline_keyboard(rows))
+            self._send_staff_panel(chat["id"], telegram_id)
         elif command == "/notifications":
             self._send_staff_notifications(chat["id"], telegram_id)
         elif command == "/addadmin":
