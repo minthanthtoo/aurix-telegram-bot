@@ -151,6 +151,12 @@ following facts supersede its Outline-fleet rows for release decisions:
 - Provider create recovery now searches for the exact generated Droplet name
   and AuriX tag after an ambiguous response before allowing any retry; this
   prevents a timeout from creating a duplicate billable node.
+- Migration 15 adds an owner-confirmed, durable assisted credential replacement
+  workflow with source-delete retry; it does not provide automatic failover or
+  protocol conversion.
+- Provider orphan candidates now require two persisted observations and are
+  cleaned only behind a separate exact-confirmation gate; the default remains
+  read-only.
 - The live acceptance audit is `WARN`, not `PASS`: primary capacity is
   overallocated and has untracked remote keys, provider mutations are disabled,
   and stable DNS automation is not configured.

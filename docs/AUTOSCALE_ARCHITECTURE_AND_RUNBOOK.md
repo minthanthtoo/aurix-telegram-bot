@@ -80,7 +80,8 @@ Not implemented or intentionally not automatic:
 - no permanent cloud/Telegram/database secrets in user data;
 - no live provider token in the normal Telegram process;
 - no automatic activation from a merely `active` Droplet state;
-- no automatic migration of existing customer keys between servers.
+- no automatic failover or silent migration of existing customer keys;
+  migration 15 provides an owner-confirmed, durable assisted replacement path.
 
 The provider worker now has a bounded, lock-protected one-pass entrypoint and
 systemd timer. It reconciles existing tagged/explicitly managed Droplets before
