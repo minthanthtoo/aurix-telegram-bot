@@ -15,7 +15,7 @@ free instance, multiple instances, or ephemeral storage.
 - Public 3 GB claim once per rolling 30 days.
 - Paid 50 GB / 30-day plan for 3,000 MMK.
 - Paid 100 GB / 30-day plan for 6,000 MMK.
-- Screenshot-only payment submission, optional LLM field extraction, and
+- Screenshot-only payment submission, production-gated LLM field extraction, and
   mandatory human verification against the receiving account.
 - Private Supabase Storage receipt objects with database-only metadata and
   short-lived admin signed URLs; failed uploads remain retryable.
@@ -101,7 +101,7 @@ python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().
 Store it in a password manager. Replacing it later makes previously stored
 Outline access URLs unreadable; it is not a value to rotate casually.
 
-### Optional receipt-vision route
+### Receipt-vision route
 
 Automatic transaction-ID extraction requires all three values:
 
@@ -109,9 +109,11 @@ Automatic transaction-ID extraction requires all three values:
 - `RECEIPT_LLM_MODEL`: a vision-capable model available at that endpoint.
 - `RECEIPT_LLM_API_KEY`: its credential.
 
-All three may instead remain blank. The bot will still accept screenshots and
-an admin can manually type the verified transaction ID and amount. Model output
-is untrusted evidence only and can never approve or credit a payment.
+For local/manual-review development all three may remain blank. Hosted Render
+profiles set `RECEIPT_VISION_REQUIRED=1`; preflight then refuses to start until
+all three are configured, the five merchant profiles are present, and the live
+startup canary reaches the gateway. Model output is untrusted evidence only and
+can never approve or credit a payment.
 
 ## 4. Verify and publish the source repository
 
@@ -195,7 +197,8 @@ Keep these Blueprint defaults:
 | `SUPABASE_RECEIPTS_BUCKET` | `payment-receipts` (create it as private) |
 | `RECEIPT_STORAGE_REQUIRED` | `1` |
 | `ALLOW_TEXT_PAYMENT_REFERENCES` | `0` |
-| `RECEIPT_LLM_*` | all configured, or all blank |
+| `RECEIPT_VISION_REQUIRED` | `1` for hosted production |
+| `RECEIPT_LLM_*` | all configured when vision is required |
 
 Do not add `PORT`; a background worker does not serve HTTP. Do not remove the
 disk merely to use a free plan: doing so loses claims, order state, wallets,
@@ -207,12 +210,12 @@ every replacement/restart.
 A healthy startup contains these lines, without secret values:
 
 ```text
-Render preflight passed: single-worker persistent disk configuration is valid
+Render preflight passed: single-worker persistent disk configuration and live dependencies are valid
 Bot authorized: @your_bot_username
 Outline connected: version ...
 ```
 
-Expected non-fatal warning when the LLM values are blank:
+Local/manual-review development may show this warning when the LLM values are blank:
 
 ```text
 WARNING: receipt vision extraction is disabled; screenshots require manual transaction entry.
@@ -365,12 +368,13 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<server-only service-role key>
 SUPABASE_RECEIPTS_BUCKET=payment-receipts
 RECEIPT_STORAGE_REQUIRED=1
+RECEIPT_VISION_REQUIRED=1
 ```
 
 Do not set `/var/data/bot.db` in this profile; there is no persistent Render
 disk. Leave `TRIAL_TELEGRAM_IDS` blank and keep
-`ALLOW_TEXT_PAYMENT_REFERENCES=0`. The remaining Telegram, Outline, Fernet, and
-optional LLM variables are the same as the paid profile.
+`ALLOW_TEXT_PAYMENT_REFERENCES=0`. The remaining Telegram, Outline, Fernet, LLM,
+and merchant-profile variables are the same as the paid profile.
 
 Create `payment-receipts` as a private bucket before testing. New receipt
 objects are stored under `orders/{order-id}/{evidence-id}.{extension}`. Only
