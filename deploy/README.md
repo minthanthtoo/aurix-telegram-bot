@@ -348,6 +348,11 @@ The Render and DigitalOcean preflight canaries also query the gateway's
 ID is not advertised. This catches model-name drift before a customer receipt
 is accepted.
 
+Both deployment preflights also verify that the five bundled payment cards
+(`assets/payment_qr/kbzpay.png`, `wavepay.png`, `ayapay.png`, `uabpay.png`, and
+`cbpay.png`) are present and non-empty. A release with an incomplete QR set is
+stopped before the bot can show a broken payment chooser.
+
 To inspect the latest stored receipt without changing its review state, run
 `deploy/receipt_pipeline_smoke.py`. It reads `COMMERCE_DATABASE_URL` when the
 control plane uses hosted PostgreSQL, or `DATABASE_PATH` for SQLite, downloads
