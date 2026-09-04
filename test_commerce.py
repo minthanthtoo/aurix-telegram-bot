@@ -533,6 +533,16 @@ class CommerceServiceTest(unittest.TestCase):
         with self.assertRaisesRegex(CommerceError, "already been submitted"):
             self.service.submit_payment(456, second.order_id, "Manual", " tx-42/ab ", self.now)
 
+    def test_consistency_report_surfaces_legacy_duplicate_payment_references(self):
+        first = self.service.create_order(123, "Min", "basic_50gb", self.now)
+        second = self.service.create_order(456, "Other", "basic_50gb", self.now)
+        self.service.submit_payment(123, first.order_id, "manual", "Tx-42/AB", self.now)
+        with self.database.connect() as connection:
+            connection.execute("DROP INDEX payments_normalized_reference_unique")
+        self.service.submit_payment(456, second.order_id, "Manual", " tx-42/ab ", self.now)
+        report = self.service.consistency_report(self.now)
+        self.assertEqual(report["duplicate_payment_references"], 1)
+
     def test_worker_provisions_once_and_queues_a_deduplicated_notification(self):
         order = self._paid_order()
         approval = self.service.approve_order(order.order_id, 999, self.now)

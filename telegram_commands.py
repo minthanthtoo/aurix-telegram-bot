@@ -1119,6 +1119,7 @@ class TelegramCommandMixin:
                 report = self._admin_call(telegram_id, "consistency_report")
                 issue_keys = {
                     "duplicate_open_orders",
+                    "duplicate_payment_references",
                     "approved_missing_subscription",
                     "approved_missing_provision_job",
                     "stale_receipts",
