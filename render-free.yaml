@@ -31,6 +31,20 @@ services:
         sync: false
       - key: OUTLINE_CERT_SHA256
         sync: false
+      - key: OUTLINE_SERVERS_JSON
+        sync: false
+      - key: OUTLINE_DEFAULT_SERVER_ID
+        sync: false
+      - key: OUTLINE_REQUEST_TIMEOUT_SECONDS
+        value: "5"
+      - key: OUTLINE_CIRCUIT_BREAKER_SECONDS
+        value: "60"
+      - key: AURIX_SERVER_HEALTH_MAX_AGE_SECONDS
+        value: "900"
+      - key: AURIX_ENDPOINT_FAILURE_THRESHOLD
+        value: "3"
+      - key: AURIX_ENDPOINT_RECOVERY_THRESHOLD
+        value: "2"
       - key: AURIX_ACCESS_URL_KEY
         sync: false
       - key: COMMERCE_DATABASE_URL
@@ -51,6 +65,10 @@ services:
         sync: false
       - key: RECEIPT_LLM_API_KEY
         sync: false
+      - key: RECEIPT_LLM_FALLBACK_MODELS
+        sync: false
+      - key: RECEIPT_LLM_SELECTION_MODE
+        value: first_acceptable
       - key: PAYMENT_RECIPIENTS_JSON
         sync: false
       - key: ALLOW_TEXT_PAYMENT_REFERENCES
@@ -67,3 +85,7 @@ services:
         sync: false
       - key: AURIX_FLEET_ENROLLMENT_KEY
         sync: false
+      - key: AURIX_FLEET_NODES_JSON
+        sync: false
+      - key: AURIX_FLEET_STRICT_ALLOCATION_VALIDATION
+        value: "0"
