@@ -33,6 +33,14 @@ except ModuleNotFoundError:  # Direct execution sets deploy/ as sys.path[0].
 
 TRUTHY = {"1", "true", "yes", "on"}
 
+PAYMENT_QR_ASSETS = {
+    "kbzpay": "kbzpay.png",
+    "wavepay": "wavepay.png",
+    "ayapay": "ayapay.png",
+    "uabpay": "uabpay.png",
+    "cbpay": "cbpay.png",
+}
+
 
 def fail(message: str) -> None:
     raise SystemExit(f"DigitalOcean preflight failed: {message}")
@@ -45,7 +53,20 @@ def _required(name: str) -> str:
     return value
 
 
+def _check_payment_qr_assets() -> None:
+    """Refuse a DigitalOcean release with an incomplete payment chooser."""
+    directory = Path(__file__).resolve().parents[1] / "assets" / "payment_qr"
+    missing = [
+        provider
+        for provider, filename in PAYMENT_QR_ASSETS.items()
+        if not (directory / filename).is_file() or (directory / filename).stat().st_size <= 0
+    ]
+    if missing:
+        fail("missing or empty payment QR asset(s): " + ", ".join(missing))
+
+
 def _validate_configuration() -> dict[str, str]:
+    _check_payment_qr_assets()
     # Keep preflight aligned with the portable recovery path.  The reconciler
     # intentionally restores root-only SSH material from the private dotenv
     # before opening an SSH session; rejecting that same configuration here

@@ -9,10 +9,18 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
-from deploy.digitalocean_preflight import _validate_configuration, _validate_live, main
+from deploy.digitalocean_preflight import (
+    _check_payment_qr_assets,
+    _validate_configuration,
+    _validate_live,
+    main,
+)
 
 
 class DigitalOceanPreflightTest(unittest.TestCase):
+    def test_all_payment_qr_assets_are_present_and_non_empty(self):
+        _check_payment_qr_assets()
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.database = Path(self.tmp.name) / "bot.db"
