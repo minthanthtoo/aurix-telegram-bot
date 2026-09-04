@@ -269,6 +269,10 @@ offsite copy when configured. The local project reserves the ignored
 `.fleet-backups/` directory for operator-side encrypted copies; encrypted
 archives must still never be committed.
 
+On a fresh control-plane host, a local node archive may not exist yet. In that
+case verification accepts the newest authenticated off-site node archive
+directly; when both copies exist, both are checked.
+
 Run the full sanitized readiness audit before declaring recovery complete:
 
 ```bash

@@ -128,6 +128,25 @@ class FleetBackupTests(unittest.TestCase):
             with self.assertRaises(FleetError):
                 verify_node(node, env)
 
+    def test_verifies_offsite_node_archive_when_fresh_host_has_no_local_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = FleetNode("sg-a", "Singapore A", "192.0.2.10", 61603, 443)
+            offsite = root / "offsite" / node.node_id
+            offsite.mkdir(parents=True)
+            archive = offsite / "20260904T000000Z.tar.gz.fernet"
+            archive.write_bytes(b"ciphertext")
+            write_private(metadata_path(archive), b"{}")
+            env = {
+                "AURIX_FLEET_BACKUP_KEY": Fernet.generate_key().decode(),
+                "AURIX_FLEET_BACKUP_DIR": str(root / "local-missing"),
+                "AURIX_FLEET_BACKUP_OFFSITE_DIR": str(root / "offsite"),
+            }
+            with patch.object(fleet_backup, "verify_archive", return_value={"ok": True}):
+                result = verify_node(node, env)
+            self.assertNotIn("local", result)
+            self.assertEqual(result["offsite"], {"ok": True})
+
     def test_object_store_replaces_offsite_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

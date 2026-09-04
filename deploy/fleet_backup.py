@@ -239,8 +239,17 @@ def backup_node(node: FleetNode, env: dict[str, str]) -> Path:
 
 
 def verify_node(node: FleetNode, env: dict[str, str]) -> dict[str, object]:
-    local = verify_archive(env, latest_archive(backup_root(env, node)))
-    result: dict[str, object] = {"node": node.node_id, "local": local}
+    """Verify every available recovery source for a node.
+
+    A rebuilt control plane may have only the off-site copy of a node's
+    Shadowbox state.  Do not require a local archive before checking the
+    configured mirror; when local state is present, still verify it so
+    corruption cannot be silently masked by an off-site copy.
+    """
+    result: dict[str, object] = {"node": node.node_id}
+    local_root = backup_root(env, node)
+    if local_root.is_dir() and any(local_root.glob("*.tar.gz.fernet")):
+        result["local"] = verify_archive(env, latest_archive(local_root))
     if offsite_storage.configured(env):
         object_key = offsite_storage.latest_key(
             env, f"fleet/{node.node_id}/", ".tar.gz.fernet"
@@ -255,6 +264,10 @@ def verify_node(node: FleetNode, env: dict[str, str]) -> dict[str, object]:
         result["offsite"] = verify_archive(env, latest_archive(remote_root))
     elif truthy(env.get("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE")):
         raise FleetError("offsite backups are required but AURIX_FLEET_BACKUP_OFFSITE_DIR is empty")
+    if len(result) == 1:
+        raise FleetError(
+            f"no authenticated backup archive is available for node {node.node_id}"
+        )
     return result
 
 
