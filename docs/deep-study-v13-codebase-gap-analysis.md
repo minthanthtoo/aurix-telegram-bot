@@ -34,8 +34,9 @@ multi-node Outline control plane with conservative health evidence, not a
 complete adaptive V13 connectivity platform and not something that should be
 replaced wholesale.
 
-Current evidence is strong for code and controlled operations (405 tests, live
-three-node health, CI-gated deployment, and verified encrypted archives), but
+Current evidence is strong for code and controlled operations (405 tests,
+CI-gated deployment, a three-node registry, and backup-verification tooling),
+but
 not yet for unrestricted customer admission: allocation normalization, orphan
 classification, stable DNS, real Telegram/payment canaries, and sustained
 observation remain explicit gates.
