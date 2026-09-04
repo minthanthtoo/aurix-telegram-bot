@@ -45,15 +45,19 @@ engineering estimates, not production traffic or revenue metrics.
   wallet, restart-safe interaction, receipt-fingerprint, Telegram timestamp
   formatting, notification-lease, deterministic-entitlement-recovery, receipt-model-selection, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (382 tests
-  passing at the latest verification).
-- Live deployment readiness: **staged, not 100%**; all three declared nodes,
-  the bot, worker/timers, provider inventory, firewall boundary, encrypted local
-  and Supabase offsite backups, and pinned-TLS management/data-port canaries are
-  verified. A temporary-destination restore drill from the private off-site
-  SQLite archive and fleet archive verification also passed. Stable DNS, a real
-  Telegram-account canary, allocation normalization/strict validation,
-  untracked-key audit, live enrollment callback/worker canary, and sustained observation remain.
+  production-acceptance suite (390 tests passing at the latest verification).
+- Live deployment readiness: **staged, not 100%**. The current sanitized
+  acceptance run passes source, lint, compilation, tests, required secret names,
+  fleet-manifest parsing, backup-key validation, and the recovery entrypoint,
+  but fails database/off-site recovery readiness because the local `.env` does
+  not declare a hosted database or off-site database/fleet destination. Legacy
+  primary allocation is also over-subscribed (70 declared slots against 20
+  saleable keys), archive decryptability has not been run in this environment,
+  provider mutations remain disabled, stable DNS is not configured, and live
+  Render/systemd checks were not requested by the audit. A real Telegram
+  account canary, allocation normalization/strict validation, untracked-key
+  audit, live enrollment callback/worker canary, and sustained observation
+  remain owner-controlled gates.
 - End-to-end MVP readiness: approximately **90%** for the controlled paid-
   concierge scope. This is a progress estimate, not a claim that automated
   payment verification, reseller features, or unrestricted scale-out are live.
