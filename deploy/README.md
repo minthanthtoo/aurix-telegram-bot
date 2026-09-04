@@ -149,9 +149,28 @@ and the challenge/concurrency tests pass.
 
 On this 1-GB staging Droplet, leave `COMMERCE_DATABASE_URL` empty unless a
 separate PostgreSQL service is already provisioned and its resource budget is
-known. When set, the free-claim SQLite database remains at `DATABASE_PATH`,
-while orders, payments, subscriptions, jobs, notifications, and audit state use
-PostgreSQL.
+known. When set, **all** bot state (free claims, orders, payments,
+subscriptions, jobs, notifications, wallets, and audit state) uses PostgreSQL;
+there is no second SQLite free-claim database. Migrate an existing SQLite
+installation before switching the service to that URL:
+
+```sh
+python deploy/migrate_sqlite_to_postgres.py \
+  --source /var/lib/aurix-bot/bot.db \
+  --env-file /etc/aurix-bot/aurix.env \
+  --dry-run
+python deploy/migrate_sqlite_to_postgres.py \
+  --source /var/lib/aurix-bot/bot.db \
+  --env-file /etc/aurix-bot/aurix.env \
+  --confirm
+```
+
+The first command inspects the source without contacting PostgreSQL. The
+second initializes the target schema and performs an idempotent copy. It never
+updates or deletes a conflicting target row; a value mismatch fails closed and
+must be reconciled before cutover. Take an encrypted SQLite backup before the
+cutover and keep the old service stopped until the target row counts and a
+Telegram canary are verified.
 
 Commerce migration 17 enables PostgreSQL row-level security on
 `key_termination_events` without adding public/`authenticated` policies. This

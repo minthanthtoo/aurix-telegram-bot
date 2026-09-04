@@ -86,7 +86,7 @@ Optional:
 - `AURIX_CONTROL_GROUP_ID` — optional trusted numeric `-100...` bootstrap override. Normally the owner connects the group from **Owner Controls → Choose Control Group**; Telegram supplies and AuriX persists the numeric ID without invite-link parsing.
 - `ADMIN_SCOPE_CLEANUP_IDS` — optional one-time comma-separated IDs whose old Telegram admin command scopes must be deleted after an administrator is removed
 - `TRIAL_TELEGRAM_IDS` — legacy allowlist; leave empty for public daily 300 MB and monthly 3 GB claims
-- `COMMERCE_DATABASE_URL` — PostgreSQL URL for all bot state when using the hosted PostgreSQL profile; empty uses SQLite
+- `COMMERCE_DATABASE_URL` — PostgreSQL URL for all bot state when using the hosted PostgreSQL profile; empty uses SQLite. Existing SQLite state can be copied with the guarded `deploy/migrate_sqlite_to_postgres.py` cutover tool.
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — server-side credentials for the private receipt-evidence bucket. Never use the publishable/anon key here.
 - `SUPABASE_RECEIPTS_BUCKET` — private bucket name (default `payment-receipts`)
 - `RECEIPT_STORAGE_REQUIRED` — set to `1` in hosted deployments so a receipt cannot enter review until its object is stored

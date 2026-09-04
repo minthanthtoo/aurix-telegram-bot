@@ -27,7 +27,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Remote inventory review | Implemented locally | Owner-only in-place classification of untracked present keys as reviewed external or unreviewed; never adopts/deletes credentials and never hides capacity usage |
 | Auditability | Implemented locally | Order, payment, approval, rejection, provision, revoke events |
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
-| Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; hosted DB provisioning and live migration remain gates |
+| Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; guarded `deploy/migrate_sqlite_to_postgres.py` preserves existing SQLite state; hosted DB provisioning, cutover, and live restore remain gates |
 | Independent worker / web control plane | Worker and callback endpoint implemented; live enrollment pending | The guarded DigitalOcean worker/timer and encrypted one-time `/fleet/register` callback (Render or standalone TLS service) are in source; live endpoint/worker canary remains a gate. Render profiles now run read-only Telegram, Supabase, LLM, database, and pinned-Outline startup canaries. |
 | Live Telegram and Outline smoke test | Three management/data endpoints verified; customer tranche controlled | Bot, primary, Singapore-B, and BKK/Nube Outline endpoints, firewall, pinned-TLS API canaries, and a reversible BKK data-port/key create-delete canary are verified; a real Telegram-account canary and longer observation remain |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
@@ -43,9 +43,10 @@ engineering estimates, not production traffic or revenue metrics.
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
   wallet, restart-safe interaction, receipt-fingerprint, Telegram timestamp
-  formatting, notification-lease, deterministic-entitlement-recovery, receipt-model-selection, and
+  formatting, notification-lease, deterministic-entitlement-recovery, receipt-model-selection,
+  SQLite→PostgreSQL migration safety, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (411 tests passing at the latest verification).
+  production-acceptance suite (416 tests passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**. The current sanitized
   acceptance run passes source, lint, compilation, tests, required secret names,
   fleet-manifest parsing, backup-key validation, and the recovery entrypoint,
