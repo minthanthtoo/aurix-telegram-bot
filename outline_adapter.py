@@ -101,6 +101,13 @@ class OutlineClient:
         with self._circuit_lock:
             self._unavailable_until = 0.0
         if response.status not in accepted_statuses:
+            # A reachable but overloaded/unhealthy management API should be
+            # treated like a transport outage.  Do not trip on ordinary
+            # caller errors (for example 404/400), which would unnecessarily
+            # block unrelated keys on the same endpoint.
+            if response.status == 429 or 500 <= response.status <= 599:
+                with self._circuit_lock:
+                    self._unavailable_until = time.monotonic() + self.circuit_breaker_seconds
             raise OutlineError(f"Outline returned HTTP {response.status}", status=response.status)
         if response.status == 404:
             return None
