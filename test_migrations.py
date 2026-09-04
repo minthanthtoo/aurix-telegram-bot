@@ -21,11 +21,13 @@ class MigrationRegistryTest(unittest.TestCase):
             with open_sqlite_connection(path) as connection:
                 connection.executescript(
                     """CREATE TABLE payments (
+                           id TEXT PRIMARY KEY,
                            provider TEXT NOT NULL,
+                           provider_reference TEXT NOT NULL,
                            normalized_reference TEXT NOT NULL
                        );
-                       INSERT INTO payments VALUES ('manual', 'tx-1');
-                       INSERT INTO payments VALUES ('MANUAL', 'tx-1');"""
+                       INSERT INTO payments VALUES ('payment-1', 'manual', 'tx-1', 'tx-1');
+                       INSERT INTO payments VALUES ('payment-2', 'MANUAL', 'tx-1', 'tx-1');"""
                 )
                 with self.assertRaisesRegex(MigrationError, "manual reconciliation"):
                     _add_normalized_payment_reference_guard(connection)

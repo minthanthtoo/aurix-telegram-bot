@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
+from commerce_models import _normalize_reference
+
 
 UTC = timezone.utc
 
@@ -238,6 +240,18 @@ def _add_normalized_payment_reference_guard(connection: Any) -> None:
     auto-merged: payment evidence is immutable and an operator must decide
     which records are legitimate before the stronger constraint is enabled.
     """
+    # Recompute every legacy value, not only blank columns.  Earlier releases
+    # used a narrower SQL normalizer on some databases and could leave tabs or
+    # other Unicode whitespace in an apparently populated value.
+    for payment in connection.execute(
+        "SELECT id, provider_reference, normalized_reference FROM payments"
+    ).fetchall():
+        normalized = _normalize_reference(payment["provider_reference"])
+        if str(payment["normalized_reference"] or "") != normalized:
+            connection.execute(
+                "UPDATE payments SET normalized_reference = ? WHERE id = ?",
+                (normalized, payment["id"]),
+            )
     duplicate = connection.execute(
         """SELECT 1
            FROM payments
@@ -1330,6 +1344,8 @@ COMMERCE_MIGRATIONS = (
         # collisions, so startup fails closed with a safe remediation message.
         sqlite_hook=_add_normalized_payment_reference_guard,
         postgres_statements=(
+            """UPDATE payments
+               SET normalized_reference = lower(regexp_replace(provider_reference, '[[:space:]]+', '', 'g'))""",
             """CREATE UNIQUE INDEX IF NOT EXISTS payments_normalized_reference_unique
                ON payments(lower(provider), normalized_reference)
                WHERE normalized_reference <> ''""",
