@@ -130,6 +130,8 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("free_access", 6, "staff_notification_preferences"),
                     ("free_access", 7, "customer_quota_alert_preferences"),
                     ("free_access", 8, "free_key_server_identity"),
+                    ("free_access", 9, "durable_free_provisioning_intents"),
+                    ("free_access", 10, "free_intent_server_identity"),
                 ],
             )
 

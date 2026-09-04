@@ -366,6 +366,13 @@ class TelegramCommandMixin:
                     "• Paid 100 GB — 6,000 MMK for 30 days",
                     self._key_delivery_keyboard(str(result.access_url)),
                 )
+            elif result.pending:
+                self.send(
+                    chat["id"],
+                    "⏳ Your promo slot is reserved and the Outline key is being prepared. "
+                    "Open My VPN in a moment to retrieve it.",
+                    self._customer_keyboard(telegram_id),
+                )
             elif result.outcome == "already_won":
                 self.send(
                     chat["id"],
@@ -807,6 +814,13 @@ class TelegramCommandMixin:
                     "Your promo gift is active. Monthly 3 GB returns automatically when the "
                     "gift or promo season ends.",
                 )
+            elif result.pending:
+                self.send(
+                    chat["id"],
+                    "⏳ Your monthly 3 GB key is being prepared safely. "
+                    "Open My VPN in a moment to retrieve it; your trial slot is reserved.",
+                    self._customer_keyboard(telegram_id),
+                )
             elif result.access_url:
                 self.send(
                     chat["id"],
@@ -1229,6 +1243,13 @@ class TelegramCommandMixin:
                     chat["id"],
                     "Your promo gift is active. Daily 300 MB returns automatically when the "
                     "gift or promo season ends.",
+                )
+            elif result.pending:
+                self.send(
+                    chat["id"],
+                    "⏳ Your daily 300 MB key is being prepared safely. "
+                    "Open My VPN in a moment to retrieve it; your claim is reserved.",
+                    self._customer_keyboard(telegram_id),
                 )
             elif result.access_url:
                 expiry = format_user_datetime(result.expires_at)

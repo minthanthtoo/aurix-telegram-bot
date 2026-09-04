@@ -260,6 +260,9 @@ class TelegramMaintenanceMixin:
         metrics = metrics_result if isinstance(metrics_result, dict) else {}
         if metrics_result is None:
             _latency_log("maintenance_metrics", started_at, status="error")
+        free_intent_worker = getattr(self.service, "process_provisioning_intents", None)
+        if callable(free_intent_worker):
+            run_stage("free_provisioning", free_intent_worker)
         # Quota first preserves the more informative cause when a key is both
         # over quota and past its wall-clock entitlement.
         run_stage("free_quota", lambda: self.service.enforce_quota(metrics=metrics))

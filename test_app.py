@@ -134,6 +134,71 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(self.outline.created[0][1], 300_000_000)
         self.assertEqual(self.outline.created[0][0], "123-FREE300MB-24hr-202608270307")
 
+    def test_free_remote_create_runs_after_reservation_commit(self):
+        observed = []
+        database = self.db
+
+        class ObservingOutline(FakeOutline):
+            def create_key(self, name, limit_bytes):
+                with database.connect() as connection:
+                    row = connection.execute(
+                        """SELECT status FROM free_provisioning_intents
+                           WHERE telegram_id = 123 ORDER BY created_at DESC LIMIT 1"""
+                    ).fetchone()
+                    observed.append(row["status"] if row else None)
+                return super().create_key(name, limit_bytes)
+
+        service = ClaimService(self.db, ObservingOutline())
+        result = service.claim(123, "Min", self.now)
+
+        self.assertEqual(result.access_url, "ss://secret")
+        self.assertEqual(observed, ["running"])
+        with self.db.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM free_provisioning_intents WHERE telegram_id = 123"
+                ).fetchone()[0],
+                "done",
+            )
+
+    def test_free_intent_worker_recovers_a_request_crash_without_duplicate_key(self):
+        with self.db.connect() as connection:
+            self.db.begin_write(connection)
+            connection.execute(
+                """INSERT INTO users (telegram_id, first_name, created_at)
+                   VALUES (?, ?, ?)""",
+                (123, "Min", self.now.isoformat()),
+            )
+            service = self.service
+            service._insert_free_intent(
+                connection,
+                telegram_id=123,
+                kind="daily",
+                campaign_code=None,
+                window_start=None,
+                winner_number=None,
+                server_id="primary",
+                outline_key_id=service._deterministic_slot_id("daily", "123", "first"),
+                key_name="123-FREE300MB-24hr-202608270307",
+                quota_bytes=300_000_000,
+                duration_days=1,
+                claim_started_at=self.now.isoformat(),
+            )
+
+        self.assertEqual(self.service.process_provisioning_intents(self.now), 1)
+        self.assertEqual(len(self.outline.created), 1)
+        with self.db.connect() as connection:
+            intent = connection.execute(
+                "SELECT status FROM free_provisioning_intents WHERE telegram_id = 123"
+            ).fetchone()
+            key = connection.execute("SELECT status FROM keys WHERE telegram_id = 123").fetchone()
+            user = connection.execute(
+                "SELECT last_claim_at FROM users WHERE telegram_id = 123"
+            ).fetchone()
+        self.assertEqual(intent["status"], "done")
+        self.assertEqual(key["status"], "active")
+        self.assertEqual(user["last_claim_at"], self.now.isoformat())
+
     def test_claim_key_name_prefers_sanitized_telegram_username(self):
         self.service.claim(123, "Min", self.now, username="@min_user")
         self.assertEqual(self.outline.created[0][0], "min_user-FREE300MB-24hr-202608270307")

@@ -147,6 +147,88 @@ def _rebuild_paid_keys_for_server_identity(connection: Any) -> None:
         raise MigrationError("Paid key identity migration broke a foreign-key reference")
 
 
+def _rebuild_free_intents_for_server_identity(connection: Any) -> None:
+    """Replace the legacy global intent ID uniqueness with server scope."""
+    if not connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'free_provisioning_intents'"
+    ).fetchone():
+        return
+    has_global_unique = False
+    for index in connection.execute("PRAGMA index_list(free_provisioning_intents)").fetchall():
+        if not bool(index[2]):
+            continue
+        columns = [
+            row[2]
+            for row in connection.execute(f"PRAGMA index_info({index[1]})").fetchall()
+        ]
+        if columns == ["outline_key_id"]:
+            has_global_unique = True
+            break
+    if not has_global_unique:
+        return
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """CREATE TABLE free_provisioning_intents_server_scoped (
+                   id TEXT PRIMARY KEY,
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   kind TEXT NOT NULL CHECK (kind IN ('daily', 'trial', 'promo')),
+                   campaign_code TEXT,
+                   window_start TEXT,
+                   winner_number INTEGER,
+                   server_id TEXT NOT NULL,
+                   outline_key_id TEXT NOT NULL,
+                   key_name TEXT NOT NULL,
+                   quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                   duration_days INTEGER NOT NULL CHECK (duration_days > 0),
+                   claim_started_at TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'running', 'done', 'failed', 'cancelled')),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   last_error TEXT,
+                   key_id INTEGER,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   UNIQUE (server_id, outline_key_id)
+               )"""
+        )
+        connection.execute(
+            """INSERT INTO free_provisioning_intents_server_scoped
+               SELECT id, telegram_id, kind, campaign_code, window_start, winner_number,
+                      server_id, outline_key_id, key_name, quota_bytes, duration_days,
+                      claim_started_at, status, attempts, next_attempt_at, locked_at,
+                      last_error, key_id, created_at, completed_at
+                 FROM free_provisioning_intents"""
+        )
+        connection.execute("DROP TABLE free_provisioning_intents")
+        connection.execute(
+            "ALTER TABLE free_provisioning_intents_server_scoped RENAME TO free_provisioning_intents"
+        )
+        connection.execute(
+            """CREATE UNIQUE INDEX free_provisioning_claim_slot
+               ON free_provisioning_intents(telegram_id, kind, claim_started_at)"""
+        )
+        connection.execute(
+            """CREATE INDEX free_provisioning_due
+               ON free_provisioning_intents(status, next_attempt_at)"""
+        )
+        connection.execute(
+            """CREATE UNIQUE INDEX free_provisioning_promo_user
+               ON free_provisioning_intents(campaign_code, telegram_id)
+               WHERE kind = 'promo' AND status IN ('pending', 'running', 'done')"""
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+
 FREE_ACCESS_MIGRATIONS = (
     Migration(1, "legacy_free_access_schema"),
     Migration(
@@ -393,6 +475,89 @@ FREE_ACCESS_MIGRATIONS = (
             "ALTER TABLE keys ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'primary'",
             "ALTER TABLE keys DROP CONSTRAINT IF EXISTS keys_outline_key_id_key",
             "CREATE UNIQUE INDEX IF NOT EXISTS free_keys_server_external ON keys(server_id, outline_key_id)",
+        ),
+    ),
+    Migration(
+        9,
+        "durable_free_provisioning_intents",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS free_provisioning_intents (
+                   id TEXT PRIMARY KEY,
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   kind TEXT NOT NULL CHECK (kind IN ('daily', 'trial', 'promo')),
+                   campaign_code TEXT,
+                   window_start TEXT,
+                   winner_number INTEGER,
+                   server_id TEXT NOT NULL,
+                   outline_key_id TEXT NOT NULL,
+                   key_name TEXT NOT NULL,
+                   quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                   duration_days INTEGER NOT NULL CHECK (duration_days > 0),
+                   claim_started_at TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'running', 'done', 'failed', 'cancelled')),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   last_error TEXT,
+                   key_id INTEGER,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   UNIQUE (server_id, outline_key_id)
+               )""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS free_provisioning_claim_slot
+               ON free_provisioning_intents(telegram_id, kind, claim_started_at)""",
+            """CREATE INDEX IF NOT EXISTS free_provisioning_due
+               ON free_provisioning_intents(status, next_attempt_at)""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS free_provisioning_promo_user
+               ON free_provisioning_intents(campaign_code, telegram_id)
+               WHERE kind = 'promo' AND status IN ('pending', 'running', 'done')""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS free_provisioning_intents (
+                   id TEXT PRIMARY KEY,
+                   telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
+                   kind TEXT NOT NULL CHECK (kind IN ('daily', 'trial', 'promo')),
+                   campaign_code TEXT,
+                   window_start TEXT,
+                   winner_number INTEGER,
+                   server_id TEXT NOT NULL,
+                   outline_key_id TEXT NOT NULL,
+                   key_name TEXT NOT NULL,
+                   quota_bytes BIGINT NOT NULL CHECK (quota_bytes > 0),
+                   duration_days INTEGER NOT NULL CHECK (duration_days > 0),
+                   claim_started_at TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'running', 'done', 'failed', 'cancelled')),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   last_error TEXT,
+                   key_id BIGINT,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   UNIQUE (server_id, outline_key_id)
+               )""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS free_provisioning_claim_slot
+               ON free_provisioning_intents(telegram_id, kind, claim_started_at)""",
+            """CREATE INDEX IF NOT EXISTS free_provisioning_due
+               ON free_provisioning_intents(status, next_attempt_at)""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS free_provisioning_promo_user
+               ON free_provisioning_intents(campaign_code, telegram_id)
+               WHERE kind = 'promo' AND status IN ('pending', 'running', 'done')""",
+        ),
+    ),
+    Migration(
+        10,
+        "free_intent_server_identity",
+        sqlite_hook=_rebuild_free_intents_for_server_identity,
+        sqlite_statements=(
+            "CREATE UNIQUE INDEX IF NOT EXISTS free_provisioning_server_external "
+            "ON free_provisioning_intents(server_id, outline_key_id)",
+        ),
+        postgres_statements=(
+            "ALTER TABLE free_provisioning_intents DROP CONSTRAINT IF EXISTS free_provisioning_intents_outline_key_id_key",
+            "CREATE UNIQUE INDEX IF NOT EXISTS free_provisioning_server_external ON free_provisioning_intents(server_id, outline_key_id)",
         ),
     ),
 )

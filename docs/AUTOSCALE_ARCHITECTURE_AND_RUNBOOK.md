@@ -48,6 +48,9 @@ The current code provides:
 - order-time paid capacity reservation;
 - deterministic least-utilized server selection;
 - server-scoped free, promo, and paid usage/key lookup;
+- restart-safe free/trial/promo provisioning intents committed before remote
+  Outline effects, with pending reservations counted during admission and a
+  maintenance-worker retry/recovery path;
 - partial-outage-safe quota enforcement;
 - degraded startup when all Outline endpoints are unavailable;
 - durable `infrastructure_jobs` and `infrastructure_events`;
@@ -232,6 +235,19 @@ Paid orders reserve capacity before receipt submission. Cancellation/rejection
 releases the reservation. Free/promo creation increments the reconciled remote
 count in the same durable transaction after successful remote creation; the next
 inventory pass replaces that estimate with observed truth.
+
+Free, monthly-trial, and giveaway issuance follows the same external-effect
+discipline as paid provisioning. A committed `free_provisioning_intents` row
+contains the server, deterministic Outline key ID, tier, quota, duration, and
+retry state before the Management API call. The caller may finish synchronously;
+if it cannot, Telegram reports that the key is being prepared and the
+`free_provisioning` maintenance stage claims due rows. A stale worker lease is
+reset, transient failures are retried with a bounded backoff, and a completed
+intent is finalized exactly once in the local database. Pending/running rows
+consume tier and physical-key headroom so concurrent requests cannot overbook a
+node. The real Outline client uses deterministic `PUT`/read-after-ambiguous
+recovery; legacy adapters that only expose non-idempotent `POST` remain a
+bounded compatibility risk and should be retired before a multi-writer rollout.
 
 Traffic commitment is conservative: active/pending quota commitments plus the
 new requested quota must fit the declared server budget. It is not a cloud bill

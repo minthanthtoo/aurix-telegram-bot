@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ports import OutlineGateway
+from commerce_models import CommerceError
 from quota_alerts import (
     get_quota_alert_preferences,
     reached_alert,
@@ -53,6 +54,16 @@ GIVEAWAY_WINNER_LIMIT = 5
 
 
 QUOTA_WARNING_THRESHOLDS = ((25, 0.25), (10, 0.10), (5, 0.05))
+
+
+# Free/trial/promo issuance uses the same bounded retry posture as paid
+# provisioning, but keeps its own table because these entitlements do not have
+# a paid subscription foreign key.  The intent is committed before any remote
+# Outline call; a restart can therefore finish or retry it without issuing a
+# second deterministic key.
+FREE_INTENT_RETRY_DELAY = timedelta(minutes=1)
+FREE_INTENT_STALE_AFTER = timedelta(minutes=5)
+FREE_INTENT_MAX_ATTEMPTS = 8
 
 
 def _outline_key_name(
@@ -102,6 +113,7 @@ class ClaimResult:
     expires_at: datetime | None = None
     next_claim_at: datetime | None = None
     denied_reason: str | None = None
+    pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,6 +127,7 @@ class GiveawayResult:
     winner_number: int | None = None
     remaining_slots: int = 0
     reason: str | None = None
+    pending: bool = False
 
 
 class ClaimService:
@@ -197,9 +210,26 @@ class ClaimService:
                      END""",
                 (server_id, tier_code, tier_code),
             ).fetchone()["n"]
+            pending_tier = 0
+            if self._intent_tables_exist(connection):
+                pending_kind = {
+                    "FREE300MB": "daily",
+                    "FREE3GB": "trial",
+                    "PROMO": "promo",
+                }.get(tier_code)
+                if pending_kind:
+                    pending_tier = int(
+                        connection.execute(
+                            """SELECT COUNT(*) AS n FROM free_provisioning_intents
+                               WHERE server_id = ? AND kind = ?
+                                 AND status IN ('pending', 'running')""",
+                            (server_id, pending_kind),
+                        ).fetchone()["n"]
+                    )
+            active_tier = int(active_tier) + pending_tier
             if allocation is not None and int(active_tier) >= int(allocation["slot_limit"]):
                 continue
-            remote_keys = int(server["remote_key_count"] or 0)
+            remote_keys = int(server["remote_key_count"] or 0) + pending_tier
             max_keys = server["max_keys"]
             usable = None if max_keys is None else max(
                 0, int(max_keys) - int(server["reserved_keys"] or 0)
@@ -340,6 +370,394 @@ class ClaimService:
                 return outline.create_key(name, limit_bytes), True
             raise
 
+    def _claim_free_intent(self, intent_id: str, now: datetime) -> dict[str, Any] | None:
+        """Claim one pending free entitlement intent for remote execution."""
+        now_text = now.astimezone(UTC).isoformat()
+        stale_before = (now - FREE_INTENT_STALE_AFTER).astimezone(UTC).isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """UPDATE free_provisioning_intents
+                   SET status = 'pending', locked_at = NULL
+                 WHERE status = 'running' AND locked_at < ?""",
+                (stale_before,),
+            )
+            # PostgreSQL workers can run concurrently.  Lock the selected row
+            # while choosing it, and skip rows owned by another worker; the
+            # SQLite writer lock already serializes this section.
+            lock_clause = " FOR UPDATE SKIP LOCKED" if connection.__class__.__name__ == "_PostgresConnection" else ""
+            if intent_id:
+                row = connection.execute(
+                    """SELECT * FROM free_provisioning_intents
+                       WHERE id = ?
+                         AND (status = 'pending' OR (status = 'failed' AND attempts < ?))
+                         AND next_attempt_at <= ?""" + lock_clause,
+                    (str(intent_id), FREE_INTENT_MAX_ATTEMPTS, now_text),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """SELECT * FROM free_provisioning_intents
+                       WHERE (status = 'pending' OR (status = 'failed' AND attempts < ?))
+                         AND next_attempt_at <= ?
+                       ORDER BY created_at LIMIT 1""" + lock_clause,
+                    (FREE_INTENT_MAX_ATTEMPTS, now_text),
+                ).fetchone()
+            if row is None:
+                return None
+            cursor = connection.execute(
+                """UPDATE free_provisioning_intents
+                   SET status = 'running', attempts = attempts + 1, locked_at = ?
+                 WHERE id = ? AND (status = 'pending' OR status = 'failed')""",
+                (now_text, row["id"]),
+            )
+            if connection.__class__.__name__ == "_PostgresConnection" and cursor.rowcount != 1:
+                # Defensive guard for a database-side status transition.  Do
+                # not perform an external call unless this worker owns the row.
+                return None
+            result = dict(row)
+            result["status"] = "running"
+            result["attempts"] = int(row["attempts"] or 0) + 1
+            result["locked_at"] = now_text
+            return result
+
+    def _reset_free_intent(self, intent_id: str, now: datetime) -> None:
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """UPDATE free_provisioning_intents
+                   SET status = 'pending', attempts = 0, next_attempt_at = ?,
+                       locked_at = NULL, last_error = NULL
+                 WHERE id = ? AND status = 'failed'""",
+                (now.astimezone(UTC).isoformat(), str(intent_id)),
+            )
+
+    def _free_intent_failed(self, intent_id: str, error: Exception, now: datetime) -> None:
+        safe_error = f"{type(error).__name__}: {str(error)[:500]}"
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            row = connection.execute(
+                "SELECT attempts FROM free_provisioning_intents WHERE id = ?",
+                (str(intent_id),),
+            ).fetchone()
+            attempts = int(row["attempts"] or 0) if row is not None else FREE_INTENT_MAX_ATTEMPTS
+            status = "failed"
+            next_attempt = (now + FREE_INTENT_RETRY_DELAY).astimezone(UTC).isoformat()
+            connection.execute(
+                """UPDATE free_provisioning_intents
+                   SET status = ?, next_attempt_at = ?, locked_at = NULL, last_error = ?
+                 WHERE id = ?""",
+                (status, next_attempt, safe_error, str(intent_id)),
+            )
+
+    def _free_intent_done(self, intent_id: str, key_id: int | None, now: datetime) -> None:
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """UPDATE free_provisioning_intents
+                   SET status = 'done', locked_at = NULL, last_error = NULL,
+                       key_id = ?, completed_at = ?
+                 WHERE id = ?""",
+                (key_id, now.astimezone(UTC).isoformat(), str(intent_id)),
+            )
+
+    def _remote_key_for_intent(self, intent: dict[str, Any]) -> dict[str, Any] | None:
+        outline = self._outline_client(str(intent["server_id"]))
+        key_id = str(intent["outline_key_id"])
+        getter = getattr(outline, "get_key", None)
+        if callable(getter):
+            try:
+                key = getter(key_id)
+            except Exception as exc:
+                if getattr(exc, "status", None) not in (404, 405, 501):
+                    raise
+                key = None
+            if isinstance(key, dict) and key.get("accessUrl"):
+                return key
+        listed = outline.list_keys()
+        items = listed.get("accessKeys", []) if isinstance(listed, dict) else listed
+        if not isinstance(items, list):
+            raise OutlineError("Outline returned invalid access key data")
+        return next(
+            (
+                item
+                for item in items
+                if isinstance(item, dict)
+                and str(item.get("id")) == key_id
+                and item.get("accessUrl")
+            ),
+            None,
+        )
+
+    def _finalize_free_intent(
+        self, intent: dict[str, Any], key: dict[str, Any], now: datetime
+    ) -> dict[str, Any]:
+        """Persist a successful remote key without repeating the remote effect."""
+        remote_id = str(key.get("id") or "")
+        if remote_id != str(intent["outline_key_id"]) or not key.get("accessUrl"):
+            raise OutlineError("Outline free entitlement response lacks the expected key")
+        now_text = now.astimezone(UTC).isoformat()
+        local_key_id: int | None = None
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            existing = connection.execute(
+                """SELECT id, telegram_id, status FROM keys
+                   WHERE server_id = ? AND outline_key_id = ?""",
+                (str(intent["server_id"]), remote_id),
+            ).fetchone()
+            if existing is not None:
+                if int(existing["telegram_id"]) != int(intent["telegram_id"]):
+                    raise CommerceError("Outline key is already mapped to another account")
+                local_key_id = int(existing["id"])
+            else:
+                cursor = connection.execute(
+                    """INSERT INTO keys
+                       (telegram_id, server_id, outline_key_id, key_type, created_at, expires_at,
+                        data_limit_bytes, status)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'active')""",
+                    (
+                        int(intent["telegram_id"]),
+                        str(intent["server_id"]),
+                        remote_id,
+                        "monthly_trial" if intent["kind"] in {"trial", "promo"} else "daily_free",
+                        str(intent["claim_started_at"]),
+                        (datetime.fromisoformat(str(intent["claim_started_at"])).astimezone(UTC)
+                         + timedelta(days=int(intent["duration_days"]))).isoformat(),
+                        int(intent["quota_bytes"]),
+                    ),
+                )
+                local_key_id = int(getattr(cursor, "lastrowid", 0) or 0) or None
+                if local_key_id is None:
+                    local_key_id = int(
+                        connection.execute(
+                            """SELECT id FROM keys
+                               WHERE server_id = ? AND outline_key_id = ?""",
+                            (str(intent["server_id"]), remote_id),
+                        ).fetchone()["id"]
+                    )
+                self._adjust_remote_key_count(connection, str(intent["server_id"]), 1)
+
+            if intent["kind"] == "daily":
+                connection.execute(
+                    "UPDATE users SET last_claim_at = ? WHERE telegram_id = ?",
+                    (str(intent["claim_started_at"]), int(intent["telegram_id"])),
+                )
+            elif intent["kind"] == "trial":
+                connection.execute(
+                    "UPDATE users SET trial_claimed_at = ? WHERE telegram_id = ?",
+                    (str(intent["claim_started_at"]), int(intent["telegram_id"])),
+                )
+            else:
+                campaign_code = str(intent["campaign_code"])
+                claim = connection.execute(
+                    """SELECT 1 FROM giveaway_claims
+                       WHERE campaign_code = ? AND telegram_id = ?""",
+                    (campaign_code, int(intent["telegram_id"])),
+                ).fetchone()
+                if claim is None:
+                    connection.execute(
+                        """INSERT INTO giveaway_claims
+                           (campaign_code, telegram_id, key_id, winner_number, claimed_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (
+                            campaign_code,
+                            int(intent["telegram_id"]),
+                            local_key_id,
+                            int(intent["winner_number"]),
+                            str(intent["claim_started_at"]),
+                        ),
+                    )
+                    window = connection.execute(
+                        """SELECT claimed_count FROM giveaway_windows
+                           WHERE campaign_code = ? AND window_start = ?""",
+                        (campaign_code, str(intent["window_start"])),
+                    ).fetchone()
+                    if window is None:
+                        connection.execute(
+                            """INSERT INTO giveaway_windows
+                               (campaign_code, window_start, claimed_count) VALUES (?, ?, 1)""",
+                            (campaign_code, str(intent["window_start"])),
+                        )
+                    else:
+                        connection.execute(
+                            """UPDATE giveaway_windows SET claimed_count = claimed_count + 1
+                               WHERE campaign_code = ? AND window_start = ?""",
+                            (campaign_code, str(intent["window_start"])),
+                        )
+                    connection.execute(
+                        """UPDATE giveaway_campaigns
+                           SET claimed_count = CASE WHEN claimed_count < winner_limit
+                                                    THEN claimed_count + 1 ELSE claimed_count END,
+                               updated_at = ?
+                         WHERE code = ?""",
+                        (now_text, campaign_code),
+                    )
+            connection.execute(
+                """UPDATE free_provisioning_intents
+                   SET status = 'done', locked_at = NULL, last_error = NULL,
+                       key_id = ?, completed_at = ?
+                 WHERE id = ?""",
+                (local_key_id, now_text, str(intent["id"])),
+            )
+        return key
+
+    def _execute_free_intent(
+        self,
+        intent_id: str,
+        now: datetime,
+        *,
+        claimed: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        intent = claimed or self._claim_free_intent(intent_id, now)
+        if intent is None:
+            with self.database.connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM free_provisioning_intents WHERE id = ?",
+                    (str(intent_id),),
+                ).fetchone()
+            if row is None or str(row["status"]) != "done":
+                return None
+            return self._remote_key_for_intent(dict(row))
+        try:
+            outline = self._outline_client(str(intent["server_id"]))
+            key, _created_remote = self._create_key_idempotent(
+                outline,
+                key_id=str(intent["outline_key_id"]),
+                name=str(intent["key_name"]),
+                limit_bytes=int(intent["quota_bytes"]),
+            )
+            if str(key.get("id") or "") != str(intent["outline_key_id"]):
+                # Legacy POST-only adapters cannot choose the remote ID.  Make
+                # the observed ID durable before local finalization so a later
+                # retry targets the exact key rather than the next POST result.
+                with self.database.connect() as connection:
+                    self.database.begin_write(connection)
+                    connection.execute(
+                        """UPDATE free_provisioning_intents SET outline_key_id = ?
+                           WHERE id = ? AND status = 'running'""",
+                        (str(key.get("id") or ""), str(intent["id"])),
+                    )
+                intent = dict(intent)
+                intent["outline_key_id"] = str(key.get("id") or "")
+            return self._finalize_free_intent(intent, key, now)
+        except Exception as exc:
+            self._free_intent_failed(str(intent["id"]), exc, now)
+            raise
+
+    def process_provisioning_intents(
+        self, now: datetime | None = None, max_jobs: int = 10
+    ) -> int:
+        """Finish pending free/trial/promo intents outside the Telegram request path."""
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        processed = 0
+        while processed < max(1, int(max_jobs)):
+            intent = self._claim_free_intent("", current)
+            if intent is None:
+                break
+            try:
+                self._execute_free_intent(str(intent["id"]), current, claimed=intent)
+            except Exception as exc:
+                print(f"free entitlement worker error: {type(exc).__name__}", file=sys.stderr)
+            processed += 1
+        return processed
+
+    def _insert_free_intent(
+        self,
+        connection: Any,
+        *,
+        telegram_id: int,
+        kind: str,
+        campaign_code: str | None,
+        window_start: str | None,
+        winner_number: int | None,
+        server_id: str,
+        outline_key_id: str,
+        key_name: str,
+        quota_bytes: int,
+        duration_days: int,
+        claim_started_at: str,
+    ) -> dict[str, Any]:
+        if not self._intent_tables_exist(connection):
+            raise OutlineError("Free entitlement durability is not initialized")
+        intent_id = _new_id()
+        connection.execute(
+            """INSERT INTO free_provisioning_intents
+               (id, telegram_id, kind, campaign_code, window_start, winner_number,
+                server_id, outline_key_id, key_name, quota_bytes, duration_days,
+                claim_started_at, status, attempts, next_attempt_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)""",
+            (
+                intent_id,
+                int(telegram_id),
+                str(kind),
+                campaign_code,
+                window_start,
+                winner_number,
+                str(server_id),
+                str(outline_key_id),
+                str(key_name),
+                int(quota_bytes),
+                int(duration_days),
+                str(claim_started_at),
+                str(claim_started_at),
+                str(claim_started_at),
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
+        ).fetchone()
+        return dict(row)
+
+    def _latest_free_intent(
+        self, connection: Any, telegram_id: int, kind: str, campaign_code: str | None = None
+    ) -> dict[str, Any] | None:
+        if not self._intent_tables_exist(connection):
+            return None
+        if campaign_code is None:
+            row = connection.execute(
+                """SELECT * FROM free_provisioning_intents
+                   WHERE telegram_id = ? AND kind = ? AND status != 'cancelled'
+                   ORDER BY created_at DESC LIMIT 1""",
+                (int(telegram_id), str(kind)),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """SELECT * FROM free_provisioning_intents
+                   WHERE telegram_id = ? AND kind = ? AND campaign_code = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (int(telegram_id), str(kind), str(campaign_code)),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def _intent_result(
+        self, intent: dict[str, Any], now: datetime, key: dict[str, Any] | None = None
+    ) -> ClaimResult | GiveawayResult | None:
+        key = key or self._remote_key_for_intent(intent)
+        if key is None:
+            return None
+        expires_at = datetime.fromisoformat(str(intent["claim_started_at"])).astimezone(UTC) + timedelta(
+            days=int(intent["duration_days"])
+        )
+        if intent["kind"] == "promo":
+            remaining = 0
+            with self.database.connect() as connection:
+                campaign = connection.execute(
+                    "SELECT winner_limit, claimed_count FROM giveaway_campaigns WHERE code = ?",
+                    (str(intent["campaign_code"]),),
+                ).fetchone()
+                if campaign is not None:
+                    remaining = max(0, int(campaign["winner_limit"]) - int(campaign["claimed_count"]))
+            return GiveawayResult(
+                "won",
+                code=str(intent["campaign_code"]),
+                quota_bytes=int(intent["quota_bytes"]),
+                duration_days=int(intent["duration_days"]),
+                access_url=str(key["accessUrl"]),
+                expires_at=expires_at,
+                winner_number=int(intent["winner_number"] or 0) or None,
+                remaining_slots=remaining,
+            )
+        return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
+
     def collect_metrics(self) -> dict[str, Any]:
         """Return collision-safe per-server metrics, tolerating partial outage."""
         ids = (
@@ -436,6 +854,19 @@ class ClaimService:
         ).fetchone()
         return row is not None
 
+    @staticmethod
+    def _intent_tables_exist(connection: Any) -> bool:
+        """Return whether the restart-safe free issuance table is available."""
+        if connection.__class__.__name__ == "_PostgresConnection":
+            row = connection.execute(
+                "SELECT to_regclass('public.free_provisioning_intents') AS table_name"
+            ).fetchone()
+            return bool(row and row["table_name"])
+        row = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'free_provisioning_intents'"
+        ).fetchone()
+        return row is not None
+
     def giveaway_status(
         self,
         telegram_id: int,
@@ -489,12 +920,24 @@ class ClaimService:
                    WHERE campaign_code = ? AND window_start = ?""",
                 (campaign["code"], window_start),
             ).fetchone()
+            pending_intent = self._latest_free_intent(
+                connection, telegram_id, "promo", str(campaign["code"])
+            )
+            pending_window = int(
+                connection.execute(
+                    """SELECT COUNT(*) AS n FROM free_provisioning_intents
+                       WHERE campaign_code = ? AND window_start = ?
+                         AND status IN ('pending', 'running')""",
+                    (campaign["code"], window_start),
+                ).fetchone()["n"]
+            ) if self._intent_tables_exist(connection) else 0
         frequency = str(campaign["frequency"] or "campaign")
         window_claimed = (
             int(window["claimed_count"])
             if window is not None
             else (total_claimed if frequency == "campaign" else 0)
         )
+        window_claimed += pending_window
         winner_limit = int(campaign["winner_limit"])
         state = self._campaign_state(campaign, current)
         gift_active = bool(
@@ -518,6 +961,10 @@ class ClaimService:
             "remaining_slots": max(0, winner_limit - window_claimed),
             "active": state == "active",
             "winner": claim is not None,
+            "pending": bool(
+                pending_intent is not None
+                and pending_intent.get("status") in {"pending", "running", "failed"}
+            ),
             "gift_active": gift_active,
             "access_lock_active": state == "active" and gift_active,
         }
@@ -702,11 +1149,16 @@ class ClaimService:
         username: str | None = None,
         code: str | None = None,
     ) -> GiveawayResult:
-        """Atomically issue one configured promotional entitlement."""
-        now = (now or datetime.now(UTC)).astimezone(UTC)
-        now_text = now.isoformat()
+        """Reserve and issue one configured promotional entitlement.
+
+        The reservation is committed before the Outline call.  If the process
+        dies after remote creation, the deterministic intent is recovered by
+        the maintenance worker instead of creating a second key.
+        """
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
         normalized = str(code or GIVEAWAY_CODE).strip().upper()
-        key: dict[str, Any] | None = None
+        intent_id: str | None = None
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             connection.execute(
@@ -725,13 +1177,7 @@ class ClaimService:
                         created_at, frequency, updated_at)
                        VALUES (?, ?, 30, ?, 0, 1, ?, 'campaign', ?)
                        ON CONFLICT(code) DO NOTHING""",
-                    (
-                        GIVEAWAY_CODE,
-                        GIVEAWAY_LIMIT_BYTES,
-                        GIVEAWAY_WINNER_LIMIT,
-                        now_text,
-                        now_text,
-                    ),
+                    (GIVEAWAY_CODE, GIVEAWAY_LIMIT_BYTES, GIVEAWAY_WINNER_LIMIT, now_text, now_text),
                 )
             suffix = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
             campaign = connection.execute(
@@ -746,27 +1192,6 @@ class ClaimService:
                    WHERE g.campaign_code = ? AND g.telegram_id = ?""",
                 (campaign["code"], telegram_id),
             ).fetchone()
-            window_start = self._campaign_window_start(campaign, now)
-            window = connection.execute(
-                """SELECT claimed_count FROM giveaway_windows
-                   WHERE campaign_code = ? AND window_start = ?""",
-                (campaign["code"], window_start),
-            ).fetchone()
-            if window is None:
-                initial_count = (
-                    int(campaign["claimed_count"])
-                    if str(campaign["frequency"] or "campaign") == "campaign"
-                    else 0
-                )
-                connection.execute(
-                    """INSERT INTO giveaway_windows
-                       (campaign_code, window_start, claimed_count) VALUES (?, ?, ?)""",
-                    (campaign["code"], window_start, initial_count),
-                )
-                window_claimed = initial_count
-            else:
-                window_claimed = int(window["claimed_count"])
-            remaining = max(0, int(campaign["winner_limit"]) - window_claimed)
             if existing is not None:
                 return GiveawayResult(
                     "already_won",
@@ -775,129 +1200,172 @@ class ClaimService:
                     duration_days=int(campaign["duration_days"]),
                     expires_at=datetime.fromisoformat(existing["expires_at"]),
                     winner_number=int(existing["winner_number"]),
-                    remaining_slots=remaining,
                 )
-            state = self._campaign_state(campaign, now)
-            if state != "active":
-                return GiveawayResult(
-                    state,
-                    code=str(campaign["code"]),
-                    quota_bytes=int(campaign["quota_bytes"]),
-                    duration_days=int(campaign["duration_days"]),
-                    remaining_slots=remaining,
-                )
-            if remaining <= 0:
-                return GiveawayResult(
-                    "full",
-                    code=str(campaign["code"]),
-                    quota_bytes=int(campaign["quota_bytes"]),
-                    duration_days=int(campaign["duration_days"]),
-                    remaining_slots=0,
-                )
-            if self._commerce_tables_exist(connection):
-                conflict = connection.execute(
-                    """SELECT 1 FROM orders
-                       WHERE telegram_id = ?
-                         AND status IN ('awaiting_payment', 'payment_submitted')
-                         AND COALESCE(refund_status, 'none') != 'refunded'
-                       UNION ALL
-                       SELECT 1 FROM subscriptions
-                       WHERE telegram_id = ? AND status IN ('pending', 'active')
-                       LIMIT 1""",
-                    (telegram_id, telegram_id),
-                ).fetchone()
-                if conflict is not None:
-                    return GiveawayResult(
-                        "ineligible",
-                        remaining_slots=remaining,
-                        reason="An open or completed paid order already belongs to this account.",
+            existing_intent = self._latest_free_intent(
+                connection, telegram_id, "promo", str(campaign["code"])
+            )
+            if existing_intent is not None and existing_intent["status"] == "done":
+                intent_id = str(existing_intent["id"])
+            elif existing_intent is not None and existing_intent["status"] in {"pending", "running"}:
+                intent_id = str(existing_intent["id"])
+                if existing_intent["status"] == "pending":
+                    connection.execute(
+                        "UPDATE free_provisioning_intents SET next_attempt_at = ? WHERE id = ?",
+                        (now_text, intent_id),
                     )
-            server_id = self._select_server_for_tier(
-                connection, "PROMO", int(campaign["quota_bytes"]), now
-            )
-            outline = self._outline_client(server_id)
-            key_name = _outline_key_name(
-                telegram_id,
-                username,
-                f"PROMO-{campaign['code']}",
-                f"{int(campaign['duration_days'])}day",
-                now,
-            )
-            key, created_remote = self._create_key_idempotent(
-                outline,
-                key_id=self._deterministic_slot_id(
-                    "promo", str(campaign["code"]), str(telegram_id)
-                ),
-                name=key_name,
-                limit_bytes=int(campaign["quota_bytes"]),
-            )
-            expires_at = now + timedelta(days=int(campaign["duration_days"]))
-            total_claimed = int(
+            elif existing_intent is not None and existing_intent["status"] == "failed":
+                intent_id = str(existing_intent["id"])
                 connection.execute(
-                    "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
-                    (campaign["code"],),
-                ).fetchone()["n"]
-            )
-            winner_number = total_claimed + 1
-            try:
-                connection.execute(
-                    """INSERT INTO keys
-                       (telegram_id, server_id, outline_key_id, key_type, created_at, expires_at,
-                        data_limit_bytes, status)
-                       VALUES (?, ?, ?, 'monthly_trial', ?, ?, ?, 'active')""",
-                    (
-                        telegram_id,
-                        server_id,
-                        str(key["id"]),
-                        now_text,
-                        expires_at.isoformat(),
-                        int(campaign["quota_bytes"]),
-                    ),
+                    "UPDATE free_provisioning_intents SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_at = NULL, last_error = NULL WHERE id = ?",
+                    (now_text, intent_id),
                 )
-                key_row = connection.execute(
-                    "SELECT id FROM keys WHERE server_id = ? AND outline_key_id = ?",
-                    (server_id, str(key["id"])),
+            else:
+                window_start = self._campaign_window_start(campaign, current)
+                window = connection.execute(
+                    """SELECT claimed_count FROM giveaway_windows
+                       WHERE campaign_code = ? AND window_start = ?""",
+                    (campaign["code"], window_start),
                 ).fetchone()
-                self._adjust_remote_key_count(connection, server_id, 1)
-                connection.execute(
-                    """INSERT INTO giveaway_claims
-                       (campaign_code, telegram_id, key_id, winner_number, claimed_at)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (campaign["code"], telegram_id, key_row["id"], winner_number, now_text),
+                if window is None:
+                    initial_count = (
+                        int(campaign["claimed_count"])
+                        if str(campaign["frequency"] or "campaign") == "campaign"
+                        else 0
+                    )
+                    connection.execute(
+                        """INSERT INTO giveaway_windows
+                           (campaign_code, window_start, claimed_count) VALUES (?, ?, ?)""",
+                        (campaign["code"], window_start, initial_count),
+                    )
+                    window_claimed = initial_count
+                else:
+                    window_claimed = int(window["claimed_count"])
+                pending_window = int(
+                    connection.execute(
+                        """SELECT COUNT(*) AS n FROM free_provisioning_intents
+                           WHERE campaign_code = ? AND window_start = ?
+                             AND status IN ('pending', 'running')""",
+                        (campaign["code"], window_start),
+                    ).fetchone()["n"]
                 )
-                connection.execute(
-                    """UPDATE giveaway_windows SET claimed_count = claimed_count + 1
-                       WHERE campaign_code = ? AND window_start = ?
-                         AND claimed_count < ?""",
-                    (campaign["code"], window_start, int(campaign["winner_limit"])),
+                window_claimed += pending_window
+                remaining = max(0, int(campaign["winner_limit"]) - window_claimed)
+                total_claimed = int(
+                    connection.execute(
+                        "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
+                        (campaign["code"],),
+                    ).fetchone()["n"]
                 )
-                connection.execute(
-                    """UPDATE giveaway_campaigns
-                       SET claimed_count = CASE
-                               WHEN claimed_count < winner_limit THEN claimed_count + 1
-                               ELSE claimed_count
-                           END,
-                           updated_at = ?
-                       WHERE code = ?""",
-                    (now_text, campaign["code"]),
+                pending_campaign = int(
+                    connection.execute(
+                        """SELECT COUNT(*) AS n FROM free_provisioning_intents
+                           WHERE campaign_code = ? AND status IN ('pending', 'running')""",
+                        (campaign["code"],),
+                    ).fetchone()["n"]
                 )
-            except Exception:
-                if created_remote:
-                    try:
-                        outline.delete_key(str(key["id"]))
-                    finally:
-                        raise
-                raise
-        return GiveawayResult(
-            "won",
-            code=str(campaign["code"]),
-            quota_bytes=int(campaign["quota_bytes"]),
-            duration_days=int(campaign["duration_days"]),
-            access_url=str(key["accessUrl"]),
-            expires_at=expires_at,
-            winner_number=winner_number,
-            remaining_slots=max(0, remaining - 1),
-        )
+                state = self._campaign_state(campaign, current)
+                if state != "active":
+                    return GiveawayResult(
+                        state,
+                        code=str(campaign["code"]),
+                        quota_bytes=int(campaign["quota_bytes"]),
+                        duration_days=int(campaign["duration_days"]),
+                        remaining_slots=remaining,
+                    )
+                if remaining <= 0:
+                    return GiveawayResult(
+                        "full",
+                        code=str(campaign["code"]),
+                        quota_bytes=int(campaign["quota_bytes"]),
+                        duration_days=int(campaign["duration_days"]),
+                        remaining_slots=0,
+                    )
+                if self._commerce_tables_exist(connection):
+                    conflict = connection.execute(
+                        """SELECT 1 FROM orders
+                           WHERE telegram_id = ?
+                             AND status IN ('awaiting_payment', 'payment_submitted')
+                             AND COALESCE(refund_status, 'none') != 'refunded'
+                           UNION ALL
+                           SELECT 1 FROM subscriptions
+                           WHERE telegram_id = ? AND status IN ('pending', 'active')
+                           LIMIT 1""",
+                        (telegram_id, telegram_id),
+                    ).fetchone()
+                    if conflict is not None:
+                        return GiveawayResult(
+                            "ineligible",
+                            remaining_slots=remaining,
+                            reason="An open or completed paid order already belongs to this account.",
+                        )
+                server_id = self._select_server_for_tier(
+                    connection, "PROMO", int(campaign["quota_bytes"]), current
+                )
+                key_name = _outline_key_name(
+                    telegram_id,
+                    username,
+                    f"PROMO-{campaign['code']}",
+                    f"{int(campaign['duration_days'])}day",
+                    current,
+                )
+                intent = self._insert_free_intent(
+                    connection,
+                    telegram_id=telegram_id,
+                    kind="promo",
+                    campaign_code=str(campaign["code"]),
+                    window_start=window_start,
+                    winner_number=total_claimed + pending_campaign + 1,
+                    server_id=server_id,
+                    outline_key_id=self._deterministic_slot_id(
+                        "promo", str(campaign["code"]), str(telegram_id)
+                    ),
+                    key_name=key_name,
+                    quota_bytes=int(campaign["quota_bytes"]),
+                    duration_days=int(campaign["duration_days"]),
+                    claim_started_at=now_text,
+                )
+                intent_id = str(intent["id"])
+        if intent_id is None:
+            return GiveawayResult("unavailable", reason="Promo reservation could not be created.")
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
+            ).fetchone()
+        if row is None:
+            return GiveawayResult("unavailable", reason="Promo reservation is unavailable.")
+        intent = dict(row)
+        if intent["status"] == "done":
+            result = self._intent_result(intent, current)
+            if isinstance(result, GiveawayResult):
+                return result
+        if intent["status"] == "running":
+            return GiveawayResult(
+                "pending",
+                code=str(intent["campaign_code"]),
+                quota_bytes=int(intent["quota_bytes"]),
+                duration_days=int(intent["duration_days"]),
+                pending=True,
+            )
+        try:
+            key = self._execute_free_intent(intent_id, current)
+        except Exception:
+            raise
+        if key is None:
+            return GiveawayResult(
+                "pending",
+                code=str(intent["campaign_code"]),
+                quota_bytes=int(intent["quota_bytes"]),
+                duration_days=int(intent["duration_days"]),
+                pending=True,
+            )
+        with self.database.connect() as connection:
+            completed = dict(
+                connection.execute(
+                    "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
+                ).fetchone()
+            )
+        result = self._intent_result(completed, current, key)
+        return result if isinstance(result, GiveawayResult) else GiveawayResult("pending", pending=True)
 
     def track_user(
         self,
@@ -924,8 +1392,9 @@ class ClaimService:
         now: datetime | None = None,
         username: str | None = None,
     ) -> ClaimResult:
-        now = (now or datetime.now(UTC)).astimezone(UTC)
-        now_text = now.isoformat()
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        intent_id: str | None = None
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             connection.execute(
@@ -940,55 +1409,82 @@ class ClaimService:
             user = connection.execute(
                 "SELECT last_claim_at FROM users WHERE telegram_id = ?", (telegram_id,)
             ).fetchone()
-            if self._has_active_promo_gift(connection, telegram_id, now):
-                return ClaimResult(denied_reason="active_promo")
-            if user["last_claim_at"]:
-                next_claim = datetime.fromisoformat(user["last_claim_at"]) + CLAIM_PERIOD
-                if now < next_claim:
-                    return ClaimResult(next_claim_at=next_claim)
-
-            server_id = self._select_server_for_tier(connection, "FREE300MB", self.limit_bytes, now)
-            outline = self._outline_client(server_id)
-            key_name = _outline_key_name(telegram_id, username, "FREE300MB", "24hr", now)
-            key, created_remote = self._create_key_idempotent(
-                outline,
-                key_id=self._deterministic_slot_id(
-                    "daily", str(telegram_id), str(user["last_claim_at"] or "first")
-                ),
-                name=key_name,
-                limit_bytes=self.limit_bytes,
-            )
-            expires_at = now + CLAIM_PERIOD
-            try:
-                connection.execute(
-                    """INSERT INTO keys
-                       (telegram_id, server_id, outline_key_id, key_type, created_at, expires_at,
-                        data_limit_bytes, status)
-                       VALUES (?, ?, ?, 'daily_free', ?, ?, ?, 'active')""",
-                    (
-                        telegram_id,
-                        server_id,
-                        str(key["id"]),
-                        now_text,
-                        expires_at.isoformat(),
-                        self.limit_bytes,
+            existing_intent = self._latest_free_intent(connection, telegram_id, "daily")
+            if existing_intent is not None and existing_intent["status"] in {
+                "pending",
+                "running",
+                "failed",
+            }:
+                intent_id = str(existing_intent["id"])
+                if existing_intent["status"] == "failed":
+                    connection.execute(
+                        """UPDATE free_provisioning_intents
+                           SET status = 'pending', attempts = 0, next_attempt_at = ?,
+                               locked_at = NULL, last_error = NULL
+                         WHERE id = ?""",
+                        (now_text, intent_id),
+                    )
+                elif existing_intent["status"] == "pending":
+                    connection.execute(
+                        "UPDATE free_provisioning_intents SET next_attempt_at = ? WHERE id = ?",
+                        (now_text, intent_id),
+                    )
+            else:
+                if self._has_active_promo_gift(connection, telegram_id, current):
+                    return ClaimResult(denied_reason="active_promo")
+                if user["last_claim_at"]:
+                    next_claim = datetime.fromisoformat(user["last_claim_at"]) + CLAIM_PERIOD
+                    if current < next_claim:
+                        return ClaimResult(next_claim_at=next_claim)
+                server_id = self._select_server_for_tier(
+                    connection, "FREE300MB", self.limit_bytes, current
+                )
+                key_name = _outline_key_name(
+                    telegram_id, username, "FREE300MB", "24hr", current
+                )
+                intent = self._insert_free_intent(
+                    connection,
+                    telegram_id=telegram_id,
+                    kind="daily",
+                    campaign_code=None,
+                    window_start=None,
+                    winner_number=None,
+                    server_id=server_id,
+                    outline_key_id=self._deterministic_slot_id(
+                        "daily", str(telegram_id), str(user["last_claim_at"] or "first")
                     ),
+                    key_name=key_name,
+                    quota_bytes=self.limit_bytes,
+                    duration_days=1,
+                    claim_started_at=now_text,
                 )
-                self._adjust_remote_key_count(connection, server_id, 1)
+                intent_id = str(intent["id"])
+        if intent_id is None:
+            return ClaimResult(denied_reason="unavailable")
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
+            ).fetchone()
+        if row is None:
+            return ClaimResult(denied_reason="unavailable")
+        intent = dict(row)
+        if intent["status"] == "done":
+            result = self._intent_result(intent, current)
+            if isinstance(result, ClaimResult):
+                return result
+        if intent["status"] == "running":
+            return ClaimResult(pending=True)
+        key = self._execute_free_intent(intent_id, current)
+        if key is None:
+            return ClaimResult(pending=True)
+        with self.database.connect() as connection:
+            completed = dict(
                 connection.execute(
-                    """UPDATE users
-                       SET last_claim_at = ?
-                       WHERE telegram_id = ?""",
-                    (now_text, telegram_id),
-                )
-            except Exception:
-                if created_remote:
-                    try:
-                        outline.delete_key(str(key["id"]))
-                    finally:
-                        raise
-                raise
-        return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
+                    "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
+                ).fetchone()
+            )
+        result = self._intent_result(completed, current, key)
+        return result if isinstance(result, ClaimResult) else ClaimResult(pending=True)
 
     def claim_trial(
         self,
@@ -997,9 +1493,10 @@ class ClaimService:
         now: datetime | None = None,
         username: str | None = None,
     ) -> ClaimResult:
-        """Issue one 3 GB entitlement per rolling 30 days."""
-        now = (now or datetime.now(UTC)).astimezone(UTC)
-        now_text = now.isoformat()
+        """Reserve and issue one 3 GB entitlement per rolling 30 days."""
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        intent_id: str | None = None
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             connection.execute(
@@ -1014,54 +1511,82 @@ class ClaimService:
             user = connection.execute(
                 "SELECT trial_claimed_at FROM users WHERE telegram_id = ?", (telegram_id,)
             ).fetchone()
-            if self._has_active_promo_gift(connection, telegram_id, now):
-                return ClaimResult(denied_reason="active_promo")
-            if user["trial_claimed_at"]:
-                next_claim = datetime.fromisoformat(user["trial_claimed_at"]) + TRIAL_PERIOD
-                if now < next_claim:
-                    return ClaimResult(next_claim_at=next_claim)
-            server_id = self._select_server_for_tier(
-                connection, "FREE3GB", self.trial_limit_bytes, now
-            )
-            outline = self._outline_client(server_id)
-            key_name = _outline_key_name(telegram_id, username, "FREE3GB", "30day", now)
-            key, created_remote = self._create_key_idempotent(
-                outline,
-                key_id=self._deterministic_slot_id(
-                    "monthly", str(telegram_id), str(user["trial_claimed_at"] or "first")
-                ),
-                name=key_name,
-                limit_bytes=self.trial_limit_bytes,
-            )
-            expires_at = now + TRIAL_PERIOD
-            try:
-                connection.execute(
-                    """INSERT INTO keys
-                       (telegram_id, server_id, outline_key_id, key_type, created_at, expires_at,
-                        data_limit_bytes, status)
-                       VALUES (?, ?, ?, 'monthly_trial', ?, ?, ?, 'active')""",
-                    (
-                        telegram_id,
-                        server_id,
-                        str(key["id"]),
-                        now_text,
-                        expires_at.isoformat(),
-                        self.trial_limit_bytes,
+            existing_intent = self._latest_free_intent(connection, telegram_id, "trial")
+            if existing_intent is not None and existing_intent["status"] in {
+                "pending",
+                "running",
+                "failed",
+            }:
+                intent_id = str(existing_intent["id"])
+                if existing_intent["status"] == "failed":
+                    connection.execute(
+                        """UPDATE free_provisioning_intents
+                           SET status = 'pending', attempts = 0, next_attempt_at = ?,
+                               locked_at = NULL, last_error = NULL
+                         WHERE id = ?""",
+                        (now_text, intent_id),
+                    )
+                elif existing_intent["status"] == "pending":
+                    connection.execute(
+                        "UPDATE free_provisioning_intents SET next_attempt_at = ? WHERE id = ?",
+                        (now_text, intent_id),
+                    )
+            else:
+                if self._has_active_promo_gift(connection, telegram_id, current):
+                    return ClaimResult(denied_reason="active_promo")
+                if user["trial_claimed_at"]:
+                    next_claim = datetime.fromisoformat(user["trial_claimed_at"]) + TRIAL_PERIOD
+                    if current < next_claim:
+                        return ClaimResult(next_claim_at=next_claim)
+                server_id = self._select_server_for_tier(
+                    connection, "FREE3GB", self.trial_limit_bytes, current
+                )
+                key_name = _outline_key_name(
+                    telegram_id, username, "FREE3GB", "30day", current
+                )
+                intent = self._insert_free_intent(
+                    connection,
+                    telegram_id=telegram_id,
+                    kind="trial",
+                    campaign_code=None,
+                    window_start=None,
+                    winner_number=None,
+                    server_id=server_id,
+                    outline_key_id=self._deterministic_slot_id(
+                        "monthly", str(telegram_id), str(user["trial_claimed_at"] or "first")
                     ),
+                    key_name=key_name,
+                    quota_bytes=self.trial_limit_bytes,
+                    duration_days=30,
+                    claim_started_at=now_text,
                 )
-                self._adjust_remote_key_count(connection, server_id, 1)
+                intent_id = str(intent["id"])
+        if intent_id is None:
+            return ClaimResult(denied_reason="unavailable")
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
+            ).fetchone()
+        if row is None:
+            return ClaimResult(denied_reason="unavailable")
+        intent = dict(row)
+        if intent["status"] == "done":
+            result = self._intent_result(intent, current)
+            if isinstance(result, ClaimResult):
+                return result
+        if intent["status"] == "running":
+            return ClaimResult(pending=True)
+        key = self._execute_free_intent(intent_id, current)
+        if key is None:
+            return ClaimResult(pending=True)
+        with self.database.connect() as connection:
+            completed = dict(
                 connection.execute(
-                    "UPDATE users SET trial_claimed_at = ? WHERE telegram_id = ?",
-                    (now_text, telegram_id),
-                )
-            except Exception:
-                if created_remote:
-                    try:
-                        outline.delete_key(str(key["id"]))
-                    finally:
-                        raise
-                raise
-        return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
+                    "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
+                ).fetchone()
+            )
+        result = self._intent_result(completed, current, key)
+        return result if isinstance(result, ClaimResult) else ClaimResult(pending=True)
 
     def _terminate_key(
         self,
