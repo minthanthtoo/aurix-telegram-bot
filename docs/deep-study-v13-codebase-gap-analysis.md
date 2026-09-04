@@ -34,7 +34,7 @@ multi-node Outline control plane with conservative health evidence, not a
 complete adaptive V13 connectivity platform and not something that should be
 replaced wholesale.
 
-Current evidence is strong for code and controlled operations (382 tests, live
+Current evidence is strong for code and controlled operations (405 tests, live
 three-node health, CI-gated deployment, and verified encrypted archives), but
 not yet for unrestricted customer admission: allocation normalization, orphan
 classification, stable DNS, real Telegram/payment canaries, and sustained
@@ -399,11 +399,13 @@ scope and release-count wording, not an active lint failure.
 Documentation drift is more consequential:
 
 - [`MVP_STATUS.md`](MVP_STATUS.md) and this document now report the verified
-  350-test suite; update both whenever a release changes the test baseline.
+  405-test suite; update both whenever a release changes the test baseline.
 - [`FINAL_ARCHITECTURE.md`](FINAL_ARCHITECTURE.md) calls an Outline-centric target canonical/final, while the later conversations redefine the north star as transport-agnostic V13.
 - The Outline fleet registry is implemented; the remaining documentation gap is
   the generic transport/profile registry required for Xray/V10–V13.
-- The README accurately labels multi-node allocation as deferred, but the distinction between “current V2 MVP,” “next V3 target,” and “eventual V13” should be explicit everywhere.
+- The README now labels multi-node allocation as implemented foundation with
+  guarded scale-out; the distinction between “current controlled MVP,” “next
+  V3 target,” and “eventual V13” should remain explicit everywhere.
 
 ## Recommended target architecture for this repository
 
@@ -465,7 +467,7 @@ while assignment/credential/config/endpoint can change
 Do this before structural V3 work:
 
 1. Commit the current application, tests, docs, and deployment files in a reviewable baseline. **Done for the current release line.**
-2. Add CI using the declared Python version and run the full 350-test suite plus Ruff. **Done for the current release line.**
+2. Add CI using the declared Python version and run the full 405-test suite plus Ruff. **Done for the current release line.**
 3. Add a migration tool or explicit numbered migrations for SQLite/PostgreSQL. **Done for the current release line.**
 4. Unify free/trial provisioning with the paid durable job/reconcile path. **Done for the current release line.**
 5. Make control-plane startup degrade gracefully when Outline management is temporarily unavailable. **Done for the current release line.**
