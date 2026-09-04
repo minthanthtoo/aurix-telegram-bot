@@ -479,16 +479,34 @@ class ClaimService:
         items = listed.get("accessKeys", []) if isinstance(listed, dict) else listed
         if not isinstance(items, list):
             raise OutlineError("Outline returned invalid access key data")
-        return next(
-            (
+        exact = [
+            item
+            for item in items
+            if isinstance(item, dict)
+            and str(item.get("id")) == key_id
+            and item.get("accessUrl")
+        ]
+        if exact:
+            return exact[0]
+        # Older Outline-compatible adapters may only support POST, which
+        # returns a server-selected ID. If the process loses the response
+        # before persisting that ID, recover the one uniquely named intent
+        # instead of issuing another POST. Multiple matches are ambiguous and
+        # must stay in manual review rather than risking the wrong entitlement.
+        key_name = str(intent.get("key_name") or "").strip()
+        if key_name:
+            named = [
                 item
                 for item in items
                 if isinstance(item, dict)
-                and str(item.get("id")) == key_id
+                and str(item.get("name") or "").strip() == key_name
                 and item.get("accessUrl")
-            ),
-            None,
-        )
+            ]
+            if len(named) > 1:
+                raise OutlineError("Multiple Outline keys match the pending entitlement name")
+            if named:
+                return named[0]
+        return None
 
     def _finalize_free_intent(
         self, intent: dict[str, Any], key: dict[str, Any], now: datetime
@@ -634,12 +652,23 @@ class ClaimService:
             return self._remote_key_for_intent(dict(row))
         try:
             outline = self._outline_client(str(intent["server_id"]))
-            key, _created_remote = self._create_key_idempotent(
-                outline,
-                key_id=str(intent["outline_key_id"]),
-                name=str(intent["key_name"]),
-                limit_bytes=int(intent["quota_bytes"]),
-            )
+            # A failed local commit after a legacy POST can leave a
+            # server-selected key whose ID was never persisted. On retries,
+            # reconcile the exact deterministic ID and then the unique
+            # human-readable name before creating anything else. The first
+            # attempt still avoids an unnecessary list call.
+            recovered = None
+            if int(intent.get("attempts") or 0) > 1:
+                recovered = self._remote_key_for_intent(intent)
+            if recovered is not None:
+                key, _created_remote = recovered, False
+            else:
+                key, _created_remote = self._create_key_idempotent(
+                    outline,
+                    key_id=str(intent["outline_key_id"]),
+                    name=str(intent["key_name"]),
+                    limit_bytes=int(intent["quota_bytes"]),
+                )
             if str(key.get("id") or "") != str(intent["outline_key_id"]):
                 # Legacy POST-only adapters cannot choose the remote ID.  Make
                 # the observed ID durable before local finalization so a later

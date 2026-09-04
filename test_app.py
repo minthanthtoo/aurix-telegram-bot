@@ -244,6 +244,95 @@ class ClaimServiceTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["outline_key_id"], outline.deterministic_ids[0])
 
+    def test_legacy_post_fallback_recovers_unique_named_key(self):
+        outline = FakeOutline()
+        key = {
+            "id": "server-selected",
+            "name": "123-FREE300MB-24hr-202608270307",
+            "accessUrl": "ss://legacy",
+        }
+        outline.created.append((key["name"], 300_000_000, key))
+        service = ClaimService(self.db, outline)
+
+        recovered = service._remote_key_for_intent(
+            {
+                "server_id": "primary",
+                "outline_key_id": "deterministic-id",
+                "key_name": key["name"],
+            }
+        )
+
+        self.assertEqual(recovered, key)
+
+    def test_legacy_post_fallback_refuses_ambiguous_named_keys(self):
+        outline = FakeOutline()
+        key_name = "123-FREE300MB-24hr-202608270307"
+        for index in (1, 2):
+            outline.created.append(
+                (
+                    key_name,
+                    300_000_000,
+                    {
+                        "id": f"server-selected-{index}",
+                        "name": key_name,
+                        "accessUrl": f"ss://legacy-{index}",
+                    },
+                )
+            )
+        service = ClaimService(self.db, outline)
+
+        with self.assertRaisesRegex(OutlineError, "Multiple Outline keys"):
+            service._remote_key_for_intent(
+                {
+                    "server_id": "primary",
+                    "outline_key_id": "deterministic-id",
+                    "key_name": key_name,
+                }
+            )
+
+    def test_legacy_post_retry_finalizes_unique_named_key_without_second_create(self):
+        key_name = "123-FREE300MB-24hr-202608270307"
+        key = {"id": "server-selected", "name": key_name, "accessUrl": "ss://legacy"}
+        self.outline.created.append((key_name, 300_000_000, key))
+        with self.db.connect() as connection:
+            self.db.begin_write(connection)
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
+                (123, "Min", self.now.isoformat()),
+            )
+            intent = self.service._insert_free_intent(
+                connection,
+                telegram_id=123,
+                kind="daily",
+                campaign_code=None,
+                window_start=None,
+                winner_number=None,
+                server_id="primary",
+                outline_key_id="deterministic-id",
+                key_name=key_name,
+                quota_bytes=300_000_000,
+                duration_days=1,
+                claim_started_at=self.now.isoformat(),
+            )
+            connection.execute(
+                "UPDATE free_provisioning_intents SET attempts = 1 WHERE id = ?",
+                (intent["id"],),
+            )
+
+        self.assertEqual(self.service.process_provisioning_intents(self.now), 1)
+        self.assertEqual(len(self.outline.created), 1)
+        with self.db.connect() as connection:
+            stored_intent = connection.execute(
+                "SELECT status, outline_key_id FROM free_provisioning_intents WHERE id = ?",
+                (intent["id"],),
+            ).fetchone()
+            stored_key = connection.execute(
+                "SELECT outline_key_id FROM keys WHERE telegram_id = ?", (123,)
+            ).fetchone()
+        self.assertEqual(stored_intent["status"], "done")
+        self.assertEqual(stored_intent["outline_key_id"], "server-selected")
+        self.assertEqual(stored_key["outline_key_id"], "server-selected")
+
     def test_trial_and_promo_use_distinct_deterministic_slots(self):
         outline = AmbiguousDeterministicOutline()
         service = ClaimService(self.db, outline)
