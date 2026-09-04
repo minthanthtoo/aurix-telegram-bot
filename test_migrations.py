@@ -124,6 +124,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 11, "remote_key_review_workflow"),
                     ("commerce", 12, "endpoint_health_observability"),
                     ("commerce", 13, "endpoint_lifecycle_drain_state"),
+                    ("commerce", 14, "connectivity_registry_foundation"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

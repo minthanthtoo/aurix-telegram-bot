@@ -103,6 +103,7 @@ def main() -> None:
         raise SystemExit("OUTLINE_CIRCUIT_BREAKER_SECONDS must be between 0 and 900")
     server_labels: dict[str, str] = {}
     server_provider_ids: dict[str, str] = {}
+    server_endpoint_metadata: dict[str, dict[str, str]] = {}
     if servers_json:
         try:
             configured_servers = json.loads(servers_json)
@@ -122,6 +123,14 @@ def main() -> None:
                     circuit_breaker_seconds=outline_cooldown,
                 )
                 server_labels[server_id] = str(item.get("label") or server_id)[:64]
+                transport = str(item.get("transport") or "outline").strip().lower()
+                if transport != "outline":
+                    raise ValueError("only the outline transport is currently supported")
+                server_endpoint_metadata[server_id] = {
+                    "provider": str(item.get("provider") or "manual")[:64],
+                    "region": str(item.get("region") or "unknown")[:64],
+                    "transport": transport,
+                }
                 provider_resource_id = str(item.get("provider_resource_id") or "").strip()
                 if provider_resource_id:
                     if not re.fullmatch(r"\d{1,20}", provider_resource_id):
@@ -135,6 +144,13 @@ def main() -> None:
             raise SystemExit("OUTLINE_SERVERS_JSON must be a valid non-empty server array") from exc
     else:
         server_labels = {"primary": os.environ.get("OUTLINE_SERVER_LABEL", "Primary")[:64]}
+        server_endpoint_metadata = {
+            "primary": {
+                "provider": os.environ.get("OUTLINE_PROVIDER", "manual")[:64],
+                "region": os.environ.get("OUTLINE_REGION", "unknown")[:64],
+                "transport": "outline",
+            }
+        }
         provider_resource_id = os.environ.get("OUTLINE_PROVIDER_RESOURCE_ID", "").strip()
         if provider_resource_id:
             if not re.fullmatch(r"\d{1,20}", provider_resource_id):
@@ -168,7 +184,11 @@ def main() -> None:
     register_servers = getattr(commerce, "register_outline_servers", None)
     if callable(register_servers):
         try:
-            register_servers(server_labels, provider_resource_ids=server_provider_ids)
+            register_servers(
+                server_labels,
+                provider_resource_ids=server_provider_ids,
+                endpoint_metadata=server_endpoint_metadata,
+            )
         except CommerceError as exc:
             raise SystemExit(f"Outline server registration failed: {exc}") from exc
     order_reconciliation = commerce.reconcile_duplicate_open_orders()

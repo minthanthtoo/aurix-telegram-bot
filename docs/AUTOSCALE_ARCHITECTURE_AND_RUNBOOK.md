@@ -647,3 +647,23 @@ completion.
 
 Until every declared endpoint and these live gates are evidenced, the project is
 **code-complete and operationally staged**, not 100% production-ready.
+
+## 21. Connectivity registry foundation (migration 14)
+
+The control plane now maintains a provider-neutral registry beside the proven
+Outline tables.  `connectivity_providers`, `connectivity_regions`, and
+`connectivity_transports` describe the deployment dimensions; a stable
+`connectivity_endpoints` row maps each Outline `server_id` to those dimensions.
+Profiles, endpoint assignments, and credentials provide durable identity for
+future transports (for example Xray/VLESS) without changing orders, wallets, or
+Telegram flows.  Existing paid and free rows are backfilled idempotently at
+startup and on fleet registration.
+
+The registry intentionally stores only a secret reference and encrypted paid
+credential ciphertext.  Management API URLs, certificate fingerprints, and
+plaintext `ss://` values are never written to registry diagnostics or logs.
+Endpoint admission is derived from the existing lifecycle and health state:
+only an active, healthy endpoint accepts new assignments; degraded, draining,
+failed, or retired endpoints remain visible for audit and migration planning.
+This is an identity/state foundation, not a claim that non-Outline adapters,
+cross-node live migration, or customer protocol conversion are implemented.

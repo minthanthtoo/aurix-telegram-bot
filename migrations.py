@@ -1027,6 +1027,154 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS outline_servers_lifecycle ON outline_servers(enabled, lifecycle_state)",
         ),
     ),
+    Migration(
+        14,
+        "connectivity_registry_foundation",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS connectivity_providers (
+                   provider_id TEXT PRIMARY KEY,
+                   display_name TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_regions (
+                   region_id TEXT PRIMARY KEY,
+                   provider_id TEXT NOT NULL REFERENCES connectivity_providers(provider_id),
+                   display_name TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_transports (
+                   transport_id TEXT PRIMARY KEY,
+                   protocol TEXT NOT NULL,
+                   display_name TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_endpoints (
+                   endpoint_id TEXT PRIMARY KEY,
+                   outline_server_id TEXT UNIQUE REFERENCES outline_servers(server_id),
+                   provider_id TEXT NOT NULL REFERENCES connectivity_providers(provider_id),
+                   region_id TEXT NOT NULL REFERENCES connectivity_regions(region_id),
+                   transport_id TEXT NOT NULL REFERENCES connectivity_transports(transport_id),
+                   status TEXT NOT NULL DEFAULT 'provisioning' CHECK (
+                       status IN ('provisioning', 'active', 'degraded', 'draining', 'failed', 'retired')
+                   ),
+                   accepts_new_keys INTEGER NOT NULL DEFAULT 0 CHECK (accepts_new_keys IN (0, 1)),
+                   management_secret_ref TEXT,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   subscription_id TEXT UNIQUE REFERENCES subscriptions(id),
+                   profile_kind TEXT NOT NULL CHECK (profile_kind IN ('free', 'paid', 'trial', 'promo')),
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended', 'blocked')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS endpoint_assignments (
+                   assignment_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES connectivity_profiles(profile_id),
+                   endpoint_id TEXT NOT NULL REFERENCES connectivity_endpoints(endpoint_id),
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended', 'failed')),
+                   assigned_at TEXT NOT NULL,
+                   ended_at TEXT,
+                   reason TEXT
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_credentials (
+                   credential_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES connectivity_profiles(profile_id),
+                   endpoint_id TEXT NOT NULL REFERENCES connectivity_endpoints(endpoint_id),
+                   transport_id TEXT NOT NULL REFERENCES connectivity_transports(transport_id),
+                   external_id TEXT NOT NULL,
+                   secret_ciphertext TEXT,
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'revoked', 'failed')),
+                   created_at TEXT NOT NULL,
+                   revoked_at TEXT,
+                   UNIQUE(endpoint_id, external_id)
+               )""",
+            "CREATE INDEX IF NOT EXISTS connectivity_endpoint_admission ON connectivity_endpoints(status, accepts_new_keys)",
+            "CREATE INDEX IF NOT EXISTS endpoint_assignments_current ON endpoint_assignments(profile_id, status)",
+            "CREATE INDEX IF NOT EXISTS connectivity_credentials_profile ON connectivity_credentials(profile_id, status)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS connectivity_providers (
+                   provider_id TEXT PRIMARY KEY,
+                   display_name TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_regions (
+                   region_id TEXT PRIMARY KEY,
+                   provider_id TEXT NOT NULL REFERENCES connectivity_providers(provider_id),
+                   display_name TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_transports (
+                   transport_id TEXT PRIMARY KEY,
+                   protocol TEXT NOT NULL,
+                   display_name TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_endpoints (
+                   endpoint_id TEXT PRIMARY KEY,
+                   outline_server_id TEXT UNIQUE REFERENCES outline_servers(server_id),
+                   provider_id TEXT NOT NULL REFERENCES connectivity_providers(provider_id),
+                   region_id TEXT NOT NULL REFERENCES connectivity_regions(region_id),
+                   transport_id TEXT NOT NULL REFERENCES connectivity_transports(transport_id),
+                   status TEXT NOT NULL DEFAULT 'provisioning' CHECK (
+                       status IN ('provisioning', 'active', 'degraded', 'draining', 'failed', 'retired')
+                   ),
+                   accepts_new_keys INTEGER NOT NULL DEFAULT 0 CHECK (accepts_new_keys IN (0, 1)),
+                   management_secret_ref TEXT,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
+                   subscription_id TEXT UNIQUE REFERENCES subscriptions(id),
+                   profile_kind TEXT NOT NULL CHECK (profile_kind IN ('free', 'paid', 'trial', 'promo')),
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended', 'blocked')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+               )""",
+            """CREATE TABLE IF NOT EXISTS endpoint_assignments (
+                   assignment_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES connectivity_profiles(profile_id),
+                   endpoint_id TEXT NOT NULL REFERENCES connectivity_endpoints(endpoint_id),
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended', 'failed')),
+                   assigned_at TEXT NOT NULL,
+                   ended_at TEXT,
+                   reason TEXT
+               )""",
+            """CREATE TABLE IF NOT EXISTS connectivity_credentials (
+                   credential_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES connectivity_profiles(profile_id),
+                   endpoint_id TEXT NOT NULL REFERENCES connectivity_endpoints(endpoint_id),
+                   transport_id TEXT NOT NULL REFERENCES connectivity_transports(transport_id),
+                   external_id TEXT NOT NULL,
+                   secret_ciphertext TEXT,
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'revoked', 'failed')),
+                   created_at TEXT NOT NULL,
+                   revoked_at TEXT,
+                   UNIQUE(endpoint_id, external_id)
+               )""",
+            "CREATE INDEX IF NOT EXISTS connectivity_endpoint_admission ON connectivity_endpoints(status, accepts_new_keys)",
+            "CREATE INDEX IF NOT EXISTS endpoint_assignments_current ON endpoint_assignments(profile_id, status)",
+            "CREATE INDEX IF NOT EXISTS connectivity_credentials_profile ON connectivity_credentials(profile_id, status)",
+        ),
+    ),
 )
 
 
