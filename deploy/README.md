@@ -88,6 +88,8 @@ OUTLINE_CERT_SHA256=replace-with-installer-output
 # Leave off until node-two verification is complete; this only exposes the
 # owner/admin intent button and does not itself create infrastructure.
 # AURIX_INFRASTRUCTURE_QUEUE_ENABLED=0
+# AURIX_INFRASTRUCTURE_AUTO_QUEUE_ENABLED=0
+# AURIX_SYSTEM_ACTOR_ID=0
 AURIX_SERVER_HEALTH_MAX_AGE_SECONDS=900
 AURIX_ENDPOINT_FAILURE_THRESHOLD=3
 AURIX_ENDPOINT_RECOVERY_THRESHOLD=2
@@ -194,6 +196,14 @@ as proof of identity. If any prerequisite is missing, the job remains
 
 Do not set `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1` until provider inventory,
 budget, Outline installation, firewall restrictions and canary tests have passed.
+
+For unattended scale intent collection, set both
+`AURIX_INFRASTRUCTURE_QUEUE_ENABLED=1` and
+`AURIX_INFRASTRUCTURE_AUTO_QUEUE_ENABLED=1`. The maintenance worker then
+creates at most one idempotent local intent after the independent observation
+gate. It still cannot create a Droplet unless the separate infrastructure
+worker has a scoped provider token, a valid budget, and
+`AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1`.
 
 Before declaring a release production-ready, run the source-controlled
 acceptance audit. It is intentionally a gate: warnings for allocation policy,

@@ -374,6 +374,8 @@ AURIX_SCALE_URGENT_TRAFFIC_PERCENT=90
 AURIX_SCALE_REQUIRED_OBSERVATIONS=2
 AURIX_SCALE_OBSERVATION_INTERVAL_SECONDS=300
 AURIX_INFRASTRUCTURE_QUEUE_ENABLED=0
+AURIX_INFRASTRUCTURE_AUTO_QUEUE_ENABLED=0
+AURIX_SYSTEM_ACTOR_ID=0
 AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED=0
 AURIX_SCALE_REGION=sgp1
 AURIX_SCALE_DROPLET_SIZE=s-1vcpu-1gb
@@ -461,6 +463,13 @@ only for Prepare/Urgent posture. The click creates one idempotent pending intent
 using the configured Singapore region, Droplet size and image. It does not call
 DigitalOcean; the separate worker still checks provider inventory, budget,
 cooldown, node count and `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED`.
+
+For an unattended but still fail-closed workflow, enable
+`AURIX_INFRASTRUCTURE_AUTO_QUEUE_ENABLED=1` as well. The maintenance pass then
+reuses its capacity snapshot and creates the same idempotent local intent when
+the independent observation gate is ready. This never calls DigitalOcean; the
+provider worker remains separately gated by credentials, budget, identity,
+activation, and mutation settings.
 
 Capacity changes affect only new issuance. A separate audit event records the
 actor, server, old/current domain state, and selected limit.

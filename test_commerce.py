@@ -867,6 +867,44 @@ class CommerceServiceTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(tuple(row), ("provision", "pending"))
 
+    def test_auto_scale_queue_requires_opt_in_and_sustained_evidence(self):
+        environment = {
+            "AURIX_INFRASTRUCTURE_QUEUE_ENABLED": "1",
+            "AURIX_INFRASTRUCTURE_AUTO_QUEUE_ENABLED": "1",
+            "AURIX_SCALE_OBSERVATION_INTERVAL_SECONDS": "0",
+            "AURIX_SCALE_REGION": "sgp1",
+            "AURIX_SCALE_DROPLET_SIZE": "s-1vcpu-1gb",
+            "AURIX_SCALE_DROPLET_IMAGE": "ubuntu-24-04-x64",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            self.service.register_outline_servers({"default": "Singapore"})
+            for key_id in range(1, 9):
+                self.outline.add_key(str(key_id), f"existing-{key_id}")
+            self.service.refresh_server_inventory(self.now)
+            self.service.configure_server_capacity(
+                "default", 999, max_keys=12, reserved_keys=2,
+                monthly_traffic_bytes=1_000_000_000_000,
+            )
+            first = self.service.capacity_snapshot(self.now)
+            self.assertEqual(
+                self.service.auto_queue_scale_out(snapshot=first),
+                {"status": "blocked", "reason": "CommerceError"},
+            )
+            second = self.service.capacity_snapshot(self.now + timedelta(minutes=1))
+            queued = self.service.auto_queue_scale_out(snapshot=second)
+
+        self.assertEqual(queued["status"], "queued")
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT operation, status FROM infrastructure_jobs WHERE id = ?",
+                (queued["job_id"],),
+            ).fetchone()
+        self.assertEqual(tuple(row), ("provision", "pending"))
+
+    def test_auto_scale_queue_is_disabled_by_default(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(self.service.auto_queue_scale_out(), {"status": "disabled"})
+
     def test_plan_allocation_reserves_capacity_before_payment_and_releases_on_cancel(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)

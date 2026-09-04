@@ -286,13 +286,22 @@ class TelegramMaintenanceMixin:
             if callable(refresh_inventory):
                 run_stage("server_inventory", refresh_inventory)
             capacity_snapshot = getattr(self.commerce, "capacity_snapshot", None)
+            capacity_snapshot_result = None
             if callable(capacity_snapshot):
                 # Inventory has just been refreshed above. Reuse that observed
                 # state while recording durable scale evidence, avoiding a
                 # second round of Outline requests in the same maintenance pass.
-                run_stage(
+                capacity_snapshot_result = run_stage(
                     "scale_observation",
                     lambda: capacity_snapshot(refresh_inventory=False),
+                )
+            auto_queue_scale_out = getattr(self.commerce, "auto_queue_scale_out", None)
+            if callable(auto_queue_scale_out) and isinstance(capacity_snapshot_result, dict):
+                # This is opt-in and only creates a local, idempotent intent;
+                # the provider worker remains separately gated.
+                run_stage(
+                    "scale_queue",
+                    lambda: auto_queue_scale_out(snapshot=capacity_snapshot_result),
                 )
             run_stage("notifications", self._send_pending_notifications)
             # Slow model calls run last so quota enforcement and customer/staff

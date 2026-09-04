@@ -147,7 +147,13 @@ class CommerceService(CommerceWorkerMixin):
     def initialize(self) -> None:
         self.database.initialize()
 
-    def queue_infrastructure_provision(self, requested_by: int, now: datetime | None = None) -> str:
+    def queue_infrastructure_provision(
+        self,
+        requested_by: int,
+        now: datetime | None = None,
+        *,
+        snapshot: dict[str, Any] | None = None,
+    ) -> str:
         """Queue an owner-approved, allowlisted node request for the worker.
 
         This method records intent only. The separate infrastructure worker
@@ -161,8 +167,8 @@ class CommerceService(CommerceWorkerMixin):
         }:
             raise CommerceError("Infrastructure provisioning is not enabled for this deployment.")
         current = now or datetime.now(UTC)
-        snapshot = self.capacity_snapshot(current)
-        advice = snapshot.get("scale_advice") or {}
+        capacity = snapshot if snapshot is not None else self.capacity_snapshot(current)
+        advice = capacity.get("scale_advice") or {}
         if str(advice.get("status") or "") not in {"prepare", "urgent"}:
             raise CommerceError("A scale-out intent is allowed only in Prepare or Urgent posture.")
         if not bool(advice.get("observation_ready")):
@@ -180,8 +186,41 @@ class CommerceService(CommerceWorkerMixin):
             size=os.environ.get("AURIX_SCALE_DROPLET_SIZE", "s-1vcpu-1gb").strip(),
             image=os.environ.get("AURIX_SCALE_DROPLET_IMAGE", "ubuntu-24-04-x64").strip(),
             requested_by=int(requested_by),
-            now=now,
+            now=current,
         )
+
+    def auto_queue_scale_out(
+        self,
+        *,
+        snapshot: dict[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Optionally turn sustained scale evidence into one durable intent.
+
+        This method only writes an idempotent local infrastructure job. The
+        separate provider worker still requires its own token, budget, and
+        ``AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED`` gate before any VM change.
+        The default is disabled, preserving the owner-button workflow.
+        """
+        enabled = os.environ.get("AURIX_INFRASTRUCTURE_AUTO_QUEUE_ENABLED", "0").strip().lower()
+        if enabled not in {"1", "true", "yes", "on"}:
+            return {"status": "disabled"}
+        if os.environ.get("AURIX_INFRASTRUCTURE_QUEUE_ENABLED", "0").strip().lower() not in {
+            "1", "true", "yes", "on",
+        }:
+            return {"status": "queue_disabled"}
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        try:
+            job_id = self.queue_infrastructure_provision(
+                int(os.environ.get("AURIX_SYSTEM_ACTOR_ID", "0")),
+                current,
+                snapshot=snapshot,
+            )
+        except (CommerceError, ValueError) as exc:
+            # “Not ready” is an expected state on most maintenance passes and
+            # should not mark the whole heartbeat failed.
+            return {"status": "blocked", "reason": type(exc).__name__}
+        return {"status": "queued", "job_id": job_id}
 
     def register_outline_servers(
         self,
