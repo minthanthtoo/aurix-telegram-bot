@@ -331,6 +331,7 @@ and the vision parser are configured and reachable. Keep these in
 
 ```dotenv
 RECEIPT_STORAGE_REQUIRED=1
+RECEIPT_VISION_REQUIRED=1
 SUPABASE_URL=https://PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=server-side-secret
 SUPABASE_RECEIPTS_BUCKET=payment-receipts

@@ -86,7 +86,10 @@ Optional:
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — server-side credentials for the private receipt-evidence bucket. Never use the publishable/anon key here.
 - `SUPABASE_RECEIPTS_BUCKET` — private bucket name (default `payment-receipts`)
 - `RECEIPT_STORAGE_REQUIRED` — set to `1` in hosted deployments so a receipt cannot enter review until its object is stored
-- `RECEIPT_LLM_BASE_URL`, `RECEIPT_LLM_MODEL`, `RECEIPT_LLM_API_KEY` — optional OpenAI-compatible vision endpoint. If absent/unavailable, receipts stay in manual review.
+- `RECEIPT_LLM_BASE_URL`, `RECEIPT_LLM_MODEL`, `RECEIPT_LLM_API_KEY` — OpenAI-compatible vision endpoint. Local/manual-review development may leave these empty; hosted production profiles require them through `RECEIPT_VISION_REQUIRED=1`.
+- `RECEIPT_VISION_REQUIRED` — set to `1` for production profiles so preflight
+  refuses to start without all three receipt-vision settings; keep `0` only for
+  local/manual-review development.
 - `RECEIPT_LLM_FALLBACK_MODELS` — optional comma-separated routes on the same gateway. A fallback runs only when the primary fails or omits critical receipt fields; QR/payment-request negatives do not waste a fallback call.
 - `RECEIPT_LLM_SELECTION_MODE` — `first_acceptable` (default, lowest cost), `rank_all` (score every configured model), or `consensus` (require two agreeing acceptable outputs; disagreement is flagged for manual review). The latter modes spend more model quota and never approve payments.
 - `PAYMENT_RECIPIENTS_JSON` — required server-side merchant profiles for all five payment methods. Each profile contains accepted recipient `names` and/or account/phone `accounts`; values are never shown in customer messages or diagnostics.

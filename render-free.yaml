@@ -9,7 +9,7 @@ services:
     plan: free
     numInstances: 1
     buildCommand: pip install -r requirements.txt
-    startCommand: python deploy/render_preflight.py && python -u deploy/render_web.py
+    startCommand: python deploy/render_preflight.py --live && python -u deploy/render_web.py
     healthCheckPath: /healthz
     maxShutdownDelaySeconds: 30
     envVars:
@@ -43,12 +43,16 @@ services:
         value: payment-receipts
       - key: RECEIPT_STORAGE_REQUIRED
         value: "1"
+      - key: RECEIPT_VISION_REQUIRED
+        value: "1"
       - key: RECEIPT_LLM_BASE_URL
-        value: ""
+        sync: false
       - key: RECEIPT_LLM_MODEL
-        value: ""
+        sync: false
       - key: RECEIPT_LLM_API_KEY
-        value: ""
+        sync: false
+      - key: PAYMENT_RECIPIENTS_JSON
+        sync: false
       - key: ALLOW_TEXT_PAYMENT_REFERENCES
         value: "0"
       - key: AURIX_MAINTENANCE_INTERVAL_SECONDS

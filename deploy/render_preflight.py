@@ -6,8 +6,13 @@ from __future__ import annotations
 import os
 import re
 import json
+import sqlite3
+import urllib.error
+import urllib.request
+import argparse
+import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from cryptography.fernet import Fernet
 
@@ -16,7 +21,84 @@ def fail(message: str) -> None:
     raise SystemExit(f"Render preflight failed: {message}")
 
 
-def main() -> None:
+def _json_request(url: str, headers: dict[str, str], timeout: int = 15) -> object:
+    """Read one dependency endpoint without echoing credentials or payloads."""
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.load(response)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
+        host = urlsplit(url).hostname or "dependency"
+        fail(f"live dependency check failed for {host}: {type(exc).__name__}")
+
+
+def _validate_live(values: dict[str, object]) -> None:
+    """Verify the external services required by the hosted profile.
+
+    This is intentionally a read-only startup canary: Telegram ``getMe``, the
+    private Supabase bucket metadata endpoint, the vision gateway model list,
+    a database ``SELECT 1``, and each pinned Outline ``GET /server`` request.
+    No payment, key, provider, or DNS mutation is performed.
+    """
+    telegram = _json_request(
+        f"https://api.telegram.org/bot{values['telegram_token']}/getMe", {}, timeout=15
+    )
+    if not isinstance(telegram, dict) or not telegram.get("ok"):
+        fail("Telegram getMe did not authorize the configured bot")
+
+    bucket = quote(str(values["bucket"]), safe="")
+    storage = _json_request(
+        f"{values['supabase_url']}/storage/v1/bucket/{bucket}",
+        {
+            "Authorization": f"Bearer {values['supabase_key']}",
+            "apikey": values["supabase_key"],
+        },
+    )
+    if not isinstance(storage, dict):
+        fail("Supabase receipt bucket check returned an invalid response")
+    if storage.get("public") is True:
+        fail("Supabase receipt bucket must remain private")
+
+    models = _json_request(
+        f"{values['llm_url']}/models",
+        {"Authorization": f"Bearer {values['llm_key']}"},
+        timeout=30,
+    )
+    if not isinstance(models, dict) or not isinstance(models.get("data"), list):
+        fail("receipt vision model listing returned an invalid response")
+
+    database_url = str(values["database_url"])
+    if database_url:
+        try:
+            import psycopg
+
+            with psycopg.connect(database_url, connect_timeout=10) as connection:
+                connection.execute("SELECT 1").fetchone()
+        except Exception as exc:  # pragma: no cover - exercised by live deploys
+            fail(f"PostgreSQL connectivity check failed: {type(exc).__name__}")
+    else:
+        try:
+            database_uri = f"file:{Path(str(values['database_path'])).resolve()}?mode=rw"
+            with sqlite3.connect(database_uri, timeout=5, uri=True) as connection:
+                connection.execute("SELECT 1").fetchone()
+        except sqlite3.Error as exc:
+            fail(f"SQLite connectivity check failed: {type(exc).__name__}")
+
+    try:
+        from outline_adapter import OutlineClient
+
+        for item in values["outline_servers"]:
+            client = OutlineClient(
+                item["api_url"],
+                item["cert_sha256"],
+                timeout_seconds=float(os.environ.get("OUTLINE_REQUEST_TIMEOUT_SECONDS", "5")),
+            )
+            client.server_info()
+    except Exception as exc:  # pragma: no cover - exercised by live deploys
+        fail(f"Outline management check failed: {type(exc).__name__}")
+
+
+def main(argv: list[str] | None = None) -> None:
     storage_mode = os.environ.get("AURIX_STORAGE_MODE", "disk").strip().lower()
     if storage_mode not in {"disk", "postgres"}:
         fail("AURIX_STORAGE_MODE must be 'disk' or 'postgres'")
@@ -31,6 +113,7 @@ def main() -> None:
     if missing:
         fail("missing required environment variables: " + ", ".join(missing))
     servers_json = os.environ.get("OUTLINE_SERVERS_JSON", "").strip()
+    outline_servers: list[dict[str, str]] = []
     provider_resource_id = os.environ.get("OUTLINE_PROVIDER_RESOURCE_ID", "").strip()
     if provider_resource_id and not re.fullmatch(r"\d{1,20}", provider_resource_id):
         fail("OUTLINE_PROVIDER_RESOURCE_ID must be a numeric Droplet ID")
@@ -92,6 +175,12 @@ def main() -> None:
                 ):
                     raise ValueError
                 seen.add(server_id)
+                outline_servers.append(
+                    {
+                        "api_url": str(server["api_url"]),
+                        "cert_sha256": fingerprint,
+                    }
+                )
             default_id = os.environ.get("OUTLINE_DEFAULT_SERVER_ID", "").strip()
             if default_id and default_id not in seen:
                 fail("OUTLINE_DEFAULT_SERVER_ID is not present in OUTLINE_SERVERS_JSON")
@@ -104,6 +193,12 @@ def main() -> None:
         fingerprint = os.environ["OUTLINE_CERT_SHA256"].lower().replace(":", "")
         if len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
             fail("OUTLINE_CERT_SHA256 must contain exactly 64 hexadecimal characters")
+        outline_servers.append(
+            {
+                "api_url": os.environ["OUTLINE_API_URL"].strip(),
+                "cert_sha256": fingerprint,
+            }
+        )
 
     try:
         Fernet(os.environ["AURIX_ACCESS_URL_KEY"].encode())
@@ -184,6 +279,22 @@ def main() -> None:
         os.environ.get("RECEIPT_LLM_MODEL", "").strip(),
         os.environ.get("RECEIPT_LLM_API_KEY", "").strip(),
     ]
+    vision_required = os.environ.get("RECEIPT_VISION_REQUIRED", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if vision_required and not all(llm_values):
+        missing = [
+            name
+            for name, value in zip(
+                ("RECEIPT_LLM_BASE_URL", "RECEIPT_LLM_MODEL", "RECEIPT_LLM_API_KEY"),
+                llm_values,
+            )
+            if not value
+        ]
+        fail(
+            "RECEIPT_VISION_REQUIRED=1 requires configured receipt vision values: "
+            + ", ".join(missing)
+        )
     if any(llm_values) and not all(llm_values):
         fail("configure all three RECEIPT_LLM_* values together or leave all blank")
     fallback_models = [
@@ -202,10 +313,50 @@ def main() -> None:
         fail("RECEIPT_LLM_SELECTION_MODE must be first_acceptable, rank_all, or consensus")
     if selection_mode == "consensus" and len(fallback_models) < 1:
         fail("consensus receipt selection requires at least one fallback model")
+    if vision_required:
+        recipients_raw = os.environ.get("PAYMENT_RECIPIENTS_JSON", "").strip()
+        try:
+            recipients = json.loads(recipients_raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            fail("PAYMENT_RECIPIENTS_JSON must be valid JSON when receipt vision is required")
+        required_methods = {"kbzpay", "wavepay", "ayapay", "uabpay", "cbpay"}
+        if not isinstance(recipients, dict) or not required_methods.issubset(recipients):
+            fail("PAYMENT_RECIPIENTS_JSON must configure all five payment methods")
+        for method in required_methods:
+            profile = recipients.get(method)
+            if not isinstance(profile, dict) or not (
+                profile.get("names") or profile.get("accounts")
+            ):
+                fail(f"PAYMENT_RECIPIENTS_JSON profile is empty for {method}")
+
+    values: dict[str, object] = {
+        "telegram_token": os.environ["TELEGRAM_BOT_TOKEN"].strip(),
+        "supabase_url": os.environ["SUPABASE_URL"].strip().rstrip("/"),
+        "supabase_key": os.environ["SUPABASE_SERVICE_ROLE_KEY"].strip(),
+        "bucket": bucket,
+        "llm_url": os.environ.get("RECEIPT_LLM_BASE_URL", "").strip().rstrip("/"),
+        "llm_key": os.environ.get("RECEIPT_LLM_API_KEY", "").strip(),
+        "database_url": os.environ.get("COMMERCE_DATABASE_URL", "").strip(),
+        "database_path": os.environ.get("DATABASE_PATH", "").strip(),
+        "outline_servers": outline_servers,
+    }
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--live", action="store_true", help="run read-only external dependency canaries")
+    # Unit callers historically invoke ``main()`` directly while unittest's
+    # own flags are present in ``sys.argv``.  Keep that API deterministic and
+    # pass real CLI arguments explicitly from the module entrypoint.
+    args = parser.parse_args([] if argv is None else argv)
+    if args.live:
+        _validate_live(values)
 
     profile = "persistent disk" if storage_mode == "disk" else "hosted PostgreSQL"
-    print(f"Render preflight passed: single-worker {profile} configuration is valid")
+    if args.live:
+        print(
+            f"Render preflight passed: single-worker {profile} configuration and live dependencies are valid"
+        )
+    else:
+        print(f"Render preflight passed: single-worker {profile} configuration is valid")
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

@@ -23,6 +23,12 @@ def valid_environment() -> dict[str, str]:
         "RECEIPT_STORAGE_REQUIRED": "1",
         "COMMERCE_DATABASE_URL": "postgresql://user:password@database.invalid/aurix",
         "ALLOW_TEXT_PAYMENT_REFERENCES": "0",
+        "PAYMENT_RECIPIENTS_JSON": json.dumps(
+            {
+                method: {"names": ["merchant"]}
+                for method in ("kbzpay", "wavepay", "ayapay", "uabpay", "cbpay")
+            }
+        ),
     }
 
 
@@ -44,6 +50,17 @@ class RenderPreflightTest(unittest.TestCase):
         self.assertNotIn(environment["TELEGRAM_BOT_TOKEN"], output)
         self.assertNotIn(environment["SUPABASE_SERVICE_ROLE_KEY"], output)
 
+    def test_live_flag_runs_external_canary_after_configuration_validation(self):
+        environment = valid_environment()
+        with patch.dict(os.environ, environment, clear=True), patch(
+            "deploy.render_preflight._validate_live"
+        ) as live:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                main(["--live"])
+        live.assert_called_once()
+        self.assertIn("live dependencies", output.getvalue())
+
     def test_missing_required_value_reports_only_its_variable_name(self):
         environment = valid_environment()
         environment["SUPABASE_SERVICE_ROLE_KEY"] = ""
@@ -61,6 +78,24 @@ class RenderPreflightTest(unittest.TestCase):
         environment["RECEIPT_LLM_MODEL"] = "vision-model"
         with self.assertRaisesRegex(SystemExit, "configure all three"):
             self.run_preflight(environment)
+
+    def test_production_vision_gate_requires_all_receipt_values(self):
+        environment = valid_environment()
+        environment["RECEIPT_VISION_REQUIRED"] = "1"
+        with self.assertRaisesRegex(SystemExit, "RECEIPT_LLM_BASE_URL"):
+            self.run_preflight(environment)
+
+    def test_production_vision_gate_passes_with_complete_configuration(self):
+        environment = valid_environment()
+        environment.update(
+            {
+                "RECEIPT_VISION_REQUIRED": "1",
+                "RECEIPT_LLM_BASE_URL": "https://vision.example/v1",
+                "RECEIPT_LLM_MODEL": "vision-model",
+                "RECEIPT_LLM_API_KEY": "test-vision-key",
+            }
+        )
+        self.assertIn("preflight passed", self.run_preflight(environment).lower())
 
     def test_receipt_fallback_requires_primary_configuration(self):
         environment = valid_environment()
