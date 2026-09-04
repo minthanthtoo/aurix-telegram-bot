@@ -153,6 +153,13 @@ known. When set, the free-claim SQLite database remains at `DATABASE_PATH`,
 while orders, payments, subscriptions, jobs, notifications, and audit state use
 PostgreSQL.
 
+Commerce migration 17 enables PostgreSQL row-level security on
+`key_termination_events` without adding public/`authenticated` policies. This
+table is server-side audit/worker state; the trusted AuriX database role remains
+able to operate it, while Supabase API roles cannot read or mutate termination
+events. Apply migrations through the normal application startup and verify the
+table is not exposed through a client-facing PostgREST role.
+
 ## 4. Firewall and service checks
 
 Before live customer testing:

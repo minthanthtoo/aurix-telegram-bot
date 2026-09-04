@@ -1281,6 +1281,20 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS infrastructure_enrollments_due ON infrastructure_enrollments(status, expires_at)",
         ),
     ),
+    Migration(
+        17,
+        "termination_events_rls",
+        # SQLite has no row-level security. The application database remains
+        # protected by its file permissions and service boundary there.
+        sqlite_statements=(),
+        postgres_statements=(
+            # No client-facing policies are created intentionally: termination
+            # events are server-side audit/worker state. The trusted commerce
+            # database role used by AuriX continues to access the table, while
+            # Supabase anon/authenticated roles cannot read or mutate rows.
+            "ALTER TABLE key_termination_events ENABLE ROW LEVEL SECURITY",
+        ),
+    ),
 )
 
 

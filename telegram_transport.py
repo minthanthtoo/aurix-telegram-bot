@@ -1646,7 +1646,7 @@ class TelegramBot(
             rows.extend(
                 [
                     (
-                        f"Open #{page * page_size + offset + 1} · {str(order['id'])[:8]}",
+                        f"{title} #{page * page_size + offset + 1} · {str(order['id'])[:8]}",
                         f"o:v:{order['id']}",
                     )
                 ]
