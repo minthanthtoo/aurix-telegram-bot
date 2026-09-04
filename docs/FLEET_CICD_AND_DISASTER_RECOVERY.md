@@ -325,6 +325,8 @@ PostgreSQL verification is recovery-source aware: if a rebuilt control-plane
 host has no local archive yet, `database_backup.py verify` verifies the newest
 authenticated off-site archive directly. If a local archive exists, it is
 verified as well, so local corruption cannot be hidden by a healthy mirror.
+Verification checks both ciphertext and plaintext SHA-256 metadata before
+running `pg_restore --list`.
 Passing `--verify-archives` to the readiness audit therefore proves the actual
 encrypted archive path rather than only checking that a database URL is
 syntactically present.

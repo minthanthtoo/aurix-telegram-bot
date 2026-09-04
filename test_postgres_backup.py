@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import stat
 import tempfile
 import unittest
@@ -44,6 +45,23 @@ class PostgresBackupTests(unittest.TestCase):
     def test_verified_archive_rejects_wrong_format(self) -> None:
         ciphertext = Fernet(self.key.encode()).encrypt(b"dump")
         metadata = b'{"format":"sqlite","ciphertext_sha256":"bad"}'
+        with patch.object(postgres_backup, "_verify_dump"):
+            with self.assertRaises(FleetError):
+                postgres_backup._verified_archive_bytes(
+                    {"AURIX_DATABASE_BACKUP_KEY": self.key},
+                    ciphertext,
+                    metadata,
+                    "test",
+                )
+
+    def test_verified_archive_rejects_plaintext_hash_mismatch(self) -> None:
+        raw = b"dump"
+        ciphertext = Fernet(self.key.encode()).encrypt(raw)
+        metadata = (
+            '{"format":"postgres-custom",'
+            f'"ciphertext_sha256":"{hashlib.sha256(ciphertext).hexdigest()}",'
+            '"plaintext_sha256":"00"}'
+        ).encode()
         with patch.object(postgres_backup, "_verify_dump"):
             with self.assertRaises(FleetError):
                 postgres_backup._verified_archive_bytes(

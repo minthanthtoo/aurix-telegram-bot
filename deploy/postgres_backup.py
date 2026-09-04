@@ -230,6 +230,9 @@ def _verified_archive_bytes(
     actual = hashlib.sha256(ciphertext).hexdigest()
     if metadata.get("ciphertext_sha256") != actual:
         raise FleetError(f"PostgreSQL backup hash mismatch: {label}")
+    plaintext_hash = metadata.get("plaintext_sha256")
+    if not isinstance(plaintext_hash, str) or plaintext_hash != hashlib.sha256(raw).hexdigest():
+        raise FleetError(f"PostgreSQL backup plaintext hash mismatch: {label}")
     _verify_dump(raw)
     return raw, metadata, actual
 

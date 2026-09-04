@@ -45,9 +45,10 @@ engineering estimates, not production traffic or revenue metrics.
   wallet, restart-safe interaction, receipt-fingerprint, Telegram timestamp
   formatting, notification-lease, deterministic-entitlement-recovery, receipt-model-selection,
   SQLite→PostgreSQL migration safety, encrypted PostgreSQL backup dispatch,
-  PostgreSQL/node off-site-only recovery, pinned node-bootstrap TLS, and
+  PostgreSQL/node off-site-only recovery and plaintext-hash integrity checks,
+  pinned node-bootstrap TLS, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (426 tests passing at the latest verification).
+  production-acceptance suite (427 tests passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**. The current sanitized
   acceptance run passes source, lint, compilation, tests, required secret names,
   fleet-manifest parsing, backup-key validation, and the recovery entrypoint,
