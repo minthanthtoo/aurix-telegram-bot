@@ -42,6 +42,22 @@ def _summarize(checks: list[dict[str, str]]) -> str:
     return PASS
 
 
+def _default_env_file() -> str:
+    """Choose the managed host env by default, with a local-dev fallback.
+
+    Production releases are immutable archives and intentionally do not carry a
+    ``.env`` file.  The systemd deployment writes the authoritative secrets to
+    ``/etc/aurix-bot/aurix.env``.  Prefer that path when it exists, while keeping
+    the command convenient for local checkouts and CI fixtures.
+    """
+
+    configured = os.environ.get("AURIX_FLEET_ENV_FILE")
+    if configured:
+        return configured
+    managed = Path("/etc/aurix-bot/aurix.env")
+    return str(managed) if managed.is_file() else ".env"
+
+
 def _git_clean(root: Path, runner: Callable[..., subprocess.CompletedProcess[str]]) -> dict[str, str]:
     if not (root / ".git").is_dir():
         return _check("source_clean", SKIP, "deployed release is an immutable archive; CI checked the source checkout")
@@ -148,7 +164,7 @@ def run_acceptance(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env-file", default=os.environ.get("AURIX_FLEET_ENV_FILE", ".env"))
+    parser.add_argument("--env-file", default=_default_env_file())
     parser.add_argument("--verify-archives", action="store_true")
     parser.add_argument("--live", action="store_true", help="also inspect release and systemd services")
     args = parser.parse_args(argv)

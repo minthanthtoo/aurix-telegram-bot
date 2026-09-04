@@ -4,10 +4,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from deploy.production_acceptance import _summarize, _tool_checks, run_acceptance
+from deploy.production_acceptance import _default_env_file, _summarize, _tool_checks, run_acceptance
 
 
 class ProductionAcceptanceTests(unittest.TestCase):
+    def test_default_env_prefers_managed_host_file(self):
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "deploy.production_acceptance.Path.is_file", return_value=True
+        ):
+            self.assertEqual(_default_env_file(), "/etc/aurix-bot/aurix.env")
+
+    def test_default_env_keeps_explicit_override(self):
+        with patch.dict("os.environ", {"AURIX_FLEET_ENV_FILE": "/tmp/test.env"}, clear=True):
+            self.assertEqual(_default_env_file(), "/tmp/test.env")
+
     def test_warnings_never_summarize_as_pass(self):
         self.assertEqual(_summarize([]), "pass")
         self.assertEqual(_summarize([{"status": "warn"}]), "warn")
