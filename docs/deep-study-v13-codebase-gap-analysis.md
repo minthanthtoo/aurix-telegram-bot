@@ -88,17 +88,20 @@ flowchart LR
     Bot --> Commerce["CommerceService"]
     Claims --> DB[("SQLite or PostgreSQL")]
     Commerce --> DB
-    Commerce --> Jobs["In-database provisioning jobs"]
-    Commerce --> Notifications["In-database notification queue"]
-    Claims --> Outline["One pinned Outline API"]
-    Jobs --> Outline
-    Outline --> DataPlane["One Outline VPN endpoint"]
+    Commerce --> Jobs["Durable provisioning jobs + free intents"]
+    Commerce --> Notifications["Leased notification queue"]
+    Claims --> Pool["Server-scoped OutlineServerPool"]
+    Jobs --> Pool
+    Pool --> SG["Singapore A"]
+    Pool --> SG2["Singapore B"]
+    Pool --> BKK["Bangkok A"]
+    SG & SG2 & BKK --> DataPlane["Outline data-plane endpoints"]
     Customer -. "ss:// access URL; traffic bypasses bot" .-> DataPlane
 ```
 
 Key evidence:
 
-- One `OUTLINE_API_URL` and one certificate pin are loaded at startup, then one `OutlineClient` is injected into both free and paid services ([app.py:2075](../app.py#L2075), [app.py:2116](../app.py#L2116)).
+- `OUTLINE_SERVERS_JSON` can load multiple endpoint-specific URLs and certificate pins into `OutlineServerPool`; the pool is injected into free and paid services ([runtime.py](../runtime.py), [outline_adapter.py](../outline_adapter.py)).
 - The bot explicitly deletes any webhook and uses `getUpdates` long polling ([app.py:2029](../app.py#L2029), [app.py:2187](../app.py#L2187)).
 - The paid Render profile deploys exactly one worker and a persistent SQLite disk ([render.yaml:1](../render.yaml#L1)).
 - Customer VPN traffic does not pass through AuriX after delivery; this correctly preserves data-plane availability during bot/control-plane outages.
@@ -107,10 +110,10 @@ Key evidence:
 
 | Version concept | Conversation meaning | Repository status | Judgment |
 |---|---|---|---|
-| V0 | One private Outline server | Implemented | Exact current data-plane topology |
+| V0 | One private Outline server | Implemented | Still supported as the single-endpoint compatibility profile |
 | V1 | Outline plus Telegram delivery | Implemented | Bot, free/trial claims, paid purchase, key delivery |
 | V2 | Entitlement/key-management engine | Strong partial/mostly implemented | Plans, orders, payments, subscriptions, quotas, jobs, audit; no generic entitlement or credential model |
-| V3 | Multi-region/multi-node Outline | Not implemented | No server/endpoint registry or assignment |
+| V3 | Multi-region/multi-node Outline | Implemented at Outline-only MVP level | Three declared endpoint records, server-scoped keys, capacity/admission policy, inventory reconciliation, and guarded allocation; manual migration remains |
 | V4 | Dynamic/adaptive Outline | Not implemented | No health state, endpoint scoring, reassignment, or migration workflow |
 | V5–V8 | Xray/REALITY/multi-transport/multi-provider | Not implemented | Outline-specific code and schema throughout |
 | V9 | Outline + Xray hybrid | Not implemented | No common transport adapter |
@@ -135,7 +138,7 @@ The code is therefore not “behind” in a simple feature-count sense. It corre
 | Outline management security | Exact certificate fingerprint pin, URL-encoded IDs, strict timeout | Good MVP | One static pin/management credential; no rotation workflow or per-endpoint trust inventory |
 | Quota/expiry enforcement | Per-key limits, metrics observation, hard deletion, retries, escalation | Strong single-node | Usage is Outline/key-specific trailing-window data, not transport-normalized billing usage |
 | Audit | Business and key lifecycle events | Good MVP | No append-only/tamper-evident guarantee, request correlation, policy/config version, or failover decision log |
-| Notifications | Durable dedupe, retry, dead-letter state | Good single process | Delivery is selected without an atomic claim; unsafe for multiple notification workers |
+| Notifications | Durable dedupe, retry, dead-letter state, short delivery lease | Good single process; safe claim primitive present | Delivery is still at-least-once (a crash after Telegram accepts a message can resend); provider-side idempotency is unavailable |
 | PostgreSQL | Optional pooled repository with transaction and job locking support | Partial production path | Not the default paid deployment; no migration framework or live DB evidence |
 | Endpoint registry | None | Absent | Required before V3 |
 | Provider/region abstraction | None | Absent | Required before provider or region diversity |
@@ -229,9 +232,14 @@ The generic object in the final conversations is a credential attached to a conn
 
 That coupling means adding Xray currently requires changes across persistence, provisioning, quota logic, usage display, naming, admin views, and tests. A transport adapter interface alone is insufficient; the schema also needs generic credential/config records with transport-specific payload metadata behind them.
 
-### P1 — no endpoint identity exists
+### P1 — endpoint identity is Outline-specific, not yet generic
 
-There is no `vpn_servers`, `providers`, `regions`, `transports`, `endpoints`, or `endpoint_assignments` table, even though [`FINAL_ARCHITECTURE.md`](FINAL_ARCHITECTURE.md) already specifies a server registry. Every key implicitly belongs to the one process-global Outline endpoint.
+The repository now has an explicit `outline_servers` registry, server-scoped
+key/intent identity, capacity allocations, provider resource IDs, inventory
+reconciliation, and deterministic endpoint selection. It still has no generic
+`providers`, `regions`, `transports`, `endpoints`, or `endpoint_assignments`
+model, so every assignment is coupled to the Outline adapter and cannot yet
+represent a replaceable transport/profile as described by the V10–V13 target.
 
 Without endpoint identity, the system cannot answer:
 
@@ -281,20 +289,26 @@ The canonical architecture says authenticated webhook, PostgreSQL, independent w
 
 There is also:
 
-- no schema migration framework;
-- no CI configuration;
 - no dependency lock file;
-- no automated backup/restore workflow;
-- no infrastructure-as-code for VPN endpoints;
-- no live integration or chaos test suite.
+- no infrastructure-as-code that installs and configures every VPN endpoint;
+- no live integration or chaos test suite;
+- no independently hosted second control-plane writer.
 
-Most importantly, the entire application/docs/test set is currently untracked in Git. Only an earlier branding commit exists. Until the implementation is committed, reviewed, and recoverable, architectural sophistication is secondary.
+Numbered SQLite/PostgreSQL migrations, CI, encrypted backup/restore tooling,
+and GitHub-gated immutable releases are now present. The remaining deployment
+gap is operational proof (real Telegram/payment canary, sustained observation,
+and multi-writer rehearsal), not missing source control or a basic recovery
+mechanism.
 
-### P2 — notification delivery is not ready for independent replicas
+### P2 — notification delivery has a lease, but remains at-least-once
 
-Provisioning jobs have an atomic database claim and PostgreSQL `SKIP LOCKED`. Notifications are read as pending and only marked sent afterward, without a running/lease state. Multiple notification workers can therefore send the same message concurrently. The current one-process topology hides this race.
-
-Before splitting workers, notifications need the same lease/claim/idempotency discipline as provisioning jobs.
+`claim_pending_notifications()` now uses a short lease (`next_attempt_at`) and
+PostgreSQL `SKIP LOCKED`, so concurrent workers do not normally select the same
+row. A crash after Telegram accepts a message but before `mark_notification_sent`
+can still cause one duplicate on lease expiry because Telegram offers no
+application-level idempotency key. Keep notifications at-least-once, use stable
+dedupe keys, and retain the current single-writer/short-worker topology until a
+provider-supported idempotent delivery boundary exists.
 
 ### P2 — usage is enforcement data, not yet a V13 telemetry system
 
@@ -345,9 +359,11 @@ Ruff reports three unused local variables (`app.py`, `test_app.py`, and `test_mv
 
 Documentation drift is more consequential:
 
-- [`MVP_STATUS.md`](MVP_STATUS.md) says 57 tests; the suite now has 79.
+- [`MVP_STATUS.md`](MVP_STATUS.md) and this document now report the verified
+  340-test suite; update both whenever a release changes the test baseline.
 - [`FINAL_ARCHITECTURE.md`](FINAL_ARCHITECTURE.md) calls an Outline-centric target canonical/final, while the later conversations redefine the north star as transport-agnostic V13.
-- The architecture document describes a server registry that the code does not implement.
+- The Outline fleet registry is implemented; the remaining documentation gap is
+  the generic transport/profile registry required for Xray/V10–V13.
 - The README accurately labels multi-node allocation as deferred, but the distinction between “current V2 MVP,” “next V3 target,” and “eventual V13” should be explicit everywhere.
 
 ## Recommended target architecture for this repository
@@ -409,12 +425,12 @@ while assignment/credential/config/endpoint can change
 
 Do this before structural V3 work:
 
-1. Commit the current application, tests, docs, and deployment files in a reviewable baseline.
-2. Add CI using the declared Python version and run all 79 tests plus Ruff.
-3. Add a migration tool or explicit numbered migrations for SQLite/PostgreSQL.
-4. Unify free/trial provisioning with the paid durable job/reconcile path.
-5. Make control-plane startup degrade gracefully when Outline management is temporarily unavailable.
-6. Add backup automation, a restore drill, and documented RPO/RTO.
+1. Commit the current application, tests, docs, and deployment files in a reviewable baseline. **Done for the current release line.**
+2. Add CI using the declared Python version and run the full 340-test suite plus Ruff. **Done for the current release line.**
+3. Add a migration tool or explicit numbered migrations for SQLite/PostgreSQL. **Done for the current release line.**
+4. Unify free/trial provisioning with the paid durable job/reconcile path. **Done for the current release line.**
+5. Make control-plane startup degrade gracefully when Outline management is temporarily unavailable. **Done for the current release line.**
+6. Add backup automation, a restore drill, and documented RPO/RTO. **Done for the current release line; live cadence remains an operational gate.**
 7. Complete a live 10–20-user Outline/Telegram/payment/quota/expiry smoke pilot.
 8. Record P50/P90/P95 usage, latency, connection success, support time, refunds, and cost per GB/user.
 
