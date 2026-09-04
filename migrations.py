@@ -955,6 +955,62 @@ COMMERCE_MIGRATIONS = (
                ON outline_remote_key_reviews(server_id, review_state)""",
         ),
     ),
+    Migration(
+        12,
+        "endpoint_health_observability",
+        sqlite_statements=(
+            "ALTER TABLE outline_servers ADD COLUMN health_success_streak INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE outline_servers ADD COLUMN health_failure_streak INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE outline_servers ADD COLUMN health_state_changed_at TEXT",
+            "ALTER TABLE outline_servers ADD COLUMN health_last_latency_ms REAL",
+            """CREATE TABLE IF NOT EXISTS endpoint_health_observations (
+                   id TEXT PRIMARY KEY,
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   probe_type TEXT NOT NULL,
+                   observed_at TEXT NOT NULL,
+                   observed_status TEXT NOT NULL CHECK (
+                       observed_status IN ('healthy', 'unreachable')
+                   ),
+                   state_before TEXT NOT NULL,
+                   state_after TEXT NOT NULL CHECK (
+                       state_after IN ('unknown', 'healthy', 'degraded', 'unreachable')
+                   ),
+                   latency_ms REAL,
+                   remote_key_count INTEGER,
+                   error_type TEXT,
+                   created_at TEXT NOT NULL,
+                   UNIQUE (server_id, probe_type, observed_at)
+               )""",
+            """CREATE INDEX IF NOT EXISTS endpoint_health_recent
+               ON endpoint_health_observations(server_id, observed_at)""",
+        ),
+        postgres_statements=(
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS health_success_streak INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS health_failure_streak INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS health_state_changed_at TEXT",
+            "ALTER TABLE outline_servers ADD COLUMN IF NOT EXISTS health_last_latency_ms DOUBLE PRECISION",
+            """CREATE TABLE IF NOT EXISTS endpoint_health_observations (
+                   id TEXT PRIMARY KEY,
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   probe_type TEXT NOT NULL,
+                   observed_at TEXT NOT NULL,
+                   observed_status TEXT NOT NULL CHECK (
+                       observed_status IN ('healthy', 'unreachable')
+                   ),
+                   state_before TEXT NOT NULL,
+                   state_after TEXT NOT NULL CHECK (
+                       state_after IN ('unknown', 'healthy', 'degraded', 'unreachable')
+                   ),
+                   latency_ms DOUBLE PRECISION,
+                   remote_key_count INTEGER,
+                   error_type TEXT,
+                   created_at TEXT NOT NULL,
+                   UNIQUE (server_id, probe_type, observed_at)
+               )""",
+            """CREATE INDEX IF NOT EXISTS endpoint_health_recent
+               ON endpoint_health_observations(server_id, observed_at)""",
+        ),
+    ),
 )
 
 

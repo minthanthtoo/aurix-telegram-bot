@@ -89,6 +89,8 @@ OUTLINE_CERT_SHA256=replace-with-installer-output
 # owner/admin intent button and does not itself create infrastructure.
 # AURIX_INFRASTRUCTURE_QUEUE_ENABLED=0
 AURIX_SERVER_HEALTH_MAX_AGE_SECONDS=900
+AURIX_ENDPOINT_FAILURE_THRESHOLD=3
+AURIX_ENDPOINT_RECOVERY_THRESHOLD=2
 AURIX_ACCESS_URL_KEY=replace-with-a-persistent-fernet-key
 DATABASE_PATH=/var/lib/aurix-bot/bot.db
 # Optional: set a reachable PostgreSQL URL for hosted commercial state.

@@ -28,12 +28,13 @@ Operational automation:         bounded fleet automation with guarded scale-out
 Adaptive/network intelligence:  not implemented
 ```
 
-The current code should therefore be treated as **Phase 2 of the later V13
-plan**: a production-staged, multi-node Outline control plane, not a complete
-adaptive V13 connectivity platform and not something that should be replaced
-wholesale.
+The current code should therefore be treated as **Phase 2 moving into the
+controlled-resilience gate** of the later V13 plan: a production-staged,
+multi-node Outline control plane with conservative health evidence, not a
+complete adaptive V13 connectivity platform and not something that should be
+replaced wholesale.
 
-Current evidence is strong for code and controlled operations (340 tests, live
+Current evidence is strong for code and controlled operations (341 tests, live
 three-node health, CI-gated deployment, and verified encrypted archives), but
 not yet for unrestricted customer admission: allocation normalization, orphan
 classification, stable DNS, real Telegram/payment canaries, and sustained
@@ -105,6 +106,7 @@ Key evidence:
 - The bot explicitly deletes any webhook and uses `getUpdates` long polling ([app.py:2029](../app.py#L2029), [app.py:2187](../app.py#L2187)).
 - The paid Render profile deploys exactly one worker and a persistent SQLite disk ([render.yaml:1](../render.yaml#L1)).
 - Customer VPN traffic does not pass through AuriX after delivery; this correctly preserves data-plane availability during bot/control-plane outages.
+- `endpoint_health_observations` records every management/inventory probe without credentials; `outline_servers` keeps success/failure streaks and the last probe latency. A first failure moves a node to `degraded` (and blocks new admission), repeated failures move it to `unreachable`, and recovery requires independent successful probes ([migrations.py](../migrations.py), [commerce_service.py](../commerce_service.py)).
 
 ## Version classification
 
@@ -114,7 +116,7 @@ Key evidence:
 | V1 | Outline plus Telegram delivery | Implemented | Bot, free/trial claims, paid purchase, key delivery |
 | V2 | Entitlement/key-management engine | Strong partial/mostly implemented | Plans, orders, payments, subscriptions, quotas, jobs, audit; no generic entitlement or credential model |
 | V3 | Multi-region/multi-node Outline | Implemented at Outline-only MVP level | Three declared endpoint records, server-scoped keys, capacity/admission policy, inventory reconciliation, and guarded allocation; manual migration remains |
-| V4 | Dynamic/adaptive Outline | Not implemented | No health state, endpoint scoring, reassignment, or migration workflow |
+| V4 | Dynamic/adaptive Outline | Partial foundation | Durable health observations, latency, failure/recovery hysteresis, and admission blocking are implemented; scoring, reassignment, and migration remain absent |
 | V5–V8 | Xray/REALITY/multi-transport/multi-provider | Not implemented | Outline-specific code and schema throughout |
 | V9 | Outline + Xray hybrid | Not implemented | No common transport adapter |
 | V10 | Protocol-agnostic adaptive fabric | Architectural idea only | Existing business state is reusable; connectivity model is not |
@@ -353,14 +355,15 @@ The schema has plans and subscription snapshots, but no explicit entitlement, de
 
 The conversations correctly distinguish account, credential, installation, device, and session. The current model represents only account and Outline credential.
 
-### P3 — lint and documentation drift
+### P3 — documentation and architecture drift
 
-Ruff reports three unused local variables (`app.py`, `test_app.py`, and `test_mvp.py`). They are low-risk and mechanically fixable.
+Ruff is clean on the current release line. The remaining drift is architectural
+scope and release-count wording, not an active lint failure.
 
 Documentation drift is more consequential:
 
 - [`MVP_STATUS.md`](MVP_STATUS.md) and this document now report the verified
-  340-test suite; update both whenever a release changes the test baseline.
+  341-test suite; update both whenever a release changes the test baseline.
 - [`FINAL_ARCHITECTURE.md`](FINAL_ARCHITECTURE.md) calls an Outline-centric target canonical/final, while the later conversations redefine the north star as transport-agnostic V13.
 - The Outline fleet registry is implemented; the remaining documentation gap is
   the generic transport/profile registry required for Xray/V10–V13.
@@ -426,7 +429,7 @@ while assignment/credential/config/endpoint can change
 Do this before structural V3 work:
 
 1. Commit the current application, tests, docs, and deployment files in a reviewable baseline. **Done for the current release line.**
-2. Add CI using the declared Python version and run the full 340-test suite plus Ruff. **Done for the current release line.**
+2. Add CI using the declared Python version and run the full 341-test suite plus Ruff. **Done for the current release line.**
 3. Add a migration tool or explicit numbered migrations for SQLite/PostgreSQL. **Done for the current release line.**
 4. Unify free/trial provisioning with the paid durable job/reconcile path. **Done for the current release line.**
 5. Make control-plane startup degrade gracefully when Outline management is temporarily unavailable. **Done for the current release line.**

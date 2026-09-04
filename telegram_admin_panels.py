@@ -225,6 +225,13 @@ class TelegramAdminMixin:
                     "",
                     f"{'🟢' if item.get('health_status') == 'healthy' else '🔴'} {item.get('label') or item.get('server_id')}",
                     (
+                        "Health evidence: "
+                        f"{str(item.get('health_status') or 'unknown')} · "
+                        f"last probe {float(item.get('health_last_latency_ms')):g} ms"
+                        if item.get("health_last_latency_ms") is not None
+                        else "Health evidence: no latency recorded"
+                    ),
+                    (
                         "Admission: ✅ eligible"
                         if item.get("admission_status") == "eligible"
                         else "Admission: ⛔ blocked · "
@@ -340,6 +347,14 @@ class TelegramAdminMixin:
         lines = [
             f"⚙️ {server.get('label') or server_id}",
             f"Health: {server.get('health_status')} · remote keys: {server.get('remote_key_count') or 0}",
+            (
+                "Probe: "
+                f"{float(server.get('health_last_latency_ms')):g} ms · "
+                f"success streak {int(server.get('health_success_streak') or 0)} · "
+                f"failure streak {int(server.get('health_failure_streak') or 0)}"
+                if server.get("health_last_latency_ms") is not None
+                else "Probe: no latency recorded"
+            ),
             (
                 f"Inventory audit: ⚠️ {int(server.get('remote_orphan_key_count') or 0)} untracked"
                 if int(server.get("remote_orphan_key_count") or 0)

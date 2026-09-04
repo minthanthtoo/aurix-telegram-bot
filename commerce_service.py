@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -292,6 +293,164 @@ class CommerceService(CommerceWorkerMixin):
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _health_threshold(name: str, default: int) -> int:
+        """Read a bounded hysteresis threshold from the deployment environment."""
+        try:
+            return max(1, min(10, int(os.environ.get(name, str(default)))))
+        except (TypeError, ValueError):
+            return default
+
+    def _record_endpoint_health(
+        self,
+        connection: Any,
+        server_id: str,
+        observed_at: str,
+        *,
+        observed_status: str,
+        latency_ms: float | None,
+        remote_key_count: int | None = None,
+        error_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist one health probe and apply conservative state hysteresis.
+
+        A single failed management call blocks new admission immediately by
+        moving a healthy node to ``degraded``. Repeated failures make the
+        state ``unreachable``; recovery needs independent successful probes.
+        The unique timestamp makes repeated maintenance/UI calls idempotent.
+        """
+        if observed_status not in {"healthy", "unreachable"}:
+            raise CommerceError("Invalid endpoint health observation")
+        lock_clause = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
+        current = connection.execute(
+            """SELECT health_status, health_success_streak,
+                      health_failure_streak, health_state_changed_at, last_error
+                 FROM outline_servers WHERE server_id = ?""" + lock_clause,
+            (server_id,),
+        ).fetchone()
+        if current is None:
+            raise CommerceError(f"Unknown Outline server: {server_id}")
+        previous = str(current["health_status"] or "unknown")
+        if self._table_exists(connection, "endpoint_health_observations"):
+            duplicate = connection.execute(
+                """SELECT state_after FROM endpoint_health_observations
+                   WHERE server_id = ? AND probe_type = 'management_inventory'
+                     AND observed_at = ?""",
+                (server_id, observed_at),
+            ).fetchone()
+            if duplicate is not None:
+                return {
+                    "state": str(duplicate["state_after"]),
+                    "success_streak": int(current["health_success_streak"] or 0),
+                    "failure_streak": int(current["health_failure_streak"] or 0),
+                    "duplicate": True,
+                }
+        success_streak = int(current["health_success_streak"] or 0)
+        failure_streak = int(current["health_failure_streak"] or 0)
+        recovery_threshold = self._health_threshold(
+            "AURIX_ENDPOINT_RECOVERY_THRESHOLD", 2
+        )
+        failure_threshold = self._health_threshold(
+            "AURIX_ENDPOINT_FAILURE_THRESHOLD", 3
+        )
+        if observed_status == "healthy":
+            success_streak += 1
+            failure_streak = 0
+            state_after = (
+                "healthy"
+                if previous in {"unknown", "healthy"}
+                or success_streak >= recovery_threshold
+                else previous
+            )
+        else:
+            failure_streak += 1
+            success_streak = 0
+            state_after = (
+                "unreachable"
+                if failure_streak >= failure_threshold
+                else "degraded"
+            )
+        changed_at = (
+            observed_at
+            if state_after != previous
+            else current["health_state_changed_at"]
+        )
+        last_error = (
+            None
+            if observed_status == "healthy" and state_after == "healthy"
+            else (str(error_type or current["last_error"] or "")[:128] or None)
+        )
+        connection.execute(
+            """UPDATE outline_servers
+                  SET health_status = ?, health_success_streak = ?,
+                      health_failure_streak = ?, health_state_changed_at = ?,
+                      health_last_latency_ms = ?, last_error = ?,
+                      last_synced_at = ?, updated_at = ?
+                WHERE server_id = ?""",
+            (
+                state_after,
+                success_streak,
+                failure_streak,
+                changed_at,
+                latency_ms,
+                last_error,
+                observed_at,
+                observed_at,
+                server_id,
+            ),
+        )
+        if self._table_exists(connection, "endpoint_health_observations"):
+            connection.execute(
+                """INSERT INTO endpoint_health_observations
+                   (id, server_id, probe_type, observed_at, observed_status,
+                    state_before, state_after, latency_ms, remote_key_count,
+                    error_type, created_at)
+                   VALUES (?, ?, 'management_inventory', ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(server_id, probe_type, observed_at) DO NOTHING""",
+                (
+                    _new_id(),
+                    server_id,
+                    observed_at,
+                    observed_status,
+                    previous,
+                    state_after,
+                    latency_ms,
+                    remote_key_count,
+                    str(error_type or "")[:128] or None,
+                    observed_at,
+                ),
+            )
+        return {
+            "state": state_after,
+            "success_streak": success_streak,
+            "failure_streak": failure_streak,
+            "duplicate": False,
+        }
+
+    def endpoint_health_history(
+        self,
+        server_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return safe, recent health evidence without endpoint credentials."""
+        try:
+            page_limit = max(1, min(200, int(limit)))
+        except (TypeError, ValueError):
+            page_limit = 20
+        with self.database.connect() as connection:
+            if not self._table_exists(connection, "endpoint_health_observations"):
+                return []
+            rows = connection.execute(
+                """SELECT observed_at, observed_status, state_before, state_after,
+                          latency_ms, remote_key_count, error_type
+                     FROM endpoint_health_observations
+                    WHERE server_id = ?
+                    ORDER BY observed_at DESC LIMIT ?""",
+                (server_id, page_limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str, Any]]:
         """Reconcile remote inventory and telemetry without storing access URLs."""
         observed_at = _now_text(now)
@@ -303,6 +462,7 @@ class CommerceService(CommerceWorkerMixin):
         for row in rows:
             server_id = str(row["server_id"])
             client = self._outline_client(server_id)
+            probe_started = time.perf_counter()
             try:
                 info = client.server_info()
                 inventory = client.list_keys()
@@ -408,12 +568,20 @@ class CommerceService(CommerceWorkerMixin):
                                 (server_id,),
                             ).fetchone()["n"]
                         )
+                    latency_ms = round((time.perf_counter() - probe_started) * 1000, 3)
+                    health = self._record_endpoint_health(
+                        connection,
+                        server_id,
+                        observed_at,
+                        observed_status="healthy",
+                        latency_ms=latency_ms,
+                        remote_key_count=len(remote_items),
+                    )
                     connection.execute(
                         """UPDATE outline_servers SET remote_key_count = ?, remote_transfer_bytes = ?,
                                   current_bandwidth_bytes = ?, peak_bandwidth_bytes = ?,
-                                  telemetry_experimental = ?, remote_orphan_key_count = ?,
-                                  health_status = 'healthy', last_error = NULL,
-                                  last_synced_at = ?, updated_at = ? WHERE server_id = ?""",
+                                  telemetry_experimental = ?, remote_orphan_key_count = ?
+                               WHERE server_id = ?""",
                         (
                             len(remote_items),
                             total_transfer,
@@ -421,15 +589,16 @@ class CommerceService(CommerceWorkerMixin):
                             peak_bandwidth,
                             experimental,
                             orphan_count,
-                            observed_at,
-                            observed_at,
                             server_id,
                         ),
                     )
                 results.append(
                     {
                         "server_id": server_id,
-                        "status": "healthy",
+                        "status": health["state"],
+                        "observed_status": "healthy",
+                        "latency_ms": latency_ms,
+                        "health_success_streak": health["success_streak"],
                         "version": info.get("version"),
                         "remote_key_count": len(remote_items),
                         "remote_orphan_key_count": orphan_count,
@@ -437,12 +606,25 @@ class CommerceService(CommerceWorkerMixin):
                 )
             except Exception as exc:
                 with self.database.connect() as connection:
-                    connection.execute(
-                        """UPDATE outline_servers SET health_status = 'unreachable', last_error = ?,
-                                  last_synced_at = ?, updated_at = ? WHERE server_id = ?""",
-                        (type(exc).__name__[:128], observed_at, observed_at, server_id),
+                    self.database.begin_write(connection)
+                    latency_ms = round((time.perf_counter() - probe_started) * 1000, 3)
+                    health = self._record_endpoint_health(
+                        connection,
+                        server_id,
+                        observed_at,
+                        observed_status="unreachable",
+                        latency_ms=latency_ms,
+                        error_type=type(exc).__name__,
                     )
-                results.append({"server_id": server_id, "status": "unreachable"})
+                results.append(
+                    {
+                        "server_id": server_id,
+                        "status": health["state"],
+                        "observed_status": "unreachable",
+                        "latency_ms": latency_ms,
+                        "health_failure_streak": health["failure_streak"],
+                    }
+                )
         return results
 
     def remote_key_inventory(

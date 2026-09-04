@@ -34,6 +34,7 @@ class FakePaidOutline:
         self.deleted = []
         self.limits = []
         self.fail_create = False
+        self.fail_inventory = False
         self.transfer = {}
 
     def list_keys(self):
@@ -59,6 +60,8 @@ class FakePaidOutline:
         return {"bytesTransferredByUserId": self.transfer}
 
     def server_info(self):
+        if self.fail_inventory:
+            raise CommerceError("Outline unavailable")
         return {"version": "fake-outline-1"}
 
     def delete_key(self, key_id):
@@ -954,6 +957,61 @@ class CommerceServiceTest(unittest.TestCase):
         with self.assertRaisesRegex(CommerceError, "temporarily full"):
             self.service.create_order(101, "One", "basic_50gb", self.now)
 
+    def test_endpoint_health_uses_conservative_hysteresis_and_keeps_history(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        with patch.dict(
+            os.environ,
+            {
+                "AURIX_ENDPOINT_FAILURE_THRESHOLD": "3",
+                "AURIX_ENDPOINT_RECOVERY_THRESHOLD": "2",
+            },
+            clear=False,
+        ):
+            self.outline.fail_inventory = True
+            first_failure = self.service.refresh_server_inventory(
+                self.now + timedelta(minutes=1)
+            )[0]
+            second_failure = self.service.refresh_server_inventory(
+                self.now + timedelta(minutes=2)
+            )[0]
+            third_failure = self.service.refresh_server_inventory(
+                self.now + timedelta(minutes=3)
+            )[0]
+            self.assertEqual(first_failure["status"], "degraded")
+            self.assertEqual(second_failure["status"], "degraded")
+            self.assertEqual(third_failure["status"], "unreachable")
+
+            self.outline.fail_inventory = False
+            first_recovery = self.service.refresh_server_inventory(
+                self.now + timedelta(minutes=4)
+            )[0]
+            second_recovery = self.service.refresh_server_inventory(
+                self.now + timedelta(minutes=5)
+            )[0]
+            self.assertEqual(first_recovery["status"], "unreachable")
+            self.assertEqual(second_recovery["status"], "healthy")
+
+        history = self.service.endpoint_health_history("default", limit=10)
+        self.assertEqual(len(history), 6)
+        self.assertEqual(
+            [row["observed_status"] for row in history[:3]],
+            ["healthy", "healthy", "unreachable"],
+        )
+        self.assertEqual(history[0]["state_after"], "healthy")
+        self.assertEqual(history[2]["state_after"], "unreachable")
+        self.assertEqual(history[4]["state_after"], "degraded")
+        with self.database.connect() as connection:
+            server = connection.execute(
+                """SELECT health_status, health_success_streak,
+                          health_failure_streak, health_last_latency_ms
+                     FROM outline_servers WHERE server_id = 'default'"""
+            ).fetchone()
+        self.assertEqual(server["health_status"], "healthy")
+        self.assertEqual(server["health_success_streak"], 2)
+        self.assertEqual(server["health_failure_streak"], 0)
+        self.assertIsNotNone(server["health_last_latency_ms"])
+
 
 class FakeRawPostgresCursor:
     rowcount = 1
@@ -1153,15 +1211,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "1f6cf80b127806dbdcc98f776dd72386c517359e6d8b44d1d88b1624b99881ef",
+            "7708bf6355a9d89b54349b1c0666cce9bf5be5b390bc914488da2d842037e78b",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "9ba3ce1c07fd62f778b74788fa1baaef40b99ab2f3e136462ba8a1d95b08404b",
+            "4446ff6375260edbc7e856c1a500278cef77b31a158e09f7208018aa2531f3fa",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "01c0c631d3f56c31677e28449fa6d3ea8130dbdccf9292c3610aadd3df32ef27",
+            "ff243a45c79fda07f0faa9db8156c8dac82f582b4d9e7a623c64fdc651b81715",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

@@ -158,6 +158,22 @@ Inventory reconciliation calls each configured endpoint independently:
 4. optional Outline 1.12 experimental server metrics;
 5. persist count, transfer, bandwidth fields, status, and `last_synced_at`.
 
+Each pass is also recorded in `endpoint_health_observations` with probe result,
+latency, remote key count, prior state, and resulting state. Health transitions
+are deliberately conservative and restart-safe:
+
+- the first failed management probe moves a healthy endpoint to `degraded`,
+  which immediately blocks new admission;
+- failures at `AURIX_ENDPOINT_FAILURE_THRESHOLD` (default `3`) move it to
+  `unreachable`;
+- recovery from `degraded`/`unreachable` requires
+  `AURIX_ENDPOINT_RECOVERY_THRESHOLD` (default `2`) independent successful
+  probes;
+- repeated calls for the same server and observation timestamp are idempotent;
+- the endpoint's `health_last_latency_ms` and streak counters are exposed in
+  the admin capacity snapshot, while credentials and management URLs are never
+  written to the health ledger.
+
 An endpoint is eligible only when all are true:
 
 - `enabled = 1`;
@@ -166,9 +182,11 @@ An endpoint is eligible only when all are true:
 - observation age is within `AURIX_SERVER_HEALTH_MAX_AGE_SECONDS`;
 - key, traffic, and tier/plan policy have capacity.
 
-An error marks that endpoint unreachable while other endpoints continue. Missing
-metrics are unknown, never zero. Quota enforcement skips keys on an unobserved
-endpoint and retries after telemetry recovers.
+An error marks that endpoint degraded/unreachable according to the hysteresis
+policy while other endpoints continue. Missing metrics are unknown, never zero.
+Quota enforcement skips keys on an unobserved endpoint and retries after
+telemetry recovers. This is health evidence and admission protection, not
+automatic customer migration or protocol failover.
 
 Startup is intentionally degraded rather than fatal: Telegram/admin functions
 remain available, issuance is rejected by the health gate, and maintenance keeps

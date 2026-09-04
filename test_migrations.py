@@ -122,6 +122,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 9, "restart_safe_interaction_state"),
                     ("commerce", 10, "receipt_perceptual_fingerprint"),
                     ("commerce", 11, "remote_key_review_workflow"),
+                    ("commerce", 12, "endpoint_health_observability"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

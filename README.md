@@ -74,6 +74,9 @@ Optional:
   `OUTLINE_SERVERS_JSON` after switching to a fleet.
 - `AURIX_SERVER_HEALTH_MAX_AGE_SECONDS` — maximum age of inventory telemetry
   accepted for new admission (default `900`).
+- `AURIX_ENDPOINT_FAILURE_THRESHOLD` / `AURIX_ENDPOINT_RECOVERY_THRESHOLD` —
+  bounded health hysteresis (defaults `3` failures / `2` successful probes);
+  failed nodes are blocked from new issuance until recovery evidence is stable.
 - `OWNER_TELEGRAM_ID` — preferred immutable owner/recovery Telegram numeric ID
 - `ADMIN_TELEGRAM_IDS` — legacy one-time comma-separated administrator bootstrap
 - `AURIX_CONTROL_GROUP_ID` — optional trusted numeric `-100...` bootstrap override. Normally the owner connects the group from **Owner Controls → Choose Control Group**; Telegram supplies and AuriX persists the numeric ID without invite-link parsing.
