@@ -33,7 +33,7 @@ plan**: a production-staged, multi-node Outline control plane, not a complete
 adaptive V13 connectivity platform and not something that should be replaced
 wholesale.
 
-Current evidence is strong for code and controlled operations (329 tests, live
+Current evidence is strong for code and controlled operations (340 tests, live
 three-node health, CI-gated deployment, and verified encrypted archives), but
 not yet for unrestricted customer admission: allocation normalization, orphan
 classification, stable DNS, real Telegram/payment canaries, and sustained
@@ -205,26 +205,23 @@ Before a public paid launch, the minimum evidence is:
 - legal/provider/payment-term review;
 - incident and refund ownership.
 
-### P1 — free/trial key creation bypasses the durable job pattern
+### P1 — free/trial provisioning is now durable, with one compatibility risk
 
-`ClaimService.claim()`, `claim_trial()`, and giveaway claims still perform the
-remote operation while holding a database write transaction. They now use a
-stable deterministic Outline ID when the adapter supports caller-selected PUT,
-and perform a read-after-ambiguous recovery before any POST fallback. This
-closes the duplicate-after-timeout failure mode for current Outline versions,
-  but does not yet remove the network call from the local transaction
-  ([entitlements.py](../entitlements.py)).
+As of the 2026-09-04 refresh, `ClaimService.claim()`, `claim_trial()`, and
+giveaway claims commit a server-scoped `free_provisioning_intents` row before
+the remote Outline call. The maintenance worker claims pending rows with
+PostgreSQL row locks, resets stale leases, retries bounded failures, and
+finalizes a successful deterministic key exactly once. Pending reservations are
+included in tier and physical-key admission, so restarts and concurrent
+requests cannot overbook a node. The Telegram path reports a pending key
+instead of losing the claim.
 
-Consequences:
-
-- a network timeout can still hold the database write lock until the request
-  path returns;
-- legacy adapters without deterministic PUT support can still leave an
-  ambiguous POST result that requires inventory reconciliation;
-- the database write lock is held during a network call;
-- free and paid credentials have different reliability guarantees.
-
-Before multi-node work, free/trial and paid provisioning should converge on one intent/job/reconcile lifecycle and one credential table/model.
+The remaining compatibility risk is limited to adapters that expose only
+non-idempotent `POST` creation. A current `OutlineClient` uses deterministic
+`PUT`/read-after-ambiguous recovery; a legacy POST-only adapter can still leave
+an ambiguous remote result if the process dies before its observed ID is
+recorded. Retire those adapters before a multi-writer or broad autonomous
+rollout ([entitlements.py](../entitlements.py)).
 
 ### P1 — the business core is still Outline-specific
 
@@ -597,7 +594,7 @@ Do not build yet:
 |---|---:|---|
 | Paid-concierge business logic | 8.5/10 | Wallet, orders, receipts, plans, promo, notifications, and audit paths are covered by the live-tested suite |
 | Outline provisioning | 9/10 | Three healthy, server-scoped endpoints; deterministic create/recovery and hard-delete enforcement |
-| Free/trial/promo provisioning | 8/10 | Deterministic slot IDs and ambiguous-create recovery; legacy POST adapters remain bounded |
+| Free/trial/promo provisioning | 8.5/10 | Durable pre-call intents, PostgreSQL claim locks, bounded retries, deterministic slot IDs, and ambiguous-create recovery; legacy POST adapters remain bounded |
 | Durability/recovery | 8.5/10 | SQLite/PostgreSQL paths, durable jobs, offsite database/fleet backups, and verified archive decrypt/restore |
 | Multi-node allocation | 7.5/10 | Capacity, admission, traffic, orphan audit, and provider identity are implemented; primary policy still needs normalization |
 | Provider automation | 6/10 | Budgeted, allowlisted DO worker plus identity-pinned activation; provider mutation intentionally disabled |
