@@ -1224,15 +1224,25 @@ class CommerceWorkerMixin:
             except (TypeError, ValueError):
                 return default
 
-        configured = [
+        declared = [
             item
             for item in servers
-            if item.get("enabled")
-            and str(item.get("lifecycle_state") or "active") == "active"
-            and item.get("saleable_key_capacity") is not None
+            if item.get("enabled") and item.get("saleable_key_capacity") is not None
+        ]
+        configured = [
+            item
+            for item in declared
+            if str(item.get("lifecycle_state") or "active") == "active"
         ]
         healthy = [item for item in configured if item.get("health_status") == "healthy"]
         if not configured:
+            if declared:
+                return {
+                    "status": "blocked",
+                    "utilization_percent": None,
+                    "remaining_slots": 0,
+                    "message": "All declared endpoints are draining or retired; no new allocation is allowed.",
+                }
             return {
                 "status": "unconfigured",
                 "utilization_percent": None,

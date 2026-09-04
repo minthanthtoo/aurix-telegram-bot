@@ -1066,12 +1066,27 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(server["lifecycle_state"], "draining")
         self.assertEqual(server["admission_status"], "blocked")
         self.assertIn("draining", server["admission_blockers"])
-        self.assertEqual(snapshot["scale_advice"]["status"], "unconfigured")
+        self.assertEqual(snapshot["scale_advice"]["status"], "blocked")
         with self.assertRaisesRegex(CommerceError, "temporarily full"):
             self.service.create_order(456, "Draining", "basic_50gb", self.now)
 
         resumed = self.service.set_server_lifecycle("default", "active", 999)
         self.assertEqual(resumed["lifecycle_state"], "active")
+
+    def test_scale_advice_reports_blocked_when_every_declared_endpoint_is_draining(self):
+        advice = CommerceService._scale_advice(
+            [
+                {
+                    "enabled": 1,
+                    "lifecycle_state": "draining",
+                    "health_status": "healthy",
+                    "saleable_key_capacity": 20,
+                    "key_demand": 4,
+                }
+            ]
+        )
+        self.assertEqual(advice["status"], "blocked")
+        self.assertIn("draining", advice["message"])
 
     def test_endpoint_retirement_fails_closed_until_remote_inventory_is_empty(self):
         self.service.register_outline_servers({"default": "Singapore"})
