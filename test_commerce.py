@@ -526,6 +526,13 @@ class CommerceServiceTest(unittest.TestCase):
         with self.assertRaises(CommerceError):
             self.service.submit_payment(789, rejected.order_id, "manual", "late-ref", self.now)
 
+    def test_payment_reference_normalization_is_atomic_across_orders(self):
+        first = self.service.create_order(123, "Min", "basic_50gb", self.now)
+        second = self.service.create_order(456, "Other", "basic_50gb", self.now)
+        self.service.submit_payment(123, first.order_id, "manual", "Tx-42/AB", self.now)
+        with self.assertRaisesRegex(CommerceError, "already been submitted"):
+            self.service.submit_payment(456, second.order_id, "Manual", " tx-42/ab ", self.now)
+
     def test_worker_provisions_once_and_queues_a_deduplicated_notification(self):
         order = self._paid_order()
         approval = self.service.approve_order(order.order_id, 999, self.now)
@@ -1307,11 +1314,11 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "21a15efdf314e21cff2268b9661ea83d3fcd9c82bbaf65ce1a4cadcc8bdeac1d",
+            "5285b42c7f9aefc6379602d6809353dfbc8253fe64d9b9fc3ad18a7d80af4734",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "ef77a1355aa524038652ab8e08b81b0ea97abcf99993e76df4fc64ff2e2ef46a",
+            "0ae64f8d333dfafcd056257c9d283691b936113e8e66b032c4e08f58338c024e",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),

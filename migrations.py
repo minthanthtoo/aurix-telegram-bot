@@ -229,6 +229,34 @@ def _rebuild_free_intents_for_server_identity(connection: Any) -> None:
         connection.execute("PRAGMA foreign_keys = ON")
 
 
+def _add_normalized_payment_reference_guard(connection: Any) -> None:
+    """Make provider/reference deduplication atomic after legacy backfill.
+
+    Older databases only enforced the raw provider reference.  That allowed
+    the same transaction to be submitted again with harmless-looking spacing
+    or case changes.  Existing collisions are deliberately not
+    auto-merged: payment evidence is immutable and an operator must decide
+    which records are legitimate before the stronger constraint is enabled.
+    """
+    duplicate = connection.execute(
+        """SELECT 1
+           FROM payments
+           WHERE normalized_reference <> ''
+           GROUP BY lower(provider), normalized_reference
+           HAVING COUNT(*) > 1
+           LIMIT 1"""
+    ).fetchone()
+    if duplicate is not None:
+        raise MigrationError(
+            "Duplicate normalized payment references require manual reconciliation"
+        )
+    connection.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS payments_normalized_reference_unique
+           ON payments(lower(provider), normalized_reference)
+           WHERE normalized_reference <> ''"""
+    )
+
+
 FREE_ACCESS_MIGRATIONS = (
     Migration(1, "legacy_free_access_schema"),
     Migration(
@@ -1293,6 +1321,18 @@ COMMERCE_MIGRATIONS = (
             # database role used by AuriX continues to access the table, while
             # Supabase anon/authenticated roles cannot read or mutate rows.
             "ALTER TABLE public.key_termination_events ENABLE ROW LEVEL SECURITY",
+        ),
+    ),
+    Migration(
+        18,
+        "normalized_payment_reference_uniqueness",
+        # SQLite applies the uniqueness index only after checking for legacy
+        # collisions, so startup fails closed with a safe remediation message.
+        sqlite_hook=_add_normalized_payment_reference_guard,
+        postgres_statements=(
+            """CREATE UNIQUE INDEX IF NOT EXISTS payments_normalized_reference_unique
+               ON payments(lower(provider), normalized_reference)
+               WHERE normalized_reference <> ''""",
         ),
     ),
 )

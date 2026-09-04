@@ -4,12 +4,32 @@ from pathlib import Path
 
 from app import Database
 from commerce import CommerceDatabase, PostgresCommerceDatabase
-from migrations import Migration, MigrationError, apply_migrations
+from migrations import (
+    Migration,
+    MigrationError,
+    _add_normalized_payment_reference_guard,
+    apply_migrations,
+)
 from persistence import open_sqlite_connection
 from repositories import HostedRepositoryDatabase, RepositoryDatabase
 
 
 class MigrationRegistryTest(unittest.TestCase):
+    def test_payment_reference_guard_fails_closed_on_legacy_collision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "payments.db"
+            with open_sqlite_connection(path) as connection:
+                connection.executescript(
+                    """CREATE TABLE payments (
+                           provider TEXT NOT NULL,
+                           normalized_reference TEXT NOT NULL
+                       );
+                       INSERT INTO payments VALUES ('manual', 'tx-1');
+                       INSERT INTO payments VALUES ('MANUAL', 'tx-1');"""
+                )
+                with self.assertRaisesRegex(MigrationError, "manual reconciliation"):
+                    _add_normalized_payment_reference_guard(connection)
+
     def test_component_history_is_idempotent_and_applies_statements_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "migrations.db"
@@ -128,6 +148,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 15, "connectivity_migration_jobs"),
                     ("commerce", 16, "fleet_enrollment_tokens"),
                     ("commerce", 17, "termination_events_rls"),
+                    ("commerce", 18, "normalized_payment_reference_uniqueness"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),
