@@ -55,6 +55,8 @@ The current code provides:
 - degraded startup when all Outline endpoints are unavailable;
 - durable `infrastructure_jobs` and `infrastructure_events`;
 - an opt-in, budget-guarded DigitalOcean controller in `infrastructure.py`.
+- ambiguous-create recovery by exact generated Droplet name/tag before any
+  retry, preventing duplicate billable nodes after a provider timeout.
 
 The controller deliberately separates provider creation from endpoint
 activation. It never stores an Outline Management URL in the database and does

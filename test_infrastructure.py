@@ -38,6 +38,22 @@ class FakeProvider:
         }
 
 
+class AmbiguousCreateProvider(FakeProvider):
+    """Simulate a provider accepting POST before the client loses its reply."""
+
+    def create_droplet(self, specification):
+        self.specifications.append(specification)
+        self.droplets.append(
+            {
+                "id": 42,
+                "name": specification["name"],
+                "tags": ["aurix-vpn-node", "aurix-awaiting-verification"],
+                "action_ids": [77],
+            }
+        )
+        raise InfrastructureError("provider response timed out")
+
+
 class FleetControllerTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -116,6 +132,37 @@ class FleetControllerTest(unittest.TestCase):
                 "SELECT status FROM infrastructure_jobs WHERE id = ?", (job_id,)
             ).fetchone()["status"]
         self.assertEqual(status, "awaiting_verification")
+
+    def test_ambiguous_provider_create_is_recovered_without_a_duplicate(self):
+        provider = AmbiguousCreateProvider()
+        controller = FleetController(self.database, provider)
+        job_id = controller.queue_provision(
+            region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+            requested_by=123, now=self.now,
+        )
+        environment = {
+            "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "10",
+            "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            recovered = controller.execute_provision(job_id)
+            observed = controller.reconcile_provision(job_id)
+        self.assertTrue(recovered["recovered"])
+        self.assertEqual(recovered["droplet_id"], "42")
+        self.assertEqual(observed["status"], "awaiting_verification")
+        self.assertEqual(len(provider.specifications), 1)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT provider_resource_id, provider_action_id, status FROM infrastructure_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+            event = connection.execute(
+                "SELECT event_type FROM infrastructure_events WHERE infrastructure_job_id = ? ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+        self.assertEqual(tuple(row), ("42", "77", "awaiting_verification"))
+        self.assertEqual(event["event_type"], "droplet_active")
 
     def test_verified_activation_is_idempotent_and_audited(self):
         provider = FakeProvider()

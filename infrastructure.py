@@ -162,6 +162,32 @@ class FleetController:
                 result.append(droplet)
         return result
 
+    def _find_created_droplet(self, name: str) -> dict[str, Any] | None:
+        """Recover a Droplet created by an ambiguous POST response.
+
+        DigitalOcean does not provide a request-idempotency key for Droplet
+        creation. The worker therefore searches for the exact generated name
+        and AuriX tag before ever retrying a timed-out create. Zero matches are
+        left as a terminal failure; multiple matches are unsafe and fail closed.
+        """
+        if self.provider is None:
+            return None
+        listing = getattr(self.provider, "list_droplets", None)
+        if not callable(listing):
+            return None
+        droplets = listing()
+        matches = [
+            item
+            for item in droplets
+            if isinstance(item, dict)
+            and str(item.get("name") or "") == name
+            and "aurix-vpn-node" in {str(tag) for tag in (item.get("tags") or [])}
+            and item.get("id")
+        ]
+        if len(matches) > 1:
+            raise InfrastructureError("ambiguous provider create recovery")
+        return matches[0] if matches else None
+
     def _known_node_count(self, provider_inventory: list[dict[str, Any]] | None = None) -> int:
         with self.database.connect() as connection:
             database_count = int(
@@ -354,8 +380,14 @@ class FleetController:
         self._budget_guard(existing_nodes=self._known_node_count(provider_inventory))
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            lock_clause = (
+                " FOR UPDATE SKIP LOCKED"
+                if connection.__class__.__name__ == "_PostgresConnection"
+                else ""
+            )
             job = connection.execute(
-                "SELECT * FROM infrastructure_jobs WHERE id = ? AND status = 'pending'",
+                "SELECT * FROM infrastructure_jobs WHERE id = ? AND status = 'pending'"
+                + lock_clause,
                 (job_id,),
             ).fetchone()
             event = connection.execute(
@@ -384,7 +416,56 @@ class FleetController:
         try:
             droplet = self.provider.create_droplet(specification)  # type: ignore[union-attr]
         except Exception as exc:
+            # A network timeout can happen after DigitalOcean has accepted the
+            # POST. Search by the unique generated name/tag before marking the
+            # job failed, otherwise an automatic retry could create a second
+            # billable node.
+            try:
+                recovered = self._find_created_droplet(str(specification["name"]))
+            except Exception:
+                recovered = None
+            if recovered is not None:
+                actions = recovered.get("action_ids") or []
+                recovered_id = str(recovered["id"])
+                recovered_action = str(actions[0]) if actions else None
+                now_text = datetime.now(UTC).isoformat()
+                with self.database.connect() as connection:
+                    self.database.begin_write(connection)
+                    connection.execute(
+                        """UPDATE infrastructure_jobs
+                              SET status = 'running', provider_resource_id = ?,
+                                  provider_action_id = ?, locked_at = ?, last_error = ?
+                            WHERE id = ?""",
+                        (
+                            recovered_id,
+                            recovered_action,
+                            now_text,
+                            "create response ambiguous; recovered by exact name",
+                            job_id,
+                        ),
+                    )
+                    connection.execute(
+                        """INSERT INTO infrastructure_events
+                           (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                           VALUES (?, ?, 'provider_create_recovered', ?, ?)""",
+                        (
+                            uuid.uuid4().hex,
+                            job_id,
+                            json.dumps(
+                                {"provider_resource_id": recovered_id},
+                                sort_keys=True,
+                            ),
+                            now_text,
+                        ),
+                    )
+                return {
+                    "job_id": job_id,
+                    "droplet_id": recovered_id,
+                    "status": "creating",
+                    "recovered": True,
+                }
             with self.database.connect() as connection:
+                self.database.begin_write(connection)
                 connection.execute(
                     """UPDATE infrastructure_jobs SET status = 'failed', locked_at = NULL,
                               last_error = ? WHERE id = ?""",

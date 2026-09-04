@@ -34,7 +34,7 @@ multi-node Outline control plane with conservative health evidence, not a
 complete adaptive V13 connectivity platform and not something that should be
 replaced wholesale.
 
-Current evidence is strong for code and controlled operations (341 tests, live
+Current evidence is strong for code and controlled operations (342 tests, live
 three-node health, CI-gated deployment, and verified encrypted archives), but
 not yet for unrestricted customer admission: allocation normalization, orphan
 classification, stable DNS, real Telegram/payment canaries, and sustained
@@ -124,6 +124,32 @@ Key evidence:
 | V13 | Resilient connectivity operating system with bounded automation | Early foundation only | Job/retry/audit patterns are useful precursors, but the connectivity fabric is absent |
 
 The code is therefore not “behind” in a simple feature-count sense. It correctly built much of the commercial foundation first. The mismatch is that some documents call the Outline-only target “final,” while the later conversations redefine the final target as protocol-agnostic V13.
+
+## Current-state corrections (2026-09-04)
+
+The historical matrix below intentionally preserves the earlier snapshot. The
+following facts supersede its Outline-fleet rows for release decisions:
+
+- The endpoint registry is implemented for Outline: three explicit
+  `outline_servers` records, composite server-scoped key identity, provider
+  resource IDs, inventory reconciliation, declared capacity, and deterministic
+  admission are live.
+- Free/trial/promo provisioning is restart-safe: durable intents are committed
+  before remote creation and reconciled by the maintenance worker. The only
+  remaining ambiguity is a legacy POST-only adapter without deterministic IDs.
+- Endpoint management health is now durable and conservative: each probe keeps
+  latency, state-before/state-after, and bounded success/failure streaks;
+  degraded and unreachable nodes are excluded from new issuance. This still
+  does not prove Myanmar ISP data-plane reachability.
+- Backups, CI-gated immutable releases, and a restore drill are present. The
+  live release still uses one SQLite writer; moving to hosted PostgreSQL and an
+  independent second writer remains a deliberate migration gate.
+- Provider create recovery now searches for the exact generated Droplet name
+  and AuriX tag after an ambiguous response before allowing any retry; this
+  prevents a timeout from creating a duplicate billable node.
+- The live acceptance audit is `WARN`, not `PASS`: primary capacity is
+  overallocated and has untracked remote keys, provider mutations are disabled,
+  and stable DNS automation is not configured.
 
 ## Historical capability matrix (2026-08-29 baseline)
 
