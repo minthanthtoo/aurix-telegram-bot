@@ -21,6 +21,11 @@ class DigitalOceanPreflightTest(unittest.TestCase):
     def test_all_payment_qr_assets_are_present_and_non_empty(self):
         _check_payment_qr_assets()
 
+    def test_missing_payment_qr_asset_fails_closed(self):
+        with patch("deploy.digitalocean_preflight.PAYMENT_QR_ASSETS", {"kbzpay": "missing.png"}):
+            with self.assertRaisesRegex(SystemExit, "missing or empty payment QR asset.*kbzpay"):
+                _check_payment_qr_assets()
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.database = Path(self.tmp.name) / "bot.db"
