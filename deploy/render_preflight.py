@@ -56,7 +56,9 @@ def _validate_live(values: dict[str, object]) -> None:
     )
     if not isinstance(storage, dict):
         fail("Supabase receipt bucket check returned an invalid response")
-    if storage.get("public") is True:
+    if storage.get("public") is not False:
+        # Missing metadata is treated as unknown rather than silently allowing
+        # a bucket whose visibility was not proven.
         fail("Supabase receipt bucket must remain private")
 
     models = _json_request(

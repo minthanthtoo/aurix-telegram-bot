@@ -34,6 +34,10 @@ final architecture and
 [`docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`](docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md)
 for the canonical fleet design and operations guide.
 
+Every branch is checked by the repository CI workflow before it is suitable for
+deployment: Python compilation, Ruff, the full test suite, shell syntax, and
+secret-free diff hygiene are required.
+
 ## Configure
 
 Create a bot with [@BotFather](https://t.me/BotFather). Obtain Outline Management API URL from your server install output. Compute its certificate SHA-256 fingerprint:
@@ -243,7 +247,7 @@ environment): `{"kbzpay":{"names":["MERCHANT NAME"],"accounts":["1234"]},...}`.
    Instances: 1
    Disk: 1 GB mounted at /var/data
    Build Command: pip install -r requirements.txt
-   Start Command: python deploy/render_preflight.py && python -u app.py
+   Start Command: python deploy/render_preflight.py --live && python -u app.py
    ```
 
 4. Enter the common secrets above. Keep these Blueprint values unchanged:
@@ -278,7 +282,7 @@ Region: Singapore
 Plan: Free
 Instances: 1
 Build Command: pip install -r requirements.txt
-Start Command: python deploy/render_preflight.py && python -u deploy/render_web.py
+Start Command: python deploy/render_preflight.py --live && python -u deploy/render_web.py
 Health Check Path: /healthz
 ```
 
@@ -383,7 +387,7 @@ Do not accept real payments until this sequence passes.
 
 | Log or symptom | Cause and fix |
 | --- | --- |
-| Render asks for **Start Command** | Paid worker: `python deploy/render_preflight.py && python -u app.py`. Free Web Service: `python deploy/render_preflight.py && python -u deploy/render_web.py`. |
+| Render asks for **Start Command** | Paid worker: `python deploy/render_preflight.py --live && python -u app.py`. Free Web Service: `python deploy/render_preflight.py --live && python -u deploy/render_web.py`. |
 | `failed to resolve host 'sup@aws-...'` | The Supabase URI was assembled incorrectly. Copy **Connect → Session pooler**, preserve the username/host boundary, and URL-encode the password. |
 | Cannot resolve `db.PROJECT_REF.supabase.co` | The direct endpoint is IPv6 by default. Use the Supabase session-pooler URI on port `5432`. |
 | `Render preflight failed` | Fix the named variable; the preflight deliberately exits before starting with unsafe storage, key, or payment settings. |

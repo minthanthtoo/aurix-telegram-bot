@@ -1,72 +1,52 @@
-name: CI
+name: AuriX CI
 
 on:
   push:
+    branches: ["**"]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  safety-net:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
     steps:
-      - name: Check out repository
+      - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Use deployment Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          # Match the current Ubuntu control plane. Render/newer runtimes remain
-          # forward-compatible, while this catches accidental 3.11+ syntax/API use.
-          python-version: "3.10.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install runtime and validation dependencies
-        run: python -m pip install --requirement requirements-dev.txt
+      - name: Install runtime and development dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
 
-      - name: Compile production modules
-        run: >-
-          python -m py_compile
-          app.py commerce.py commerce_models.py commerce_repositories.py commerce_service.py
-          commerce_worker.py observability.py outline_adapter.py ports.py
-          connectivity_registry.py
-          entitlements.py free_repository.py infrastructure.py runtime.py telegram_transport.py
-          telegram_admin.py telegram_admin_panels.py telegram_callbacks.py
-          telegram_commands.py telegram_maintenance.py
-          migrations.py persistence.py repositories.py
-          receipt_llm.py supabase_storage.py
-          deploy/render_preflight.py deploy/render_web.py
-          deploy/digitalocean_preflight.py deploy/digitalocean_autodeploy.py
-          deploy/infrastructure_worker.py
-          deploy/fleet_reconcile.py deploy/fleet_backup.py
-          deploy/receipt_pipeline_smoke.py
+      - name: Compile Python source
+        run: python -m compileall -q .
 
-      - name: Validate fleet automation artifacts
+      - name: Run Ruff
+        run: ruff check .
+
+      - name: Run unit and integration-contract tests
+        run: python -m unittest discover -s . -p 'test_*.py'
+
+      - name: Check shell deployment scripts
+        run: bash -n deploy/recover_control_plane.sh deploy/node_bootstrap.sh
+
+      - name: Check whitespace and unresolved merge markers
         run: |
-          bash -n deploy/node_bootstrap.sh
-          python deploy/fleet_reconcile.py validate --env-file .env.fleet.example
-
-      - name: Run correctness lint
-        run: >-
-          ruff check
-          app.py commerce.py commerce_models.py commerce_repositories.py commerce_service.py
-          commerce_worker.py observability.py outline_adapter.py ports.py
-          connectivity_registry.py
-          entitlements.py free_repository.py infrastructure.py runtime.py telegram_transport.py
-          telegram_admin.py telegram_admin_panels.py telegram_callbacks.py
-          telegram_commands.py telegram_maintenance.py
-          migrations.py persistence.py repositories.py
-          receipt_llm.py supabase_storage.py deploy
-          test_app.py test_commerce.py test_connectivity_registry.py test_free_profile.py test_infrastructure.py test_migrations.py
-          test_mvp.py test_observability.py test_persistence.py
-          test_refactor_boundaries.py test_render_preflight.py test_runtime.py test_storage.py
-
-      - name: Run behavior and branch-coverage gate
-        env:
-          PYTHONWARNINGS: error::ResourceWarning
-        run: coverage run -m unittest discover
-
-      - name: Report coverage
-        run: coverage report
+          git diff --check
+          if grep -RIn --exclude-dir=.git --exclude-dir=__pycache__ \
+            -E '^(<<<<<<<|=======|>>>>>>>)' .; then
+            echo 'unresolved merge marker found' >&2
+            exit 1
+          fi

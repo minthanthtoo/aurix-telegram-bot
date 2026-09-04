@@ -92,6 +92,12 @@ Outline state stops reconciliation and requires restore.
 
 ## CI/CD and timers
 
+`.github/workflows/ci.yml` is the source-level gate for every push and pull
+request. It runs the full Python suite on Python 3.12 and 3.13, compilation,
+Ruff, deployment-script shell checks, and merge-marker/whitespace checks. A
+provider worker or Render deployment must use a commit that passed this gate;
+the workflow never receives production secrets and never mutates infrastructure.
+
 GitHub CI compiles and lints fleet code, syntax-checks the remote bootstrap,
 validates a sample manifest, and runs all tests. The existing DigitalOcean
 autodeployer activates only a CI-successful `main` commit and rolls back failed

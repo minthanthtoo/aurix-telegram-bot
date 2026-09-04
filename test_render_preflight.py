@@ -2,12 +2,14 @@ import contextlib
 import io
 import json
 import os
+import sqlite3
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
-from deploy.render_preflight import main
+from deploy.render_preflight import _validate_live, main
 
 
 def valid_environment() -> dict[str, str]:
@@ -60,6 +62,59 @@ class RenderPreflightTest(unittest.TestCase):
                 main(["--live"])
         live.assert_called_once()
         self.assertIn("live dependencies", output.getvalue())
+
+    def test_live_canary_is_read_only_and_checks_outline_and_private_bucket(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = os.path.join(directory, "bot.db")
+            with sqlite3.connect(database) as connection:
+                connection.execute("CREATE TABLE health (id INTEGER)")
+            values = {
+                "telegram_token": "test-token",
+                "supabase_url": "https://project.supabase.co",
+                "supabase_key": "service-role-key",
+                "bucket": "payment-receipts",
+                "llm_url": "https://vision.example/v1",
+                "llm_key": "vision-key",
+                "database_url": "",
+                "database_path": database,
+                "outline_servers": [
+                    {"api_url": "https://outline.example/secret", "cert_sha256": "a" * 64}
+                ],
+            }
+
+            class FakeOutline:
+                def __init__(self, *args, **kwargs):
+                    del args, kwargs
+                    self.server_checks = 0
+
+                def server_info(self):
+                    self.server_checks += 1
+                    return {"version": "1.12.3"}
+
+            with patch(
+                "deploy.render_preflight._json_request",
+                side_effect=[{"ok": True}, {"public": False}, {"data": [{"id": "vision-model"}]}],
+            ), patch("outline_adapter.OutlineClient", FakeOutline):
+                _validate_live(values)
+
+    def test_live_canary_rejects_public_receipt_bucket(self):
+        values = {
+            "telegram_token": "test-token",
+            "supabase_url": "https://project.supabase.co",
+            "supabase_key": "service-role-key",
+            "bucket": "payment-receipts",
+            "llm_url": "https://vision.example/v1",
+            "llm_key": "vision-key",
+            "database_url": "postgresql://user:password@db.invalid/aurix",
+            "database_path": "",
+            "outline_servers": [],
+        }
+        with patch(
+            "deploy.render_preflight._json_request",
+            side_effect=[{"ok": True}, {"public": True}],
+        ):
+            with self.assertRaisesRegex(SystemExit, "must remain private"):
+                _validate_live(values)
 
     def test_missing_required_value_reports_only_its_variable_name(self):
         environment = valid_environment()

@@ -335,7 +335,7 @@ Health check: /healthz
 The free profile's start command is:
 
 ```text
-python deploy/render_preflight.py && python -u deploy/render_web.py
+python deploy/render_preflight.py --live && python -u deploy/render_web.py
 ```
 
 `render_web.py` binds `0.0.0.0:$PORT`, starts `app.py` as a child process, and
