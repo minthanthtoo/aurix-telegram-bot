@@ -48,6 +48,11 @@ install -d -o root -g aurix -m 0750 /etc/aurix-bot
 python3 -m venv /opt/aurix-venv
 ```
 
+The fleet bootstrap can safely clean the installer's convenience key and run
+its readiness probe unattended. Both management calls pin the SHA-256
+certificate fingerprint emitted in `access.txt`; a certificate mismatch stops
+bootstrap before any key deletion or endpoint activation.
+
 Copy the repository files to `/opt/aurix-bot` and install the unit:
 
 ```sh

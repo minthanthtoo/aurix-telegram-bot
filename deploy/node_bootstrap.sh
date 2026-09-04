@@ -145,26 +145,71 @@ if [[ "$fresh_install" == "1" ]]; then
   # The official installer creates one convenience key. It is untracked by
   # AuriX, so a new node must be empty before control-plane activation.
   python3 - <<'PY'
+import hashlib
+import http.client
 import json
+import os
+import re
 import ssl
 import urllib.parse
-import urllib.request
 
 fields = {}
-import os
 outline_dir = os.environ["OUTLINE_DIR"]
 with open(outline_dir + "/access.txt", encoding="utf-8") as stream:
     for line in stream:
         key, _, value = line.strip().partition(":")
         fields[key] = value
 api = fields["apiUrl"].rstrip("/")
-context = ssl._create_unverified_context()
-with urllib.request.urlopen(api + "/access-keys", context=context, timeout=15) as response:
-    keys = json.load(response).get("accessKeys", [])
+parsed = urllib.parse.urlsplit(api)
+expected = fields.get("certSha256", "").replace(":", "").lower()
+if (
+    parsed.scheme != "https"
+    or not parsed.hostname
+    or parsed.port is None
+    or not re.fullmatch(r"[0-9a-f]{64}", expected)
+):
+    raise RuntimeError("invalid pinned Outline management identity")
+
+
+class PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        super().connect()
+        certificate = self.sock.getpeercert(binary_form=True)
+        actual = hashlib.sha256(certificate).hexdigest()
+        if actual != expected:
+            self.close()
+            raise RuntimeError("Outline certificate pin mismatch")
+
+
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+context.check_hostname = False
+context.verify_mode = ssl.CERT_NONE
+
+
+def request(method, suffix):
+    connection = PinnedHTTPSConnection(
+        parsed.hostname, parsed.port, timeout=15, context=context
+    )
+    try:
+        connection.request(
+            method,
+            parsed.path.rstrip("/") + suffix,
+            headers={"Accept": "application/json"},
+        )
+        response = connection.getresponse()
+        body = response.read()
+        if response.status >= 400:
+            raise RuntimeError("Outline management request failed")
+        return response.status, body
+    finally:
+        connection.close()
+
+
+_, body = request("GET", "/access-keys")
+keys = json.loads(body.decode("utf-8")).get("accessKeys", [])
 for item in keys:
     key_id = urllib.parse.quote(str(item["id"]), safe="")
-    request = urllib.request.Request(api + "/access-keys/" + key_id, method="DELETE")
-    urllib.request.urlopen(request, context=context, timeout=15).read()
+    request("DELETE", "/access-keys/" + key_id)
 PY
 fi
 
@@ -182,23 +227,70 @@ printf '%s\n' "${AURIX_FLEET_REVISION:-unknown}" > /etc/aurix-node/revision
 chmod 0640 /etc/aurix-node/revision
 
 python3 - <<'PY'
+import hashlib
+import http.client
 import json
+import os
+import re
 import ssl
-import urllib.request
+import urllib.parse
 
 fields = {}
-import os
 outline_dir = os.environ["OUTLINE_DIR"]
 with open(outline_dir + "/access.txt", encoding="utf-8") as stream:
     for line in stream:
         key, _, value = line.strip().partition(":")
         fields[key] = value
 api = fields["apiUrl"].rstrip("/")
-context = ssl._create_unverified_context()
-with urllib.request.urlopen(api + "/server", context=context, timeout=15) as response:
-    server = json.load(response)
-with urllib.request.urlopen(api + "/access-keys", context=context, timeout=15) as response:
-    keys = json.load(response).get("accessKeys", [])
+parsed = urllib.parse.urlsplit(api)
+expected = fields.get("certSha256", "").replace(":", "").lower()
+if (
+    parsed.scheme != "https"
+    or not parsed.hostname
+    or parsed.port is None
+    or not re.fullmatch(r"[0-9a-f]{64}", expected)
+):
+    raise RuntimeError("invalid pinned Outline management identity")
+
+
+class PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        super().connect()
+        certificate = self.sock.getpeercert(binary_form=True)
+        actual = hashlib.sha256(certificate).hexdigest()
+        if actual != expected:
+            self.close()
+            raise RuntimeError("Outline certificate pin mismatch")
+
+
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+context.check_hostname = False
+context.verify_mode = ssl.CERT_NONE
+
+
+def request(method, suffix):
+    connection = PinnedHTTPSConnection(
+        parsed.hostname, parsed.port, timeout=15, context=context
+    )
+    try:
+        connection.request(
+            method,
+            parsed.path.rstrip("/") + suffix,
+            headers={"Accept": "application/json"},
+        )
+        response = connection.getresponse()
+        body = response.read()
+        if response.status >= 400:
+            raise RuntimeError("Outline management request failed")
+        return response.status, body
+    finally:
+        connection.close()
+
+
+_, server_body = request("GET", "/server")
+_, keys_body = request("GET", "/access-keys")
+server = json.loads(server_body.decode("utf-8"))
+keys = json.loads(keys_body.decode("utf-8")).get("accessKeys", [])
 print(json.dumps({
     "status": "ready",
     "outline_version": str(server.get("version") or "unknown"),
