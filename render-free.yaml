@@ -55,3 +55,11 @@ services:
         value: "60"
       - key: AURIX_LATENCY_LOG
         value: "0"
+      - key: AURIX_FLEET_REGISTRATION_ENABLED
+        value: "0"
+      - key: AURIX_FLEET_AUTO_REGISTRATION_ENABLED
+        value: "0"
+      - key: AURIX_FLEET_REGISTRATION_URL
+        sync: false
+      - key: AURIX_FLEET_ENROLLMENT_KEY
+        sync: false

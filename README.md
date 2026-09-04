@@ -99,6 +99,10 @@ reject an otherwise valid profile.
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
+- `AURIX_FLEET_REGISTRATION_ENABLED`, `AURIX_FLEET_REGISTRATION_URL`, and
+  `AURIX_FLEET_ENROLLMENT_KEY` — optional HTTPS one-time node-enrollment
+  callback; enable only together with the worker's
+  `AURIX_FLEET_AUTO_REGISTRATION_ENABLED` gate and pinned SSH trust files.
 
 Optional DigitalOcean fleet creation belongs to a separate operator worker.
 It is off by default and requires explicit allowlists, node/day/cooldown limits,
@@ -106,7 +110,10 @@ and a monthly budget. The final MVP envelope is assisted scaling at 75%/90%
 key or declared-traffic utilization,
 up to three Singapore 1 GB nodes, one creation per 24 hours, and an $18/month
 node ceiling. Do not put `DIGITALOCEAN_API_TOKEN` in the normal bot
-service. The exact gates and manual Outline verification step are documented in
+service. The default path remains assisted and stops before activation; an
+owner-approved zero-touch enrollment callback is available when its HTTPS,
+one-time-token, and pinned-SSH gates are configured. The exact gates and
+verification paths are documented in
 the [fleet runbook](docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md).
 The exact second-node installation and canary sequence is in
 [`docs/NODE2_INSTALL_AND_CANARY.md`](docs/NODE2_INSTALL_AND_CANARY.md).
@@ -307,6 +314,37 @@ https://YOUR-SERVICE.onrender.com/healthz
 A healthy response has HTTP 200 and `"status": "ok"`. An external uptime
 monitor can check this endpoint, but it does not turn the Free profile into a
 durable or production-grade service.
+
+#### Optional zero-touch node enrollment
+
+The same web entrypoint exposes `POST /fleet/register` only when
+`AURIX_FLEET_REGISTRATION_ENABLED=1`. A provider-created node receives a
+short-lived, single-use enrollment token in cloud-init; after Outline and SSH
+start, it posts its local `access.txt` identity and SSH host key to this
+endpoint. The callback stores an encrypted payload, and the infrastructure
+worker activates the node only after the provider-observed IP, Outline
+management URL, and pinned SSH host key all match. It never accepts a host key
+implicitly and never sends the enrollment encryption key to the VM.
+
+To opt in, configure these values in the worker and web-service environments
+(keep the encryption key identical and private):
+
+```text
+AURIX_FLEET_REGISTRATION_ENABLED=1
+AURIX_FLEET_AUTO_REGISTRATION_ENABLED=1
+AURIX_FLEET_REGISTRATION_URL=https://YOUR-SERVICE.onrender.com/fleet/register
+AURIX_FLEET_ENROLLMENT_KEY=<Fernet key>
+AURIX_FLEET_ENV_FILE=/etc/aurix-bot/aurix.env
+AURIX_FLEET_SSH_KEY=/etc/aurix-fleet/automation_ed25519
+AURIX_FLEET_KNOWN_HOSTS=/etc/aurix-fleet/known_hosts
+AURIX_FLEET_CONTROL_PLANE_SOURCE=<control-plane CIDR>
+```
+
+The callback returns only a sanitized status and job ID. A rejected, expired,
+replayed, or malformed request does not activate a node; the worker keeps the
+provisioning job in `awaiting_verification` for a later retry. For production,
+use a durable PostgreSQL control-plane database and keep Render's health check
+on `/healthz`.
 
 ### 4. Verify the first deployment
 

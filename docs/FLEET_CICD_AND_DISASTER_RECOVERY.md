@@ -101,6 +101,8 @@ configured, enables:
 - `aurix-fleet-reconcile.timer`, every ten minutes and after boot;
 - `aurix-fleet-backup.timer`, daily encrypted state capture;
 - `aurix-infrastructure-worker.timer`, provider request reconciliation.
+  When the standalone HTTPS callback is selected, the recovery script also
+  installs/enables `aurix-fleet-registration.service` from the same release.
 
 ```bash
 systemctl list-timers 'aurix-*'
@@ -161,6 +163,16 @@ monthly-budget allowlists. A new resource remains unallocatable until:
 3. reconciliation installs/discovers Outline and pinned health passes;
 4. capacity and all plan/tier slots are explicit;
 5. the bot observes a fresh healthy inventory snapshot.
+
+For a fully unattended provider hand-off, enable the separately gated
+`AURIX_FLEET_AUTO_REGISTRATION_ENABLED` flow and expose the credential-free
+HTTPS `POST /fleet/register` endpoint from Render (`deploy/render_web.py`) or
+the standalone TLS service (`deploy/fleet_registration_server.py`). Cloud-init
+contains only a short-lived one-time token. The callback encrypts the node's
+Outline identity and SSH host key; the worker binds both to the provider's
+current IP, runs the same pinned reconciler, and consumes the token only after
+health/policy success. A callback or reconcile failure leaves the resource
+waiting and rolls back the manifest/known-hosts files.
 
 For providers lacking API or cloud-init, VM creation is not falsely described
 as automatic. Once a blank trusted VM is reachable, the same provider-neutral
@@ -334,9 +346,10 @@ Continue revival with:
 6. verify `Outline inventory ready: N/N`, Telegram authorization, database and
    remote-key counts, then a canary connection before enabling sales.
 
-This is control-plane recovery from source and private environment. It does not
-create a new provider VM by itself; full zero-touch VM creation additionally
-requires pre-authorized provider and DNS credentials plus a provider adapter.
+This is control-plane recovery from source and private environment. The
+zero-touch registration path still requires pre-authorized provider/DNS
+credentials, the scoped worker mutation gate, a trusted HTTPS endpoint, and
+the pinned SSH files; absent those gates recovery remains safely assisted.
 
 For SQLite deployments, `DATABASE_PATH` is not enough for disaster recovery.
 Configure `AURIX_DATABASE_BACKUP_OFFSITE_DIR` or move production commerce state

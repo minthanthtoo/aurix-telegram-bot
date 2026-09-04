@@ -1247,6 +1247,40 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS connectivity_migrations_source ON connectivity_migration_jobs(source_endpoint_id, status)",
         ),
     ),
+    Migration(
+        16,
+        "fleet_enrollment_tokens",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS infrastructure_enrollments (
+                   job_id TEXT PRIMARY KEY REFERENCES infrastructure_jobs(id),
+                   token_hash TEXT NOT NULL UNIQUE,
+                   expires_at TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'consumed', 'rejected', 'expired')),
+                   payload_ciphertext TEXT,
+                   received_at TEXT,
+                   consumed_at TEXT,
+                   last_error TEXT,
+                   created_at TEXT NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS infrastructure_enrollments_due ON infrastructure_enrollments(status, expires_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS infrastructure_enrollments (
+                   job_id TEXT PRIMARY KEY REFERENCES infrastructure_jobs(id),
+                   token_hash TEXT NOT NULL UNIQUE,
+                   expires_at TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'consumed', 'rejected', 'expired')),
+                   payload_ciphertext TEXT,
+                   received_at TIMESTAMPTZ,
+                   consumed_at TIMESTAMPTZ,
+                   last_error TEXT,
+                   created_at TIMESTAMPTZ NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS infrastructure_enrollments_due ON infrastructure_enrollments(status, expires_at)",
+        ),
+    ),
 )
 
 

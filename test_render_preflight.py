@@ -113,6 +113,36 @@ class RenderPreflightTest(unittest.TestCase):
 
         self.assertIn("preflight passed", self.run_preflight(environment).lower())
 
+    def test_registration_endpoint_requires_https_and_matching_fernet_key(self):
+        environment = valid_environment()
+        environment.update(
+            {
+                "AURIX_FLEET_REGISTRATION_ENABLED": "1",
+                "AURIX_FLEET_REGISTRATION_URL": "http://control.example/fleet/register",
+                "AURIX_FLEET_ENROLLMENT_KEY": Fernet.generate_key().decode(),
+            }
+        )
+        with self.assertRaisesRegex(SystemExit, "HTTPS"):
+            self.run_preflight(environment)
+        environment["AURIX_FLEET_REGISTRATION_URL"] = "https://control.example/fleet/register"
+        environment["AURIX_FLEET_ENROLLMENT_KEY"] = "invalid"
+        with self.assertRaisesRegex(SystemExit, "Fernet"):
+            self.run_preflight(environment)
+        environment["AURIX_FLEET_ENROLLMENT_KEY"] = Fernet.generate_key().decode()
+        self.assertIn("preflight passed", self.run_preflight(environment).lower())
+
+    def test_auto_registration_cannot_run_without_callback_gate(self):
+        environment = valid_environment()
+        environment.update(
+            {
+                "AURIX_FLEET_AUTO_REGISTRATION_ENABLED": "1",
+                "AURIX_FLEET_REGISTRATION_URL": "https://control.example/fleet/register",
+                "AURIX_FLEET_ENROLLMENT_KEY": Fernet.generate_key().decode(),
+            }
+        )
+        with self.assertRaisesRegex(SystemExit, "requires AURIX_FLEET_REGISTRATION_ENABLED"):
+            self.run_preflight(environment)
+
 
 if __name__ == "__main__":
     unittest.main()

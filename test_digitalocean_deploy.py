@@ -19,6 +19,7 @@ class DigitalOceanDeployTest(unittest.TestCase):
     def test_operational_units_are_versioned_with_the_release(self):
         self.assertIn("aurix-infrastructure-worker.service", VERSIONED_UNIT_NAMES)
         self.assertIn("aurix-infrastructure-worker.timer", VERSIONED_UNIT_NAMES)
+        self.assertIn("aurix-fleet-registration.service", VERSIONED_UNIT_NAMES)
         self.assertIn("aurix-dns-sync.service", VERSIONED_UNIT_NAMES)
         self.assertIn("aurix-dns-sync.timer", VERSIONED_UNIT_NAMES)
     def test_receipt_smoke_is_directly_executable_outside_repository(self):

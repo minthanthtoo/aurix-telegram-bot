@@ -167,6 +167,22 @@ class RecoveryReadinessTests(unittest.TestCase):
         self.assertEqual(checks["provider_automation"]["status"], "fail")
         self.assertIn("SSH_KEY_IDS", checks["provider_automation"]["detail"])
 
+    def test_zero_touch_enrollment_readiness_requires_https_callback(self) -> None:
+        values = self.base_env()
+        values.update(
+            {
+                "AURIX_FLEET_REGISTRATION_ENABLED": "1",
+                "AURIX_FLEET_AUTO_REGISTRATION_ENABLED": "1",
+                "AURIX_FLEET_REGISTRATION_URL": "http://control.example/fleet/register",
+                "AURIX_FLEET_ENROLLMENT_KEY": self.key,
+            }
+        )
+        self.write_env(values)
+        report = run_audit(self.env_file, verify_archives=False)
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["fleet_enrollment"]["status"], "fail")
+        self.assertIn("HTTPS", checks["fleet_enrollment"]["detail"])
+
     def test_object_store_satisfies_recovery_offsite_checks(self) -> None:
         values = self.fleet_env()
         values.pop("AURIX_DATABASE_BACKUP_OFFSITE_DIR")

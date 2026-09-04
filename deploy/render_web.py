@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import os
+import base64
+import binascii
 from datetime import datetime, timezone
 import signal
 import subprocess
@@ -18,7 +20,12 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
+
+
+REGISTRATION_MAX_BODY = 64 * 1024
+TRUTHY = {"1", "true", "yes", "on"}
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -26,6 +33,104 @@ class HealthHandler(BaseHTTPRequestHandler):
 
     child: subprocess.Popen[bytes] | None = None
     heartbeat_path: str | None = None
+    registration_database: Any = None
+    registration_database_lock = threading.Lock()
+
+    @staticmethod
+    def _truthy(name: str) -> bool:
+        return os.environ.get(name, "").strip().lower() in TRUTHY
+
+    @classmethod
+    def _database_for_registration(cls) -> Any:
+        if cls.registration_database is not None:
+            return cls.registration_database
+        with cls.registration_database_lock:
+            if cls.registration_database is not None:
+                return cls.registration_database
+            from commerce import CommerceDatabase, PostgresCommerceDatabase
+
+            database_url = os.environ.get("COMMERCE_DATABASE_URL", "").strip()
+            if database_url:
+                database = PostgresCommerceDatabase(database_url)
+            else:
+                database_path = os.environ.get("DATABASE_PATH", "").strip()
+                if not database_path or not os.path.isabs(database_path):
+                    raise RuntimeError("registration database path is not configured")
+                database = CommerceDatabase(Path(database_path))
+            database.initialize()
+            cls.registration_database = database
+            return database
+
+    def _json_response(self, status: int, payload: dict[str, Any]) -> None:
+        body = (json.dumps(payload, sort_keys=True) + "\n").encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _register_node(self) -> None:
+        if not self._truthy("AURIX_FLEET_REGISTRATION_ENABLED"):
+            self._json_response(404, {"error": "not_found"})
+            return
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self._json_response(415, {"error": "unsupported_media_type"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "-1"))
+        except ValueError:
+            length = -1
+        if length < 1 or length > REGISTRATION_MAX_BODY:
+            self._json_response(413 if length > REGISTRATION_MAX_BODY else 400, {"error": "invalid_body"})
+            return
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            self._json_response(400, {"error": "invalid_body"})
+            return
+        try:
+            request = json.loads(raw)
+            if not isinstance(request, dict):
+                raise ValueError
+            required = {"token", "job_id", "node_id", "public_ip", "access_txt_b64", "ssh_host_key_b64"}
+            if set(request) != required:
+                raise ValueError
+            decoded: dict[str, str] = {}
+            for field in ("access_txt_b64", "ssh_host_key_b64"):
+                decoded[field[:-4]] = base64.b64decode(str(request[field]), validate=True).decode("utf-8")
+            payload = {
+                "job_id": str(request["job_id"]),
+                "node_id": str(request["node_id"]),
+                "public_ip": str(request["public_ip"]),
+                "access_txt": decoded["access_txt"],
+                "ssh_host_key": decoded["ssh_host_key"],
+            }
+            token = str(request["token"])
+            encryption_key = os.environ.get("AURIX_FLEET_ENROLLMENT_KEY", "").strip()
+            if not encryption_key:
+                self._json_response(503, {"error": "registration_unavailable"})
+                return
+            from fleet_enrollment import EnrollmentError, receive_enrollment
+
+            result = receive_enrollment(
+                self._database_for_registration(),
+                token=token,
+                payload=payload,
+                encryption_key=encryption_key,
+            )
+        except (ValueError, TypeError, UnicodeError, binascii.Error):
+            self._json_response(400, {"error": "invalid_request"})
+            return
+        except Exception as exc:
+            from fleet_enrollment import EnrollmentError
+
+            if isinstance(exc, EnrollmentError):
+                self._json_response(400, {"error": "registration_rejected"})
+            else:
+                self._json_response(503, {"error": "registration_unavailable"})
+            return
+        self._json_response(200, {"status": result["status"], "job_id": result["job_id"]})
 
     @classmethod
     def _maintenance_health(cls) -> tuple[bool, dict[str, Any]]:
@@ -75,6 +180,12 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self.path != "/fleet/register":
+            self.send_error(404)
+            return
+        self._register_node()
 
     def log_message(self, format: str, *args: Any) -> None:
         # Avoid request URLs becoming noisy or accidentally carrying query data.

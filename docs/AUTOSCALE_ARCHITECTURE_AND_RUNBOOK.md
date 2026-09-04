@@ -57,6 +57,8 @@ The current code provides:
 - an opt-in, budget-guarded DigitalOcean controller in `infrastructure.py`.
 - ambiguous-create recovery by exact generated Droplet name/tag before any
   retry, preventing duplicate billable nodes after a provider timeout.
+- encrypted, single-use fleet enrollment callbacks with provider-IP and
+  pinned-SSH verification before automatic manifest activation.
 
 The controller deliberately separates provider creation from endpoint
 activation. It never stores an Outline Management URL in the database and does
@@ -73,11 +75,32 @@ data leaves the job waiting. There is intentionally no `ssh-keyscan`,
 trust. Without an authenticated host-key path, an operator must install/verify
 Outline and update the manifest.
 
+For an owner-approved zero-touch provider workflow, `deploy/render_web.py`
+also exposes `POST /fleet/register` when
+`AURIX_FLEET_REGISTRATION_ENABLED=1`. Set
+`AURIX_FLEET_AUTO_REGISTRATION_ENABLED=1` on the infrastructure worker, use
+the same Fernet `AURIX_FLEET_ENROLLMENT_KEY` and an HTTPS
+`AURIX_FLEET_REGISTRATION_URL`, and keep the fleet SSH key/known-hosts files
+root-only. A new Droplet receives only a short-lived enrollment token in its
+cloud-init; after Outline is ready it posts `access.txt` and its SSH host key.
+The worker encrypts that callback, binds it to the provider's current IP,
+appends the exact host key only when no conflict exists, runs the ordinary
+fleet reconciler, and consumes the token only after a successful health/policy
+reconcile. Any malformed, replayed, expired, mismatched, or failed request
+leaves the job waiting and the endpoint non-saleable. Configure
+`AURIX_AUTO_NODE_*` capacity/slot templates explicitly; the default template
+has zero saleable slots until an owner allocates capacity.
+The same handler can run independently on a control-plane host with
+`deploy/fleet_registration_server.py` and
+`deploy/aurix-fleet-registration.service`; that mode requires a trusted
+TLS certificate/key and does not create a second Telegram poller.
+
 Not implemented or intentionally not automatic:
 
 - no CPU-only scale trigger;
 - no automatic scale-in or Droplet destruction;
-- no permanent cloud/Telegram/database secrets in user data;
+- no permanent cloud/Telegram/database secrets in user data (only a
+  short-lived enrollment token is present when the opt-in flow is enabled);
 - no live provider token in the normal Telegram process;
 - no automatic activation from a merely `active` Droplet state;
 - no automatic failover or silent migration of existing customer keys;
@@ -378,6 +401,15 @@ AURIX_INFRASTRUCTURE_QUEUE_ENABLED=0
 AURIX_INFRASTRUCTURE_AUTO_QUEUE_ENABLED=0
 AURIX_SYSTEM_ACTOR_ID=0
 AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED=0
+# Optional zero-touch callback; keep disabled until the HTTPS endpoint is live.
+AURIX_FLEET_REGISTRATION_ENABLED=0
+AURIX_FLEET_AUTO_REGISTRATION_ENABLED=0
+AURIX_FLEET_REGISTRATION_URL=
+AURIX_FLEET_ENROLLMENT_KEY=
+AURIX_AUTO_NODE_MAX_KEYS=10
+AURIX_AUTO_NODE_RESERVED_KEYS=2
+AURIX_AUTO_NODE_TIER_SLOTS_JSON={}
+AURIX_AUTO_NODE_PLAN_SLOTS_JSON={}
 AURIX_SCALE_REGION=sgp1
 AURIX_SCALE_DROPLET_SIZE=s-1vcpu-1gb
 AURIX_SCALE_DROPLET_IMAGE=ubuntu-24-04-x64
@@ -389,8 +421,9 @@ Safe default is disabled. The budget is mandatory when mutation is enabled and
 fails closed on invalid/unavailable billing data. Existing managed Droplets are
 counted by provider inventory and the configured ID bridge until tags are
 verified. Every new Droplet receives the pre-registered provider SSH key IDs at
-creation; private key material is never sent in provider user data. `user_data`
-is not accepted; new nodes still require a pinned identity verification step.
+creation; private key material is never sent in provider user data. Without the
+opt-in enrollment callback described above, new nodes still require a pinned
+identity verification step.
 
 ## 13. Scale-out decision
 
@@ -635,7 +668,8 @@ completion.
   cooldown, node-count, and two consecutive fresh capacity observations.
 - A queued provision is an idempotent intent only; the worker is the sole actor
   allowed to call DigitalOcean. It stops at `awaiting_verification` unless the
-  explicit, identity-pinned auto-activation gate is enabled.
+  explicit, identity-pinned auto-activation or zero-touch enrollment gate is
+  enabled.
 - Every worker pass records provider inventory and derives stale orphan
   candidates without mutating anything. A candidate must be a managed AuriX
   Droplet, absent from the endpoint registry and unfinished jobs, and observed

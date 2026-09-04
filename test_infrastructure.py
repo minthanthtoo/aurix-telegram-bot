@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from cryptography.fernet import Fernet
 from commerce import CommerceDatabase
 from infrastructure import DigitalOceanClient, FleetController, InfrastructureError
 
@@ -134,7 +135,7 @@ class FleetControllerTest(unittest.TestCase):
         self.assertEqual(waiting_again["provider_resource_id"], "42")
         self.assertEqual(waiting_again["public_ip"], "203.0.113.10")
         self.assertNotIn("user_data", provider.specifications[0])
-        self.assertEqual(provider.specifications[0]["ssh_keys"], ["12345"])
+        self.assertEqual(provider.specifications[0]["ssh_keys"], [12345])
         with self.database.connect() as connection:
             status = connection.execute(
                 "SELECT status FROM infrastructure_jobs WHERE id = ?", (job_id,)
@@ -188,6 +189,69 @@ class FleetControllerTest(unittest.TestCase):
         with patch.dict(os.environ, environment, clear=True):
             with self.assertRaisesRegex(InfrastructureError, "SSH_KEY_IDS"):
                 controller.execute_provision(job_id)
+
+    def test_auto_enrollment_attaches_one_time_user_data_and_persists_pending_token(self):
+        provider = FakeProvider()
+        controller = FleetController(self.database, provider)
+        job_id = controller.queue_provision(
+            region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+            requested_by=123, now=self.now,
+        )
+        environment = {
+            "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
+            "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "10",
+            "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
+            "AURIX_FLEET_AUTO_REGISTRATION_ENABLED": "1",
+            "AURIX_FLEET_REGISTRATION_ENABLED": "1",
+            "AURIX_FLEET_REGISTRATION_URL": "https://control.example/fleet/register",
+            "AURIX_FLEET_ENROLLMENT_KEY": Fernet.generate_key().decode(),
+            "AURIX_FLEET_CONTROL_PLANE_SOURCE": "203.0.113.7/32",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            created = controller.execute_provision(job_id)
+        self.assertEqual(created["status"], "creating")
+        specification = provider.specifications[0]
+        self.assertIn("user_data", specification)
+        self.assertIn("aurix-auto-enrollment", specification["tags"])
+        self.assertNotIn(environment["AURIX_FLEET_ENROLLMENT_KEY"], specification["user_data"])
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT status, payload_ciphertext FROM infrastructure_enrollments WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+        self.assertEqual(row["status"], "pending")
+        self.assertIsNone(row["payload_ciphertext"])
+
+    def test_invalid_auto_enrollment_configuration_rolls_back_running_transition(self):
+        controller = FleetController(self.database, FakeProvider())
+        job_id = controller.queue_provision(
+            region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+            requested_by=123, now=self.now,
+        )
+        environment = {
+            "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+            "AURIX_DIGITALOCEAN_SSH_KEY_IDS": "12345",
+            "AURIX_MAX_MONTHLY_INFRA_BUDGET_USD": "10",
+            "AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD": "6",
+            "AURIX_FLEET_AUTO_REGISTRATION_ENABLED": "1",
+            "AURIX_FLEET_REGISTRATION_ENABLED": "1",
+            "AURIX_FLEET_REGISTRATION_URL": "https://control.example/fleet/register",
+            "AURIX_FLEET_ENROLLMENT_KEY": "invalid",
+            "AURIX_FLEET_CONTROL_PLANE_SOURCE": "203.0.113.7/32",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(InfrastructureError, "encryption key"):
+                controller.execute_provision(job_id)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM infrastructure_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            enrollment = connection.execute(
+                "SELECT 1 FROM infrastructure_enrollments WHERE job_id = ?", (job_id,)
+            ).fetchone()
+        self.assertEqual(row["status"], "pending")
+        self.assertIsNone(enrollment)
 
     def test_verified_activation_is_idempotent_and_audited(self):
         provider = FakeProvider()

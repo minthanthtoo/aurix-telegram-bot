@@ -202,6 +202,27 @@ material; attaching them at creation is what makes unattended bootstrap
 reachable. The corresponding private key and pinned `known_hosts` file remain
 root-only on the control plane.
 
+Optional zero-touch enrollment is available for an owner-approved setup. The
+Render web entrypoint accepts `POST /fleet/register` only with
+`AURIX_FLEET_REGISTRATION_ENABLED=1`; the provider worker additionally needs
+`AURIX_FLEET_AUTO_REGISTRATION_ENABLED=1`, an HTTPS
+`AURIX_FLEET_REGISTRATION_URL`, and a matching Fernet
+`AURIX_FLEET_ENROLLMENT_KEY`. Cloud-init contains only a short-lived,
+single-use token. The node posts its Outline identity and SSH host key, which
+are encrypted in the control-plane database. The worker verifies the provider
+IP, Outline certificate fingerprint, and pinned SSH host key before adding the
+node to the manifest and running `fleet_reconcile.py`. Replays, conflicts,
+timeouts, or failed health/policy checks leave the job in
+`awaiting_verification`; no customer key is assigned. Capacity is zero by
+default and is enabled only through the explicit `AURIX_AUTO_NODE_*` templates.
+If the control plane is hosted on the same DigitalOcean host instead of
+Render, install `deploy/aurix-fleet-registration.service`, set
+`AURIX_FLEET_REGISTRATION_TLS_CERT`, `AURIX_FLEET_REGISTRATION_TLS_KEY`, and
+`AURIX_FLEET_REGISTRATION_PORT` in the root-only environment, then place a
+trusted reverse-proxy/DNS name in `AURIX_FLEET_REGISTRATION_URL` and enable the
+service. The standalone listener uses the same `/fleet/register` handler and
+TLS requirements; it does not start a second Telegram poller.
+
 For unattended scale intent collection, set both
 `AURIX_INFRASTRUCTURE_QUEUE_ENABLED=1` and
 `AURIX_INFRASTRUCTURE_AUTO_QUEUE_ENABLED=1`. The maintenance worker then

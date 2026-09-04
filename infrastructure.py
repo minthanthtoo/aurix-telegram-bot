@@ -17,7 +17,16 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
+
+from fleet_enrollment import (
+    EnrollmentError,
+    create_pending_enrollment,
+    generate_token,
+    render_user_data,
+    validate_enrollment_key,
+)
 
 
 UTC = timezone.utc
@@ -144,7 +153,7 @@ class FleetController:
         return {item.strip() for item in raw.split(",") if item.strip()}
 
     @staticmethod
-    def _provider_ssh_key_ids() -> list[str]:
+    def _provider_ssh_key_ids() -> list[str | int]:
         """Return provider-side SSH key IDs/fingerprints for new Droplets.
 
         DigitalOcean does not make a newly created Droplet reachable through
@@ -164,7 +173,10 @@ class FleetController:
             for value in values
         ):
             raise InfrastructureError("AURIX_DIGITALOCEAN_SSH_KEY_IDS is invalid")
-        return values
+        # DigitalOcean's API accepts numeric key IDs as JSON numbers and
+        # fingerprints as strings. Preserve fingerprints while avoiding the
+        # ambiguous string form for numeric IDs.
+        return [int(value) if value.isdigit() else value for value in values]
 
     def _provider_inventory(self) -> list[dict[str, Any]]:
         """Return provider nodes explicitly owned by AuriX.
@@ -584,9 +596,68 @@ class FleetController:
         ):
             raise InfrastructureError("Configured monthly infrastructure budget would be exceeded")
 
+    def _auto_enrollment_payload(
+        self, *, job_id: str, specification: dict[str, Any]
+    ) -> tuple[str, str] | None:
+        """Build one-time user-data and return ``(token, node_id)`` when enabled."""
+        if not _enabled("AURIX_FLEET_AUTO_REGISTRATION_ENABLED"):
+            return None
+        if not _enabled("AURIX_FLEET_REGISTRATION_ENABLED"):
+            raise InfrastructureError(
+                "automatic node registration requires AURIX_FLEET_REGISTRATION_ENABLED=1"
+            )
+        registration_url = os.environ.get("AURIX_FLEET_REGISTRATION_URL", "").strip()
+        enrollment_key = os.environ.get("AURIX_FLEET_ENROLLMENT_KEY", "").strip()
+        if not registration_url or not enrollment_key:
+            raise InfrastructureError(
+                "automatic node registration requires AURIX_FLEET_REGISTRATION_URL "
+                "and AURIX_FLEET_ENROLLMENT_KEY"
+            )
+        try:
+            validate_enrollment_key(enrollment_key)
+        except EnrollmentError as exc:
+            raise InfrastructureError("automatic node registration encryption key is invalid") from exc
+        source = os.environ.get("AURIX_FLEET_CONTROL_PLANE_SOURCE", "").strip()
+        if not source:
+            raise InfrastructureError(
+                "automatic node registration requires AURIX_FLEET_CONTROL_PLANE_SOURCE"
+            )
+        token = generate_token()
+        # Keep the manifest identifier within its 24-character contract while
+        # avoiding collisions from jobs that share a long prefix.
+        node_id = "auto-" + hashlib.sha256(str(job_id).strip().encode()).hexdigest()[:18]
+        try:
+            bootstrap_script = (Path(__file__).resolve().parent / "deploy" / "node_bootstrap.sh").read_bytes()
+            rendered = render_user_data(
+                bootstrap_script=bootstrap_script,
+                registration_url=registration_url,
+                token=token,
+                job_id=str(job_id),
+                node_id=node_id,
+                control_plane_source=source,
+                api_port=int(os.environ.get("AURIX_SCALE_API_PORT", "61603")),
+                keys_port=int(os.environ.get("AURIX_SCALE_KEYS_PORT", "443")),
+                ssh_port=int(os.environ.get("AURIX_SCALE_SSH_PORT", "22")),
+                swap_mb=int(os.environ.get("AURIX_SCALE_SWAP_MB", "1024")),
+                installer_url=os.environ.get("AURIX_OUTLINE_INSTALLER_URL", ""),
+                installer_sha256=os.environ.get("AURIX_OUTLINE_INSTALLER_SHA256", ""),
+            )
+        except (OSError, ValueError, EnrollmentError) as exc:
+            raise InfrastructureError(f"automatic node registration payload is invalid: {type(exc).__name__}") from exc
+        specification["user_data"] = rendered
+        specification["tags"] = [
+            "aurix-vpn-node",
+            "aurix-awaiting-verification",
+            "aurix-auto-enrollment",
+        ]
+        # Keep the encryption key out of the provider payload.  It is used by
+        # the control-plane registration endpoint and worker only.
+        return token, node_id
+
     def execute_provision(self, job_id: str) -> dict[str, Any]:
         if not _enabled("AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED"):
             raise InfrastructureError("Infrastructure mutations are disabled")
+        auto_enrollment: tuple[str, str] | None = None
         with self.database.connect() as connection:
             pending = connection.execute(
                 "SELECT id FROM infrastructure_jobs WHERE id = ? AND status = 'pending'",
@@ -617,8 +688,6 @@ class FleetController:
             if job is None or event is None:
                 raise InfrastructureError("Provisioning job is not pending")
             specification = json.loads(str(event["metadata_json"]))
-            # Bootstrap is deliberately credential-free. An operator installs
-            # Outline and registers its secret management URL after creation.
             specification = {
                 "name": f"aurix-vpn-{specification['region']}-{job_id[:8]}",
                 "region": specification["region"],
@@ -631,6 +700,22 @@ class FleetController:
             # repeatable bootstrap.  This list contains provider key IDs or
             # fingerprints, never private key material.
             specification["ssh_keys"] = self._provider_ssh_key_ids()
+            try:
+                auto_enrollment = self._auto_enrollment_payload(
+                    job_id=str(job_id), specification=specification
+                )
+                if auto_enrollment is not None:
+                    create_pending_enrollment(
+                        self.database,
+                        job_id=str(job_id),
+                        token=auto_enrollment[0],
+                        now=datetime.now(UTC),
+                        connection=connection,
+                    )
+            except EnrollmentError as exc:
+                raise InfrastructureError(
+                    f"automatic node enrollment could not be prepared: {type(exc).__name__}"
+                ) from exc
             connection.execute(
                 """UPDATE infrastructure_jobs SET status = 'running', attempts = attempts + 1,
                           locked_at = ? WHERE id = ?""",

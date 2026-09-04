@@ -51,6 +51,7 @@ VERSIONED_UNIT_NAMES = (
     "aurix-fleet-backup.timer",
     "aurix-infrastructure-worker.service",
     "aurix-infrastructure-worker.timer",
+    "aurix-fleet-registration.service",
     "aurix-dns-sync.service",
     "aurix-dns-sync.timer",
 )

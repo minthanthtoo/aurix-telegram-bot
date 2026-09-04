@@ -275,6 +275,35 @@ def check_provider(env: dict[str, str]) -> Check:
     return Check("provider_automation", FAIL, "provider mutations enabled without DIGITALOCEAN_API_TOKEN")
 
 
+def check_enrollment(env: dict[str, str]) -> Check:
+    """Validate the optional callback contract without making network calls."""
+    registration = truthy(env.get("AURIX_FLEET_REGISTRATION_ENABLED"))
+    automatic = truthy(env.get("AURIX_FLEET_AUTO_REGISTRATION_ENABLED"))
+    if automatic and not registration:
+        return Check(
+            "fleet_enrollment",
+            FAIL,
+            "AURIX_FLEET_AUTO_REGISTRATION_ENABLED requires AURIX_FLEET_REGISTRATION_ENABLED=1",
+        )
+    if not registration:
+        return Check("fleet_enrollment", PASS, "zero-touch enrollment is disabled")
+    parsed = urlsplit(env.get("AURIX_FLEET_REGISTRATION_URL", "").strip())
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.path != "/fleet/register"
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+    ):
+        return Check("fleet_enrollment", FAIL, "registration URL must be a credential-free HTTPS URL")
+    try:
+        Fernet(env.get("AURIX_FLEET_ENROLLMENT_KEY", "").encode())
+    except (TypeError, ValueError):
+        return Check("fleet_enrollment", FAIL, "AURIX_FLEET_ENROLLMENT_KEY is invalid")
+    return Check("fleet_enrollment", PASS, "HTTPS enrollment callback and encryption key are configured")
+
+
 def check_dns(env: dict[str, str], nodes: list[FleetNode]) -> Check:
     if not nodes:
         required = truthy(env.get("AURIX_DNS_REQUIRE"))
@@ -339,6 +368,7 @@ def run_audit(env_file: Path, verify_archives: bool) -> dict[str, object]:
         check_offsite_config(env, nodes),
         check_backup_archives(env, nodes, verify_archives),
         check_provider(env),
+        check_enrollment(env),
         check_dns(env, nodes),
         check_recovery_entrypoint(),
     ]

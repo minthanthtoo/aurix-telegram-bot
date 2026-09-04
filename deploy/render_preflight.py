@@ -126,6 +126,32 @@ def main() -> None:
     }:
         fail("RECEIPT_STORAGE_REQUIRED must be enabled for Render")
 
+    registration_enabled = os.environ.get(
+        "AURIX_FLEET_REGISTRATION_ENABLED", "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    auto_registration = os.environ.get(
+        "AURIX_FLEET_AUTO_REGISTRATION_ENABLED", "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if registration_enabled or auto_registration:
+        registration_url = os.environ.get("AURIX_FLEET_REGISTRATION_URL", "").strip()
+        parsed_registration = urlsplit(registration_url)
+        if (
+            parsed_registration.scheme != "https"
+            or not parsed_registration.hostname
+            or parsed_registration.path != "/fleet/register"
+            or parsed_registration.fragment
+            or parsed_registration.username
+            or parsed_registration.password
+        ):
+            fail("AURIX_FLEET_REGISTRATION_URL must be a credential-free HTTPS URL")
+        enrollment_key = os.environ.get("AURIX_FLEET_ENROLLMENT_KEY", "").strip()
+        try:
+            Fernet(enrollment_key.encode())
+        except (TypeError, ValueError):
+            fail("AURIX_FLEET_ENROLLMENT_KEY is not a valid Fernet key")
+    if auto_registration and not registration_enabled:
+        fail("AURIX_FLEET_AUTO_REGISTRATION_ENABLED requires AURIX_FLEET_REGISTRATION_ENABLED=1")
+
     if storage_mode == "disk":
         database_value = os.environ.get("DATABASE_PATH", "").strip()
         if not database_value:

@@ -107,6 +107,9 @@ def _validate_configuration() -> dict[str, str]:
     auto_activation = os.environ.get(
         "AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED", "0"
     ).strip().lower() in TRUTHY
+    auto_registration = os.environ.get(
+        "AURIX_FLEET_AUTO_REGISTRATION_ENABLED", "0"
+    ).strip().lower() in TRUTHY
     if auto_activation and not fleet_raw:
         fail("automatic infrastructure activation requires AURIX_FLEET_NODES_JSON")
     if auto_activation:
@@ -115,6 +118,39 @@ def _validate_configuration() -> dict[str, str]:
         )
         if not activation_env.is_absolute() or not activation_env.is_file():
             fail("AURIX_FLEET_ENV_FILE must be an existing absolute file when auto activation is enabled")
+    if auto_registration:
+        registration_url = _required("AURIX_FLEET_REGISTRATION_URL")
+        parsed_registration = urlsplit(registration_url)
+        if (
+            parsed_registration.scheme != "https"
+            or not parsed_registration.hostname
+            or parsed_registration.path != "/fleet/register"
+            or parsed_registration.fragment
+            or parsed_registration.username
+            or parsed_registration.password
+        ):
+            fail("AURIX_FLEET_REGISTRATION_URL must be a credential-free HTTPS URL")
+        enrollment_key = _required("AURIX_FLEET_ENROLLMENT_KEY")
+        try:
+            Fernet(enrollment_key.encode())
+        except (TypeError, ValueError):
+            fail("AURIX_FLEET_ENROLLMENT_KEY is not a valid Fernet key")
+        if os.environ.get("AURIX_FLEET_REGISTRATION_ENABLED", "0").strip().lower() not in TRUTHY:
+            fail("AURIX_FLEET_REGISTRATION_ENABLED=1 is required for automatic node registration")
+        registration_env = Path(
+            os.environ.get("AURIX_FLEET_ENV_FILE", "/etc/aurix-bot/aurix.env")
+        )
+        if not registration_env.is_absolute() or not registration_env.is_file():
+            fail("AURIX_FLEET_ENV_FILE must be an existing absolute file when auto registration is enabled")
+        control_source = _required("AURIX_FLEET_CONTROL_PLANE_SOURCE")
+        try:
+            ipaddress.ip_network(control_source, strict=False)
+        except ValueError:
+            fail("AURIX_FLEET_CONTROL_PLANE_SOURCE must be an IP address or CIDR")
+        for variable in ("AURIX_FLEET_SSH_KEY", "AURIX_FLEET_KNOWN_HOSTS"):
+            configured_path = Path(_required(variable))
+            if not configured_path.is_absolute() or not configured_path.is_file():
+                fail(f"{variable} must be an existing absolute file when auto registration is enabled")
     object_store_configured = offsite_storage.configured(dict(os.environ))
     if object_store_configured:
         try:

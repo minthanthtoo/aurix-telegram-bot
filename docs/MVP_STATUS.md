@@ -28,11 +28,11 @@ engineering estimates, not production traffic or revenue metrics.
 | Auditability | Implemented locally | Order, payment, approval, rejection, provision, revoke events |
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
 | Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; hosted DB provisioning and live migration remain gates |
-| Independent worker / web control plane | Worker implemented; web separation pending | The guarded DigitalOcean worker/timer is installed on the primary host; an independently hosted Render web/control service remains a later gate |
+| Independent worker / web control plane | Worker and callback endpoint implemented; live enrollment pending | The guarded DigitalOcean worker/timer and encrypted one-time `/fleet/register` callback (Render or standalone TLS service) are in source; live endpoint/worker canary remains a gate |
 | Live Telegram and Outline smoke test | Three management/data endpoints verified; customer tranche controlled | Bot, primary, Singapore-B, and BKK/Nube Outline endpoints, firewall, pinned-TLS API canaries, and a reversible BKK data-port/key create-delete canary are verified; a real Telegram-account canary and longer observation remain |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
 | Referrals, affiliates, and resellers | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
-| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, provider-side SSH-key attachment, two-observation provider-orphan audit with separately gated cleanup, non-secret remote-key audit, durable two-observation scale gate, capacity posture, stable provider identity checks, idempotent intents, and worker safety gates are live; free/trial/promo provisioning is restart-safe and counts pending reservations against node admission; untracked remote keys remain a migration blocker and BKK is healthy/canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
+| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, provider-side SSH-key attachment, two-observation provider-orphan audit with separately gated cleanup, non-secret remote-key audit, durable two-observation scale gate, capacity posture, stable provider identity checks, idempotent intents, encrypted single-use enrollment, and worker safety gates are live; free/trial/promo provisioning is restart-safe and counts pending reservations against node admission; untracked remote keys remain a migration blocker and BKK is healthy/canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
 
 ## Honest aggregate view
 
@@ -45,7 +45,7 @@ engineering estimates, not production traffic or revenue metrics.
   wallet, restart-safe interaction, receipt-fingerprint, Telegram timestamp
   formatting, notification-lease, deterministic-entitlement-recovery, receipt-model-selection, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (363 tests
+  production-acceptance suite (378 tests
   passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**; all three declared nodes,
   the bot, worker/timers, provider inventory, firewall boundary, encrypted local
@@ -53,7 +53,7 @@ engineering estimates, not production traffic or revenue metrics.
   verified. A temporary-destination restore drill from the private off-site
   SQLite archive and fleet archive verification also passed. Stable DNS, a real
   Telegram-account canary, allocation normalization/strict validation,
-  untracked-key audit, and sustained observation remain.
+  untracked-key audit, live enrollment callback/worker canary, and sustained observation remain.
 - End-to-end MVP readiness: approximately **90%** for the controlled paid-
   concierge scope. This is a progress estimate, not a claim that automated
   payment verification, reseller features, or unrestricted scale-out are live.
@@ -72,4 +72,8 @@ engineering estimates, not production traffic or revenue metrics.
    `docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`, then decide whether the paid
    pilot remains one-process SQLite or enables the PostgreSQL backend plus an
    independent worker before admitting more than a controlled cohort; the
-   PostgreSQL schema path is now present but not live-tested.
+  PostgreSQL schema path is now present but not live-tested.
+4. If zero-touch provider expansion is desired, deploy the Render or standalone
+   TLS callback, set the matching enrollment gates, provision one canary node,
+   verify the callback/reconcile/rollback audit trail, and keep its capacity at
+   zero until the owner approves the `AURIX_AUTO_NODE_*` tranche.

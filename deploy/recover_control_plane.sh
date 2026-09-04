@@ -78,6 +78,12 @@ dns_sync_enabled=0
 if [[ "${AURIX_DNS_SYNC_ENABLED:-}" =~ ^(1|true|yes|on)$ ]]; then
   dns_sync_enabled=1
 fi
+registration_service_enabled=0
+if [[ "${AURIX_FLEET_REGISTRATION_ENABLED:-}" =~ ^(1|true|yes|on)$ \
+  && -n "${AURIX_FLEET_REGISTRATION_TLS_CERT:-}" \
+  && -n "${AURIX_FLEET_REGISTRATION_TLS_KEY:-}" ]]; then
+  registration_service_enabled=1
+fi
 unset PAYMENT_RECIPIENTS_JSON OUTLINE_SERVERS_JSON AURIX_FLEET_NODES_JSON
 
 command -v python3 >/dev/null || {
@@ -164,7 +170,7 @@ install -o root -g root -m 0644 "$release_dir/deploy/aurix-autodeploy.service" /
 install -o root -g root -m 0644 "$release_dir/deploy/aurix-autodeploy.timer" /etc/systemd/system/aurix-autodeploy.timer
 install -o root -g root -m 0644 "$release_dir/deploy/aurix-database-backup.service" /etc/systemd/system/aurix-database-backup.service
 install -o root -g root -m 0644 "$release_dir/deploy/aurix-database-backup.timer" /etc/systemd/system/aurix-database-backup.timer
-for unit in aurix-fleet-backup.service aurix-fleet-backup.timer aurix-fleet-reconcile.service aurix-fleet-reconcile.timer aurix-dns-sync.service aurix-dns-sync.timer; do
+for unit in aurix-fleet-backup.service aurix-fleet-backup.timer aurix-fleet-reconcile.service aurix-fleet-reconcile.timer aurix-dns-sync.service aurix-dns-sync.timer aurix-fleet-registration.service; do
   install -o root -g root -m 0644 "$release_dir/deploy/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
@@ -178,10 +184,17 @@ fi
 if [[ "$dns_sync_enabled" == "1" ]]; then
   systemctl enable aurix-dns-sync.timer >/dev/null
 fi
+if [[ "$registration_service_enabled" == "1" ]]; then
+  systemctl enable aurix-fleet-registration.service >/dev/null
+fi
 
 if [[ "$skip_service_start" == "0" ]]; then
   systemctl restart aurix-bot.service
   systemctl is-active --quiet aurix-bot.service
+  if [[ "$registration_service_enabled" == "1" ]]; then
+    systemctl restart aurix-fleet-registration.service
+    systemctl is-active --quiet aurix-fleet-registration.service
+  fi
 fi
 
 echo "AuriX control-plane recovery prepared at $release_id"

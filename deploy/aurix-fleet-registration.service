@@ -1,0 +1,25 @@
+[Unit]
+Description=AuriX fleet enrollment callback
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/aurix-current
+EnvironmentFile=/etc/aurix-bot/aurix.env
+ExecStart=/usr/bin/python3 /opt/aurix-current/deploy/fleet_registration_server.py
+Restart=on-failure
+RestartSec=10s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/aurix-bot /var/lib/aurix-fleet
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

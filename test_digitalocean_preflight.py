@@ -235,6 +235,29 @@ class DigitalOceanPreflightTest(unittest.TestCase):
         with patch.dict(os.environ, environment, clear=True):
             main([])
 
+    def test_auto_registration_requires_credential_free_endpoint_and_callback_service(self):
+        environment = dict(self.fleet_environment())
+        env_file = Path(self.tmp.name) / "fleet.env"
+        env_file.write_text("AURIX_FLEET_NODES_JSON=[]\n", encoding="utf-8")
+        environment.update(
+            {
+                "AURIX_FLEET_AUTO_REGISTRATION_ENABLED": "1",
+                "AURIX_FLEET_REGISTRATION_URL": "http://insecure.example/register",
+                "AURIX_FLEET_ENV_FILE": str(env_file),
+                "AURIX_FLEET_ENROLLMENT_KEY": Fernet.generate_key().decode(),
+            }
+        )
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "HTTPS"):
+                main([])
+        environment["AURIX_FLEET_REGISTRATION_URL"] = "https://control.example/fleet/register"
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "REGISTRATION_ENABLED"):
+                main([])
+        environment["AURIX_FLEET_REGISTRATION_ENABLED"] = "1"
+        with patch.dict(os.environ, environment, clear=True):
+            main([])
+
 
 if __name__ == "__main__":
     unittest.main()
