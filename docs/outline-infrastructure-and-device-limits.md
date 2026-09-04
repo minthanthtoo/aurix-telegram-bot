@@ -162,7 +162,10 @@ The secret management path is defense in depth, not a substitute for restricting
 
 ## Required recovery semantics
 
-These are requirements for the real-server integration, not claims that the current prototype already implements them.
+These are the recovery invariants for the real-server integration. The current
+implementation covers them for free/trial/promo intents and paid
+provisioning/revocation jobs; the remaining owner-only canary requirements are
+called out below.
 
 1. Persist a unique provisioning-operation ID before calling Outline.
 2. Derive or reserve a caller-selected key ID for that operation where the deployed server supports it.
@@ -174,7 +177,14 @@ These are requirements for the real-server integration, not claims that the curr
 8. Retry revocation with bounded batches, timeouts, backoff, and a next-attempt timestamp so an Outline outage cannot block Telegram polling.
 9. Reconcile the remote key inventory at startup and after every staging failure so a database commit failure cannot leave an untracked active key.
 
-Until this state machine is implemented, an owner-only live trial must take before/after key inventories and manually revoke any orphan. It is not safe for public users.
+The implementation commits intent rows before remote effects, reconciles
+deterministic IDs after ambiguous responses, encrypts access URLs, queues
+delivery durably, retries orphaned effects with bounded workers, and reconciles
+remote inventory after staging failures. The deployed Outline version still
+needs an owner-only canary to prove its exact `PUT /access-keys/{id}` behavior
+and the latency of an already-open session after deletion. Until that live
+evidence exists, public issuance remains gated even though the recovery state
+machine is implemented.
 
 ## Device-limit assessment
 
