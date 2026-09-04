@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
-from deploy.render_preflight import _validate_live, main
+from deploy.render_preflight import _check_payment_qr_assets, _validate_live, main
 
 
 def valid_environment() -> dict[str, str]:
@@ -35,6 +35,9 @@ def valid_environment() -> dict[str, str]:
 
 
 class RenderPreflightTest(unittest.TestCase):
+    def test_all_payment_qr_assets_are_present_and_non_empty(self):
+        _check_payment_qr_assets()
+
     def run_preflight(self, environment: dict[str, str]) -> str:
         output = io.StringIO()
         with patch.dict(os.environ, environment, clear=True):

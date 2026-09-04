@@ -17,8 +17,29 @@ from urllib.parse import quote, urlsplit
 from cryptography.fernet import Fernet
 
 
+PAYMENT_QR_ASSETS = {
+    "kbzpay": "kbzpay.png",
+    "wavepay": "wavepay.png",
+    "ayapay": "ayapay.png",
+    "uabpay": "uabpay.png",
+    "cbpay": "cbpay.png",
+}
+
+
 def fail(message: str) -> None:
     raise SystemExit(f"Render preflight failed: {message}")
+
+
+def _check_payment_qr_assets() -> None:
+    """Refuse a release whose five customer payment cards are incomplete."""
+    directory = Path(__file__).resolve().parents[1] / "assets" / "payment_qr"
+    missing = [
+        provider
+        for provider, filename in PAYMENT_QR_ASSETS.items()
+        if not (directory / filename).is_file() or (directory / filename).stat().st_size <= 0
+    ]
+    if missing:
+        fail("missing or empty payment QR asset(s): " + ", ".join(missing))
 
 
 def _json_request(url: str, headers: dict[str, str], timeout: int = 15) -> object:
@@ -123,6 +144,7 @@ def _validate_live(values: dict[str, object]) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    _check_payment_qr_assets()
     storage_mode = os.environ.get("AURIX_STORAGE_MODE", "disk").strip().lower()
     if storage_mode not in {"disk", "postgres"}:
         fail("AURIX_STORAGE_MODE must be 'disk' or 'postgres'")
