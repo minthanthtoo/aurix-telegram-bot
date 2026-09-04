@@ -18,6 +18,20 @@ class ProductionAcceptanceTests(unittest.TestCase):
         with patch.dict("os.environ", {"AURIX_FLEET_ENV_FILE": "/tmp/test.env"}, clear=True):
             self.assertEqual(_default_env_file(), "/tmp/test.env")
 
+    def test_linked_worktree_git_file_is_checked_for_cleanliness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").write_text("gitdir: /tmp/common-git\n", encoding="utf-8")
+
+            def runner(command, **kwargs):
+                del kwargs
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            from deploy.production_acceptance import _git_clean
+
+            check = _git_clean(root, runner)
+        self.assertEqual(check["status"], "pass")
+
     def test_warnings_never_summarize_as_pass(self):
         self.assertEqual(_summarize([]), "pass")
         self.assertEqual(_summarize([{"status": "warn"}]), "warn")

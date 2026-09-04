@@ -59,7 +59,11 @@ def _default_env_file() -> str:
 
 
 def _git_clean(root: Path, runner: Callable[..., subprocess.CompletedProcess[str]]) -> dict[str, str]:
-    if not (root / ".git").is_dir():
+    # Linked worktrees use a ``.git`` file that points at the common Git
+    # directory.  Treat it as a real checkout so cleanliness is still checked;
+    # only a release archive with no .git entry should be marked immutable.
+    git_marker = root / ".git"
+    if not git_marker.is_dir() and not git_marker.is_file():
         return _check("source_clean", SKIP, "deployed release is an immutable archive; CI checked the source checkout")
     try:
         result = runner(
