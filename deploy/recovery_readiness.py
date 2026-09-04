@@ -251,7 +251,27 @@ def check_provider(env: dict[str, str]) -> Check:
     if not truthy(env.get("AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED")):
         return Check("provider_automation", WARN, "provider mutations are disabled")
     if has_value(env, "DIGITALOCEAN_API_TOKEN"):
-        return Check("provider_automation", PASS, "DigitalOcean provider token is configured")
+        key_ids = [
+            item.strip()
+            for item in env.get("AURIX_DIGITALOCEAN_SSH_KEY_IDS", "").split(",")
+            if item.strip()
+        ]
+        if not key_ids:
+            return Check(
+                "provider_automation",
+                FAIL,
+                "AURIX_DIGITALOCEAN_SSH_KEY_IDS is required for reachable provider bootstrap",
+            )
+        if len(key_ids) > 10 or any(
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:._-]{0,127}", value)
+            for value in key_ids
+        ):
+            return Check("provider_automation", FAIL, "AURIX_DIGITALOCEAN_SSH_KEY_IDS is invalid")
+        return Check(
+            "provider_automation",
+            PASS,
+            "DigitalOcean provider token and SSH-key attachment are configured",
+        )
     return Check("provider_automation", FAIL, "provider mutations enabled without DIGITALOCEAN_API_TOKEN")
 
 
