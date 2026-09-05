@@ -108,6 +108,14 @@ def github_slug(repository: str) -> str | None:
 
 
 def ci_conclusion(payload: object, check_name: str = "safety-net") -> str:
+    """Return a conservative conclusion for checks on one exact commit.
+
+    Older deployments exposed one ``safety-net`` check.  The current workflow
+    uses a Python-version matrix, so no check has that exact name.  When the
+    legacy name is absent, require every reported check to be completed and
+    successful; an empty or incomplete check set remains pending rather than
+    silently bypassing the release gate.
+    """
     if not isinstance(payload, dict) or not isinstance(payload.get("check_runs"), list):
         return "invalid"
     matching = [
@@ -115,11 +123,17 @@ def ci_conclusion(payload: object, check_name: str = "safety-net") -> str:
         for item in payload["check_runs"]
         if isinstance(item, dict) and str(item.get("name")) == check_name
     ]
+    if not matching and check_name == "safety-net":
+        matching = [
+            item
+            for item in payload["check_runs"]
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
     if not matching:
         return "pending"
     if any(item.get("status") != "completed" for item in matching):
         return "pending"
-    return "success" if any(item.get("conclusion") == "success" for item in matching) else "failed"
+    return "success" if all(item.get("conclusion") == "success" for item in matching) else "failed"
 
 
 def require_github_ci(sha: str) -> str:

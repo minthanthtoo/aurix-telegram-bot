@@ -334,8 +334,10 @@ records the deployed commit and retains rollback releases.
 
 The DigitalOcean bot does not update merely because a commit exists locally or
 on GitHub. Install the repository's timer once to make GitHub `main` the release
-source. The timer polls every two minutes and deploys only when the `safety-net`
-GitHub Actions check has completed successfully for that exact commit.
+source. The timer polls every two minutes and deploys only when every GitHub
+Actions check reported for that exact commit has completed successfully. This
+supports the current Python-version matrix and remains conservative when a
+new check is added.
 
 Each accepted commit is built under `/opt/aurix-releases/<full-commit-sha>` with
 its own virtual environment. The deployer compiles the release, runs the full

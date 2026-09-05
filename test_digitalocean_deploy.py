@@ -138,6 +138,33 @@ class DigitalOceanDeployTest(unittest.TestCase):
             "success",
         )
 
+    def test_ci_gate_accepts_current_python_matrix_checks(self):
+        payload = {
+            "check_runs": [
+                {"name": "test (3.12)", "status": "completed", "conclusion": "success"},
+                {"name": "test (3.13)", "status": "completed", "conclusion": "success"},
+            ]
+        }
+        self.assertEqual(ci_conclusion(payload), "success")
+
+    def test_ci_gate_keeps_matrix_pending_until_every_check_finishes(self):
+        payload = {
+            "check_runs": [
+                {"name": "test (3.12)", "status": "completed", "conclusion": "success"},
+                {"name": "test (3.13)", "status": "in_progress", "conclusion": None},
+            ]
+        }
+        self.assertEqual(ci_conclusion(payload), "pending")
+
+    def test_ci_gate_fails_matrix_when_any_check_fails(self):
+        payload = {
+            "check_runs": [
+                {"name": "test (3.12)", "status": "completed", "conclusion": "success"},
+                {"name": "test (3.13)", "status": "completed", "conclusion": "failure"},
+            ]
+        }
+        self.assertEqual(ci_conclusion(payload), "failed")
+
 
 if __name__ == "__main__":
     unittest.main()
