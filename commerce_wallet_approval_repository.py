@@ -24,6 +24,13 @@ class WalletApprovalRepository:
         return None if row is None else str(row["id"])
 
     @staticmethod
+    def ledger_entry_exists(connection: Any, idempotency_key: str) -> bool:
+        return connection.execute(
+            "SELECT id FROM wallet_ledger WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone() is not None
+
+    @staticmethod
     def wallet_reservation(connection: Any, order_id: str) -> Any:
         return connection.execute(
             """SELECT id, amount_minor, currency, status

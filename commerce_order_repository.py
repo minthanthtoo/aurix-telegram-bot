@@ -342,6 +342,13 @@ class OrderRepository:
         )
 
     @staticmethod
+    def mark_wallet_payment_submitted(connection: Any, order_id: str) -> None:
+        connection.execute(
+            "UPDATE orders SET status = 'payment_submitted', payment_method = 'wallet' WHERE id = ?",
+            (order_id,),
+        )
+
+    @staticmethod
     def open_order_ids(connection: Any, telegram_id: int, limit: int) -> list[Any]:
         return connection.execute(
             """SELECT id FROM orders

@@ -23,27 +23,22 @@ def credit_wallet(
     with self.database.connect() as connection:
         self.database.begin_write(connection)
         self._ensure_user(connection, telegram_id, "")
-        connection.execute(
-            """INSERT INTO wallets (telegram_id, currency, balance_minor, created_at, updated_at)
-               VALUES (?, ?, 0, ?, ?) ON CONFLICT(telegram_id) DO NOTHING""",
-            (telegram_id, currency, now_text, now_text),
+        self.wallet_approvals.ensure_wallet(
+            connection, telegram_id=telegram_id, currency=currency, now_text=now_text
         )
-        existing = connection.execute(
-            "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (idem,)
-        ).fetchone()
-        if existing is not None:
+        credited = self.wallet_approvals.credit_once(
+            connection,
+            entry_id=_new_id(),
+            telegram_id=telegram_id,
+            amount_minor=amount_minor,
+            currency=currency,
+            reference_type="payment",
+            reference_id=reference_id,
+            idempotency_key=idem,
+            now_text=now_text,
+        )
+        if not credited:
             return "already_credited"
-        connection.execute(
-            "UPDATE wallets SET balance_minor = balance_minor + ?, updated_at = ? WHERE telegram_id = ?",
-            (amount_minor, now_text, telegram_id),
-        )
-        connection.execute(
-            """INSERT INTO wallet_ledger
-               (id, telegram_id, kind, amount_minor, currency, reference_type,
-                reference_id, idempotency_key, created_at)
-               VALUES (?, ?, 'credit', ?, ?, 'payment', ?, ?, ?)""",
-            (_new_id(), telegram_id, amount_minor, currency, reference_id, idem, now_text),
-        )
         self._audit(
             connection,
             "wallet_credited",
@@ -72,10 +67,7 @@ def pay_order_with_wallet(
             return "already_approved"
         if order["status"] not in ("awaiting_payment", "payment_submitted"):
             raise CommerceError("Order is not open for wallet payment")
-        evidence = connection.execute(
-            "SELECT review_status FROM payment_evidence WHERE order_id = ? ORDER BY submitted_at DESC LIMIT 1",
-            (order_id,),
-        ).fetchone()
+        evidence = self.payments.latest_evidence_review(connection, order_id)
         if evidence is not None and str(evidence["review_status"] or "pending") != "rejected":
             raise CommerceError(
                 "This order already has a receipt; wallet payment cannot be combined"
@@ -88,69 +80,33 @@ def pay_order_with_wallet(
         ):
             raise CommerceError("A receipt payment is already attached to this order")
         self._ensure_user(connection, telegram_id, "")
-        connection.execute(
-            """INSERT INTO wallets (telegram_id, currency, balance_minor, created_at, updated_at)
-               VALUES (?, ?, 0, ?, ?) ON CONFLICT(telegram_id) DO NOTHING""",
-            (telegram_id, order["currency"], now_text, now_text),
-        )
         idem = f"reserve:{order_id}"
-        existing = connection.execute(
-            "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (idem,)
-        ).fetchone()
-        if existing is not None:
-            return "already_reserved"
-        updated = connection.execute(
-            """UPDATE wallets SET balance_minor = balance_minor - ?, updated_at = ?
-               WHERE telegram_id = ? AND balance_minor >= ?""",
-            (order["amount_minor"], now_text, telegram_id, order["amount_minor"]),
+        already_reserved = self.wallet_approvals.ledger_entry_exists(connection, idem)
+        reserved = self.wallet_approvals.reserve_once(
+            connection,
+            ledger_entry_id=_new_id(),
+            reservation_id=_new_id(),
+            telegram_id=telegram_id,
+            order_id=order_id,
+            amount_minor=int(order["amount_minor"]),
+            currency=str(order["currency"]),
+            idempotency_key=idem,
+            now_text=now_text,
         )
-        if getattr(updated, "rowcount", 1) == 0:
+        if not reserved:
             raise CommerceError("Insufficient wallet balance")
-        connection.execute(
-            """INSERT INTO wallet_ledger
-               (id, telegram_id, kind, amount_minor, currency, reference_type,
-                reference_id, idempotency_key, created_at)
-               VALUES (?, ?, 'reserve', ?, ?, 'order', ?, ?, ?)""",
-            (
-                _new_id(),
-                telegram_id,
-                order["amount_minor"],
-                order["currency"],
-                order_id,
-                idem,
-                now_text,
-            ),
+        if already_reserved:
+            return "already_reserved"
+        self.orders.insert_payment(
+            connection,
+            payment_id=_new_id(),
+            order_id=order_id,
+            provider="wallet",
+            provider_reference=f"wallet:{order_id}",
+            normalized_reference=_normalize_reference(f"wallet:{order_id}"),
+            submitted_at=now_text,
         )
-        connection.execute(
-            """INSERT INTO wallet_reservations
-               (id, telegram_id, order_id, amount_minor, currency, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'reserved', ?, ?)""",
-            (
-                _new_id(),
-                telegram_id,
-                order_id,
-                order["amount_minor"],
-                order["currency"],
-                now_text,
-                now_text,
-            ),
-        )
-        connection.execute(
-            """INSERT INTO payments
-               (id, order_id, provider, provider_reference, normalized_reference, status, submitted_at)
-               VALUES (?, ?, 'wallet', ?, ?, 'submitted', ?)""",
-            (
-                _new_id(),
-                order_id,
-                f"wallet:{order_id}",
-                _normalize_reference(f"wallet:{order_id}"),
-                now_text,
-            ),
-        )
-        connection.execute(
-            "UPDATE orders SET status = 'payment_submitted', payment_method = 'wallet' WHERE id = ?",
-            (order_id,),
-        )
+        self.orders.mark_wallet_payment_submitted(connection, order_id)
         self._audit(
             connection,
             "wallet_reserved",

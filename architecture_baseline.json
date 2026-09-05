@@ -19,9 +19,9 @@
       "max_sql_calls": 29
     },
     "commerce_order_repository.py": {
-      "max_lines": 353,
+      "max_lines": 360,
       "max_function_lines": 35,
-      "max_sql_calls": 27
+      "max_sql_calls": 28
     },
     "commerce_payment_repository.py": {
       "max_lines": 176,
@@ -49,9 +49,9 @@
       "max_sql_calls": 11
     },
     "commerce_wallet_approval_repository.py": {
-      "max_lines": 439,
+      "max_lines": 446,
       "max_function_lines": 79,
-      "max_sql_calls": 38
+      "max_sql_calls": 39
     },
     "commerce_service.py": {
       "max_lines": 254,
@@ -61,6 +61,11 @@
     "commerce_service_wallet_refunds.py": {
       "max_lines": 112,
       "max_function_lines": 56,
+      "max_sql_calls": 0
+    },
+    "commerce_service_wallet_payment.py": {
+      "max_lines": 119,
+      "max_function_lines": 68,
       "max_sql_calls": 0
     },
     "commerce_service_allocation.py": {
