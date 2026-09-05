@@ -333,6 +333,16 @@
       "max_function_lines": 2,
       "max_sql_calls": 0
     },
+    "identity_usage_policy.py": {
+      "max_lines": 35,
+      "max_function_lines": 18,
+      "max_sql_calls": 0
+    },
+    "identity_usage_repository.py": {
+      "max_lines": 271,
+      "max_function_lines": 46,
+      "max_sql_calls": 13
+    },
     "identity_support.py": {
       "max_lines": 37,
       "max_function_lines": 9,
@@ -359,9 +369,9 @@
       "max_sql_calls": 29
     },
     "identity_usage.py": {
-      "max_lines": 568,
-      "max_function_lines": 351,
-      "max_sql_calls": 25
+      "max_lines": 222,
+      "max_function_lines": 70,
+      "max_sql_calls": 9
     },
     "telegram_admin_navigation.py": {
       "max_lines": 504,
@@ -546,7 +556,7 @@
     "identity_usage_recording.py": {
       "max_lines": 364,
       "max_function_lines": 351,
-      "max_sql_calls": 16
+      "max_sql_calls": 0
     },
     "entitlement_giveaway_campaign.py": {
       "max_lines": 271,
@@ -590,6 +600,8 @@
       "sources": [
         "commerce_models.py",
         "commerce_wallet_approval_repository.py",
+        "identity_usage_policy.py",
+        "identity_usage_repository.py",
         "ports.py",
         "repositories.py",
         "persistence.py"

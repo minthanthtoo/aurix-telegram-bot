@@ -10,9 +10,12 @@ from identity_support import IdentityError, _now_text, _parse_time
 
 
 from identity_usage_recording import IdentityUsageRecordingMixin
+from identity_usage_repository import IdentityUsageRepository
 
 
 class IdentityUsageMixin(IdentityUsageRecordingMixin):
+    usage_recording = IdentityUsageRepository()
+
     def subscription_is_exhausted(self, subscription_id: str) -> bool:
         """Return the authoritative aggregate-quota stop for a paid entitlement."""
         with self.database.connect() as connection:

@@ -6,7 +6,8 @@ import secrets
 from datetime import timedelta
 from typing import Any
 
-from identity_support import IdentityError, _now_text, _parse_time
+from identity_support import _parse_time
+from identity_usage_policy import normalize_usage_observation
 
 
 class IdentityUsageRecordingMixin:
@@ -19,45 +20,18 @@ class IdentityUsageRecordingMixin:
         observed_at: str | None = None,
         now: str | None = None,
     ) -> dict[str, Any]:
-        """Credit monotonic remote counters without allowing counter resets to bypass quota.
-
-        Outline exposes a cumulative counter per remote key, but counters can
-        reset after a server restart, metrics-window rollover, or key reuse.
-        Each reset starts a new local epoch; aggregate entitlement consumption
-        is never reset and every accepted delta is preserved in both a sample
-        and an immutable ledger entry.
-        """
-        try:
-            reported = int(remote_bytes)
-        except (TypeError, ValueError) as exc:
-            raise IdentityError("remote usage is invalid") from exc
-        if reported < 0 or reported > 100 * 1024 * 1024 * 1024 * 1024:
-            raise IdentityError("remote usage is outside the allowed range")
-        timestamp = str(now or _now_text())
-        observed_text = str(observed_at or timestamp)
-        observed_time = _parse_time(observed_text)
-        now_time = _parse_time(timestamp)
-        if observed_time > now_time + timedelta(minutes=5):
-            raise IdentityError("remote usage timestamp is too far in the future")
+        """Credit remote counters; preserve aggregate use across counter resets."""
+        reported, timestamp, observed_text, observed_time = normalize_usage_observation(
+            remote_bytes,
+            observed_at=observed_at,
+            now=now,
+        )
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            binding = connection.execute(
-                """SELECT c.credential_id, c.endpoint_id, c.external_id,
-                          g.generation_id, g.entitlement_id, e.subscription_id,
-                          e.source_ref,
-                          e.quota_bytes, e.consumed_bytes, e.status, e.expires_at
-                     FROM connectivity_credentials c
-                     JOIN credential_generations g
-                       ON g.credential_id = c.credential_id
-                      AND g.endpoint_id = c.endpoint_id
-                      AND g.status = 'active'
-                     JOIN entitlements e ON e.entitlement_id = g.entitlement_id
-                    WHERE c.endpoint_id = ? AND c.external_id = ? AND c.status = 'active'
-                      AND e.status = 'active'
-                    ORDER BY g.generation_no DESC
-                    LIMIT 1""",
-                (str(endpoint_id), str(external_id)),
-            ).fetchone()
+            repository = self.usage_recording
+            endpoint_id = str(endpoint_id)
+            external_id = str(external_id)
+            binding = repository.active_binding(connection, endpoint_id, external_id)
             if binding is None:
                 return {"accepted": False, "reason": "unbound_or_inactive_credential"}
             entitlement_id = str(binding["entitlement_id"])
@@ -65,34 +39,37 @@ class IdentityUsageRecordingMixin:
             self._lock_entitlement(connection, entitlement_id)
             quota = int(binding["quota_bytes"])
             consumed_before = int(binding["consumed_bytes"] or 0)
-            epoch = connection.execute(
-                """SELECT * FROM entitlement_usage_epochs
-                    WHERE entitlement_id = ? AND generation_id = ? AND endpoint_id = ?
-                      AND source_external_id = ? AND status = 'active'
-                    ORDER BY epoch_no DESC LIMIT 1""",
-                (entitlement_id, generation_id, str(endpoint_id), str(external_id)),
-            ).fetchone()
+            epoch = repository.active_epoch(
+                connection,
+                entitlement_id=entitlement_id,
+                generation_id=generation_id,
+                endpoint_id=endpoint_id,
+                external_id=external_id,
+            )
             reset = False
             delta = 0
             reason = "no_delta"
             if epoch is None:
-                latest = connection.execute(
-                    """SELECT COALESCE(MAX(epoch_no), 0) AS latest
-                         FROM entitlement_usage_epochs
-                        WHERE entitlement_id = ? AND generation_id = ?
-                          AND endpoint_id = ? AND source_external_id = ?""",
-                    (entitlement_id, generation_id, str(endpoint_id), str(external_id)),
-                ).fetchone()
                 epoch_id = f"epoch-{secrets.token_hex(16)}"
-                epoch_no = int(latest["latest"] or 0) + 1
-                connection.execute(
-                    """INSERT INTO entitlement_usage_epochs
-                       (epoch_id, entitlement_id, generation_id, endpoint_id, source_external_id,
-                        epoch_no, last_remote_bytes, credited_bytes, reset_count, status,
-                        last_observed_at, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'active', ?, ?, ?)""",
-                    (epoch_id, entitlement_id, generation_id, str(endpoint_id), str(external_id),
-                     epoch_no, reported, observed_text, timestamp, timestamp),
+                epoch_no = repository.latest_epoch_no(
+                    connection,
+                    entitlement_id=entitlement_id,
+                    generation_id=generation_id,
+                    endpoint_id=endpoint_id,
+                    external_id=external_id,
+                ) + 1
+                repository.create_epoch(
+                    connection,
+                    epoch_id=epoch_id,
+                    entitlement_id=entitlement_id,
+                    generation_id=generation_id,
+                    endpoint_id=endpoint_id,
+                    external_id=external_id,
+                    epoch_no=epoch_no,
+                    remote_bytes=reported,
+                    reset_count=0,
+                    observed_at=observed_text,
+                    now_text=timestamp,
                 )
                 delta = reported
                 reason = "initial_sample"
@@ -103,15 +80,22 @@ class IdentityUsageRecordingMixin:
                 previous_observed = _parse_time(str(epoch["last_observed_at"]))
                 if observed_time < previous_observed:
                     sample_id = f"sample-{secrets.token_hex(16)}"
-                    connection.execute(
-                        """INSERT INTO entitlement_usage_samples
-                           (sample_id, epoch_id, entitlement_id, generation_id, endpoint_id,
-                           source_external_id, lease_id, remote_bytes, delta_bytes, accepted,
-                           reason, observed_at, created_at)
-                           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 0, 0, 'stale_sample', ?, ?)
-                           ON CONFLICT(epoch_id, observed_at, remote_bytes) DO NOTHING""",
-                        (sample_id, epoch_id, entitlement_id, generation_id, str(endpoint_id),
-                         str(external_id), reported, observed_text, timestamp),
+                    repository.record_sample(
+                        connection,
+                        sample_id=sample_id,
+                        epoch_id=epoch_id,
+                        entitlement_id=entitlement_id,
+                        generation_id=generation_id,
+                        endpoint_id=endpoint_id,
+                        external_id=external_id,
+                        lease_id=None,
+                        remote_bytes=reported,
+                        delta_bytes=0,
+                        accepted=False,
+                        reason="stale_sample",
+                        observed_at=observed_text,
+                        now_text=timestamp,
+                        ignore_duplicate=True,
                     )
                     return {
                         "accepted": False,
@@ -124,22 +108,22 @@ class IdentityUsageRecordingMixin:
                     }
                 previous_remote = int(epoch["last_remote_bytes"] or 0)
                 if reported < previous_remote:
-                    connection.execute(
-                        """UPDATE entitlement_usage_epochs SET status = 'reset', updated_at = ?
-                            WHERE epoch_id = ? AND status = 'active'""",
-                        (timestamp, epoch_id),
-                    )
+                    repository.mark_epoch_reset(connection, epoch_id, timestamp)
                     epoch_id = f"epoch-{secrets.token_hex(16)}"
                     epoch_no = int(epoch["epoch_no"]) + 1
                     epoch_reset_count += 1
-                    connection.execute(
-                        """INSERT INTO entitlement_usage_epochs
-                           (epoch_id, entitlement_id, generation_id, endpoint_id, source_external_id,
-                            epoch_no, last_remote_bytes, credited_bytes, reset_count, status,
-                            last_observed_at, created_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'active', ?, ?, ?)""",
-                        (epoch_id, entitlement_id, generation_id, str(endpoint_id), str(external_id),
-                         epoch_no, reported, epoch_reset_count, observed_text, timestamp, timestamp),
+                    repository.create_epoch(
+                        connection,
+                        epoch_id=epoch_id,
+                        entitlement_id=entitlement_id,
+                        generation_id=generation_id,
+                        endpoint_id=endpoint_id,
+                        external_id=external_id,
+                        epoch_no=epoch_no,
+                        remote_bytes=reported,
+                        reset_count=epoch_reset_count,
+                        observed_at=observed_text,
+                        now_text=timestamp,
                     )
                     reset = True
                     delta = reported
@@ -148,7 +132,7 @@ class IdentityUsageRecordingMixin:
                         connection,
                         entitlement_id=entitlement_id,
                         generation_id=generation_id,
-                        endpoint_id=str(endpoint_id),
+                        endpoint_id=endpoint_id,
                         epoch_id=epoch_id,
                         event_type="counter_reset",
                         bytes_value=0,
@@ -161,18 +145,19 @@ class IdentityUsageRecordingMixin:
                 else:
                     delta = reported - previous_remote
                     reason = "monotonic" if delta else "no_delta"
-                    connection.execute(
-                        """UPDATE entitlement_usage_epochs
-                              SET last_remote_bytes = ?, last_observed_at = ?, updated_at = ?
-                            WHERE epoch_id = ?""",
-                        (reported, observed_text, timestamp, epoch_id),
+                    repository.update_epoch_remote(
+                        connection,
+                        epoch_id=epoch_id,
+                        remote_bytes=reported,
+                        observed_at=observed_text,
+                        now_text=timestamp,
                     )
-            duplicate = connection.execute(
-                """SELECT sample_id, accepted, reason, delta_bytes
-                     FROM entitlement_usage_samples
-                    WHERE epoch_id = ? AND observed_at = ? AND remote_bytes = ?""",
-                (epoch_id, observed_text, reported),
-            ).fetchone()
+            duplicate = repository.duplicate_sample(
+                connection,
+                epoch_id=epoch_id,
+                observed_at=observed_text,
+                remote_bytes=reported,
+            )
             if duplicate is not None:
                 return {
                     "accepted": bool(duplicate["accepted"]),
@@ -182,13 +167,12 @@ class IdentityUsageRecordingMixin:
                     "epoch_id": epoch_id,
                 }
             credited = min(delta, max(0, quota - consumed_before))
-            lease_rows = [dict(row) for row in connection.execute(
-                """SELECT * FROM quota_leases
-                    WHERE entitlement_id = ? AND generation_id = ?
-                      AND status = 'active' AND expires_at > ?
-                    ORDER BY created_at, lease_id""",
-                (entitlement_id, generation_id, timestamp),
-            ).fetchall()]
+            lease_rows = repository.active_leases(
+                connection,
+                entitlement_id=entitlement_id,
+                generation_id=generation_id,
+                now_text=timestamp,
+            )
 
             def create_runtime_lease(block_bytes: int) -> dict[str, Any]:
                 lease_id = f"lease-{secrets.token_hex(16)}"
@@ -196,19 +180,21 @@ class IdentityUsageRecordingMixin:
                     _parse_time(str(binding["expires_at"])),
                     _parse_time(timestamp) + timedelta(days=30),
                 ).isoformat()
-                connection.execute(
-                    """INSERT INTO quota_leases
-                       (lease_id, entitlement_id, generation_id, endpoint_id,
-                        lease_bytes, expires_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (lease_id, entitlement_id, generation_id, str(endpoint_id),
-                     int(block_bytes), lease_expires, timestamp),
+                repository.create_lease(
+                    connection,
+                    lease_id=lease_id,
+                    entitlement_id=entitlement_id,
+                    generation_id=generation_id,
+                    endpoint_id=endpoint_id,
+                    lease_bytes=int(block_bytes),
+                    expires_at=lease_expires,
+                    now_text=timestamp,
                 )
                 self._append_quota_ledger(
                     connection,
                     entitlement_id=entitlement_id,
                     generation_id=generation_id,
-                    endpoint_id=str(endpoint_id),
+                    endpoint_id=endpoint_id,
                     lease_id=lease_id,
                     event_type="grant",
                     bytes_value=int(block_bytes),
@@ -240,21 +226,28 @@ class IdentityUsageRecordingMixin:
                 lease_rows.append(create_runtime_lease(block))
             if not lease_rows:
                 sample_id = f"sample-{secrets.token_hex(16)}"
-                connection.execute(
-                    """INSERT INTO entitlement_usage_samples
-                       (sample_id, epoch_id, entitlement_id, generation_id, endpoint_id,
-                        source_external_id, lease_id, remote_bytes, delta_bytes, accepted,
-                        reason, observed_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, 'no_active_lease', ?, ?)""",
-                    (sample_id, epoch_id, entitlement_id, generation_id, str(endpoint_id),
-                     str(external_id), reported, delta, observed_text, timestamp),
+                repository.record_sample(
+                    connection,
+                    sample_id=sample_id,
+                    epoch_id=epoch_id,
+                    entitlement_id=entitlement_id,
+                    generation_id=generation_id,
+                    endpoint_id=endpoint_id,
+                    external_id=external_id,
+                    lease_id=None,
+                    remote_bytes=reported,
+                    delta_bytes=delta,
+                    accepted=False,
+                    reason="no_active_lease",
+                    observed_at=observed_text,
+                    now_text=timestamp,
                 )
                 self._mark_entitlement_exhausted_locked(
                     connection,
                     entitlement_id,
                     now=timestamp,
                     generation_id=generation_id,
-                    endpoint_id=str(endpoint_id),
+                    endpoint_id=endpoint_id,
                     epoch_id=epoch_id,
                     reason="missing_active_lease_fail_closed",
                 )
@@ -279,12 +272,12 @@ class IdentityUsageRecordingMixin:
                         primary_lease_id = str(lease["lease_id"])
                     new_used = int(lease["used_bytes"] or 0) + allocation
                     lease_status = "exhausted" if new_used >= int(lease["lease_bytes"]) else "active"
-                    connection.execute(
-                        """UPDATE quota_leases
-                              SET used_bytes = ?, status = ?,
-                                  released_at = CASE WHEN ? = 'exhausted' THEN COALESCE(released_at, ?) ELSE released_at END
-                            WHERE lease_id = ?""",
-                        (new_used, lease_status, lease_status, timestamp, str(lease["lease_id"])),
+                    repository.consume_lease(
+                        connection,
+                        lease_id=str(lease["lease_id"]),
+                        used_bytes=new_used,
+                        status=lease_status,
+                        now_text=timestamp,
                     )
                     lease_remaining -= allocation
                 if lease_remaining <= 0:
@@ -296,34 +289,42 @@ class IdentityUsageRecordingMixin:
             else:
                 sample_reason = reason
             sample_id = f"sample-{secrets.token_hex(16)}"
-            connection.execute(
-                """INSERT INTO entitlement_usage_samples
-                   (sample_id, epoch_id, entitlement_id, generation_id, endpoint_id,
-                    source_external_id, lease_id, remote_bytes, delta_bytes, accepted,
-                    reason, observed_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (sample_id, epoch_id, entitlement_id, generation_id, str(endpoint_id),
-                 str(external_id), primary_lease_id, reported, delta, int(bool(credited)),
-                 sample_reason, observed_text, timestamp),
+            repository.record_sample(
+                connection,
+                sample_id=sample_id,
+                epoch_id=epoch_id,
+                entitlement_id=entitlement_id,
+                generation_id=generation_id,
+                endpoint_id=endpoint_id,
+                external_id=external_id,
+                lease_id=primary_lease_id,
+                remote_bytes=reported,
+                delta_bytes=delta,
+                accepted=bool(credited),
+                reason=sample_reason,
+                observed_at=observed_text,
+                now_text=timestamp,
             )
-            connection.execute(
-                """UPDATE entitlement_usage_epochs
-                      SET last_remote_bytes = ?, credited_bytes = credited_bytes + ?,
-                          last_observed_at = ?, updated_at = ?
-                    WHERE epoch_id = ?""",
-                (reported, credited, observed_text, timestamp, epoch_id),
+            repository.credit_epoch(
+                connection,
+                epoch_id=epoch_id,
+                remote_bytes=reported,
+                credited_bytes=credited,
+                observed_at=observed_text,
+                now_text=timestamp,
             )
             if credited:
-                connection.execute(
-                    """UPDATE entitlements SET consumed_bytes = ?, updated_at = ?
-                        WHERE entitlement_id = ?""",
-                    (consumed_after, timestamp, entitlement_id),
+                repository.set_entitlement_consumed(
+                    connection,
+                    entitlement_id=entitlement_id,
+                    consumed_bytes=consumed_after,
+                    now_text=timestamp,
                 )
                 self._append_quota_ledger(
                     connection,
                     entitlement_id=entitlement_id,
                     generation_id=generation_id,
-                    endpoint_id=str(endpoint_id),
+                    endpoint_id=endpoint_id,
                     lease_id=primary_lease_id,
                     epoch_id=epoch_id,
                     event_type="usage",
@@ -341,7 +342,7 @@ class IdentityUsageRecordingMixin:
                     entitlement_id,
                     now=timestamp,
                     generation_id=generation_id,
-                    endpoint_id=str(endpoint_id),
+                    endpoint_id=endpoint_id,
                     epoch_id=epoch_id,
                     reason="aggregate_quota_reached",
                 )
@@ -361,4 +362,3 @@ class IdentityUsageRecordingMixin:
             "reset": reset,
             "exhausted": exhausted,
         }
-
