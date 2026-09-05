@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from commerce_repositories import _PostgresConnection
+
 
 class PaymentRepository:
     """Transaction-neutral payment/evidence query boundary."""
@@ -234,3 +236,154 @@ class PaymentRepository:
                 values["currency"], values["reviewed_at"], values["evidence_id"],
             ),
         )
+
+    @staticmethod
+    def claim_extraction_job(connection: Any, current_text: str, stale_before: str) -> dict[str, Any] | None:
+        connection.execute(
+            """UPDATE receipt_extraction_jobs
+               SET status = 'pending', locked_at = NULL
+               WHERE status = 'running' AND locked_at < ?""",
+            (stale_before,),
+        )
+        lock_clause = " FOR UPDATE SKIP LOCKED" if isinstance(connection, _PostgresConnection) else ""
+        row = connection.execute(
+            """SELECT j.id AS job_id, j.attempts, e.id AS evidence_id,
+                      e.provider, e.telegram_file_id, e.mime_type,
+                      e.storage_path, e.storage_status
+               FROM receipt_extraction_jobs j
+               JOIN payment_evidence e ON e.id = j.evidence_id
+               WHERE j.status = 'pending' AND j.next_attempt_at <= ?
+                 AND e.review_status = 'pending'
+               ORDER BY j.created_at LIMIT 1""" + lock_clause,
+            (current_text,),
+        ).fetchone()
+        if row is None:
+            return None
+        updated = connection.execute(
+            """UPDATE receipt_extraction_jobs
+               SET status = 'running', attempts = attempts + 1, locked_at = ?
+               WHERE id = ? AND status = 'pending'""",
+            (current_text, row["job_id"]),
+        )
+        if getattr(updated, "rowcount", 1) == 0:
+            return None
+        result = dict(row)
+        result["attempts"] = int(row["attempts"]) + 1
+        return result
+
+    @staticmethod
+    def extraction_context(connection: Any, evidence_id: str) -> Any:
+        return connection.execute(
+            """SELECT e.provider, e.order_id, e.submitted_at,
+                      o.amount_minor, o.currency, o.payment_method
+               FROM payment_evidence e JOIN orders o ON o.id = e.order_id
+               WHERE e.id = ? AND e.review_status = 'pending'""",
+            (evidence_id,),
+        ).fetchone()
+
+    @staticmethod
+    def complete_extraction(
+        connection: Any, *, evidence_id: str, job_id: str, extraction_json: str,
+        status: str, completed_at: str
+    ) -> None:
+        connection.execute(
+            "UPDATE payment_evidence SET extraction_json = ?, extraction_status = ? WHERE id = ?",
+            (extraction_json, status, evidence_id),
+        )
+        connection.execute(
+            """UPDATE receipt_extraction_jobs
+               SET status = 'done', locked_at = NULL, last_error = NULL, completed_at = ?
+               WHERE id = ?""",
+            (completed_at, job_id),
+        )
+
+    @staticmethod
+    def complete_missing_extraction(connection: Any, job_id: str, completed_at: str) -> None:
+        connection.execute(
+            """UPDATE receipt_extraction_jobs
+               SET status = 'done', locked_at = NULL, completed_at = ? WHERE id = ?""",
+            (completed_at, job_id),
+        )
+
+    @staticmethod
+    def fail_extraction(connection: Any, job_id: str, next_attempt: str, error: str) -> None:
+        connection.execute(
+            """UPDATE receipt_extraction_jobs
+               SET status = CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END,
+                   next_attempt_at = ?, locked_at = NULL, last_error = ?
+               WHERE id = ?""",
+            (next_attempt, error, job_id),
+        )
+
+    @staticmethod
+    def rejection_context(connection: Any, evidence_id: str) -> Any:
+        return connection.execute(
+            """SELECT e.id, e.order_id, e.review_status, e.telegram_id, e.provider,
+                      o.plan_name, o.plan_code
+               FROM payment_evidence e JOIN orders o ON o.id = e.order_id
+               WHERE e.id = ?""",
+            (evidence_id,),
+        ).fetchone()
+
+    @staticmethod
+    def reject_evidence(connection: Any, **values: Any) -> None:
+        connection.execute(
+            """UPDATE payment_evidence SET reviewer_id = ?, review_notes = ?,
+                       review_status = 'rejected', reviewed_at = ? WHERE id = ?""",
+            (values["admin_id"], values["notes"], values["reviewed_at"], values["evidence_id"]),
+        )
+        connection.execute(
+            "UPDATE payments SET status = 'rejected' WHERE order_id = ? AND status = 'submitted'",
+            (values["order_id"],),
+        )
+
+    @staticmethod
+    def insert_notification(connection: Any, **values: Any) -> None:
+        connection.execute(
+            """INSERT INTO notifications
+               (id, dedupe_key, telegram_id, kind, text, status, next_attempt_at, created_at)
+               VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+               ON CONFLICT(dedupe_key) DO NOTHING""",
+            (
+                values["notification_id"], values["dedupe_key"], values["telegram_id"],
+                values["kind"], values["text"], values["now_text"], values["now_text"],
+            ),
+        )
+
+    @staticmethod
+    def start_diagnostic(connection: Any, run_id: str, admin_id: int, now_text: str) -> None:
+        connection.execute(
+            """INSERT INTO receipt_diagnostic_runs
+               (id, admin_id, status, result_json, started_at)
+               VALUES (?, ?, 'running', '{}', ?)""",
+            (run_id, int(admin_id), now_text),
+        )
+
+    @staticmethod
+    def finish_diagnostic(
+        connection: Any, run_id: str, admin_id: int, status: str, result_json: str, completed_at: str
+    ) -> Any:
+        return connection.execute(
+            """UPDATE receipt_diagnostic_runs
+               SET status = ?, result_json = ?, completed_at = ?
+               WHERE id = ? AND admin_id = ? AND status = 'running'""",
+            (status, result_json, completed_at, str(run_id), int(admin_id)),
+        )
+
+    @staticmethod
+    def latest_diagnostic(connection: Any) -> Any:
+        return connection.execute(
+            """SELECT * FROM receipt_diagnostic_runs
+               WHERE status IN ('passed', 'failed')
+               ORDER BY started_at DESC LIMIT 1"""
+        ).fetchone()
+
+    @staticmethod
+    def receipt_counts(connection: Any) -> tuple[int, int]:
+        pending = connection.execute(
+            "SELECT COUNT(*) AS count FROM payment_evidence WHERE review_status = 'pending'"
+        ).fetchone()
+        failed = connection.execute(
+            "SELECT COUNT(*) AS count FROM payment_evidence WHERE storage_status = 'failed'"
+        ).fetchone()
+        return int(pending["count"]), int(failed["count"])
