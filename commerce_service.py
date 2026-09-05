@@ -1371,6 +1371,14 @@ class CommerceService(CommerceWorkerMixin):
                 "Open Key Repairs to review. AuriX will not recreate this key or reset quota without the required owner decision.",
                 observed_at,
             )
+        self._queue_customer_repair_notification(
+            connection,
+            repair_id,
+            int(row["telegram_id"]),
+            status,
+            server_id,
+            observed_at,
+        )
         # Let the caller distinguish a newly opened repair episode from a
         # repeated observation of the same queued/manual decision.  This keeps
         # operator counters and audit volume stable during frequent refreshes.
@@ -1759,26 +1767,33 @@ class CommerceService(CommerceWorkerMixin):
                     "SELECT 1 FROM notifications WHERE dedupe_key LIKE ? LIMIT 1",
                     (f"staff:key_repairs:{repair_id}:%",),
                 ).fetchone()
-                if exists is not None:
-                    continue
                 usage_text = "unknown (fresh Outline telemetry unavailable)"
                 if row["used_bytes"] is not None:
                     usage_text = f"{_human_bytes(max(0, int(row['used_bytes'])))} observed"
-                self._queue_staff_notification(
+                if exists is None:
+                    self._queue_staff_notification(
+                        connection,
+                        "key_repairs",
+                        repair_id,
+                        "🧩 MANAGED KEY MISSING\n\n"
+                        f"Repair: #{repair_id[:8]}\n"
+                        f"Customer: tg:{int(row['telegram_id'])}\n"
+                        f"Endpoint: {str(row['server_id'])[:32]}\n"
+                        f"Old key: {str(row['source_external_id'])[:32]}\n"
+                        f"Usage: {usage_text}\n"
+                        f"Decision: {str(row['status']).replace('_', ' ')}\n\n"
+                        "Open Key Repairs to review. AuriX will not recreate this key or reset quota without the required owner decision.",
+                        created_at,
+                    )
+                    queued += 1
+                self._queue_customer_repair_notification(
                     connection,
-                    "key_repairs",
                     repair_id,
-                    "🧩 MANAGED KEY MISSING\n\n"
-                    f"Repair: #{repair_id[:8]}\n"
-                    f"Customer: tg:{int(row['telegram_id'])}\n"
-                    f"Endpoint: {str(row['server_id'])[:32]}\n"
-                    f"Old key: {str(row['source_external_id'])[:32]}\n"
-                    f"Usage: {usage_text}\n"
-                    f"Decision: {str(row['status']).replace('_', ' ')}\n\n"
-                    "Open Key Repairs to review. AuriX will not recreate this key or reset quota without the required owner decision.",
+                    int(row["telegram_id"]),
+                    str(row["status"]),
+                    str(row["server_id"]),
                     created_at,
                 )
-                queued += 1
         return queued
 
     def remote_key_inventory(
@@ -2651,6 +2666,57 @@ class CommerceService(CommerceWorkerMixin):
                     created_at,
                 ),
             )
+
+    @staticmethod
+    def _queue_customer_repair_notification(
+        connection: Any,
+        repair_id: str,
+        telegram_id: int,
+        status: str,
+        endpoint: str,
+        created_at: str,
+    ) -> None:
+        """Notify the affected customer about a repair state transition.
+
+        The state is part of the dedupe key, so repeated inventory polls do
+        not flood a chat while a meaningful transition still produces an
+        auditable, credential-free update.
+        """
+        normalized = str(status or "").strip().lower()
+        if normalized in {"pending", "running"}:
+            message = (
+                "🛠 AuriX noticed that your VPN key is temporarily unavailable.\n\n"
+                "Secure recovery is in progress. Your remaining quota is protected; "
+                "please refresh My VPN shortly."
+            )
+        elif normalized == "manual":
+            message = (
+                "⚠️ Your AuriX VPN key needs owner review because trusted usage data "
+                "was unavailable.\n\n"
+                "The old credential is withheld and no quota reset or replacement has "
+                "been issued. We will notify you after a safe decision."
+            )
+        else:
+            message = (
+                "🟡 AuriX is retrying recovery of your VPN key.\n\n"
+                "Your entitlement remains recorded and no extra quota has been granted. "
+                "Please refresh My VPN later."
+            )
+        connection.execute(
+            """INSERT INTO notifications
+               (id, dedupe_key, telegram_id, kind, text, status,
+                next_attempt_at, created_at)
+               VALUES (?, ?, ?, 'vpn_key_repair', ?, 'pending', ?, ?)
+               ON CONFLICT(dedupe_key) DO NOTHING""",
+            (
+                _new_id(),
+                f"customer:key_repairs:{repair_id}:{normalized}",
+                int(telegram_id),
+                message + f"\n\nEndpoint: {str(endpoint)[:64]}",
+                created_at,
+                created_at,
+            ),
+        )
 
     @staticmethod
     def _queue_receipt_extraction(connection: Any, evidence_id: str, created_at: str) -> None:
