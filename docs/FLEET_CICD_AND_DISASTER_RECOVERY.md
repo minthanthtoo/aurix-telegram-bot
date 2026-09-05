@@ -91,6 +91,9 @@ and exception types; management paths, certificate fingerprints, access URLs,
 and transfer amounts are never printed. `--allow-partial` is useful during a
 node outage because it returns success when at least one endpoint remains
 healthy while still showing every failed node.
+The top-level `serving_servers` and `empty_servers` counters make the distinction
+explicit: a node with healthy management but zero keys is reported as
+`not_serving_no_keys`, not as customer-serving capacity.
 
 Reconciliation takes a global lock and, for each node:
 

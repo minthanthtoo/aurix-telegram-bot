@@ -272,9 +272,15 @@ def run(env_file: Path) -> dict[str, Any]:
             )
         )
     healthy = sum(1 for item in results if item["status"] == "healthy")
+    serving = sum(1 for item in results if item.get("data_plane_status") == "healthy")
+    empty = sum(
+        1 for item in results if item.get("data_plane_status") == "not_serving_no_keys"
+    )
     return {
         "status": "healthy" if healthy == len(results) else "degraded" if healthy else "unreachable",
         "healthy_servers": healthy,
+        "serving_servers": serving,
+        "empty_servers": empty,
         "server_count": len(results),
         "servers": results,
     }

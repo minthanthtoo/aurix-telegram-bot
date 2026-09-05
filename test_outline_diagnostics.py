@@ -158,9 +158,11 @@ class OutlineDiagnosticsTest(unittest.TestCase):
                 return_value={"status": "healthy"},
             ) as probe:
                 report = run(env_file)
-            probe.assert_called_once()
-            self.assertEqual(report["server_count"], 1)
-            self.assertEqual(report["status"], "healthy")
+                probe.assert_called_once()
+                self.assertEqual(report["server_count"], 1)
+                self.assertEqual(report["serving_servers"], 0)
+                self.assertEqual(report["empty_servers"], 0)
+                self.assertEqual(report["status"], "healthy")
 
 
 if __name__ == "__main__":
