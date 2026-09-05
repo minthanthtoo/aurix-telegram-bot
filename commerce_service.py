@@ -1304,6 +1304,16 @@ class CommerceService(CommerceWorkerMixin):
                 job_state = "reopened"
             else:
                 job_state = current_status or "existing"
+        alert_needed = job_state in {"created", "reopened"}
+        if not alert_needed:
+            # Backfill the alert for a repair that was opened by an older
+            # release before staff key-repair notifications existed. The
+            # per-staff dedupe key makes this safe across every poll.
+            alert_exists = connection.execute(
+                "SELECT 1 FROM notifications WHERE dedupe_key LIKE ? LIMIT 1",
+                (f"staff:key_repairs:{repair_id}:%",),
+            ).fetchone()
+            alert_needed = alert_exists is None
         if job_state in {"created", "reopened"}:
             self._audit(
                 connection,
@@ -1321,6 +1331,7 @@ class CommerceService(CommerceWorkerMixin):
                     "job_state": job_state,
                 },
             )
+        if alert_needed:
             # A missing managed key is an operational incident, not a silent
             # customer-facing outage. Queue one durable, preference-aware
             # staff alert for this repair episode; the notification dedupe
