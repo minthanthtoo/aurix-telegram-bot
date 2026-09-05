@@ -8,11 +8,15 @@ from datetime import datetime
 from typing import Any
 
 from commerce_models import CommerceError, _new_id, _normalize_reference, _now_text
+from commerce_receipt_submission_repository import ReceiptSubmissionRepository
 from receipt_fingerprint import (
     NEAR_DUPLICATE_DISTANCE,
     fingerprint_distance,
     receipt_perceptual_hash,
 )
+
+
+_RECEIPTS = ReceiptSubmissionRepository()
 
 
 def submit_receipt(
@@ -119,10 +123,7 @@ def submit_receipt(
                 # lost the response before moving the order state. Repair
                 # that narrow inconsistency on an idempotent retry.
                 if order["status"] == "awaiting_payment":
-                    connection.execute(
-                        "UPDATE orders SET status = 'payment_submitted' WHERE id = ?",
-                        (order_id,),
-                    )
+                    _RECEIPTS.mark_order_submitted(connection, order_id)
                     self._audit(
                         connection,
                         "receipt_state_recovered",
@@ -137,12 +138,11 @@ def submit_receipt(
             storage_path = str(existing["storage_path"] or "") or self._receipt_storage_path(
                 order_id, evidence_id, mime_type
             )
-            connection.execute(
-                """UPDATE payment_evidence
-                   SET storage_bucket = ?, storage_path = ?, storage_status = 'pending',
-                       storage_error = NULL
-                   WHERE id = ?""",
-                (storage_bucket, storage_path, evidence_id),
+            _RECEIPTS.mark_upload_pending(
+                connection,
+                evidence_id=evidence_id,
+                storage_bucket=storage_bucket,
+                storage_path=storage_path,
             )
         else:
             latest = self.payments.latest_evidence_review(connection, order_id)
@@ -194,33 +194,25 @@ def submit_receipt(
                 if storage_configured
                 else None
             )
-            connection.execute(
-                """INSERT INTO payment_evidence
-                   (id, order_id, telegram_id, provider, telegram_file_id,
-                    telegram_file_unique_id, telegram_media_type, image_sha256,
-                    image_phash, mime_type, byte_size, storage_bucket, storage_path,
-                    storage_status, extraction_json, extraction_status,
-                    submitted_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    evidence_id,
-                    order_id,
-                    telegram_id,
-                    provider_name,
-                    file_id[:256],
-                    file_unique_id[:256] if file_unique_id else None,
-                    telegram_media_type,
-                    digest,
-                    phash,
-                    mime_type[:64],
-                    len(image_bytes),
-                    storage_bucket,
-                    storage_path,
-                    storage_status,
-                    json.dumps(extraction or {}, sort_keys=True),
-                    status,
-                    submitted_at,
-                ),
+            _RECEIPTS.insert_evidence(
+                connection,
+                evidence_id=evidence_id,
+                order_id=order_id,
+                telegram_id=telegram_id,
+                provider=provider_name,
+                file_id=file_id[:256],
+                file_unique_id=file_unique_id[:256] if file_unique_id else None,
+                media_type=telegram_media_type,
+                image_sha256=digest,
+                image_phash=phash,
+                mime_type=mime_type[:64],
+                byte_size=len(image_bytes),
+                storage_bucket=storage_bucket,
+                storage_path=storage_path,
+                storage_status=storage_status,
+                extraction_json=json.dumps(extraction or {}, sort_keys=True),
+                extraction_status=status,
+                submitted_at=submitted_at,
             )
             is_new = True
 
@@ -235,11 +227,10 @@ def submit_receipt(
             # Preserve the row so a retry can reuse the same object path.
             try:
                 with self.database.connect() as connection:
-                    connection.execute(
-                        """UPDATE payment_evidence
-                           SET storage_status = 'failed', storage_error = ?
-                           WHERE id = ?""",
-                        (type(exc).__name__[:128], evidence_id),
+                    _RECEIPTS.mark_upload_failed(
+                        connection,
+                        evidence_id,
+                        type(exc).__name__[:128],
                     )
             except Exception:
                 pass
@@ -248,17 +239,14 @@ def submit_receipt(
             storage_path = uploaded_path
             with self.database.connect() as connection:
                 self.database.begin_write(connection)
-                connection.execute(
-                    """UPDATE payment_evidence
-                       SET storage_bucket = ?, storage_path = ?, storage_status = 'stored',
-                           storage_error = NULL, stored_at = ?
-                       WHERE id = ?""",
-                    (storage_bucket, str(uploaded_path), submitted_at, evidence_id),
+                _RECEIPTS.mark_stored(
+                    connection,
+                    evidence_id=evidence_id,
+                    storage_bucket=storage_bucket,
+                    storage_path=str(uploaded_path),
+                    stored_at=submitted_at,
                 )
-                connection.execute(
-                    "UPDATE orders SET status = 'payment_submitted' WHERE id = ?",
-                    (order_id,),
-                )
+                _RECEIPTS.mark_order_submitted(connection, order_id)
                 self._audit(
                     connection,
                     "receipt_submitted" if is_new else "receipt_storage_recovered",
@@ -296,10 +284,7 @@ def submit_receipt(
         # failed. Approval still requires a human verification decision.
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                "UPDATE orders SET status = 'payment_submitted' WHERE id = ?",
-                (order_id,),
-            )
+            _RECEIPTS.mark_order_submitted(connection, order_id)
             if is_new:
                 self._audit(
                     connection,
@@ -332,4 +317,3 @@ def submit_receipt(
     result["storage_status"] = "stored" if storage_configured else "not_configured"
     result["storage_path"] = storage_path
     return result
-

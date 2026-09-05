@@ -28,6 +28,11 @@
       "max_function_lines": 28,
       "max_sql_calls": 9
     },
+    "commerce_receipt_submission_repository.py": {
+      "max_lines": 84,
+      "max_function_lines": 28,
+      "max_sql_calls": 5
+    },
     "commerce_inventory_reconciliation_repository.py": {
       "max_lines": 197,
       "max_function_lines": 34,
@@ -554,9 +559,9 @@
       "max_sql_calls": 5
     },
     "commerce_service_receipt_submission.py": {
-      "max_lines": 335,
-      "max_function_lines": 317,
-      "max_sql_calls": 7
+      "max_lines": 319,
+      "max_function_lines": 298,
+      "max_sql_calls": 0
     },
     "commerce_service_receipt_review.py": {
       "max_lines": 157,
@@ -628,6 +633,7 @@
         "commerce_fleet_health_repository.py",
         "commerce_inventory_reconciliation_repository.py",
         "commerce_provisioning_repository.py",
+        "commerce_receipt_submission_repository.py",
         "commerce_wallet_approval_repository.py",
         "identity_usage_policy.py",
         "identity_usage_repository.py",

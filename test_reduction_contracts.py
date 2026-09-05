@@ -14,6 +14,7 @@ from commerce_capacity_snapshot_repository import CapacitySnapshotRepository
 from commerce_provisioning_repository import ProvisioningRepository
 from commerce_fleet_health_repository import FleetHealthRepository
 from entitlement_allocation_repository import EntitlementAllocationRepository
+from commerce_receipt_submission_repository import ReceiptSubmissionRepository
 from identity_usage_repository import IdentityUsageRepository
 from persistence import open_sqlite_connection
 from repositories import (
@@ -23,6 +24,7 @@ from repositories import (
     IdentityUsageRepositoryPort,
     InventoryReconciliationRepositoryPort,
     ProvisioningRepositoryPort,
+    ReceiptSubmissionRepositoryPort,
 )
 
 
@@ -161,6 +163,7 @@ class ReductionContractTest(unittest.TestCase):
         self.assertIsInstance(
             EntitlementAllocationRepository(), EntitlementAllocationRepositoryPort
         )
+        self.assertIsInstance(ReceiptSubmissionRepository(), ReceiptSubmissionRepositoryPort)
         self.assertIsInstance(self.service.identity.usage_recording, IdentityUsageRepository)
         self.assertIsInstance(self.service.identity.usage_recording, IdentityUsageRepositoryPort)
         with self.database.connect() as connection:
