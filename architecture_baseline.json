@@ -643,6 +643,16 @@
       "max_function_lines": 181,
       "max_sql_calls": 0
     },
+    "route_failover.py": {
+      "max_lines": 280,
+      "max_function_lines": 119,
+      "max_sql_calls": 0
+    },
+    "route_failover_repository.py": {
+      "max_lines": 270,
+      "max_function_lines": 23,
+      "max_sql_calls": 22
+    },
     "commerce_customer_repository.py": {
       "max_lines": 159,
       "max_function_lines": 29,
@@ -728,6 +738,7 @@
         "commerce_customer_repository.py",
         "commerce_failover_repository.py",
         "entitlement_giveaway_repository.py",
+        "route_failover_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",
