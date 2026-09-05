@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from quota_alert_repository import QuotaAlertRepository
 
 UTC = timezone.utc
 MODES = {"percent", "mb", "gb"}
@@ -21,13 +22,12 @@ DEFAULTS = {
     "version": 1,
 }
 
+_REPOSITORY = QuotaAlertRepository()
+
 
 def get_quota_alert_preferences(database: Any, telegram_id: int) -> dict[str, Any]:
     with database.connect() as connection:
-        row = connection.execute(
-            "SELECT * FROM user_quota_alert_preferences WHERE telegram_id = ?",
-            (int(telegram_id),),
-        ).fetchone()
+        row = _REPOSITORY.preferences(connection, telegram_id)
     if row is None:
         return dict(DEFAULTS)
     result = dict(row)
@@ -57,30 +57,18 @@ def set_quota_alert_preferences(
     updated_at = datetime.now(UTC).isoformat()
     with database.connect() as connection:
         database.begin_write(connection)
-        connection.execute(
-            """INSERT INTO user_quota_alert_preferences
-               (telegram_id, enabled, mode, alert_count, step_value, version, updated_at)
-               VALUES (?, ?, ?, ?, ?, 1, ?)
-               ON CONFLICT(telegram_id) DO UPDATE SET
-                 enabled = excluded.enabled, mode = excluded.mode,
-                 alert_count = excluded.alert_count, step_value = excluded.step_value,
-                 version = user_quota_alert_preferences.version + 1,
-                 updated_at = excluded.updated_at""",
-            (
-                int(telegram_id),
-                1 if (current["enabled"] if enabled is None else enabled) else 0,
-                selected_mode,
-                selected_count,
-                selected_step,
-                updated_at,
-            ),
+        _REPOSITORY.upsert_preferences(
+            connection,
+            telegram_id=telegram_id,
+            enabled=1 if (current["enabled"] if enabled is None else enabled) else 0,
+            mode=selected_mode,
+            alert_count=selected_count,
+            step_value=selected_step,
+            updated_at=updated_at,
         )
         for table in ("keys", "paid_vpn_keys"):
             try:
-                connection.execute(
-                    f"UPDATE {table} SET quota_warning_percent = NULL WHERE telegram_id = ?",
-                    (int(telegram_id),),
-                )
+                _REPOSITORY.clear_legacy_warning(connection, table, telegram_id)
             except Exception:
                 pass
     return get_quota_alert_preferences(database, telegram_id)

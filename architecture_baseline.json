@@ -393,6 +393,16 @@
       "max_function_lines": 32,
       "max_sql_calls": 0
     },
+    "quota_alerts.py": {
+      "max_lines": 125,
+      "max_function_lines": 37,
+      "max_sql_calls": 0
+    },
+    "quota_alert_repository.py": {
+      "max_lines": 38,
+      "max_function_lines": 15,
+      "max_sql_calls": 3
+    },
     "identity_accounts.py": {
       "max_lines": 161,
       "max_function_lines": 33,
@@ -666,6 +676,7 @@
         "identity_generations_repository.py",
         "identity_accounts_repository.py",
         "identity_entitlements_repository.py",
+        "quota_alert_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",
