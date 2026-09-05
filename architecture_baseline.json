@@ -33,6 +33,11 @@
       "max_function_lines": 34,
       "max_sql_calls": 12
     },
+    "commerce_fleet_health_repository.py": {
+      "max_lines": 155,
+      "max_function_lines": 43,
+      "max_sql_calls": 11
+    },
     "commerce_wallet_approval_repository.py": {
       "max_lines": 295,
       "max_function_lines": 56,
@@ -564,9 +569,9 @@
       "max_sql_calls": 5
     },
     "commerce_service_fleet_health.py": {
-      "max_lines": 272,
-      "max_function_lines": 133,
-      "max_sql_calls": 11
+      "max_lines": 227,
+      "max_function_lines": 110,
+      "max_sql_calls": 0
     },
     "identity_usage_recording.py": {
       "max_lines": 364,
@@ -615,6 +620,7 @@
       "sources": [
         "commerce_models.py",
         "commerce_capacity_snapshot_repository.py",
+        "commerce_fleet_health_repository.py",
         "commerce_inventory_reconciliation_repository.py",
         "commerce_provisioning_repository.py",
         "commerce_wallet_approval_repository.py",

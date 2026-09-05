@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from commerce_fleet_health_repository import FleetHealthRepository
 from commerce_models import CommerceError, _new_id, _now_text
 from connectivity_registry import ConnectivityRegistry
 from lifecycle_policy import normalize_lifecycle_state
+
+
+_FLEET_HEALTH = FleetHealthRepository()
 
 
 def set_server_lifecycle(
@@ -36,10 +40,7 @@ def set_server_lifecycle(
     clean_reason = str(reason or "").strip()[:512] or None
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        row = connection.execute(
-            "SELECT * FROM outline_servers WHERE server_id = ?",
-            (server,),
-        ).fetchone()
+        row = _FLEET_HEALTH.server(connection, server)
         if row is None:
             raise CommerceError("Outline server is not configured")
         previous = str(row.get("lifecycle_state") if hasattr(row, "get") else row["lifecycle_state"] or "active")
@@ -52,40 +53,19 @@ def set_server_lifecycle(
             }
         if state == "retired":
             blockers: list[str] = []
-            active_free = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS n FROM keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
-                    (server,),
-                ).fetchone()["n"]
-            ) if self._table_exists(connection, "keys") else 0
-            active_paid = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS n FROM paid_vpn_keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
-                    (server,),
-                ).fetchone()["n"]
+            counts = _FLEET_HEALTH.retirement_counts(
+                connection,
+                server,
+                include_free_keys=self._table_exists(connection, "keys"),
+                include_free_intents=self._table_exists(
+                    connection, "free_provisioning_intents"
+                ),
             )
-            pending_orders = int(
-                connection.execute(
-                    """SELECT COUNT(*) AS n FROM orders
-                       WHERE server_id = ? AND status IN ('awaiting_payment', 'payment_submitted')""",
-                    (server,),
-                ).fetchone()["n"]
-            )
-            pending_subscriptions = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS n FROM subscriptions WHERE server_id = ? AND status IN ('pending', 'active')",
-                    (server,),
-                ).fetchone()["n"]
-            )
-            pending_intents = 0
-            if self._table_exists(connection, "free_provisioning_intents"):
-                pending_intents += int(
-                    connection.execute(
-                        """SELECT COUNT(*) AS n FROM free_provisioning_intents
-                           WHERE server_id = ? AND status IN ('pending', 'running')""",
-                        (server,),
-                    ).fetchone()["n"]
-                )
+            active_free = counts["active_free"]
+            active_paid = counts["active_paid"]
+            pending_orders = counts["pending_orders"]
+            pending_subscriptions = counts["pending_subscriptions"]
+            pending_intents = counts["pending_intents"]
             if active_free:
                 blockers.append(f"{active_free} active free/promo key(s)")
             if active_paid:
@@ -107,12 +87,13 @@ def set_server_lifecycle(
             if blockers:
                 raise CommerceError("Endpoint cannot be retired yet: " + "; ".join(blockers))
         enabled = 1 if state in {"active", "draining"} else 0
-        connection.execute(
-            """UPDATE outline_servers
-                  SET enabled = ?, lifecycle_state = ?, lifecycle_reason = ?,
-                      lifecycle_changed_at = ?, updated_at = ?
-                WHERE server_id = ?""",
-            (enabled, state, clean_reason, now_text, now_text, server),
+        _FLEET_HEALTH.set_lifecycle(
+            connection,
+            server_id=server,
+            enabled=bool(enabled),
+            state=state,
+            reason=clean_reason,
+            now_text=now_text,
         )
         ConnectivityRegistry.sync_outline_health(
             connection,
@@ -164,23 +145,14 @@ def _record_endpoint_health(
     """
     if observed_status not in {"healthy", "unreachable"}:
         raise CommerceError("Invalid endpoint health observation")
-    lock_clause = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
-    current = connection.execute(
-        """SELECT health_status, health_success_streak,
-                  health_failure_streak, health_state_changed_at, last_error
-             FROM outline_servers WHERE server_id = ?""" + lock_clause,
-        (server_id,),
-    ).fetchone()
+    current = _FLEET_HEALTH.health_state_for_update(connection, server_id)
     if current is None:
         raise CommerceError(f"Unknown Outline server: {server_id}")
     previous = str(current["health_status"] or "unknown")
     if self._table_exists(connection, "endpoint_health_observations"):
-        duplicate = connection.execute(
-            """SELECT state_after FROM endpoint_health_observations
-               WHERE server_id = ? AND probe_type = 'management_inventory'
-                 AND observed_at = ?""",
-            (server_id, observed_at),
-        ).fetchone()
+        duplicate = _FLEET_HEALTH.duplicate_observation(
+            connection, server_id, observed_at
+        )
         if duplicate is not None:
             return {
                 "state": str(duplicate["state_after"]),
@@ -223,45 +195,29 @@ def _record_endpoint_health(
         if observed_status == "healthy" and state_after == "healthy"
         else (str(error_type or current["last_error"] or "")[:128] or None)
     )
-    connection.execute(
-        """UPDATE outline_servers
-              SET health_status = ?, health_success_streak = ?,
-                  health_failure_streak = ?, health_state_changed_at = ?,
-                  health_last_latency_ms = ?, last_error = ?,
-                  last_synced_at = ?, updated_at = ?
-            WHERE server_id = ?""",
-        (
-            state_after,
-            success_streak,
-            failure_streak,
-            changed_at,
-            latency_ms,
-            last_error,
-            observed_at,
-            observed_at,
-            server_id,
-        ),
+    _FLEET_HEALTH.update_health(
+        connection,
+        server_id=server_id,
+        state=state_after,
+        success_streak=success_streak,
+        failure_streak=failure_streak,
+        changed_at=changed_at,
+        latency_ms=latency_ms,
+        last_error=last_error,
+        observed_at=observed_at,
     )
     if self._table_exists(connection, "endpoint_health_observations"):
-        connection.execute(
-            """INSERT INTO endpoint_health_observations
-               (id, server_id, probe_type, observed_at, observed_status,
-                state_before, state_after, latency_ms, remote_key_count,
-                error_type, created_at)
-               VALUES (?, ?, 'management_inventory', ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(server_id, probe_type, observed_at) DO NOTHING""",
-            (
-                _new_id(),
-                server_id,
-                observed_at,
-                observed_status,
-                previous,
-                state_after,
-                latency_ms,
-                remote_key_count,
-                str(error_type or "")[:128] or None,
-                observed_at,
-            ),
+        _FLEET_HEALTH.record_observation(
+            connection,
+            observation_id=_new_id(),
+            server_id=server_id,
+            observed_at=observed_at,
+            observed_status=observed_status,
+            state_before=previous,
+            state_after=state_after,
+            latency_ms=latency_ms,
+            remote_key_count=remote_key_count,
+            error_type=str(error_type or "")[:128] or None,
         )
     return {
         "state": state_after,
@@ -269,4 +225,3 @@ def _record_endpoint_health(
         "failure_streak": failure_streak,
         "duplicate": False,
     }
-
