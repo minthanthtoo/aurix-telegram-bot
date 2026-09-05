@@ -50,3 +50,20 @@ jobs:
             echo 'unresolved merge marker found' >&2
             exit 1
           fi
+
+  # Compatibility check for already-installed deployers. Older releases
+  # looked specifically for this name; keep it as a single, visible aggregate
+  # over the Python-version matrix while newer deployers accept every check.
+  safety-net:
+    if: ${{ always() }}
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every matrix test to pass
+        if: ${{ needs.test.result != 'success' }}
+        run: |
+          echo "matrix test result: ${{ needs.test.result }}" >&2
+          exit 1
+      - name: CI aggregate passed
+        run: echo "AuriX CI safety-net passed"
