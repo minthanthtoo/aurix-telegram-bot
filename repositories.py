@@ -107,6 +107,25 @@ class WalletReadRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class CommerceJobRepositoryPort(Protocol):
+    """Provisioning-job lease and retry persistence operations."""
+
+    def claim(self, connection: Any, operation: str, now_text: str, stale_before: str) -> Any: ...
+
+    def mark_done(self, connection: Any, job_id: str) -> None: ...
+
+    def mark_failed(self, connection: Any, **values: Any) -> None: ...
+
+    def failed_jobs(self, connection: Any, limit: int, include_nonterminal: bool) -> list[Any]: ...
+
+    def failed_job(self, connection: Any, job_id: str) -> Any: ...
+
+    def reset(self, connection: Any, job_id: str, now_text: str) -> None: ...
+
+    def failed_job_for_order(self, connection: Any, order_id: str, operation: str | None) -> Any: ...
+
+
+@runtime_checkable
 class PaymentRepositoryPort(Protocol):
     """Payment/evidence reads used by order workflows."""
 
