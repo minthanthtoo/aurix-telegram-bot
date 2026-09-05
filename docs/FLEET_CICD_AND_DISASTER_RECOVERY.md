@@ -83,6 +83,9 @@ For a fast, read-only incident check, run the sanitized Outline diagnostic:
 
 It verifies the pinned management API, reports Outline version/key and metrics
 counts, and tests the TCP data port advertised by up to eight keys per node.
+If the management API itself is down, it also probes the node's declared
+`keys_port`, when present, so an incident report distinguishes control-plane
+failure from an independently closed/refused data port.
 The output contains only node IDs, public host/port metadata, status, latency,
 and exception types; management paths, certificate fingerprints, access URLs,
 and transfer amounts are never printed. `--allow-partial` is useful during a

@@ -296,6 +296,8 @@ acceptance audit. It is intentionally a gate: warnings for allocation policy,
 DNS, canaries, or sustained observation keep the result non-passing.
 `--live` also runs the sanitized Outline management/data-port diagnostic, so a
 node that is configured but unreachable cannot be mistaken for a healthy fleet.
+When management is unreachable, the diagnostic still tests the declared public
+`keys_port` (if configured) and reports its sanitized TCP state.
 Render startup accepts a partially unavailable fleet when at least one endpoint
 is healthy (and emits a sanitized degraded-mode warning); it fails closed only
 when every configured Outline endpoint is unreachable.

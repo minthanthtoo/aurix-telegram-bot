@@ -77,6 +77,39 @@ class OutlineDiagnosticsTest(unittest.TestCase):
         self.assertEqual(result["status"], "degraded")
         self.assertEqual(result["data_ports"][0]["status"], "timeout")
 
+    def test_probe_still_checks_configured_data_port_when_management_is_down(self):
+        calls = []
+
+        def connector(address, timeout):
+            calls.append((address, timeout))
+            if address[1] == 61603:
+                raise TimeoutError
+            raise ConnectionRefusedError
+
+        result = probe_server(
+            {
+                "id": "bkk-a",
+                "label": "Bangkok A",
+                "api_url": "https://198.51.100.11:61603/private",
+                "cert_sha256": "b" * 64,
+                "keys_port": 443,
+            },
+            request_timeout=2,
+            data_timeout=1,
+            client_factory=_Client,
+            connector=connector,
+        )
+
+        self.assertEqual(result["status"], "unreachable")
+        self.assertEqual(result["error"], "management_tcp_timeout")
+        self.assertEqual(result["data_ports"], [{
+            "host": "198.51.100.11",
+            "port": 443,
+            "status": "refused",
+            "latency_ms": result["data_ports"][0]["latency_ms"],
+        }])
+        self.assertEqual(len(calls), 2)
+
     def test_run_loads_explicit_env_file_and_reports_partial_fleet(self):
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / "aurix.env"

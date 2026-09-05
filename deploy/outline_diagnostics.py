@@ -183,6 +183,14 @@ def probe_server(
     if result["management_tcp"]["status"] != "open":
         result["latency_ms"] = result["management_tcp"]["latency_ms"]
         result["error"] = "management_tcp_" + str(result["management_tcp"]["status"])
+        # Management and data planes can fail independently.  When the
+        # management API is unavailable, still test the configured public
+        # access port so an operator can distinguish a firewall/port failure
+        # from a control-plane-only outage without exposing any key secret.
+        for host, port in _access_targets([], parsed.hostname, config.get("keys_port")):
+            result["data_ports"].append(
+                _tcp_probe(host, port, data_timeout, connector=connector)
+            )
         return result
     started = time.perf_counter()
     try:
