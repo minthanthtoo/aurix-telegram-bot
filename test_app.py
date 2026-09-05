@@ -2795,6 +2795,22 @@ class TelegramBotCommerceTest(unittest.TestCase):
         copy_button = next(button for button in buttons if button["text"].startswith("📋 #1"))
         self.assertEqual(copy_button["copy_text"], {"text": "ss://secret"})
 
+    def test_usage_views_withhold_remaining_when_outline_does_not_report_a_key(self):
+        self.bot.handle(self.message(123, "/claim"))
+        self.outline.transfer = {}
+
+        self.bot.handle(self.message(123, "/usage"))
+        usage_text = self.bot.sent[-1][1]
+        self.assertIn("Usage: temporarily unavailable", usage_text)
+        self.assertIn("Remaining: withheld", usage_text)
+        self.assertNotIn("Remaining: 300.00 MB of 300.00 MB", usage_text)
+
+        self.bot.handle(self.message(123, "/myvpn"))
+        vpn_text = self.bot.sent[-1][1]
+        self.assertIn("Usage: temporarily unavailable", vpn_text)
+        self.assertIn("Remaining: withheld", vpn_text)
+        self.assertNotIn("Remaining 300.00 MB / 300.00 MB", vpn_text)
+
     def test_myvpn_rolls_up_observed_usage_across_endpoint_keys(self):
         pool = FakeOutlinePool()
         commerce = CommerceService(

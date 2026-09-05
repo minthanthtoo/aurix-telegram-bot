@@ -1969,15 +1969,23 @@ class TelegramBot(
             + (f" · {server_health}" if server_health != "healthy" else "")
         )
         if quota:
-            percent = min(100.0, used * 100 / quota)
-            filled = min(10, max(0, int(percent / 10)))
-            lines.extend(
-                [
-                    f"Usage: {'█' * filled}{'░' * (10 - filled)} {percent:.1f}%",
-                    f"Used {self._format_bytes(used)} · Remaining "
-                    f"{self._format_bytes(remaining)} / {self._format_bytes(quota)}",
-                ]
-            )
+            if observed:
+                percent = min(100.0, used * 100 / quota)
+                filled = min(10, max(0, int(percent / 10)))
+                lines.extend(
+                    [
+                        f"Usage: {'█' * filled}{'░' * (10 - filled)} {percent:.1f}%",
+                        f"Used {self._format_bytes(used)} · Remaining "
+                        f"{self._format_bytes(remaining)} / {self._format_bytes(quota)}",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        "Usage: temporarily unavailable (endpoint telemetry not confirmed)",
+                        "Remaining: withheld until a fresh Outline counter is received",
+                    ]
+                )
         if not observed:
             lines.append("Usage snapshot may be delayed; refresh for the latest Outline total.")
         access_url = item.get("access_url")
@@ -2140,8 +2148,6 @@ class TelegramBot(
                 display_status = status
                 icon = "🟢" if status == "active" else "🟡" if "pending" in status else "🔴"
             quota = int(entry.get("quota_bytes") or 0)
-            used = int(entry.get("used_bytes") or 0)
-            remaining = max(0, int(entry.get("remaining_bytes") or 0))
             lines = [
                 f"#{index} · {entry['tier']}",
                 f"{icon} {display_status} · Expires: {format_user_datetime(entry.get('expires_at'), 'pending')}",
@@ -2150,17 +2156,26 @@ class TelegramBot(
                 formatter = (
                     self._format_decimal_bytes if entry.get("decimal_quota") else self._format_bytes
                 )
-                percent = min(100.0, used * 100 / quota)
-                filled = min(10, max(0, int(percent / 10)))
-                bar = "█" * filled + "░" * (10 - filled)
-                observed_note = "" if entry.get("usage_observed") else " · awaiting traffic data"
-                lines.extend(
-                    [
-                        f"{bar} {percent:.1f}%{observed_note}",
-                        f"Used {formatter(used)} · Remaining "
-                        f"{formatter(remaining)} / {formatter(quota)}",
-                    ]
-                )
+                if entry.get("usage_observed"):
+                    used = int(entry.get("used_bytes") or 0)
+                    remaining = max(0, int(entry.get("remaining_bytes") or 0))
+                    percent = min(100.0, used * 100 / quota)
+                    filled = min(10, max(0, int(percent / 10)))
+                    bar = "█" * filled + "░" * (10 - filled)
+                    lines.extend(
+                        [
+                            f"{bar} {percent:.1f}%",
+                            f"Used {formatter(used)} · Remaining "
+                            f"{formatter(remaining)} / {formatter(quota)}",
+                        ]
+                    )
+                else:
+                    lines.extend(
+                        [
+                            "📡 Usage: temporarily unavailable (endpoint telemetry not confirmed)",
+                            "Remaining: withheld until a fresh Outline counter is received",
+                        ]
+                    )
             if (
                 str(entry.get("server_health_status") or "unknown") != "healthy"
                 and entry.get("server_label")
@@ -2309,27 +2324,37 @@ class TelegramBot(
             return
         blocks = ["📶 Your VPN usage\nOutline transfer accounting (rolling 30-day window)"]
         for entry in entries:
-            used = int(entry["used_bytes"])
             quota = int(entry["quota_bytes"])
-            remaining = int(entry["remaining_bytes"])
-            percent = (used * 100 / quota) if quota else 0.0
-            filled = min(10, max(0, int(percent / 10)))
-            bar = "█" * filled + "░" * (10 - filled)
-            observed_note = "" if entry.get("usage_observed") else " (no traffic recorded yet)"
-            blocks.append(
-                f"{entry['tier']}\n"
-                f"{bar} {percent:.1f}%\n"
-                f"Used: {self._format_bytes(used)}{observed_note}\n"
-                f"Remaining: {self._format_bytes(remaining)} of {self._format_bytes(quota)}\n"
-                f"Expires: {format_user_datetime(entry['expires_at'])}\n"
-                f"State: {entry['status']}"
-                + (
-                    f"\nEndpoint: {entry['server_label']} · {entry['server_health_status']}"
-                    if entry.get("server_label")
-                    and str(entry.get("server_health_status") or "unknown") != "healthy"
-                    else ""
+            lines = [f"{entry['tier']}"]
+            if entry.get("usage_observed"):
+                used = int(entry["used_bytes"])
+                remaining = int(entry["remaining_bytes"])
+                percent = (used * 100 / quota) if quota else 0.0
+                filled = min(10, max(0, int(percent / 10)))
+                bar = "█" * filled + "░" * (10 - filled)
+                lines.extend(
+                    [
+                        f"{bar} {percent:.1f}%",
+                        f"Used: {self._format_bytes(used)}",
+                        f"Remaining: {self._format_bytes(remaining)} of {self._format_bytes(quota)}",
+                    ]
                 )
+            else:
+                lines.extend(
+                    [
+                        "Usage: temporarily unavailable (endpoint telemetry not confirmed)",
+                        "Remaining: withheld until a fresh Outline counter is received",
+                    ]
+                )
+            lines.extend(
+                [f"Expires: {format_user_datetime(entry['expires_at'])}", f"State: {entry['status']}"],
             )
+            if (
+                entry.get("server_label")
+                and str(entry.get("server_health_status") or "unknown") != "healthy"
+            ):
+                lines.append(f"Endpoint: {entry['server_label']} · {entry['server_health_status']}")
+            blocks.append("\n".join(lines))
         blocks.append(
             "Traffic is bytes reported by Outline for each key. It is not live speed, "
             "and the window is not a calendar-month reset."
