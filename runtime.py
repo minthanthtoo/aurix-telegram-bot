@@ -282,7 +282,7 @@ def main() -> None:
                 file=sys.stderr,
             )
     claim_service = ClaimService(
-        database,
+        commerce_database,
         outline,
         limit_bytes=PUBLIC_LIMIT_BYTES,
         probe_service=probe_service,
@@ -320,7 +320,11 @@ def main() -> None:
     if control_group_id is not None and control_group_id >= 0:
         raise SystemExit("AURIX_CONTROL_GROUP_ID must be a negative Telegram group ID")
 
-    staff_access = StaffAccessControl(database, owner_id)
+    # Both SQLite and hosted PostgreSQL expose the complete application
+    # repository.  Keeping every runtime component on this same handle is
+    # essential: free claims, staff state, Telegram deduplication, commerce,
+    # identity, and device entitlements must not diverge across databases.
+    staff_access = StaffAccessControl(commerce_database, owner_id)
     if control_group_id is None:
         stored_control_group = staff_access.control_group()
         if stored_control_group is not None:

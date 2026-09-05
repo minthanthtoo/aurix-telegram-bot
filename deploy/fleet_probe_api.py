@@ -8,6 +8,7 @@ import binascii
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
@@ -18,6 +19,7 @@ if __package__ in {None, ""}:
 
 from commerce import CommerceDatabase, PostgresCommerceDatabase  # noqa: E402
 from control_api import create_control_wsgi_app  # noqa: E402
+from connectivity_registry import ConnectivityRegistry  # noqa: E402
 from device_api import DeviceAPIService, ManifestSigner, create_device_wsgi_app  # noqa: E402
 from fleet_probe import FleetProbeService  # noqa: E402
 from fleet_probe_api import create_probe_wsgi_app  # noqa: E402
@@ -52,14 +54,18 @@ def _manifest_signer() -> ManifestSigner:
         raise SystemExit("AURIX_MANIFEST_SIGNING_KEY must be a URL-safe base64 Ed25519 private key") from exc
 
 
-def _access_url_decryptor():
+def _access_url_cipher() -> Fernet:
     encoded = os.environ.get("AURIX_ACCESS_URL_KEY", "").strip()
     if not encoded:
         raise SystemExit("AURIX_ACCESS_URL_KEY is required for device route configuration")
     try:
-        cipher = Fernet(encoded)
+        return Fernet(encoded)
     except (TypeError, ValueError) as exc:
         raise SystemExit("AURIX_ACCESS_URL_KEY must be a Fernet key") from exc
+
+
+def _access_url_decryptor():
+    cipher = _access_url_cipher()
 
     def decrypt(value: str) -> str | None:
         if not value:
@@ -70,6 +76,20 @@ def _access_url_decryptor():
             return None
 
     return decrypt
+
+
+def _normalize_legacy_access_url(value: str, cipher: Fernet) -> str | None:
+    """Return registry-safe ciphertext without copying raw access URLs."""
+    raw = str(value or "")
+    if not raw:
+        return None
+    if raw.startswith("ss://"):
+        return cipher.encrypt(raw.encode()).decode()
+    try:
+        cipher.decrypt(raw.encode())
+    except (InvalidToken, UnicodeDecodeError, ValueError):
+        return None
+    return raw
 
 
 def main() -> None:
@@ -84,6 +104,16 @@ def main() -> None:
         else CommerceDatabase(Path(os.environ.get("DATABASE_PATH", "data/bot.db")))
     )
     database.initialize()
+    # This service may start before the Telegram process.  Normalize legacy
+    # paid rows here too, so managed-device route delivery does not depend on
+    # which control-plane process happened to boot first.
+    access_url_cipher = _access_url_cipher()
+    with database.connect() as connection:
+        ConnectivityRegistry.rebuild_from_legacy(
+            connection,
+            now_text=datetime.now(timezone.utc).isoformat(),
+            encrypt_access_url=lambda value: _normalize_legacy_access_url(value, access_url_cipher),
+        )
     identity = IdentityService(database)
     try:
         identity.sync_existing_users()
