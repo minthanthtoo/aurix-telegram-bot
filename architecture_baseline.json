@@ -379,9 +379,9 @@
       "max_sql_calls": 0
     },
     "identity_usage_repository.py": {
-      "max_lines": 271,
+      "max_lines": 376,
       "max_function_lines": 46,
-      "max_sql_calls": 13
+      "max_sql_calls": 21
     },
     "identity_support.py": {
       "max_lines": 37,
@@ -424,9 +424,9 @@
       "max_sql_calls": 30
     },
     "identity_usage.py": {
-      "max_lines": 222,
+      "max_lines": 149,
       "max_function_lines": 70,
-      "max_sql_calls": 9
+      "max_sql_calls": 0
     },
     "telegram_admin_navigation.py": {
       "max_lines": 504,

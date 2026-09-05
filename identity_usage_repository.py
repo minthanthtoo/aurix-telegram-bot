@@ -269,3 +269,108 @@ class IdentityUsageRepository:
                 WHERE entitlement_id = ?""",
             (consumed_bytes, now_text, entitlement_id),
         )
+
+    @staticmethod
+    def subscription_is_exhausted(connection: Any, subscription_id: str) -> bool:
+        return connection.execute(
+            """SELECT 1 FROM entitlements
+                WHERE subscription_id = ? AND status = 'revoked'
+                  AND quota_exhausted_at IS NOT NULL LIMIT 1""",
+            (subscription_id,),
+        ).fetchone() is not None
+
+    @staticmethod
+    def source_is_exhausted(connection: Any, source_ref: str) -> bool:
+        return connection.execute(
+            """SELECT 1 FROM entitlements
+                WHERE source_ref = ? AND status = 'revoked'
+                  AND quota_exhausted_at IS NOT NULL LIMIT 1""",
+            (source_ref,),
+        ).fetchone() is not None
+
+    @staticmethod
+    def quota_snapshot(connection: Any, entitlement_id: str) -> Any:
+        return connection.execute(
+            """SELECT e.entitlement_id, e.account_id, e.kind, e.quota_bytes,
+                      e.consumed_bytes, e.status, e.expires_at, e.quota_exhausted_at,
+                      COALESCE((SELECT SUM(lease_bytes - used_bytes) FROM quota_leases q
+                                 WHERE q.entitlement_id = e.entitlement_id AND q.status = 'active'), 0) AS reserved_bytes,
+                      COALESCE((SELECT COUNT(*) FROM entitlement_usage_epochs u
+                                 WHERE u.entitlement_id = e.entitlement_id), 0) AS epoch_count
+                 FROM entitlements e WHERE e.entitlement_id = ?""",
+            (entitlement_id,),
+        ).fetchone()
+
+    @staticmethod
+    def lease_usage_row(connection: Any, lease_id: str) -> Any:
+        return connection.execute(
+            """SELECT q.*, e.quota_bytes, e.consumed_bytes, e.status AS entitlement_status
+                 FROM quota_leases q JOIN entitlements e ON e.entitlement_id = q.entitlement_id
+                WHERE q.lease_id = ?""",
+            (lease_id,),
+        ).fetchone()
+
+    @staticmethod
+    def update_lease_usage(connection: Any, **values: Any) -> None:
+        connection.execute(
+            """UPDATE quota_leases SET used_bytes = ?, status = ?,
+                    released_at = CASE WHEN ? = 'exhausted' THEN COALESCE(released_at, ?) ELSE released_at END
+                WHERE lease_id = ?""",
+            (
+                values["used_bytes"], values["status"], values["status"],
+                values["now_text"], values["lease_id"],
+            ),
+        )
+
+    @staticmethod
+    def lease_snapshot(connection: Any, telegram_id: int) -> list[Any]:
+        return connection.execute(
+            """SELECT q.lease_id, q.entitlement_id, q.endpoint_id, q.lease_bytes,
+                      q.used_bytes, q.expires_at, q.status
+                 FROM quota_leases q JOIN entitlements e ON e.entitlement_id = q.entitlement_id
+                 JOIN account_identities i ON i.account_id = e.account_id
+                WHERE i.identity_type = 'telegram' AND i.identity_value = ?
+                ORDER BY q.created_at""",
+            (str(int(telegram_id)),),
+        ).fetchall()
+
+    @staticmethod
+    def routes_for_account(connection: Any, account_id: str) -> list[Any]:
+        return connection.execute(
+            """SELECT g.generation_id, g.entitlement_id, g.generation_no,
+                      e.endpoint_id, sr.route_id, r.display_name AS region,
+                      sr.protocol, t.display_name AS transport, g.credential_id
+                 FROM credential_generations g
+                 JOIN entitlements en ON en.entitlement_id = g.entitlement_id
+                 JOIN connectivity_endpoints e ON e.endpoint_id = g.endpoint_id
+                 JOIN connectivity_credentials c ON c.credential_id = g.credential_id
+                    AND c.endpoint_id = g.endpoint_id AND c.status = 'active'
+                 JOIN connectivity_regions r ON r.region_id = e.region_id
+                 JOIN connectivity_routes sr ON sr.route_id = g.route_id
+                 JOIN connectivity_transports t ON t.transport_id = e.transport_id
+                WHERE en.account_id = ? AND en.status = 'active' AND g.status = 'active'
+                  AND sr.status IN ('active', 'degraded') AND e.status IN ('active', 'degraded')
+                ORDER BY r.display_name, g.generation_no""",
+            (account_id,),
+        ).fetchall()
+
+    @staticmethod
+    def route_secret(connection: Any, account_id: str, route_id: str) -> Any:
+        return connection.execute(
+            """SELECT g.generation_id, g.entitlement_id, g.generation_no,
+                      en.kind, en.quota_bytes, en.expires_at, e.endpoint_id,
+                      e.outline_server_id, sr.route_id, r.display_name AS region,
+                      sr.protocol, t.display_name AS transport, c.credential_id,
+                      c.external_id, c.secret_ciphertext
+                 FROM credential_generations g
+                 JOIN entitlements en ON en.entitlement_id = g.entitlement_id
+                 JOIN connectivity_endpoints e ON e.endpoint_id = g.endpoint_id
+                 JOIN connectivity_routes sr ON sr.route_id = g.route_id
+                 JOIN connectivity_regions r ON r.region_id = e.region_id
+                 JOIN connectivity_transports t ON t.transport_id = e.transport_id
+                 JOIN connectivity_credentials c ON c.credential_id = g.credential_id
+                WHERE en.account_id = ? AND en.status = 'active' AND g.generation_id = ?
+                  AND g.status = 'active' AND sr.status IN ('active', 'degraded')
+                  AND e.status IN ('active', 'degraded') AND c.status = 'active'""",
+            (account_id, route_id),
+        ).fetchone()
