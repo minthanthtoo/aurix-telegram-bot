@@ -53,8 +53,9 @@ boundary for future work:
 | Automatic failover and silent migration | Not enabled. Credential generations and owner-confirmed endpoint migration provide the safe cutover boundary; outage-driven automatic migration still requires canary/SLO evidence. |
 | Autoscaling and disaster recovery | Guarded worker, probe, backup, recovery, and deployment artifacts exist; live provider mutation, multi-writer cutover, and full restore/fencing drills remain operational gates. |
 
-Local verification for this implementation pass: **494 tests passed**, Ruff,
-Python compilation, and whitespace validation passed. Live node serving state,
+Local verification for this implementation pass: **494 tests passed**, Python
+compilation, shell syntax, and whitespace validation passed. Ruff was not
+available in the validation environment. Live node serving state,
 canary results, and backup freshness remain operational evidence rather than
 claims inferred from this document.
 
