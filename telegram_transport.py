@@ -1876,6 +1876,7 @@ class TelegramBot(
             return
         key_id = str(item.get("outline_key_id") or "")
         used = int(item.get("last_usage_bytes") or 0)
+        repair_status = str(item.get("repair_status") or "").lower()
         observed = False
         try:
             metrics, access_state = self._collect_outline_state(
@@ -1898,11 +1899,16 @@ class TelegramBot(
         quota = int(item.get("quota_bytes") or 0)
         remaining = max(0, quota - used)
         status = str(item.get("key_status") or item.get("status") or "pending")
+        display_status = status
+        if repair_status in {"pending", "running", "failed"}:
+            display_status = "key recovery in progress"
+        elif repair_status == "manual":
+            display_status = "key recovery needs review"
         name = str(item.get("plan_name") or item.get("plan_code") or "Paid key")
         lines = [
             f"🔑 {name}",
             "",
-            f"Status: {status}",
+            f"Status: {display_status}",
             f"Key reference: {subscription_id[-6:]}",
             f"Expires: {format_user_datetime(item.get('expires_at'), 'pending')}",
         ]
@@ -1936,6 +1942,15 @@ class TelegramBot(
                 lines.append(
                     "The key is too long for Telegram's copy button. Use Show Keys as Text."
                 )
+        elif repair_status in {"pending", "running", "failed"}:
+            lines.append(
+                "🛠 Your key is being restored. Your quota is protected; refresh this panel shortly."
+            )
+        elif repair_status == "manual":
+            lines.append(
+                "🛠 This key needs owner review because trusted traffic data was unavailable. "
+                "No quota reset or replacement has been issued."
+            )
         elif status == "active":
             lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
         elif "pending" in status:
@@ -1988,10 +2003,13 @@ class TelegramBot(
         subscriptions: list[dict[str, Any]] = []
         open_order: dict[str, Any] | None = None
         if self.commerce is not None:
+            # Outline key IDs are local to an endpoint.  Always include the
+            # server ID so key ``1`` on Singapore A cannot be confused with
+            # key ``1`` on another node.
             paid_usage = {
-                str(item.get("outline_key_id")): item
+                (str(item.get("server_id") or ""), str(item.get("outline_key_id"))): item
                 for item in self.commerce.user_usage(telegram_id, usage_by_key)
-                if item.get("outline_key_id")
+                if item.get("outline_key_id") and item.get("server_id")
             }
             subscriptions = self.commerce.user_vpns(telegram_id, limit=100)
             relevant = [
@@ -2005,7 +2023,7 @@ class TelegramBot(
             for item in relevant:
                 key_id = str(item.get("outline_key_id") or "")
                 server_id = str(item.get("server_id") or "")
-                usage = paid_usage.get(key_id, {})
+                usage = paid_usage.get((server_id, key_id), {})
                 status = str(usage.get("status") or item.get("status") or "unknown")
                 if item.get("status") == "pending" and not item.get("key_status"):
                     status = "activation pending"
@@ -2028,6 +2046,8 @@ class TelegramBot(
                         "usage_observed": bool(usage.get("usage_observed")),
                         "expires_at": item.get("expires_at"),
                         "status": status,
+                        "repair_status": usage.get("repair_status") or item.get("repair_status"),
+                        "repair_reason": usage.get("repair_reason") or item.get("repair_reason"),
                         "access_url": current_access or item.get("access_url"),
                         "subscription_id": item.get("subscription_id"),
                         "created_at": item.get("created_at") or item.get("starts_at"),
@@ -2060,13 +2080,20 @@ class TelegramBot(
         copy_rows: list[list[dict[str, Any]]] = []
         for index, entry in enumerate(displayed, start=1):
             status = str(entry.get("status") or "unknown")
-            icon = "🟢" if status == "active" else "🟡" if "pending" in status else "🔴"
+            repair_status = str(entry.get("repair_status") or "").lower()
+            if repair_status in {"pending", "running", "failed"}:
+                display_status, icon = "key recovery in progress", "🟡"
+            elif repair_status == "manual":
+                display_status, icon = "key recovery needs review", "🟠"
+            else:
+                display_status = status
+                icon = "🟢" if status == "active" else "🟡" if "pending" in status else "🔴"
             quota = int(entry.get("quota_bytes") or 0)
             used = int(entry.get("used_bytes") or 0)
             remaining = max(0, int(entry.get("remaining_bytes") or 0))
             lines = [
                 f"#{index} · {entry['tier']}",
-                f"{icon} {status} · Expires: {format_user_datetime(entry.get('expires_at'), 'pending')}",
+                f"{icon} {display_status} · Expires: {format_user_datetime(entry.get('expires_at'), 'pending')}",
             ]
             if quota > 0:
                 formatter = (
@@ -2114,6 +2141,16 @@ class TelegramBot(
                             }
                         ]
                     )
+            elif repair_status in {"pending", "running", "failed"}:
+                lines.append(
+                    "🛠 Your Outline key is being restored. Your quota is protected; "
+                    "refresh this panel shortly."
+                )
+            elif repair_status == "manual":
+                lines.append(
+                    "🛠 This key needs owner review because trusted traffic data was "
+                    "unavailable. No quota reset or replacement has been issued."
+                )
             elif status == "active" and entry.get("key_type") != "paid" and not access_available:
                 lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
             elif status == "activation pending":

@@ -21,6 +21,11 @@ is never replaced from one failed API call.
 - Every create/recreate, local cutover, old binding, usage value, and customer
   notice is audited. Access URLs are encrypted at rest and never shown in
   admin inventory panels.
+- Customer VPN views join repair state by `(server_id, local_key_ref)`. When a
+  managed key has disappeared, `/myvpn` and the focused paid-key view show
+  **key recovery in progress** or **key recovery needs review** instead of
+  presenting a misleading active key. The message confirms that quota was not
+  reset and that no replacement was issued while usage is untrusted.
 
 ## Lifecycle
 

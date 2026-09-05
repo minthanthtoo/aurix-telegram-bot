@@ -4869,6 +4869,14 @@ class CommerceService(CommerceWorkerMixin):
                           k.server_id, os.label AS server_label, os.health_status AS server_health_status,
                           k.outline_key_id, k.quota_bytes, k.status,
                           k.last_usage_bytes, k.quota_reason, k.created_at,
+                          (SELECT r.status FROM managed_key_repair_jobs r
+                           WHERE r.kind = 'paid' AND r.server_id = k.server_id
+                             AND r.local_key_ref = CAST(k.id AS TEXT)
+                           ORDER BY r.created_at DESC LIMIT 1) AS repair_status,
+                          (SELECT r.last_error FROM managed_key_repair_jobs r
+                           WHERE r.kind = 'paid' AND r.server_id = k.server_id
+                             AND r.local_key_ref = CAST(k.id AS TEXT)
+                           ORDER BY r.created_at DESC LIMIT 1) AS repair_reason,
                           (SELECT j.status FROM provisioning_jobs j WHERE j.subscription_id = s.id
                            AND j.operation = 'revoke' LIMIT 1) AS revocation_status
                    FROM subscriptions s
@@ -4930,6 +4938,8 @@ class CommerceService(CommerceWorkerMixin):
                             )
                         )
                     ),
+                    "repair_status": row["repair_status"],
+                    "repair_reason": row["repair_reason"],
                     "created_at": row["created_at"],
                 }
             )
@@ -4950,7 +4960,17 @@ class CommerceService(CommerceWorkerMixin):
                           os.last_synced_at AS server_last_synced_at,
                           k.outline_key_id, k.access_url,
                           COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
-                          k.status AS key_status, k.created_at, k.quota_reason
+                          k.status AS key_status, k.created_at, k.quota_reason,
+                          (SELECT r.status FROM managed_key_repair_jobs r
+                           WHERE r.kind = 'paid'
+                             AND r.server_id = COALESCE(k.server_id, s.server_id)
+                             AND r.local_key_ref = CAST(k.id AS TEXT)
+                           ORDER BY r.created_at DESC LIMIT 1) AS repair_status,
+                          (SELECT r.last_error FROM managed_key_repair_jobs r
+                           WHERE r.kind = 'paid'
+                             AND r.server_id = COALESCE(k.server_id, s.server_id)
+                             AND r.local_key_ref = CAST(k.id AS TEXT)
+                           ORDER BY r.created_at DESC LIMIT 1) AS repair_reason
                    FROM subscriptions s
                    LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
                    LEFT JOIN outline_servers os
@@ -4993,7 +5013,17 @@ class CommerceService(CommerceWorkerMixin):
                           k.outline_key_id, k.access_url,
                           COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
                           k.status AS key_status, k.created_at, k.quota_reason,
-                          k.last_usage_bytes, k.last_usage_observed_at
+                          k.last_usage_bytes, k.last_usage_observed_at,
+                          (SELECT r.status FROM managed_key_repair_jobs r
+                           WHERE r.kind = 'paid'
+                             AND r.server_id = COALESCE(k.server_id, s.server_id)
+                             AND r.local_key_ref = CAST(k.id AS TEXT)
+                           ORDER BY r.created_at DESC LIMIT 1) AS repair_status,
+                          (SELECT r.last_error FROM managed_key_repair_jobs r
+                           WHERE r.kind = 'paid'
+                             AND r.server_id = COALESCE(k.server_id, s.server_id)
+                             AND r.local_key_ref = CAST(k.id AS TEXT)
+                           ORDER BY r.created_at DESC LIMIT 1) AS repair_reason
                    FROM subscriptions s
                    LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
                    LEFT JOIN outline_servers os

@@ -1866,7 +1866,17 @@ class ClaimService:
                           keys.last_usage_bytes, keys.quota_reason,
                           g.campaign_code,
                           (SELECT remote_state FROM key_termination_events e
-                           WHERE e.key_id = keys.id ORDER BY e.detected_at DESC LIMIT 1) AS termination_state
+                           WHERE e.key_id = keys.id ORDER BY e.detected_at DESC LIMIT 1) AS termination_state,
+                          (SELECT r.status FROM managed_key_repair_jobs r
+                           WHERE r.kind = 'free'
+                             AND r.server_id = keys.server_id
+                             AND r.local_key_ref = CAST(keys.id AS TEXT)
+                           ORDER BY r.created_at DESC LIMIT 1) AS repair_status,
+                          (SELECT r.last_error FROM managed_key_repair_jobs r
+                           WHERE r.kind = 'free'
+                             AND r.server_id = keys.server_id
+                             AND r.local_key_ref = CAST(keys.id AS TEXT)
+                           ORDER BY r.created_at DESC LIMIT 1) AS repair_reason
                    FROM keys
                    LEFT JOIN giveaway_claims g ON g.key_id = keys.id
                    WHERE keys.telegram_id = ?
@@ -1936,6 +1946,8 @@ class ClaimService:
                     "usage_observed": observed,
                     "expires_at": row["expires_at"],
                     "status": effective_status,
+                    "repair_status": row["repair_status"],
+                    "repair_reason": row["repair_reason"],
                     "access_url": scoped_access.get(key_id)
                     if effective_status == "active"
                     else None,

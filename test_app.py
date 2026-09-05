@@ -273,6 +273,54 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(tuple(key), ("2", 290_000_000, "active"))
         self.assertEqual(tuple(repair), ("done", 10_000_000, 290_000_000))
 
+    def test_myvpn_explains_when_missing_key_is_waiting_for_owner_review(self):
+        commerce = CommerceService(
+            CommerceDatabase(self.db.path),
+            self.outline,
+            Fernet.generate_key(),
+        )
+        commerce.initialize()
+        commerce.register_outline_servers({"primary": "Primary"})
+        commerce.refresh_server_inventory(self.now)
+        self.service.claim(123, "Min", self.now, username="min_user")
+        self.outline.deleted.append("1")
+        self.outline.transfer = {}
+        commerce.refresh_server_inventory(self.now + timedelta(minutes=1))
+        commerce.refresh_server_inventory(self.now + timedelta(minutes=2))
+
+        usage = self.service.user_usage(
+            123,
+            {"byServer": {"primary": {}}},
+            {},
+        )
+        self.assertEqual(usage[0]["repair_status"], "manual")
+        self.assertEqual(usage[0]["repair_reason"], "usage_observation_required")
+
+    def test_paid_usage_is_server_scoped_when_outline_ids_collide(self):
+        pool = FakeOutlinePool()
+        commerce = CommerceService(
+            CommerceDatabase(self.db.path),
+            pool,
+            Fernet.generate_key(),
+            allow_legacy_text_approval=True,
+        )
+        commerce.initialize()
+        commerce.register_outline_servers({"sg-a": "Singapore A", "sg-b": "Singapore B"})
+        commerce.refresh_server_inventory(self.now)
+
+        for reference in ("collision-a", "collision-b"):
+            order = commerce.create_order(123, "Min", "basic_50gb", self.now)
+            commerce.submit_payment(123, order.order_id, "manual", reference, self.now)
+            commerce.approve_order(order.order_id, 999, self.now)
+            self.assertEqual(commerce.process_jobs(self.now), 1)
+
+        usage = commerce.user_usage(
+            123,
+            {"byServer": {"sg-a": {"1": 111}, "sg-b": {"1": 222}}},
+        )
+        by_server = {item["server_id"]: item["used_bytes"] for item in usage}
+        self.assertEqual(by_server, {"sg-a": 111, "sg-b": 222})
+
     def test_second_claim_inside_24_hours_is_rejected(self):
         self.service.claim(123, "Min", self.now)
         result = self.service.claim(123, "Min", self.now + timedelta(hours=23, minutes=59))
@@ -2882,6 +2930,21 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertTrue(any(button["text"].startswith("🔑 #1") for button in buttons))
         self.assertFalse(any(button.get("callback_data") == "n:plans" for button in buttons))
         self.assertFalse(any(button.get("callback_data") == "n:claim" for button in buttons))
+
+    def test_myvpn_shows_safe_recovery_state_for_missing_free_key(self):
+        self.commerce.register_outline_servers({"primary": "Primary"})
+        self.commerce.refresh_server_inventory(datetime.now(UTC))
+        self.bot.handle(self.message(123, "/claim"))
+        self.outline.deleted.append("1")
+        self.outline.transfer = {}
+        now = datetime.now(UTC)
+        self.commerce.refresh_server_inventory(now)
+        self.commerce.refresh_server_inventory(now + timedelta(minutes=1))
+
+        self.bot.handle(self.message(123, "/myvpn"))
+
+        self.assertIn("key recovery needs review", self.bot.sent[-1][1])
+        self.assertIn("No quota reset or replacement has been issued", self.bot.sent[-1][1])
 
     def test_many_paid_keys_use_paginated_browser_and_focused_copy_view(self):
         for index in range(12):
