@@ -919,6 +919,19 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(rows[0]["telegram_id"], 999)
         self.assertIn("MANAGED KEY MISSING", rows[0]["text"])
 
+        # The independent maintenance backfill is restart/startup safe and
+        # remains idempotent if an older release opened the repair first.
+        with self.database.connect() as connection:
+            connection.execute("DELETE FROM notifications WHERE kind = 'staff_key_repairs'")
+        self.assertEqual(
+            self.service.ensure_managed_key_repair_notifications(self.now),
+            1,
+        )
+        self.assertEqual(
+            self.service.ensure_managed_key_repair_notifications(self.now),
+            0,
+        )
+
     def test_recent_durable_snapshot_preserves_quota_when_missing_metrics_race(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)

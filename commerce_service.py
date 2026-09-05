@@ -1712,6 +1712,57 @@ class CommerceService(CommerceWorkerMixin):
                 )
         return results
 
+    def ensure_managed_key_repair_notifications(
+        self, now: datetime | None = None
+    ) -> int:
+        """Backfill staff alerts for every still-open managed-key repair.
+
+        Inventory normally opens the alert in the same transaction as the
+        repair decision. This second, cheap pass also covers repairs created
+        during startup before staff bootstrap completed, and repairs created
+        by an older release. It is idempotent per repair/staff pair and never
+        calls Outline or changes entitlement state.
+        """
+        created_at = _now_text(now)
+        queued = 0
+        with self.database.connect() as connection:
+            if not self._table_exists(connection, "managed_key_repair_jobs"):
+                return 0
+            rows = connection.execute(
+                """SELECT id, kind, server_id, telegram_id, source_external_id,
+                          quota_bytes, used_bytes, status
+                     FROM managed_key_repair_jobs
+                    WHERE status IN ('pending', 'running', 'manual', 'failed')
+                    ORDER BY created_at, id"""
+            ).fetchall()
+            for row in rows:
+                repair_id = str(row["id"])
+                exists = connection.execute(
+                    "SELECT 1 FROM notifications WHERE dedupe_key LIKE ? LIMIT 1",
+                    (f"staff:key_repairs:{repair_id}:%",),
+                ).fetchone()
+                if exists is not None:
+                    continue
+                usage_text = "unknown (fresh Outline telemetry unavailable)"
+                if row["used_bytes"] is not None:
+                    usage_text = f"{_human_bytes(max(0, int(row['used_bytes'])))} observed"
+                self._queue_staff_notification(
+                    connection,
+                    "key_repairs",
+                    repair_id,
+                    "🧩 MANAGED KEY MISSING\n\n"
+                    f"Repair: #{repair_id[:8]}\n"
+                    f"Customer: tg:{int(row['telegram_id'])}\n"
+                    f"Endpoint: {str(row['server_id'])[:32]}\n"
+                    f"Old key: {str(row['source_external_id'])[:32]}\n"
+                    f"Usage: {usage_text}\n"
+                    f"Decision: {str(row['status']).replace('_', ' ')}\n\n"
+                    "Open Key Repairs to review. AuriX will not recreate this key or reset quota without the required owner decision.",
+                    created_at,
+                )
+                queued += 1
+        return queued
+
     def remote_key_inventory(
         self,
         server_id: str,

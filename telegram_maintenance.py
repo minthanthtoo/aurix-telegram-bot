@@ -307,6 +307,11 @@ class TelegramMaintenanceMixin:
             )
             if callable(process_managed_key_repairs):
                 run_stage("managed_key_repairs", process_managed_key_repairs)
+            ensure_repair_notifications = getattr(
+                self.commerce, "ensure_managed_key_repair_notifications", None
+            )
+            if callable(ensure_repair_notifications):
+                run_stage("managed_key_repair_alerts", ensure_repair_notifications)
             process_endpoint_migrations = getattr(self.commerce, "process_endpoint_migrations", None)
             if callable(process_endpoint_migrations):
                 run_stage("endpoint_migrations", process_endpoint_migrations)
