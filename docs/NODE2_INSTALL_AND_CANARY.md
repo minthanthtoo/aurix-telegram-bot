@@ -10,7 +10,11 @@ Current evidence (5 September 2026): Singapore-B's pinned Management API is
 healthy and reports Outline 1.12.3 with zero keys. A direct SSH probe from the
 control-plane host timed out, so provider-side enrollment/rebuild automation
 must remain disabled until the SSH path is restored and re-pinned; this does
-not invalidate the read-only Management API health result.
+not invalidate the read-only Management API health result. The DigitalOcean
+read-only Droplet API confirms the VM is active and unlocked; the worker token
+receives HTTP 403 for DigitalOcean firewall reads, so inspect the console's
+cloud-firewall/network rules before changing anything. Do not open SSH broadly
+as a workaround.
 
 Do not perform the installation while the AuriX bot is serving a live customer
 rollout unless the owner has explicitly approved the maintenance window. Keep
