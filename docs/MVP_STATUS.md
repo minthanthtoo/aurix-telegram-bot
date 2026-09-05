@@ -49,7 +49,7 @@ engineering estimates, not production traffic or revenue metrics.
   PostgreSQL/node off-site-only recovery and plaintext-hash integrity checks,
   pinned node-bootstrap TLS, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (439 tests passing at the latest verification).
+  production-acceptance suite (442 tests passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**. The current sanitized
   acceptance run passes source, lint, compilation, tests, required secret names,
   fleet-manifest parsing, backup-key validation, and the recovery entrypoint,

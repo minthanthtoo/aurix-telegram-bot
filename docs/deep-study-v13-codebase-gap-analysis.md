@@ -34,7 +34,7 @@ multi-node Outline control plane with conservative health evidence, not a
 complete adaptive V13 connectivity platform and not something that should be
 replaced wholesale.
 
-Current evidence is strong for code and controlled operations (439 tests,
+Current evidence is strong for code and controlled operations (442 tests,
 CI-gated deployment, a three-node registry, and backup-verification tooling),
 but
 not yet for unrestricted customer admission: allocation normalization, orphan
