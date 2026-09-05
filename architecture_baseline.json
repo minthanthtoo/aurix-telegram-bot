@@ -389,9 +389,9 @@
       "max_sql_calls": 0
     },
     "identity_core.py": {
-      "max_lines": 72,
-      "max_function_lines": 50,
-      "max_sql_calls": 2
+      "max_lines": 50,
+      "max_function_lines": 32,
+      "max_sql_calls": 0
     },
     "identity_accounts.py": {
       "max_lines": 161,
