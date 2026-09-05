@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from commerce_models import UTC, _now_text
-from connectivity_registry import ConnectivityRegistry
 from route_failover import FailoverError
 
 
@@ -15,37 +14,12 @@ def _failover_target_has_fresh_probe(self, server_id: str, now: datetime) -> boo
     stale_after = int(getattr(self.probe_service, "stale_after_seconds", 900) or 900)
     cutoff = (now.astimezone(UTC) - timedelta(seconds=max(30, stale_after))).isoformat()
     with self.database.connect() as connection:
-        if not self._table_exists(connection, "route_health_snapshots"):
-            return False
-        row = connection.execute(
-            """SELECT status, last_observed_at FROM route_health_snapshots
-                WHERE server_id = ? AND status = 'healthy'
-                  AND last_observed_at >= ?""",
-            (str(server_id), cutoff),
-        ).fetchone()
-    return row is not None
+        return self.failover_reads.target_has_fresh_probe(connection, server_id, cutoff)
 
 
 def _failover_source_record(self, decision: dict[str, Any]) -> dict[str, Any] | None:
     with self.database.connect() as connection:
-        row = connection.execute(
-            """SELECT d.*, g.credential_id, g.status AS generation_status,
-                      c.external_id, c.secret_ciphertext, c.status AS credential_status,
-                      cp.telegram_id, cp.subscription_id,
-                      en.kind, en.quota_bytes, en.expires_at, en.status AS entitlement_status,
-                      te.outline_server_id AS target_server_id,
-                      tr.protocol AS target_protocol
-                 FROM failover_decisions d
-                 JOIN credential_generations g ON g.generation_id = d.source_generation_id
-                 JOIN connectivity_credentials c ON c.credential_id = g.credential_id
-                 JOIN connectivity_profiles cp ON cp.profile_id = c.profile_id
-                 JOIN entitlements en ON en.entitlement_id = d.entitlement_id
-                 JOIN connectivity_routes tr ON tr.route_id = d.target_route_id
-                 JOIN connectivity_endpoints te ON te.endpoint_id = tr.endpoint_id
-                WHERE d.decision_id = ?""",
-            (str(decision["decision_id"]),),
-        ).fetchone()
-    return dict(row) if row is not None else None
+        return self.failover_reads.source_record(connection, str(decision["decision_id"]))
 
 
 def process_route_failovers(
@@ -126,10 +100,9 @@ def process_route_failovers(
             # Read the policy directly so a dashboard listing cannot
             # become the source of execution parameters.
             with self.database.connect() as connection:
-                policy_row = connection.execute(
-                    "SELECT standby_lease_bytes FROM route_failover_policies WHERE entitlement_id = ?",
-                    (str(record["entitlement_id"]),),
-                ).fetchone()
+                policy_row = self.failover_reads.standby_lease_bytes(
+                    connection, str(record["entitlement_id"])
+                )
             if policy_row is None:
                 raise FailoverError("failover policy disappeared before execution")
             lease_bytes = min(
@@ -150,13 +123,12 @@ def process_route_failovers(
             encrypted = self._encrypt_access_url(str(target_grant["access_url"]))
             with self.database.connect() as connection:
                 self.database.begin_write(connection)
-                current_decision = connection.execute(
-                    "SELECT state FROM failover_decisions WHERE decision_id = ?",
-                    (str(decision["decision_id"]),),
-                ).fetchone()
+                current_decision = self.failover_reads.decision_state(
+                    connection, str(decision["decision_id"])
+                )
                 if current_decision is None or str(current_decision["state"]) != "creating":
                     raise FailoverError("failover decision is no longer owned by this worker")
-                ConnectivityRegistry.bind_credential(
+                self.failover_reads.bind_credential(
                     connection,
                     telegram_id=int(record["telegram_id"]),
                     server_id=target_server,
@@ -186,13 +158,11 @@ def process_route_failovers(
             self.failover.mark_verified(str(decision["decision_id"]), now=now_text)
             target_credential_id = None
             with self.database.connect() as connection:
-                credential = connection.execute(
-                    """SELECT credential_id FROM connectivity_credentials
-                        WHERE endpoint_id = ? AND external_id = ? AND status = 'active'""",
-                    (str(record["target_endpoint_id"]), str(target_grant["external_id"])),
-                ).fetchone()
-                if credential is not None:
-                    target_credential_id = str(credential["credential_id"])
+                target_credential_id = self.failover_reads.target_credential_id(
+                    connection,
+                    str(record["target_endpoint_id"]),
+                    str(target_grant["external_id"]),
+                )
             if not target_credential_id:
                 raise FailoverError("target credential binding did not converge")
             new_generation = self.identity.ensure_generation_for_credential(
@@ -229,4 +199,3 @@ def process_route_failovers(
             print(f"route failover error: {type(exc).__name__}", file=sys.stderr)
         processed += 1
     return processed
-

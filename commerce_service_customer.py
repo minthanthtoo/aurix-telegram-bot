@@ -13,29 +13,7 @@ from commerce_models import _now_text
 def user_usage(self, telegram_id: int, usage_by_key: dict[str, Any]) -> list[dict[str, Any]]:
     """Return paid key usage belonging to one Telegram user."""
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT s.plan_code, s.plan_name, s.status AS subscription_status, s.expires_at, s.starts_at,
-                      k.server_id, os.label AS server_label, os.health_status AS server_health_status,
-                      k.outline_key_id, k.quota_bytes, k.status,
-                      k.last_usage_bytes, k.quota_reason, k.created_at,
-                      (SELECT r.status FROM managed_key_repair_jobs r
-                       WHERE r.kind = 'paid' AND r.server_id = k.server_id
-                         AND r.local_key_ref = CAST(k.id AS TEXT)
-                       ORDER BY r.created_at DESC LIMIT 1) AS repair_status,
-                      (SELECT r.last_error FROM managed_key_repair_jobs r
-                       WHERE r.kind = 'paid' AND r.server_id = k.server_id
-                         AND r.local_key_ref = CAST(k.id AS TEXT)
-                       ORDER BY r.created_at DESC LIMIT 1) AS repair_reason,
-                      (SELECT j.status FROM provisioning_jobs j WHERE j.subscription_id = s.id
-                       AND j.operation = 'revoke' LIMIT 1) AS revocation_status
-               FROM subscriptions s
-               JOIN paid_vpn_keys k ON k.subscription_id = s.id
-               LEFT JOIN outline_servers os ON os.server_id = k.server_id
-               WHERE s.telegram_id = ?
-                 AND (k.status IN ('active', 'revoke_failed') OR k.quota_reason = 'quota')
-               ORDER BY k.created_at DESC LIMIT 10""",
-            (telegram_id,),
-        ).fetchall()
+        rows = self.customer_reads.user_usage(connection, telegram_id)
     result = []
     for row in rows:
         server_id = str(
@@ -105,16 +83,9 @@ def user_migrated_usage(self, telegram_id: int) -> int:
     second time.
     """
     with self.database.connect() as connection:
-        if not self._table_exists(connection, "connectivity_migration_jobs"):
+        if not self.customer_reads.table_exists(connection, "connectivity_migration_jobs"):
             return 0
-        row = connection.execute(
-            """SELECT COALESCE(SUM(source_used_bytes), 0) AS used
-                 FROM connectivity_migration_jobs
-                WHERE telegram_id = ?
-                  AND status IN ('source_delete_pending', 'completed')
-                  AND source_used_bytes IS NOT NULL""",
-            (int(telegram_id),),
-        ).fetchone()
+        row = self.customer_reads.migrated_usage(connection, telegram_id)
     try:
         return max(0, int(row["used"] if row is not None else 0))
     except (KeyError, TypeError, ValueError):
@@ -138,15 +109,11 @@ def prune_usage_snapshots(
     current = (now or datetime.now(UTC)).astimezone(UTC)
     cutoff = (current - timedelta(days=retention_days)).isoformat()
     with self.database.connect() as connection:
-        deleted = connection.execute(
-            "DELETE FROM usage_snapshots WHERE observed_at < ?",
-            (cutoff,),
-        )
-    return max(0, int(getattr(deleted, "rowcount", 0) or 0))
+        return self.customer_reads.delete_usage_snapshots(connection, cutoff)
 
 def _usage_snapshot_table_available(self) -> bool:
     with self.database.connect() as connection:
-        return self._table_exists(connection, "usage_snapshots")
+        return self.customer_reads.usage_snapshot_table_available(connection)
 
 def user_vpns(self, telegram_id: int, limit: int = 20) -> list[dict[str, Any]]:
     """Return all of a user's paid entitlements without exposing secrets.
@@ -155,34 +122,9 @@ def user_vpns(self, telegram_id: int, limit: int = 20) -> list[dict[str, Any]]:
     plans). Access URLs are decrypted only for active, non-expired keys.
     """
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
-                      s.expires_at, s.starts_at,
-                      COALESCE(k.server_id, s.server_id) AS server_id,
-                      os.label AS server_label, os.health_status AS server_health_status,
-                      os.last_synced_at AS server_last_synced_at,
-                      k.outline_key_id, k.access_url,
-                      COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
-                      k.status AS key_status, k.created_at, k.quota_reason,
-                      (SELECT r.status FROM managed_key_repair_jobs r
-                       WHERE r.kind = 'paid'
-                         AND r.server_id = COALESCE(k.server_id, s.server_id)
-                         AND r.local_key_ref = CAST(k.id AS TEXT)
-                       ORDER BY r.created_at DESC LIMIT 1) AS repair_status,
-                      (SELECT r.last_error FROM managed_key_repair_jobs r
-                       WHERE r.kind = 'paid'
-                         AND r.server_id = COALESCE(k.server_id, s.server_id)
-                         AND r.local_key_ref = CAST(k.id AS TEXT)
-                       ORDER BY r.created_at DESC LIMIT 1) AS repair_reason
-               FROM subscriptions s
-               LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
-               LEFT JOIN outline_servers os
-                 ON os.server_id = COALESCE(k.server_id, s.server_id)
-               WHERE s.telegram_id = ? AND s.status IN ('pending', 'active', 'expired', 'revoked')
-               ORDER BY CASE s.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
-                        s.starts_at DESC LIMIT ?""",
-            (telegram_id, max(1, min(int(limit), 100))),
-        ).fetchall()
+        rows = self.customer_reads.user_vpns(
+            connection, telegram_id, max(1, min(int(limit), 100))
+        )
     now_text = _now_text()
     results = []
     for row in rows:
@@ -208,33 +150,7 @@ def user_vpn_detail(
 ) -> dict[str, Any] | None:
     """Return one customer-owned paid entitlement for a focused key view."""
     with self.database.connect() as connection:
-        row = connection.execute(
-            """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
-                      s.expires_at, s.starts_at,
-                      COALESCE(k.server_id, s.server_id) AS server_id,
-                      os.label AS server_label, os.health_status AS server_health_status,
-                      os.last_synced_at AS server_last_synced_at,
-                      k.outline_key_id, k.access_url,
-                      COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
-                      k.status AS key_status, k.created_at, k.quota_reason,
-                      k.last_usage_bytes, k.last_usage_observed_at,
-                      (SELECT r.status FROM managed_key_repair_jobs r
-                       WHERE r.kind = 'paid'
-                         AND r.server_id = COALESCE(k.server_id, s.server_id)
-                         AND r.local_key_ref = CAST(k.id AS TEXT)
-                       ORDER BY r.created_at DESC LIMIT 1) AS repair_status,
-                      (SELECT r.last_error FROM managed_key_repair_jobs r
-                       WHERE r.kind = 'paid'
-                         AND r.server_id = COALESCE(k.server_id, s.server_id)
-                         AND r.local_key_ref = CAST(k.id AS TEXT)
-                       ORDER BY r.created_at DESC LIMIT 1) AS repair_reason
-               FROM subscriptions s
-               LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
-               LEFT JOIN outline_servers os
-                 ON os.server_id = COALESCE(k.server_id, s.server_id)
-               WHERE s.telegram_id = ? AND s.id = ?""",
-            (telegram_id, subscription_id),
-        ).fetchone()
+        row = self.customer_reads.user_vpn_detail(connection, telegram_id, subscription_id)
     if row is None:
         return None
     result = dict(row)
@@ -250,9 +166,7 @@ def user_vpn_detail(
 
 def receipt_policy(self) -> dict[str, Any]:
     with self.database.connect() as connection:
-        row = connection.execute(
-            "SELECT * FROM receipt_verification_policy WHERE id = 1"
-        ).fetchone()
+        row = self.customer_reads.receipt_policy(connection)
     if row is None:
         return {"mode": "manual", "version": 0, "updated_at": None}
     return dict(row)
@@ -273,19 +187,14 @@ def set_receipt_mode(
     now_text = _now_text()
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        current = connection.execute(
-            "SELECT mode, version FROM receipt_verification_policy WHERE id = 1"
-        ).fetchone()
+        current = self.customer_reads.receipt_policy_version(connection)
         if current is None:
             raise CommerceError("Receipt verification policy is unavailable")
         if expected_version is not None and int(current["version"]) != int(expected_version):
             raise CommerceError("Receipt mode changed while you were reviewing it; refresh first")
         old_mode = str(current["mode"])
-        connection.execute(
-            """UPDATE receipt_verification_policy
-               SET mode = ?, version = version + 1, updated_by = ?,
-                   updated_at = ?, change_reason = ? WHERE id = 1""",
-            (normalized, int(admin_id), now_text, str(reason)[:500]),
+        self.customer_reads.update_receipt_mode(
+            connection, normalized, admin_id, now_text, reason
         )
         self._audit(
             connection,
