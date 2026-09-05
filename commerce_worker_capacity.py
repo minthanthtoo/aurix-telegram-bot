@@ -58,14 +58,7 @@ def queue_quota_warnings(
     queued = 0
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        rows = connection.execute(
-            """SELECT k.id, k.subscription_id, k.telegram_id, k.outline_key_id,
-                      k.quota_bytes, k.status, k.quota_warning_percent,
-                      k.server_id, s.plan_code, s.expires_at
-               FROM paid_vpn_keys k JOIN subscriptions s ON s.id = k.subscription_id
-               WHERE k.status = 'active' AND s.status = 'active'
-                 AND k.quota_bytes IS NOT NULL"""
-        ).fetchall()
+        rows = self.capacity_operations.active_paid_keys_for_warnings(connection)
         for row in rows:
             try:
                 server_key = row["server_id"] or default_server_id
@@ -88,10 +81,7 @@ def queue_quota_warnings(
                 f"v{preferences.get('version', 1)}:{threshold_bytes}"
             )
             try:
-                existing = connection.execute(
-                    "SELECT id FROM notifications WHERE dedupe_key = ?",
-                    (dedupe_key,),
-                ).fetchone()
+                existing = self.capacity_operations.notification_exists(connection, dedupe_key)
                 if existing is None:
                     text = (
                         f"📶 VPN usage alert: your AuriX {row['plan_code']} key has "
@@ -102,17 +92,17 @@ def queue_quota_warnings(
                         "When no quota remains, the key will be blocked and deleted. "
                         f"Expires: {row['expires_at']}"
                     )
-                    connection.execute(
-                        """INSERT INTO notifications
-                           (id, dedupe_key, telegram_id, kind, text, status,
-                            next_attempt_at, created_at)
-                           VALUES (?, ?, ?, 'quota_warning', ?, 'pending', ?, ?)""",
-                        (_new_id(), dedupe_key, row["telegram_id"], text, now_text, now_text),
+                    self.capacity_operations.insert_warning(
+                        connection,
+                        id=_new_id(),
+                        dedupe_key=dedupe_key,
+                        telegram_id=row["telegram_id"],
+                        text=text,
+                        now_text=now_text,
                     )
                     queued += 1
-                connection.execute(
-                    "UPDATE paid_vpn_keys SET quota_warning_percent = ? WHERE id = ?",
-                    (int(remaining_percent), row["id"]),
+                self.capacity_operations.update_warning_percent(
+                    connection, row["id"], int(remaining_percent)
                 )
             except Exception as exc:
                 if self.database.is_integrity_error(exc):
@@ -148,12 +138,7 @@ def enforce_quotas(
         # A notification outage must never delay the hard quota revoke.
         print(f"paid quota warning error: {type(exc).__name__}", file=sys.stderr)
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT k.id, k.subscription_id, k.outline_key_id, k.quota_bytes, k.server_id,
-                      k.status, s.status AS subscription_status
-               FROM paid_vpn_keys k JOIN subscriptions s ON s.id = k.subscription_id
-               WHERE k.status = 'active' AND s.status = 'active' AND k.quota_bytes IS NOT NULL"""
-        ).fetchall()
+        rows = self.capacity_operations.active_paid_keys_for_enforcement(connection)
     scheduled = 0
     for row in rows:
         quota = int(row["quota_bytes"])
@@ -178,42 +163,39 @@ def enforce_quotas(
                 continue
             if used < quota:
                 with self.database.connect() as connection:
-                    connection.execute(
-                        "UPDATE paid_vpn_keys SET last_usage_bytes = ?, last_usage_observed_at = ? WHERE id = ?",
-                        (used, _now_text(current), row["id"]),
+                    self.capacity_operations.update_usage(
+                        connection, row["id"], used, _now_text(current)
                     )
                 continue
             quota_reason = "quota"
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            existing = connection.execute(
-                "SELECT id FROM quota_events WHERE subscription_id = ? AND reason = ?",
-                (row["subscription_id"], quota_reason),
-            ).fetchone()
+            existing = self.capacity_operations.quota_event(
+                connection, str(row["subscription_id"]), quota_reason
+            )
             if existing is None:
-                connection.execute(
-                    """INSERT INTO quota_events
-                       (id, subscription_id, reason, observed_bytes, quota_bytes, observed_at)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (_new_id(), row["subscription_id"], quota_reason, used, quota, _now_text(current)),
+                self.capacity_operations.insert_quota_event(
+                    connection,
+                    id=_new_id(),
+                    subscription_id=row["subscription_id"],
+                    reason=quota_reason,
+                    used=used,
+                    quota=quota,
+                    observed_at=_now_text(current),
                 )
                 scheduled += 1
-            connection.execute(
-                """UPDATE paid_vpn_keys SET status = 'active',
-                          last_usage_bytes = ?, last_usage_observed_at = ?, quota_reason = ?
-                   WHERE id = ? AND status = 'active'""",
-                (used, _now_text(current), quota_reason, row["id"]),
+            self.capacity_operations.mark_exhausted(
+                connection,
+                key_id=row["id"],
+                used=used,
+                observed_at=_now_text(current),
+                reason=quota_reason,
             )
-            connection.execute(
-                "UPDATE subscriptions SET status = 'revoked' WHERE id = ? AND status = 'active'",
-                (row["subscription_id"],),
+            self.capacity_operations.revoke_subscription(
+                connection, str(row["subscription_id"])
             )
-            connection.execute(
-                """INSERT INTO provisioning_jobs
-                   (id, subscription_id, operation, status, next_attempt_at, created_at)
-                   VALUES (?, ?, 'revoke', 'pending', ?, ?)
-                   ON CONFLICT(subscription_id, operation) DO NOTHING""",
-                (_new_id(), row["subscription_id"], _now_text(current), _now_text(current)),
+            self.capacity_operations.insert_revoke_job(
+                connection, str(row["subscription_id"]), _now_text(current), _new_id()
             )
     return scheduled
 
@@ -273,7 +255,7 @@ def _record_scale_observation(
     healthy_count = sum(1 for item in servers if item.get("health_status") == "healthy")
     status = str(advice.get("status") or "unconfigured")
     with self.database.connect() as connection:
-        if not self._table_exists(connection, "scale_observations"):
+        if not self.capacity_operations.table_exists(connection, "scale_observations"):
             return {
                 "consecutive_observations": 0,
                 "required_observations": required,
@@ -281,10 +263,7 @@ def _record_scale_observation(
                 "last_observed_at": None,
             }
         self.database.begin_write(connection)
-        latest = connection.execute(
-            """SELECT observed_at FROM scale_observations
-               ORDER BY observed_at DESC LIMIT 1"""
-        ).fetchone()
+        latest = self.capacity_operations.latest_scale_observation(connection)
         should_insert = True
         latest_at: datetime | None = None
         if latest is not None and latest["observed_at"]:
@@ -296,30 +275,19 @@ def _record_scale_observation(
                 current_utc = current.astimezone(UTC)
                 should_insert = current_utc > latest_at + timedelta(seconds=interval)
         if should_insert:
-            connection.execute(
-                """INSERT INTO scale_observations
-                   (id, fleet_fingerprint, observed_at, status,
-                    utilization_percent, remaining_slots, saleable_capacity,
-                    traffic_utilization_percent, healthy_server_count, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(fleet_fingerprint, observed_at) DO NOTHING""",
-                (
-                    _new_id(),
-                    fleet_fingerprint,
-                    observed_at,
-                    status,
-                    advice.get("utilization_percent"),
-                    advice.get("remaining_slots"),
-                    advice.get("saleable_capacity"),
-                    advice.get("traffic_utilization_percent"),
-                    healthy_count,
-                    observed_at,
-                ),
+            self.capacity_operations.insert_scale_observation(
+                connection,
+                id=_new_id(),
+                fingerprint=fleet_fingerprint,
+                observed_at=observed_at,
+                status=status,
+                utilization_percent=advice.get("utilization_percent"),
+                remaining_slots=advice.get("remaining_slots"),
+                saleable_capacity=advice.get("saleable_capacity"),
+                traffic_utilization_percent=advice.get("traffic_utilization_percent"),
+                healthy_count=healthy_count,
             )
-        rows = connection.execute(
-            """SELECT observed_at, status FROM scale_observations
-               ORDER BY observed_at DESC LIMIT 10"""
-        ).fetchall()
+        rows = self.capacity_operations.recent_scale_observations(connection)
     consecutive = 0
     for row in rows:
         if str(row["status"]) not in {"prepare", "urgent"}:

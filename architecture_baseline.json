@@ -54,8 +54,8 @@
       "max_sql_calls": 39
     },
     "commerce_service.py": {
-      "max_lines": 260,
-      "max_function_lines": 32,
+      "max_lines": 262,
+      "max_function_lines": 33,
       "max_sql_calls": 0
     },
     "commerce_service_wallet_refunds.py": {
@@ -648,6 +648,16 @@
       "max_function_lines": 18,
       "max_sql_calls": 12
     },
+    "commerce_worker_capacity.py": {
+      "max_lines": 306,
+      "max_function_lines": 88,
+      "max_sql_calls": 0
+    },
+    "commerce_capacity_operations_repository.py": {
+      "max_lines": 144,
+      "max_function_lines": 14,
+      "max_sql_calls": 16
+    },
     "commerce_service_inventory_reconciliation.py": {
       "max_lines": 275,
       "max_function_lines": 263,
@@ -778,6 +788,7 @@
         "fleet_enrollment_repository.py",
         "access_control_repository.py",
         "commerce_lifecycle_repository.py",
+        "commerce_capacity_operations_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",
