@@ -13,6 +13,11 @@
       "max_function_lines": 61,
       "max_sql_calls": 13
     },
+    "commerce_allocation_repository.py": {
+      "max_lines": 279,
+      "max_function_lines": 77,
+      "max_sql_calls": 29
+    },
     "commerce_order_repository.py": {
       "max_lines": 46,
       "max_function_lines": 9,
@@ -54,9 +59,9 @@
       "max_sql_calls": 0
     },
     "commerce_service_allocation.py": {
-      "max_lines": 481,
-      "max_function_lines": 137,
-      "max_sql_calls": 33
+      "max_lines": 361,
+      "max_function_lines": 90,
+      "max_sql_calls": 0
     },
     "commerce_service_core.py": {
       "max_lines": 316,
@@ -635,6 +640,7 @@
       "sources": [
         "commerce_models.py",
         "commerce_capacity_snapshot_repository.py",
+        "commerce_allocation_repository.py",
         "commerce_fleet_health_repository.py",
         "commerce_inventory_reconciliation_repository.py",
         "commerce_provisioning_repository.py",

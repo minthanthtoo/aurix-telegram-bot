@@ -6,11 +6,15 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from commerce_allocation_repository import CommerceAllocationRepository
 from commerce_models import UTC
 from commerce_models import CommerceError
 from commerce_models import Plan
 from commerce_models import _new_id
 from commerce_models import _now_text
+
+
+_ALLOCATION = CommerceAllocationRepository()
 
 
 def configure_server_capacity(
@@ -31,10 +35,13 @@ def configure_server_capacity(
     now_text = _now_text()
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        updated = connection.execute(
-            """UPDATE outline_servers SET max_keys = ?, reserved_keys = ?,
-                      monthly_traffic_bytes = ?, updated_at = ? WHERE server_id = ?""",
-            (max_keys, reserved_keys, monthly_traffic_bytes, now_text, server_id),
+        updated = _ALLOCATION.update_server_capacity(
+            connection,
+            max_keys=max_keys,
+            reserved_keys=reserved_keys,
+            monthly_traffic_bytes=monthly_traffic_bytes,
+            now_text=now_text,
+            server_id=server_id,
         )
         if getattr(updated, "rowcount", 1) == 0:
             raise CommerceError("Outline server is not configured in the environment")
@@ -54,18 +61,16 @@ def configure_plan_allocation(
     now_text = _now_text()
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        if connection.execute(
-            "SELECT 1 FROM outline_servers WHERE server_id = ? AND enabled = 1", (server_id,)
-        ).fetchone() is None:
+        if _ALLOCATION.enabled_server(connection, server_id) is None:
             raise CommerceError("Outline server is unavailable")
-        if connection.execute("SELECT 1 FROM plans WHERE code = ?", (plan_code,)).fetchone() is None:
+        if _ALLOCATION.plan(connection, plan_code) is None:
             raise CommerceError("Unknown plan")
-        connection.execute(
-            """INSERT INTO server_plan_allocations
-               (server_id, plan_code, slot_limit, updated_at) VALUES (?, ?, ?, ?)
-               ON CONFLICT(server_id, plan_code) DO UPDATE SET
-                 slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
-            (server_id, plan_code, int(slot_limit), now_text),
+        _ALLOCATION.upsert_plan_allocation(
+            connection,
+            server_id=server_id,
+            plan_code=plan_code,
+            slot_limit=int(slot_limit),
+            now_text=now_text,
         )
         self._validate_server_allocation_capacity(connection, server_id)
         self._audit(
@@ -85,16 +90,14 @@ def configure_tier_allocation(
     now_text = _now_text()
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        if connection.execute(
-            "SELECT 1 FROM outline_servers WHERE server_id = ? AND enabled = 1", (server_id,)
-        ).fetchone() is None:
+        if _ALLOCATION.enabled_server(connection, server_id) is None:
             raise CommerceError("Outline server is unavailable")
-        connection.execute(
-            """INSERT INTO server_tier_allocations
-               (server_id, tier_code, slot_limit, updated_at) VALUES (?, ?, ?, ?)
-               ON CONFLICT(server_id, tier_code) DO UPDATE SET
-                 slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
-            (server_id, normalized, int(slot_limit), now_text),
+        _ALLOCATION.upsert_tier_allocation(
+            connection,
+            server_id=server_id,
+            tier_code=normalized,
+            slot_limit=int(slot_limit),
+            now_text=now_text,
         )
         self._validate_server_allocation_capacity(connection, server_id)
         self._audit(
@@ -121,27 +124,10 @@ def _validate_server_allocation_capacity(connection: Any, server_id: str) -> Non
         "1", "true", "yes", "on",
     }:
         return
-    server = connection.execute(
-        "SELECT max_keys, reserved_keys FROM outline_servers WHERE server_id = ?",
-        (server_id,),
-    ).fetchone()
+    server, plan_total, tier_total = _ALLOCATION.allocation_capacity(connection, server_id)
     if server is None or server["max_keys"] is None:
         return
     saleable = max(0, int(server["max_keys"]) - int(server["reserved_keys"] or 0))
-    plan_total = int(
-        connection.execute(
-            "SELECT COALESCE(SUM(slot_limit), 0) AS n FROM server_plan_allocations WHERE server_id = ?",
-            (server_id,),
-        ).fetchone()["n"]
-        or 0
-    )
-    tier_total = int(
-        connection.execute(
-            "SELECT COALESCE(SUM(slot_limit), 0) AS n FROM server_tier_allocations WHERE server_id = ?",
-            (server_id,),
-        ).fetchone()["n"]
-        or 0
-    )
     total = plan_total + tier_total
     if total > saleable:
         raise CommerceError(
@@ -185,29 +171,11 @@ def apply_server_policy(
     now_text = _now_text()
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        server = connection.execute(
-            "SELECT max_keys, reserved_keys, monthly_traffic_bytes FROM outline_servers "
-            "WHERE server_id = ? AND enabled = 1",
-            (server_id,),
-        ).fetchone()
+        server, existing_plans, existing_tiers = _ALLOCATION.policy_state(
+            connection, server_id
+        )
         if server is None:
             raise CommerceError("Outline server is unavailable")
-        existing_plans = {
-            str(row["plan_code"]): int(row["slot_limit"] or 0)
-            for row in connection.execute(
-                "SELECT plan_code, slot_limit FROM server_plan_allocations WHERE server_id = ?",
-                (server_id,),
-            ).fetchall()
-            if int(row["slot_limit"] or 0) > 0
-        }
-        existing_tiers = {
-            str(row["tier_code"]): int(row["slot_limit"] or 0)
-            for row in connection.execute(
-                "SELECT tier_code, slot_limit FROM server_tier_allocations WHERE server_id = ?",
-                (server_id,),
-            ).fetchall()
-            if int(row["slot_limit"] or 0) > 0
-        }
         desired_plans = {
             code: limit for code, limit in normalized_plans.items() if limit > 0
         }
@@ -223,37 +191,19 @@ def apply_server_policy(
         )
         if not changed:
             return
-        connection.execute(
-            """UPDATE outline_servers SET max_keys = ?, reserved_keys = ?,
-                      monthly_traffic_bytes = ?, updated_at = ? WHERE server_id = ?""",
-            (max_keys, reserved_keys, monthly_traffic_bytes, now_text, server_id),
-        )
         # Clear stale rows first; no intermediate strict check is performed
         # until every manifest value is present in this transaction.
-        connection.execute(
-            "UPDATE server_plan_allocations SET slot_limit = 0, updated_at = ? WHERE server_id = ?",
-            (now_text, server_id),
+        _ALLOCATION.clear_policy(connection, server_id, now_text)
+        _ALLOCATION.write_policy_values(
+            connection,
+            server_id=server_id,
+            max_keys=max_keys,
+            reserved_keys=reserved_keys,
+            monthly_traffic_bytes=monthly_traffic_bytes,
+            now_text=now_text,
+            plan_slots=desired_plans,
+            tier_slots=desired_tiers,
         )
-        connection.execute(
-            "UPDATE server_tier_allocations SET slot_limit = 0, updated_at = ? WHERE server_id = ?",
-            (now_text, server_id),
-        )
-        for plan_code, slot_limit in desired_plans.items():
-            connection.execute(
-                """INSERT INTO server_plan_allocations
-                   (server_id, plan_code, slot_limit, updated_at) VALUES (?, ?, ?, ?)
-                   ON CONFLICT(server_id, plan_code) DO UPDATE SET
-                     slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
-                (server_id, plan_code, slot_limit, now_text),
-            )
-        for tier_code, slot_limit in desired_tiers.items():
-            connection.execute(
-                """INSERT INTO server_tier_allocations
-                   (server_id, tier_code, slot_limit, updated_at) VALUES (?, ?, ?, ?)
-                   ON CONFLICT(server_id, tier_code) DO UPDATE SET
-                     slot_limit = excluded.slot_limit, updated_at = excluded.updated_at""",
-                (server_id, tier_code, slot_limit, now_text),
-            )
         self._validate_server_allocation_capacity(connection, server_id)
         self._audit(
             connection,
@@ -279,45 +229,30 @@ def _select_server_for_plan(
     *,
     telegram_id: int | None = None,
 ) -> str:
-    plan = connection.execute(
-        "SELECT quota_bytes FROM plans WHERE code = ? AND active = 1", (plan_code,)
-    ).fetchone()
-    if plan is None:
-        raise CommerceError("Unknown or inactive plan")
-    requested_quota = int(plan["quota_bytes"] or 0)
-    has_plan_allocations = int(
-        connection.execute(
-            "SELECT COUNT(*) AS n FROM server_plan_allocations WHERE plan_code = ?",
-            (plan_code,),
-        ).fetchone()["n"]
-    ) > 0
     health_max_age = max(
         30, int(os.environ.get("AURIX_SERVER_HEALTH_MAX_AGE_SECONDS", "900"))
     )
     selection_time = datetime.fromisoformat(now_text).astimezone(UTC)
     fresh_after = _now_text(selection_time - timedelta(seconds=health_max_age))
-    servers = connection.execute(
-        """SELECT * FROM outline_servers
-           WHERE enabled = 1 AND lifecycle_state = 'active'
-             AND health_status = 'healthy'
-             AND last_synced_at IS NOT NULL AND last_synced_at >= ?
-           ORDER BY server_id""",
-        (fresh_after,),
-    ).fetchall()
+    inputs = _ALLOCATION.selection_inputs(
+        connection,
+        plan_code=plan_code,
+        fresh_after=fresh_after,
+        now_text=now_text,
+        include_route_health=self._table_exists(connection, "route_health_snapshots"),
+    )
+    plan = inputs["plan"]
+    if plan is None:
+        raise CommerceError("Unknown or inactive plan")
+    requested_quota = int(plan["quota_bytes"] or 0)
+    has_plan_allocations = inputs["has_allocations"]
     candidates: list[tuple[float, int, float, str]] = []
-    for server in servers:
+    for evidence in inputs["servers"]:
+        server = evidence["server"]
         server_id = str(server["server_id"])
         probe_status = "unknown"
         probe_score = -1.0
-        probe = (
-            connection.execute(
-                """SELECT status, score, last_observed_at
-                     FROM route_health_snapshots WHERE server_id = ?""",
-                (server_id,),
-            ).fetchone()
-            if self._table_exists(connection, "route_health_snapshots")
-            else None
-        )
+        probe = evidence["probe"]
         if probe is not None and probe["last_observed_at"] is not None:
             try:
                 probe_fresh = datetime.fromisoformat(str(probe["last_observed_at"])).astimezone(UTC) >= selection_time - timedelta(seconds=health_max_age)
@@ -331,49 +266,22 @@ def _select_server_for_plan(
                 require_probe = os.environ.get("AURIX_REQUIRE_PROBE_EVIDENCE_FOR_ISSUANCE", "0").strip().lower() in {"1", "true", "yes", "on"}
                 if require_probe and probe_status == "unknown":
                     continue
-        allocation = connection.execute(
-            "SELECT slot_limit FROM server_plan_allocations WHERE server_id = ? AND plan_code = ?",
-            (server_id, plan_code),
-        ).fetchone()
+        allocation = evidence["allocation"]
         if has_plan_allocations and allocation is None:
             continue
-        allocated_count = connection.execute(
-            """SELECT
-                 (SELECT COUNT(*) FROM subscriptions WHERE server_id = ? AND plan_code = ?
-                    AND status IN ('pending', 'active')) +
-                 (SELECT COUNT(*) FROM orders WHERE server_id = ? AND plan_code = ?
-                    AND (status = 'payment_submitted' OR
-                         (status = 'awaiting_payment' AND capacity_reserved_until > ?))) AS n""",
-            (server_id, plan_code, server_id, plan_code, now_text),
-        ).fetchone()["n"]
+        allocated_count = evidence["allocated_count"]
         if allocation is not None and int(allocated_count) >= int(allocation["slot_limit"]):
             continue
         remote_keys = int(server["remote_key_count"] or 0)
-        reservations = connection.execute(
-            """SELECT COUNT(*) AS n FROM orders WHERE server_id = ?
-               AND (status = 'payment_submitted' OR
-                    (status = 'awaiting_payment' AND capacity_reserved_until > ?))""",
-            (server_id, now_text),
-        ).fetchone()["n"]
-        pending_keys = connection.execute(
-            "SELECT COUNT(*) AS n FROM subscriptions WHERE server_id = ? AND status = 'pending'",
-            (server_id,),
-        ).fetchone()["n"]
+        reservations = evidence["reservations"]
+        pending_keys = evidence["pending_keys"]
         max_keys = server["max_keys"]
         usable = None if max_keys is None else max(0, int(max_keys) - int(server["reserved_keys"] or 0))
         if usable is not None and remote_keys + int(reservations) + int(pending_keys) >= usable:
             continue
         traffic_budget = server["monthly_traffic_bytes"]
         if traffic_budget is not None:
-            committed = connection.execute(
-                """SELECT
-                   COALESCE((SELECT SUM(COALESCE(quota_bytes, 0)) FROM subscriptions
-                     WHERE server_id = ? AND status IN ('pending', 'active')), 0) +
-                   COALESCE((SELECT SUM(COALESCE(quota_bytes_snapshot, 0)) FROM orders
-                     WHERE server_id = ? AND (status = 'payment_submitted' OR
-                       (status = 'awaiting_payment' AND capacity_reserved_until > ?))), 0) AS n""",
-                (server_id, server_id, now_text),
-            ).fetchone()["n"]
+            committed = evidence["committed"]
             if int(committed or 0) + requested_quota > int(traffic_budget):
                 continue
         denominator = int(allocation["slot_limit"]) if allocation is not None and int(allocation["slot_limit"]) else (usable or 1)
@@ -384,46 +292,34 @@ def _select_server_for_plan(
     selected = min(candidates)
     if self._table_exists(connection, "route_decisions"):
         selected_score = -selected[2] if selected[2] >= 0 else None
-        connection.execute(
-            """INSERT INTO route_decisions
-               (decision_id, telegram_id, entitlement_ref, requested_region,
-                selected_server_id, decision_mode, score, evidence_json, created_at)
-               VALUES (?, ?, NULL, NULL, ?, 'automatic', ?, ?, ?)""",
-            (
-                f"decision-{_new_id()}",
-                telegram_id,
-                selected[3],
-                selected_score,
-                json.dumps(
-                    {
-                        "basis": "capacity_and_fresh_probe",
-                        "plan_code": str(plan_code),
-                        "probe_rank": selected[1],
-                    },
-                    ensure_ascii=True,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
-                now_text,
+        _ALLOCATION.record_decision(
+            connection,
+            decision_id=f"decision-{_new_id()}",
+            telegram_id=telegram_id,
+            server_id=selected[3],
+            score=selected_score,
+            evidence_json=json.dumps(
+                {
+                    "basis": "capacity_and_fresh_probe",
+                    "plan_code": str(plan_code),
+                    "probe_rank": selected[1],
+                },
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
             ),
+            now_text=now_text,
         )
     return selected[3]
 
 def plans(self) -> list[Plan]:
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT code, name, price_minor, currency, quota_bytes, duration_days
-               FROM plans WHERE active = 1 ORDER BY price_minor"""
-        ).fetchall()
+        rows = _ALLOCATION.active_plans(connection)
     return [Plan(**dict(row)) for row in rows]
 
 def get_plan(self, code: str) -> Plan:
     with self.database.connect() as connection:
-        row = connection.execute(
-            """SELECT code, name, price_minor, currency, quota_bytes, duration_days
-               FROM plans WHERE code = ? AND active = 1""",
-            (code,),
-        ).fetchone()
+        row = _ALLOCATION.active_plan(connection, code)
     if row is None:
         raise CommerceError("Unknown or inactive plan")
     return Plan(**dict(row))
@@ -437,22 +333,12 @@ def plan_availability(self, now: datetime | None = None) -> dict[str, dict[str, 
     )
     fresh_after = _now_text((now or datetime.now(UTC)) - timedelta(seconds=health_max_age))
     with self.database.connect() as connection:
-        plans = connection.execute("SELECT code FROM plans WHERE active = 1").fetchall()
-        server_count = int(
-            connection.execute(
-                "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
-            ).fetchone()["n"]
-        )
+        inputs = _ALLOCATION.availability_inputs(connection, fresh_after, now_text)
+        plans = inputs["plans"]
+        server_count = inputs["server_count"]
         for plan in plans:
             code = str(plan["code"])
-            allocations = connection.execute(
-                """SELECT a.server_id, a.slot_limit FROM server_plan_allocations a
-                   JOIN outline_servers s ON s.server_id = a.server_id
-                   WHERE a.plan_code = ? AND s.enabled = 1
-                     AND s.health_status = 'healthy'
-                     AND s.last_synced_at IS NOT NULL AND s.last_synced_at >= ?""",
-                (code, fresh_after),
-            ).fetchall()
+            allocations = inputs["allocations"][code]
             if not server_count:
                 result[code] = {"available": True, "remaining_slots": None, "managed": False}
                 continue
@@ -467,15 +353,9 @@ def plan_availability(self, now: datetime | None = None) -> dict[str, dict[str, 
                 continue
             remaining = 0
             for allocation in allocations:
-                used = connection.execute(
-                    """SELECT
-                       (SELECT COUNT(*) FROM subscriptions WHERE server_id = ? AND plan_code = ?
-                          AND status IN ('pending', 'active')) +
-                       (SELECT COUNT(*) FROM orders WHERE server_id = ? AND plan_code = ?
-                          AND (status = 'payment_submitted' OR
-                               (status = 'awaiting_payment' AND capacity_reserved_until > ?))) AS n""",
-                    (allocation["server_id"], code, allocation["server_id"], code, now_text),
-                ).fetchone()["n"]
+                used = _ALLOCATION.used_for_plan(
+                    connection, str(allocation["server_id"]), code, now_text
+                )
                 remaining += max(0, int(allocation["slot_limit"]) - int(used))
             result[code] = {"available": remaining > 0, "remaining_slots": remaining, "managed": True}
     return result
