@@ -404,9 +404,14 @@
       "max_sql_calls": 9
     },
     "identity_generations.py": {
-      "max_lines": 387,
-      "max_function_lines": 94,
-      "max_sql_calls": 29
+      "max_lines": 163,
+      "max_function_lines": 26,
+      "max_sql_calls": 0
+    },
+    "identity_generations_repository.py": {
+      "max_lines": 394,
+      "max_function_lines": 83,
+      "max_sql_calls": 30
     },
     "identity_usage.py": {
       "max_lines": 222,
@@ -648,6 +653,7 @@
         "commerce_wallet_approval_repository.py",
         "identity_usage_policy.py",
         "identity_usage_repository.py",
+        "identity_generations_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",
