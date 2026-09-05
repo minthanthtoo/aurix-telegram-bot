@@ -628,6 +628,16 @@
       "max_function_lines": 10,
       "max_sql_calls": 13
     },
+    "access_control.py": {
+      "max_lines": 319,
+      "max_function_lines": 89,
+      "max_sql_calls": 0
+    },
+    "access_control_repository.py": {
+      "max_lines": 183,
+      "max_function_lines": 24,
+      "max_sql_calls": 17
+    },
     "commerce_service_inventory_reconciliation.py": {
       "max_lines": 275,
       "max_function_lines": 263,
@@ -756,6 +766,7 @@
         "route_failover_repository.py",
         "infrastructure_provisioning_repository.py",
         "fleet_enrollment_repository.py",
+        "access_control_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",

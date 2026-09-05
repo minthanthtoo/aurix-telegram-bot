@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from access_control_repository import AccessControlRepository
+
 
 UTC = timezone.utc
 STAFF_NOTIFICATION_EVENTS = (
@@ -30,6 +32,7 @@ class StaffAccessControl:
 
     def __init__(self, database: Any, immutable_owner_id: int | None = None):
         self.database = database
+        self.repository = AccessControlRepository()
         self.immutable_owner_id = int(immutable_owner_id) if immutable_owner_id else None
 
     def _audit(
@@ -40,24 +43,9 @@ class StaffAccessControl:
         actor_id: int | None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        try:
-            connection.execute(
-                """INSERT INTO audit_events
-                   (actor_type, actor_id, action, target_type, target_id,
-                    metadata_json, created_at)
-                   VALUES ('staff', ?, ?, 'staff_account', ?, ?, ?)""",
-                (
-                    str(actor_id) if actor_id is not None else None,
-                    action,
-                    str(target_id),
-                    json.dumps(metadata or {}, sort_keys=True),
-                    _now(),
-                ),
-            )
-        except Exception:
-            # Free-only test repositories may initialize before commerce has
-            # created the shared audit table. Authorization state still wins.
-            pass
+        self.repository.audit(
+            connection, action, target_id, actor_id, metadata, _now()
+        )
 
     def bootstrap(
         self,
@@ -72,9 +60,7 @@ class StaffAccessControl:
         group_owner_id = int(group_owner["id"]) if group_owner and group_owner.get("id") else None
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            existing = connection.execute(
-                "SELECT telegram_id FROM staff_accounts WHERE role = 'owner' AND status = 'active'"
-            ).fetchone()
+            existing = self.repository.active_owner(connection)
             existing_owner = int(existing["telegram_id"]) if existing is not None else None
             legacy_admin_ids = sorted({int(value) for value in admin_ids if int(value) > 0})
             legacy_single_owner = legacy_admin_ids[0] if len(legacy_admin_ids) == 1 else None
@@ -92,22 +78,14 @@ class StaffAccessControl:
                     if group_owner_id
                     else "legacy_single_admin"
                 )
-                connection.execute(
-                    """INSERT INTO staff_accounts
-                       (telegram_id, role, status, display_name, username, source,
-                        added_by, added_at, access_version)
-                       VALUES (?, 'owner', 'active', ?, ?, ?, ?, ?, 1)
-                       ON CONFLICT(telegram_id) DO UPDATE SET
-                         role = 'owner', status = 'active', revoked_by = NULL,
-                         revoked_at = NULL, access_version = staff_accounts.access_version + 1""",
-                    (
-                        selected_owner,
-                        str(owner_profile.get("display_name") or "")[:128] or None,
-                        str(owner_profile.get("username") or "")[:128] or None,
-                        owner_source,
-                        selected_owner,
-                        _now(),
-                    ),
+                self.repository.insert_owner(
+                    connection,
+                    telegram_id=selected_owner,
+                    display_name=str(owner_profile.get("display_name") or "")[:128] or None,
+                    username=str(owner_profile.get("username") or "")[:128] or None,
+                    source=owner_source,
+                    added_by=selected_owner,
+                    now_text=_now(),
                 )
                 self._audit(
                     connection,
@@ -117,11 +95,7 @@ class StaffAccessControl:
                     {"source": owner_source},
                 )
 
-            active_admin_count = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS count FROM staff_accounts WHERE role = 'admin' AND status = 'active'"
-                ).fetchone()["count"]
-            )
+            active_admin_count = self.repository.active_admin_count(connection)
             candidates: list[dict[str, Any]] = []
             source = "none"
             if active_admin_count == 0:
@@ -139,24 +113,14 @@ class StaffAccessControl:
                 candidate_id = int(candidate.get("id") or 0)
                 if candidate_id <= 0 or candidate_id == selected_owner or candidate.get("is_bot"):
                     continue
-                connection.execute(
-                    """INSERT INTO staff_accounts
-                       (telegram_id, role, status, display_name, username, source,
-                        added_by, added_at, access_version)
-                       VALUES (?, 'admin', 'active', ?, ?, ?, ?, ?, 1)
-                       ON CONFLICT(telegram_id) DO UPDATE SET
-                         role = 'admin', status = 'active', display_name = excluded.display_name,
-                         username = excluded.username, source = excluded.source,
-                         revoked_by = NULL, revoked_at = NULL,
-                         access_version = staff_accounts.access_version + 1""",
-                    (
-                        candidate_id,
-                        str(candidate.get("display_name") or "")[:128] or None,
-                        str(candidate.get("username") or "")[:128] or None,
-                        source,
-                        selected_owner,
-                        _now(),
-                    ),
+                self.repository.insert_admin(
+                    connection,
+                    telegram_id=candidate_id,
+                    display_name=str(candidate.get("display_name") or "")[:128] or None,
+                    username=str(candidate.get("username") or "")[:128] or None,
+                    source=source,
+                    added_by=selected_owner,
+                    now_text=_now(),
                 )
                 imported += 1
                 self._audit(
@@ -175,19 +139,13 @@ class StaffAccessControl:
 
     def role_for(self, telegram_id: int) -> str | None:
         with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT role FROM staff_accounts WHERE telegram_id = ? AND status = 'active'",
-                (int(telegram_id),),
-            ).fetchone()
+            row = self.repository.role(connection, telegram_id)
         return str(row["role"]) if row is not None else None
 
     def control_group(self) -> dict[str, Any] | None:
         """Return the owner-approved control group, if one has been bound."""
         with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT control_group_id, title, bound_by, bound_at, source "
-                "FROM staff_control_group WHERE id = 1"
-            ).fetchone()
+            row = self.repository.control_group(connection)
         return dict(row) if row is not None else None
 
     def bind_control_group(
@@ -206,17 +164,12 @@ class StaffAccessControl:
         clean_title = str(title or "").strip()[:128] or None
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                """INSERT INTO staff_control_group
-                   (id, control_group_id, title, bound_by, bound_at, source)
-                   VALUES (1, ?, ?, ?, ?, 'telegram_chat_shared')
-                   ON CONFLICT(id) DO UPDATE SET
-                     control_group_id = excluded.control_group_id,
-                     title = excluded.title,
-                     bound_by = excluded.bound_by,
-                     bound_at = excluded.bound_at,
-                     source = excluded.source""",
-                (group_id, clean_title, int(owner_id), bound_at),
+            self.repository.bind_control_group(
+                connection,
+                group_id=group_id,
+                title=clean_title,
+                owner_id=int(owner_id),
+                bound_at=bound_at,
             )
             self._audit(
                 connection,
@@ -229,16 +182,12 @@ class StaffAccessControl:
 
     def owner_id(self) -> int | None:
         with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT telegram_id FROM staff_accounts WHERE role = 'owner' AND status = 'active'"
-            ).fetchone()
+            row = self.repository.owner(connection)
         return int(row["telegram_id"]) if row is not None else None
 
     def admin_ids(self) -> set[int]:
         with self.database.connect() as connection:
-            rows = connection.execute(
-                "SELECT telegram_id FROM staff_accounts WHERE status = 'active'"
-            ).fetchall()
+            rows = self.repository.active_staff_ids(connection)
         return {int(row["telegram_id"]) for row in rows}
 
     def is_admin(self, telegram_id: int) -> bool:
@@ -257,25 +206,14 @@ class StaffAccessControl:
 
     def list_staff(self) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
-            rows = connection.execute(
-                """SELECT s.*, COALESCE(NULLIF(s.display_name, ''), u.first_name, '') AS effective_name,
-                          COALESCE(NULLIF(s.username, ''), u.username) AS effective_username
-                   FROM staff_accounts s LEFT JOIN users u ON u.telegram_id = s.telegram_id
-                   WHERE s.status = 'active'
-                   ORDER BY CASE WHEN s.role = 'owner' THEN 0 ELSE 1 END,
-                            s.added_at, s.telegram_id"""
-            ).fetchall()
+            rows = self.repository.list_staff(connection)
         return [dict(row) for row in rows]
 
     def notification_preferences(self, telegram_id: int) -> dict[str, bool]:
         """Return one staff member's event choices; missing rows default on."""
         self.require_admin(telegram_id)
         with self.database.connect() as connection:
-            rows = connection.execute(
-                """SELECT event_type, enabled FROM staff_notification_preferences
-                   WHERE telegram_id = ?""",
-                (int(telegram_id),),
-            ).fetchall()
+            rows = self.repository.notification_preferences(connection, telegram_id)
         configured = {str(row["event_type"]): bool(row["enabled"]) for row in rows}
         return {event: configured.get(event, True) for event in STAFF_NOTIFICATION_EVENTS}
 
@@ -289,13 +227,9 @@ class StaffAccessControl:
             raise StaffAccessError("That notification type is unavailable")
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                """INSERT INTO staff_notification_preferences
-                   (telegram_id, event_type, enabled, updated_at)
-                   VALUES (?, ?, ?, ?)
-                   ON CONFLICT(telegram_id, event_type) DO UPDATE SET
-                     enabled = excluded.enabled, updated_at = excluded.updated_at""",
-                (int(telegram_id), event, 1 if enabled else 0, _now()),
+            now_text = _now()
+            self.repository.set_notification_preference(
+                connection, telegram_id, event, enabled, now_text
             )
             self._audit(
                 connection,
@@ -313,31 +247,19 @@ class StaffAccessControl:
             raise StaffAccessError("That account cannot be added as an administrator")
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            user = connection.execute(
-                "SELECT first_name, username FROM users WHERE telegram_id = ?", (candidate_id,)
-            ).fetchone()
+            user = self.repository.user(connection, candidate_id)
             if user is None:
                 raise StaffAccessError(
                     "That user must open the bot and use /whoami before being added"
                 )
-            connection.execute(
-                """INSERT INTO staff_accounts
-                   (telegram_id, role, status, display_name, username, source,
-                    added_by, added_at, access_version)
-                   VALUES (?, 'admin', 'active', ?, ?, 'owner_panel', ?, ?, 1)
-                   ON CONFLICT(telegram_id) DO UPDATE SET
-                     role = 'admin', status = 'active', display_name = excluded.display_name,
-                     username = excluded.username, source = 'owner_panel',
-                     added_by = excluded.added_by, added_at = excluded.added_at,
-                     revoked_by = NULL, revoked_at = NULL,
-                     access_version = staff_accounts.access_version + 1""",
-                (
-                    candidate_id,
-                    str(user["first_name"] or "")[:128] or None,
-                    str(user["username"] or "")[:128] or None,
-                    int(owner_id),
-                    _now(),
-                ),
+            self.repository.insert_admin(
+                connection,
+                telegram_id=candidate_id,
+                display_name=str(user["first_name"] or "")[:128] or None,
+                username=str(user["username"] or "")[:128] or None,
+                source="owner_panel",
+                added_by=int(owner_id),
+                now_text=_now(),
             )
             self._audit(connection, "admin_added", candidate_id, owner_id)
         return next(item for item in self.list_staff() if int(item["telegram_id"]) == candidate_id)
@@ -349,20 +271,13 @@ class StaffAccessControl:
             raise StaffAccessError("The owner cannot be removed or demoted from Telegram")
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            updated = connection.execute(
-                """UPDATE staff_accounts
-                   SET status = 'revoked', revoked_by = ?, revoked_at = ?,
-                       access_version = access_version + 1
-                   WHERE telegram_id = ? AND role = 'admin' AND status = 'active'""",
-                (int(owner_id), _now(), target_id),
+            now_text = _now()
+            updated = self.repository.revoke_admin(
+                connection, target_id, int(owner_id), now_text
             )
             if int(getattr(updated, "rowcount", 0) or 0) != 1:
                 raise StaffAccessError("Active administrator not found")
-            connection.execute(
-                """UPDATE admin_action_challenges SET status = 'cancelled', cancelled_at = ?
-                   WHERE admin_id = ? AND status = 'pending'""",
-                (_now(), target_id),
-            )
+            self.repository.cancel_challenges(connection, target_id, now_text)
             self._audit(connection, "admin_revoked", target_id, owner_id)
 
     def group_sync_preview(
@@ -393,10 +308,12 @@ class StaffAccessControl:
         }
         run_id = uuid.uuid4().hex
         with self.database.connect() as connection:
-            connection.execute(
-                """INSERT INTO staff_sync_runs
-                   (id, control_group_id, requested_by, source, status, snapshot_json, created_at)
-                   VALUES (?, ?, ?, 'telegram_group', 'previewed', ?, ?)""",
-                (run_id, int(control_group_id), int(owner_id), json.dumps(snapshot), _now()),
+            self.repository.insert_sync_run(
+                connection,
+                run_id=run_id,
+                control_group_id=control_group_id,
+                owner_id=owner_id,
+                snapshot=snapshot,
+                now_text=_now(),
             )
         return {"run_id": run_id, **snapshot}
