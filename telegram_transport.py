@@ -68,6 +68,7 @@ class TelegramBot(
         "📈 Capacity": "/capacity",
         "🔎 Consistency": "/reconcile",
         "🔁 Failed Jobs": "/failed",
+        "🧩 Key Repairs": "/repairs",
         "🚨 Enforcement": "/enforcement",
         "🎁 Promo Settings": "/promo",
         "🧪 Receipt System": "/receiptsystem",
@@ -88,6 +89,7 @@ class TelegramBot(
             "/stoppromo",
             "/resumepromo",
             "/failed",
+            "/repairs",
             "/migrations",
             "/retry",
             "/retryjob",
@@ -105,9 +107,10 @@ class TelegramBot(
             "/notifications",
             "/serverstate",
             "/migratekey",
+            "/approverepair",
         }
     )
-    OWNER_ONLY_COMMANDS = frozenset({"/owner", "/staff", "/addadmin", "/removeadmin", "/groupsync", "/serverstate", "/migratekey"})
+    OWNER_ONLY_COMMANDS = frozenset({"/owner", "/staff", "/addadmin", "/removeadmin", "/groupsync", "/serverstate", "/migratekey", "/approverepair"})
     ADMIN_CONFIRMATION_COMMANDS = frozenset(
         {
             "/retry",
@@ -124,6 +127,7 @@ class TelegramBot(
             "/removeadmin",
             "/serverstate",
             "/migratekey",
+            "/approverepair",
         }
     )
     UNKNOWN_ACTION_TEXT = "Use the menu to choose an AuriX action."
@@ -596,6 +600,13 @@ class TelegramBot(
                             self.send(chat_id, "This worker item has no customer order reference.")
                     elif view == "migrations":
                         self._show_migration_detail(
+                            chat_id,
+                            telegram_id,
+                            item,
+                            message_id=message.get("message_id"),
+                        )
+                    elif view == "repairs":
+                        self._show_managed_repair_detail(
                             chat_id,
                             telegram_id,
                             item,

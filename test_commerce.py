@@ -759,6 +759,82 @@ class CommerceServiceTest(unittest.TestCase):
         with self.assertRaisesRegex(CommerceError, "not present"):
             self.service.review_remote_key("default", "missing", "accepted_external", 999)
 
+    def test_managed_missing_key_requires_two_observations_then_preserves_remaining_quota(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=1))
+
+        # Outline no longer lists the key, but its transfer endpoint still
+        # exposes the cumulative usage. The first absence is only recorded.
+        self.outline.keys.pop("1")
+        self.outline.transfer = {"1": 1_000_000}
+        first = self.service.refresh_server_inventory(self.now + timedelta(minutes=2))[0]
+        self.assertEqual(first["managed_missing_key_count"], 1)
+        self.assertEqual(first["repair_jobs_queued"], 0)
+
+        second = self.service.refresh_server_inventory(self.now + timedelta(minutes=3))[0]
+        self.assertEqual(second["repair_jobs_queued"], 1)
+        with self.database.connect() as connection:
+            repair = connection.execute(
+                "SELECT status, used_bytes, quota_bytes FROM managed_key_repair_jobs"
+            ).fetchone()
+        self.assertEqual(tuple(repair), ("pending", 1_000_000, 50_000_000_000))
+
+        self.assertEqual(
+            self.service.process_managed_key_repairs(self.now + timedelta(minutes=3)),
+            1,
+        )
+        self.assertEqual(len(self.outline.created), 2)
+        with self.database.connect() as connection:
+            key = connection.execute(
+                "SELECT outline_key_id, quota_bytes, status FROM paid_vpn_keys"
+            ).fetchone()
+            repair = connection.execute(
+                "SELECT status, used_bytes, quota_bytes FROM managed_key_repair_jobs"
+            ).fetchone()
+            notice = connection.execute(
+                "SELECT kind, access_url_ciphertext FROM notifications WHERE kind = 'vpn_key_repaired'"
+            ).fetchone()
+            audit = connection.execute(
+                "SELECT action, metadata_json FROM audit_events WHERE action = 'managed_key_repaired'"
+            ).fetchone()
+        self.assertEqual(tuple(key), ("1", 49_999_000_000, "active"))
+        self.assertEqual(tuple(repair), ("done", 1_000_000, 49_999_000_000))
+        self.assertIsNotNone(notice)
+        self.assertNotIn("ss://", str(notice["access_url_ciphertext"]))
+        self.assertEqual(audit["action"], "managed_key_repaired")
+        self.assertIn("49999000000", audit["metadata_json"])
+
+    def test_managed_missing_key_without_fresh_usage_escalates_without_quota_reset(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=1))
+        self.outline.keys.pop("1")
+        self.outline.transfer = {}
+
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=2))
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=3))
+        self.assertEqual(
+            self.service.process_managed_key_repairs(self.now + timedelta(minutes=3)),
+            0,
+        )
+        with self.database.connect() as connection:
+            repair = connection.execute(
+                "SELECT status, last_error FROM managed_key_repair_jobs"
+            ).fetchone()
+            key = connection.execute(
+                "SELECT outline_key_id, quota_bytes, status FROM paid_vpn_keys"
+            ).fetchone()
+        self.assertEqual(tuple(repair), ("manual", "usage_observation_required"))
+        self.assertEqual(tuple(key), ("1", 50_000_000_000, "active"))
+        self.assertEqual(len(self.outline.created), 1)
+
     def test_capacity_snapshot_exposes_read_only_policy_and_admission_posture(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)
@@ -1333,15 +1409,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "5285b42c7f9aefc6379602d6809353dfbc8253fe64d9b9fc3ad18a7d80af4734",
+            "c81b427dcb6d99ea66f6b4cd8013624277a0df1c9f6f5641bcdf93c4517268ee",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "0ae64f8d333dfafcd056257c9d283691b936113e8e66b032c4e08f58338c024e",
+            "5e73cd626017b7185c1726f7610e1cb483a2481aaad902de363df28028ec55a7",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "a4712ab5bf180d19eeb6924c74d2f4aa5b1d8b6d015d85c952004b01b53bc369",
+            "b58b7b287ac78be20edfa8de348799fb478c7841d1ab17c424f338d9d9944b93",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

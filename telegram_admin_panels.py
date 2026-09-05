@@ -79,6 +79,19 @@ class TelegramAdminMixin:
                 f"{source} → {target}"
                 + (f"\n{error}" if error else "")
             )
+        elif view == "repairs":
+            status = str(item.get("status") or "-").replace("_", " ").title()
+            quota = int(item.get("quota_bytes") or 0)
+            used = item.get("used_bytes")
+            usage = "unknown" if used is None else f"{int(used):,}/{quota:,} B"
+            error = str(item.get("last_error") or "")[:180]
+            text = (
+                f"{status} · {str(item.get('kind') or '-').upper()} · job:{short_id}\n"
+                f"tg:{str(item.get('telegram_id') or '-')[-6:]} · server:{str(item.get('server_id') or '-')[:18]}\n"
+                f"key:{str(item.get('source_external_id') or '-')[:18]} · usage:{usage}\n"
+                f"expires:{str(item.get('expires_at') or '-')[:19]}"
+                + (f"\n{error}" if error else "")
+            )
         else:
             text = f"tg:{str(item.get('telegram_id') or '-')[-6:]} · key:{str(item.get('outline_key_id') or '-')[:12]}\n{item.get('reason') or '-'} · {item.get('remote_state') or '-'}"
         return text[:700], short_id
@@ -96,6 +109,11 @@ class TelegramAdminMixin:
         if view == "migrations":
             return list(
                 self._admin_call(telegram_id, "endpoint_migration_jobs", limit=100)
+                or []
+            )
+        if view == "repairs":
+            return list(
+                self._admin_call(telegram_id, "managed_key_repair_jobs", status="open", limit=100)
                 or []
             )
         if view == "enforcement":
@@ -127,6 +145,7 @@ class TelegramAdminMixin:
             "receipts": "🧾 Receipt Review",
             "failed": "🔁 Worker Jobs",
             "migrations": "🔁 Endpoint Migrations",
+            "repairs": "🧩 Managed Key Repairs",
             "enforcement": "🚨 Enforcement",
         }.get(view, "AuriX Admin")
         text = f"{title} · {len(items)} open\nPage {page + 1}/{pages} · updated {datetime.now(UTC).strftime('%H:%M UTC')}"
@@ -155,6 +174,7 @@ class TelegramAdminMixin:
                 "receipts": "No unreviewed receipts.",
                 "failed": "No terminal worker failures.",
                 "migrations": "No open endpoint migrations.",
+                "repairs": "No managed-key repairs are waiting for action.",
                 "enforcement": "No free/trial termination events recorded.",
             }.get(view, "Nothing needs attention.")
             if message_id is not None:
@@ -184,6 +204,7 @@ class TelegramAdminMixin:
                 [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
                 [
                     ("🔁 Failed Jobs", "a:n:failed"),
+                    ("🧩 Key Repairs", "a:n:repairs"),
                     ("🔁 Migrations", "a:n:migrations"),
                     ("🚨 Enforcement", "a:n:enforcement"),
                 ],
@@ -210,6 +231,8 @@ class TelegramAdminMixin:
                     f"{report.get('pending_receipt_uploads', 0)} upload(s) pending · "
                     f"{report.get('failed_receipt_uploads', 0)} upload(s) failed · "
                     f"{report.get('failed_jobs', 0)} failed job(s) · "
+                    f"{report.get('managed_key_repairs_pending', 0)} key repair(s) pending · "
+                    f"{report.get('managed_key_repairs_manual', 0)} key repair(s) manual · "
                     f"{report.get('stale_receipts', 0)} stale review(s) · "
                     f"{report.get('dead_notifications', 0)} dead notification(s)"
                 )
@@ -858,6 +881,59 @@ class TelegramAdminMixin:
                 pass
         self.send(chat_id, text, markup)
 
+    def _show_managed_repair_detail(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        repair: dict[str, Any],
+        message_id: int | None = None,
+    ) -> None:
+        """Render a missing-key repair with explicit owner-only decisions."""
+        repair_id = str(repair.get("id") or repair.get("job_id") or "-")
+        status = str(repair.get("status") or "unknown").replace("_", " ").title()
+        kind = str(repair.get("kind") or "-").upper()
+        quota = int(repair.get("quota_bytes") or 0)
+        used = repair.get("used_bytes")
+        usage = "unknown — fresh Outline metrics required" if used is None else f"{int(used):,} bytes"
+        error = str(repair.get("last_error") or "")
+        lines = [
+            "🧩 Managed-key repair",
+            "",
+            f"Job: {repair_id[:24]}",
+            f"Status: {status} · {kind}",
+            f"Customer: tg:{str(repair.get('telegram_id') or '-')[-6:]}",
+            f"Server: {str(repair.get('server_id') or '-')[:32]}",
+            f"Old key: {str(repair.get('source_external_id') or '-')[:32]}",
+            f"Planned name: {str(repair.get('key_name') or '-')[:48]}",
+            f"Observed usage: {usage} / quota {quota:,} bytes",
+            f"Expires: {str(repair.get('expires_at') or '-')[:32]}",
+            f"Attempts: {int(repair.get('attempts') or 0)}",
+        ]
+        if error:
+            lines.extend(["", f"Reason: {error[:500]}"])
+        lines.extend(
+            [
+                "",
+                "Automatic repair never guesses unknown usage or resets quota. "
+                "A successful replacement keeps the measured remaining allowance.",
+            ]
+        )
+        rows: list[list[tuple[str, str]]] = []
+        if self._is_owner(telegram_id) and status.lower() in {"manual", "failed"} and error != "quota_already_exhausted":
+            rows.append([("✅ Approve · preserve usage", f"a:j:{repair_id}:safe")])
+            if error == "usage_observation_required":
+                rows.append([("⚠️ Approve full quota (explicit)", f"a:j:{repair_id}:full")])
+        rows.append([("🔄 Refresh Repairs", "a:n:repairs"), ("⬅ Admin Home", "a:n:admin")])
+        text = "\n".join(lines)[:4096]
+        markup = self._inline_keyboard(rows)
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
+
     def _owner_keyboard(self) -> dict[str, Any]:
         return self._inline_keyboard(
             [
@@ -868,6 +944,7 @@ class TelegramAdminMixin:
                 [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
                 [
                     ("🔁 Failed Jobs", "a:n:failed"),
+                    ("🧩 Key Repairs", "a:n:repairs"),
                     ("🔁 Migrations", "a:n:migrations"),
                     ("🚨 Enforcement", "a:n:enforcement"),
                 ],
@@ -1079,6 +1156,21 @@ class TelegramAdminMixin:
                         "requested_mode": args[0] if args else None,
                     }
                 )
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
+        if command == "/approverepair":
+            try:
+                repairs = self._admin_call(
+                    telegram_id, "managed_key_repair_jobs", status="all", limit=500
+                )
+                repair = next(
+                    (item for item in repairs if str(item.get("id")) == target_id), None
+                )
+                if repair is None:
+                    snapshot.update({"state": "missing"})
+                else:
+                    snapshot.update({"state": "present", "repair": repair})
             except Exception as exc:
                 snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
             return snapshot
@@ -1326,6 +1418,25 @@ class TelegramAdminMixin:
                     f"Target endpoint: {snapshot.get('target_server_id') or (args[2] if len(args) > 2 else '-')}",
                     f"Target state: {snapshot.get('target_status') or '-'} · admission {'enabled' if snapshot.get('target_accepts_new_keys') else 'blocked'}",
                     "Result: create a replacement with fresh source-usage accounting, cut over locally, notify the customer, then delete the old remote key.",
+                ]
+            )
+        if command == "/approverepair":
+            repair = snapshot.get("repair") or {}
+            quota = int(repair.get("quota_bytes") or 0)
+            used = repair.get("used_bytes")
+            usage = "unknown" if used is None else f"{int(used):,} bytes"
+            full = len(args) == 2 and args[1].lower() == "full"
+            return "\n".join(
+                [
+                    f"Repair: {repair.get('id') or (args[0] if args else '-')} · {str(repair.get('status') or '-').title()}",
+                    f"Customer: tg:{str(repair.get('telegram_id') or '-')[-6:]} · server: {repair.get('server_id') or '-'}",
+                    f"Old key: {repair.get('source_external_id') or '-'}",
+                    f"Observed usage: {usage} / quota {quota:,} bytes",
+                    (
+                        "Result: restore a replacement with the full original quota because fresh usage is unavailable; this is an explicit owner override."
+                        if full
+                        else "Result: restore a replacement using fresh usage and preserve the remaining quota; no quota reset."
+                    ),
                 ]
             )
         if command == "/retryjob":

@@ -293,6 +293,51 @@ node. The real Outline client uses deterministic `PUT`/read-after-ambiguous
 recovery; legacy adapters that only expose non-idempotent `POST` remain a
 bounded compatibility risk and should be retired before a multi-writer rollout.
 
+### Missing managed-key repair (automatic, quota-preserving)
+
+Inventory drift is handled differently from an untracked remote key. If a
+successful Outline inventory no longer contains a key that AuriX still marks
+active, the reconciler records the disappearance on the server-scoped audit
+row. It must be absent in **two independent observations** (by default at
+least 60 seconds apart) before a durable `managed_key_repair_jobs` row opens.
+This prevents a transient API response, stale cache, or short network fault
+from creating a replacement key.
+
+The repair worker then:
+
+1. revalidates the local entitlement, expiry, server, and exact old key ID;
+2. re-GETs that ID to recover from an ambiguous inventory/create race;
+3. fetches fresh transfer metrics from the same endpoint;
+4. refuses to guess when usage is unavailable, and refuses to restore an
+   exhausted key;
+5. creates or deterministically recreates the key, applies the **remaining**
+   allowance (original quota minus observed usage), and commits the new
+   server-scoped ID and encrypted access URL atomically;
+6. revokes the old local credential binding, records `managed_key_repaired`,
+   notifies the customer, and leaves the complete audit trail.
+
+Unknown usage is therefore `manual`, not a hidden quota reset. An owner can
+open **Admin → Managed Key Repairs**, inspect the reason, and confirm either a
+normal fresh-usage repair or the separately labelled **full-quota override**.
+Both choices require the existing one-time confirmation challenge and are
+audited. Staff cannot approve the override. Untracked remote keys remain
+read-only migration/audit items and are never adopted or deleted by this flow.
+
+Relevant controls are deliberately conservative:
+
+```text
+AURIX_KEY_REPAIR_REQUIRED_OBSERVATIONS=2
+AURIX_KEY_REPAIR_OBSERVATION_INTERVAL_SECONDS=60
+AURIX_KEY_REPAIR_MAX_ATTEMPTS=8
+AURIX_KEY_REPAIR_ALLOW_UNKNOWN_USAGE=0
+AURIX_KEY_REPAIR_ALLOW_STALE_USAGE=0
+```
+
+Use the admin `/repairs` panel for open `pending`, `running`, `failed`, and
+`manual` decisions. `/reconcile` includes missing-key and repair counters, and
+the maintenance worker processes only bounded, leased jobs. A failed or manual
+decision never changes customer quota until a successful repair commit.
+
 Traffic commitment is conservative: active/pending quota commitments plus the
 new requested quota must fit the declared server budget. It is not a cloud bill
 forecast and must not be confused with observed trailing-30-day transfer.

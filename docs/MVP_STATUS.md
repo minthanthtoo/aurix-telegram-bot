@@ -16,7 +16,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Staff-assisted payment review | Implemented locally | Receipt photos/documents are uploaded to a private Supabase Storage bucket, while the database keeps only immutable object metadata/checksum and review state; optional vision LLM extracts candidate fields; `/receipts`, `/receipt`, `/verify`, and `/rejectreceipt` expose a review queue; staff verification remains authoritative and required before screenshot-paid approval |
 | Wallet ledger | Implemented locally | Immutable credit/reserve/capture/release ledger and balance projection; external receipts use credit→reserve→capture while wallet purchases use reserve→capture without double deduction |
 | Subscription lifecycle | Implemented locally | UTC start/expiry, active/pending/expired states, and independent paid entitlements (multiple simultaneous keys per customer); untouched orders expire after 24 hours |
-| Outline provisioning | Implemented locally | TLS pinning, GET/list/POST/optional deterministic PUT, quota set/delete, metrics, and 404-safe key deletion |
+| Outline provisioning | Implemented locally | TLS pinning, GET/list/POST/optional deterministic PUT, quota set/delete, metrics, 404-safe key deletion, and two-observation missing-key repair that preserves remaining quota |
 | Durable external-effect state | Implemented for one process | SQLite jobs and notifications with retry, stale-running recovery, dedupe; paid and free/trial/promo issuance commits a server-scoped provisioning intent before any Outline call, then reconciles it through the maintenance worker; deterministic IDs and read-after-ambiguous recovery prevent duplicate keys when the adapter supports it; ten-minute conversational prompts survive restarts |
 | Expiry and revocation | Implemented locally | Expiry job, 404-safe known-key deletion, expiry notification; expired/pending subscriptions cannot disclose or later provision keys |
 | Quota exhaustion enforcement | Implemented locally | Metrics `used >= configured limit` fails closed, records a deduplicated event, and queues hard DELETE; Outline has no documented pause endpoint |
@@ -43,12 +43,13 @@ engineering estimates, not production traffic or revenue metrics.
   SQLite, PostgreSQL-adapter, Supabase Storage client, receipt, trial, quota,
   order, multi-key, quota-warning, Telegram delivery, infrastructure-worker,
   wallet, restart-safe interaction, receipt-fingerprint, Telegram timestamp
-  formatting, notification-lease, deterministic-entitlement-recovery, receipt-model-selection,
+  formatting, notification-lease, deterministic-entitlement-recovery, managed-key-repair,
+  receipt-model-selection,
   SQLite→PostgreSQL migration safety, encrypted PostgreSQL backup dispatch,
   PostgreSQL/node off-site-only recovery and plaintext-hash integrity checks,
   pinned node-bootstrap TLS, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (427 tests passing at the latest verification).
+  production-acceptance suite (430 tests passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**. The current sanitized
   acceptance run passes source, lint, compilation, tests, required secret names,
   fleet-manifest parsing, backup-key validation, and the recovery entrypoint,

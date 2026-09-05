@@ -32,7 +32,9 @@ disabled by default and separate from the Telegram runtime. See
 [`docs/MVP_STATUS.md`](docs/MVP_STATUS.md) for the current comparison with the
 final architecture and
 [`docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`](docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md)
-for the canonical fleet design and operations guide.
+for the canonical fleet design and operations guide. The missing-key,
+quota-preserving recovery procedure is documented separately in
+[`docs/MANAGED_KEY_REPAIR_RUNBOOK.md`](docs/MANAGED_KEY_REPAIR_RUNBOOK.md).
 
 Every branch is checked by the repository CI workflow before it is suitable for
 deployment: Python compilation, Ruff, the full test suite, shell syntax, and

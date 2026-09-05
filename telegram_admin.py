@@ -36,6 +36,8 @@ class AdminOperations:
             "migratable_credentials",
             "refresh_server_inventory",
             "remote_key_inventory",
+            "managed_key_repair_jobs",
+            "process_managed_key_repairs",
             "configure_server_capacity",
             "configure_plan_allocation",
             "configure_tier_allocation",
@@ -55,6 +57,7 @@ class AdminOperations:
         "set_server_lifecycle",
         "server_drain_readiness",
         "queue_endpoint_migration",
+        "approve_managed_key_repair",
     })
     SERVICE_OPERATIONS = frozenset(
         {

@@ -235,6 +235,8 @@ class TelegramCommandMixin:
                 pass
             elif command == "/migratekey" and len(args) != 3:
                 pass
+            elif command == "/approverepair" and len(args) not in (1, 2):
+                pass
             else:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
@@ -251,6 +253,11 @@ class TelegramCommandMixin:
                     "/removeadmin": lambda: f"Revoke AuriX administrator access from Telegram user {args[0]}?",
                     "/serverstate": lambda: f"Change endpoint {args[0]} lifecycle to {args[1]}?",
                     "/migratekey": lambda: f"Move credential {args[1]} from {args[0]} to {args[2]} while preserving remaining quota and expiry?",
+                    "/approverepair": lambda: (
+                        f"Approve managed-key repair {args[0]} with explicit full-quota restoration?"
+                        if len(args) == 2 and args[1].lower() == "full"
+                        else f"Approve managed-key repair {args[0]} while preserving observed usage?"
+                    ),
                 }[command]()
                 self._queue_admin_confirmation(
                     chat["id"],
@@ -273,6 +280,7 @@ class TelegramCommandMixin:
                         "/removeadmin": "🛑 Confirm Remove Admin",
                         "/serverstate": "✅ Confirm Endpoint State",
                         "/migratekey": "🔁 Confirm Key Migration",
+                        "/approverepair": "✅ Confirm Repair",
                     }[command],
                 )
                 return
@@ -1067,6 +1075,10 @@ class TelegramCommandMixin:
                     "pending_revocations",
                     "dead_notifications",
                     "wallet_balance_mismatches",
+                    "managed_key_missing",
+                    "managed_key_repairs_pending",
+                    "managed_key_repairs_failed",
+                    "managed_key_repairs_manual",
                 }
                 healthy = all(report.get(key, 0) == 0 for key in issue_keys)
                 lines = [
@@ -1105,6 +1117,23 @@ class TelegramCommandMixin:
                     )
                 else:
                     self._open_admin_panel(chat["id"], telegram_id, "failed")
+        elif command == "/repairs":
+            if not self._is_admin(telegram_id):
+                self._send_customer_fallback(chat["id"], telegram_id)
+            elif self.commerce is None:
+                self.send(chat["id"], "Commerce is not configured.")
+            else:
+                jobs = self._admin_call(
+                    telegram_id, "managed_key_repair_jobs", status="open", limit=100
+                )
+                if not jobs:
+                    self.send(
+                        chat["id"],
+                        "No managed-key repairs are waiting for action.",
+                        self._admin_keyboard(telegram_id),
+                    )
+                else:
+                    self._open_admin_panel(chat["id"], telegram_id, "repairs")
         elif command == "/migrations":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -1199,6 +1228,37 @@ class TelegramCommandMixin:
                         for item in history
                     )
                     self.send(chat["id"], "\n".join(lines), self._admin_keyboard(telegram_id))
+        elif command == "/approverepair":
+            if not self._is_owner(telegram_id):
+                self._send_customer_fallback(chat["id"], telegram_id)
+            elif self.commerce is None:
+                self.send(chat["id"], "Commerce is not configured.")
+            elif len(args) not in (1, 2) or (len(args) == 2 and args[1].lower() != "full"):
+                self.send(chat["id"], "Usage: /approverepair <repair-id> [full]")
+            else:
+                try:
+                    result = self._admin_owner_call(
+                        telegram_id,
+                        "approve_managed_key_repair",
+                        args[0],
+                        telegram_id,
+                        allow_unknown_usage=len(args) == 2,
+                    )
+                except (CommerceError, PermissionError) as exc:
+                    self.send(
+                        chat["id"],
+                        str(exc),
+                        self._inline_keyboard([[ ("🧩 Key Repairs", "a:n:repairs") ]]),
+                    )
+                else:
+                    self.send(
+                        chat["id"],
+                        (
+                            f"✅ Repair {result.get('repair_id') or args[0]} queued. "
+                            "The worker will re-check the endpoint, usage and expiry before changing the key."
+                        ),
+                        self._inline_keyboard([[ ("🧩 Key Repairs", "a:n:repairs"), ("🏠 Admin Home", "a:n:admin") ]]),
+                    )
         elif command in ("/approve", "/reject"):
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)

@@ -948,6 +948,226 @@ class CommerceService(CommerceWorkerMixin):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    @staticmethod
+    def _managed_repair_required_observations() -> int:
+        """Require independent missing-key observations before recreating access."""
+        try:
+            return max(
+                2,
+                min(10, int(os.environ.get("AURIX_KEY_REPAIR_REQUIRED_OBSERVATIONS", "2"))),
+            )
+        except (TypeError, ValueError):
+            return 2
+
+    @staticmethod
+    def _managed_repair_observation_interval_seconds() -> int:
+        """Keep repeated UI refreshes from fabricating independent observations."""
+        try:
+            return max(
+                0,
+                min(
+                    86_400,
+                    int(os.environ.get("AURIX_KEY_REPAIR_OBSERVATION_INTERVAL_SECONDS", "60")),
+                ),
+            )
+        except (TypeError, ValueError):
+            return 60
+
+    @staticmethod
+    def _managed_repair_allow_unknown_usage() -> bool:
+        """Return whether an operator explicitly permits a full-quota repair.
+
+        A missing remote key has no trustworthy usage value after an out-of-band
+        deletion.  The safe default is to escalate for review rather than reset
+        the entitlement to its original quota.  A controlled owner-only repair
+        can opt in through the deployment environment when the operator has
+        independently verified that no traffic was served.
+        """
+        return os.environ.get("AURIX_KEY_REPAIR_ALLOW_UNKNOWN_USAGE", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    @staticmethod
+    def _managed_repair_key_name(row: Any, previous_name: str | None = None) -> str:
+        """Keep a stable, human-readable name when a key is recreated."""
+        if previous_name and str(previous_name).strip():
+            return str(previous_name).strip()[:128]
+        raw_identity = str(row.get("username") if hasattr(row, "get") else row["username"] or "")
+        raw_identity = raw_identity.lstrip("@") or str(row["telegram_id"])
+        identity = re.sub(r"[^A-Za-z0-9_-]+", "-", raw_identity).strip("-_")[:48]
+        identity = identity or str(row["telegram_id"])
+        kind = str(row["kind"] or "free").lower()
+        if kind == "paid":
+            plan_name = str(row.get("plan_name") or row.get("plan_code") or "paid")
+            match = re.search(r"\b(\d+)\s*GB\b", plan_name, re.IGNORECASE)
+            tier = f"PAID{match.group(1)}GB" if match else str(row.get("plan_code") or "PAID")
+        elif row.get("campaign_code"):
+            tier = f"PROMO-{row['campaign_code']}"
+        elif str(row.get("key_type") or "") == "monthly_trial":
+            tier = "FREE3GB"
+        else:
+            tier = "FREE300MB"
+        duration = f"{int(row.get('duration_days') or (30 if tier == 'FREE3GB' else 1))}day"
+        created_at = str(row.get("created_at") or "")
+        try:
+            started = datetime.fromisoformat(created_at).astimezone(UTC)
+            timestamp = started.strftime("%Y%m%d%H%M")
+        except (TypeError, ValueError, OverflowError):
+            timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M")
+        return f"{identity}-{tier}-{duration}-{timestamp}"[:128]
+
+    def _managed_repair_rows(self, connection: Any, server_id: str) -> list[dict[str, Any]]:
+        """Return active managed entitlements that may need remote repair."""
+        rows: list[dict[str, Any]] = []
+        paid_rows = connection.execute(
+            """SELECT 'paid' AS kind, CAST(k.id AS TEXT) AS local_key_ref,
+                      k.id AS local_id, k.telegram_id, k.outline_key_id AS source_external_id,
+                      k.quota_bytes, k.last_usage_bytes, k.created_at, s.expires_at,
+                      s.plan_name, s.plan_code, s.duration_days, u.username
+                 FROM paid_vpn_keys k
+                 JOIN subscriptions s ON s.id = k.subscription_id
+                 JOIN users u ON u.telegram_id = k.telegram_id
+                WHERE k.server_id = ? AND k.status = 'active' AND s.status = 'active'
+                  AND k.quota_bytes IS NOT NULL AND COALESCE(k.quota_reason, '') = ''""",
+            (server_id,),
+        ).fetchall()
+        rows.extend(dict(row) for row in paid_rows)
+        if self._table_exists(connection, "keys"):
+            free_rows = connection.execute(
+                """SELECT 'free' AS kind, CAST(k.id AS TEXT) AS local_key_ref,
+                          k.id AS local_id, k.telegram_id, k.outline_key_id AS source_external_id,
+                          k.data_limit_bytes AS quota_bytes, k.last_usage_bytes,
+                          k.created_at, k.expires_at, k.key_type, u.username,
+                          g.campaign_code,
+                          COALESCE(c.duration_days,
+                                   CASE WHEN k.key_type = 'monthly_trial' THEN 30 ELSE 1 END)
+                              AS duration_days
+                     FROM keys k
+                     JOIN users u ON u.telegram_id = k.telegram_id
+                     LEFT JOIN giveaway_claims g ON g.key_id = k.id
+                     LEFT JOIN giveaway_campaigns c ON c.code = g.campaign_code
+                    WHERE k.server_id = ? AND k.status = 'active'
+                      AND COALESCE(k.quota_reason, '') = ''
+                      AND k.data_limit_bytes IS NOT NULL""",
+                (server_id,),
+            ).fetchall()
+            rows.extend(dict(row) for row in free_rows)
+        for row in rows:
+            row["source_external_id"] = str(row.get("source_external_id") or "").strip()
+            row["key_name"] = self._managed_repair_key_name(row)
+        return [row for row in rows if row["source_external_id"]]
+
+    def _enqueue_managed_key_repair(
+        self,
+        connection: Any,
+        row: dict[str, Any],
+        *,
+        observed_at: str,
+        missing_observation_count: int,
+        previous_name: str | None,
+        usage_bytes: int | None,
+    ) -> str:
+        """Create/update one durable repair decision without calling Outline."""
+        local_ref = str(row["local_key_ref"])
+        server_id = str(row["server_id"])
+        kind = str(row["kind"])
+        quota = int(row["quota_bytes"] or 0)
+        name = self._managed_repair_key_name(row, previous_name)
+        existing = connection.execute(
+            """SELECT * FROM managed_key_repair_jobs
+               WHERE server_id = ? AND kind = ? AND local_key_ref = ?""",
+            (server_id, kind, local_ref),
+        ).fetchone()
+        allow_unknown = self._managed_repair_allow_unknown_usage()
+        effective_usage = usage_bytes
+        usage_is_fresh = usage_bytes is not None
+        if effective_usage is None:
+            try:
+                effective_usage = int(row.get("last_usage_bytes"))
+            except (TypeError, ValueError):
+                effective_usage = None
+            usage_is_fresh = False
+        if not usage_is_fresh and os.environ.get(
+            "AURIX_KEY_REPAIR_ALLOW_STALE_USAGE", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}:
+            usage_is_fresh = effective_usage is not None
+        if effective_usage is not None:
+            effective_usage = max(0, effective_usage)
+        if not usage_is_fresh and not allow_unknown:
+            status = "manual"
+            error = "usage_observation_required"
+        elif effective_usage is not None and effective_usage >= quota:
+            status = "manual"
+            error = "quota_already_exhausted"
+        else:
+            status = "pending"
+            error = None
+        if existing is None:
+            connection.execute(
+                """INSERT INTO managed_key_repair_jobs
+                   (id, kind, server_id, telegram_id, local_key_ref,
+                    source_external_id, target_external_id, key_name, quota_bytes,
+                    used_bytes, expires_at, status, attempts, next_attempt_at,
+                    last_error, observed_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
+                (
+                    _new_id(), kind, server_id, int(row["telegram_id"]), local_ref,
+                    str(row["source_external_id"]), str(row["source_external_id"]), name,
+                    quota, effective_usage, str(row["expires_at"]), status,
+                    observed_at, error, observed_at, observed_at,
+                ),
+            )
+            job_state = "created"
+        else:
+            current_status = str(existing["status"] or "")
+            # A completed/cancelled job belongs to an earlier disappearance.
+            # Re-open it only after a new two-observation episode, preserving
+            # the same durable row and audit history without duplicate jobs.
+            reopen = current_status in {"done", "cancelled"} or str(
+                existing["source_external_id"]
+            ) != str(row["source_external_id"])
+            if reopen:
+                connection.execute(
+                    """UPDATE managed_key_repair_jobs
+                       SET source_external_id = ?, target_external_id = ?, key_name = ?,
+                           quota_bytes = ?, used_bytes = ?, expires_at = ?, status = ?,
+                           attempts = 0, next_attempt_at = ?, locked_at = NULL,
+                           last_error = ?, observed_at = ?, completed_at = NULL
+                         WHERE id = ?""",
+                    (
+                        str(row["source_external_id"]), str(row["source_external_id"]), name,
+                        quota, effective_usage, str(row["expires_at"]), status, observed_at,
+                        error, observed_at, existing["id"],
+                    ),
+                )
+                job_state = "reopened"
+            else:
+                job_state = current_status or "existing"
+        if job_state in {"created", "reopened"}:
+            self._audit(
+                connection,
+                "managed_key_missing",
+                "managed_key",
+                f"{server_id}:{kind}:{local_ref}",
+                "system",
+                None,
+                {
+                    "source_external_id": str(row["source_external_id"]),
+                    "missing_observation_count": int(missing_observation_count),
+                    "repair_status": status,
+                    "used_bytes": effective_usage,
+                    "quota_bytes": quota,
+                    "job_state": job_state,
+                },
+            )
+        # Let the caller distinguish a newly opened repair episode from a
+        # repeated observation of the same queued/manual decision.  This keeps
+        # operator counters and audit volume stable during frequent refreshes.
+        return status if job_state in {"created", "reopened"} else f"existing_{status}"
+
     def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str, Any]]:
         """Reconcile remote inventory and telemetry without storing access URLs."""
         observed_at = _now_text(now)
@@ -996,7 +1216,21 @@ class CommerceService(CommerceWorkerMixin):
                 with self.database.connect() as connection:
                     self.database.begin_write(connection)
                     orphan_count = 0
+                    managed_missing_count = 0
+                    repair_jobs_queued = 0
+                    repair_manual_count = 0
                     if self._table_exists(connection, "outline_remote_keys"):
+                        managed_rows = self._managed_repair_rows(connection, server_id)
+                        for managed_row in managed_rows:
+                            managed_row["server_id"] = server_id
+                        ledger_rows = {
+                            str(item["outline_key_id"]): dict(item)
+                            for item in connection.execute(
+                                """SELECT * FROM outline_remote_keys
+                                   WHERE server_id = ?""",
+                                (server_id,),
+                            ).fetchall()
+                        }
                         managed_ids = {
                             str(item["outline_key_id"])
                             for item in connection.execute(
@@ -1030,8 +1264,9 @@ class CommerceService(CommerceWorkerMixin):
                             connection.execute(
                                 """INSERT INTO outline_remote_keys
                                    (server_id, outline_key_id, remote_name, managed, status,
-                                    first_seen_at, last_seen_at, last_usage_bytes)
-                                   VALUES (?, ?, ?, ?, 'present', ?, ?, ?)
+                                    first_seen_at, last_seen_at, last_usage_bytes,
+                                    missing_observation_count, missing_since_at, last_missing_at)
+                                   VALUES (?, ?, ?, ?, 'present', ?, ?, ?, 0, NULL, NULL)
                                    ON CONFLICT(server_id, outline_key_id) DO UPDATE SET
                                      remote_name = excluded.remote_name,
                                      managed = excluded.managed,
@@ -1040,7 +1275,10 @@ class CommerceService(CommerceWorkerMixin):
                                      last_usage_bytes = COALESCE(
                                          excluded.last_usage_bytes,
                                          outline_remote_keys.last_usage_bytes
-                                     )""",
+                                     ),
+                                     missing_observation_count = 0,
+                                     missing_since_at = NULL,
+                                     last_missing_at = NULL""",
                                 (
                                     server_id,
                                     outline_key_id,
@@ -1051,6 +1289,93 @@ class CommerceService(CommerceWorkerMixin):
                                     usage_bytes,
                                 ),
                             )
+                        remote_ids = {
+                            str(item["id"]).strip()
+                            for item in remote_items
+                            if str(item.get("id") or "").strip()
+                        }
+                        required_observations = self._managed_repair_required_observations()
+                        interval_seconds = self._managed_repair_observation_interval_seconds()
+                        current_observed_dt = datetime.fromisoformat(observed_at).astimezone(UTC)
+                        for managed_row in managed_rows:
+                            source_id = str(managed_row["source_external_id"])
+                            if source_id in remote_ids:
+                                continue
+                            managed_missing_count += 1
+                            previous = ledger_rows.get(source_id)
+                            previous_status = str(previous.get("status") or "") if previous else ""
+                            previous_count = int(
+                                previous.get("missing_observation_count") or 0
+                            ) if previous else 0
+                            previous_last_missing = str(previous.get("last_missing_at") or "") if previous else ""
+                            count = 1
+                            missing_since = observed_at
+                            should_increment = True
+                            if previous_status == "missing":
+                                count = max(1, previous_count)
+                                missing_since = str(previous.get("missing_since_at") or observed_at)
+                                if previous_last_missing:
+                                    try:
+                                        elapsed = current_observed_dt - datetime.fromisoformat(
+                                            previous_last_missing
+                                        ).astimezone(UTC)
+                                        should_increment = elapsed.total_seconds() >= interval_seconds
+                                    except (TypeError, ValueError, OverflowError):
+                                        should_increment = True
+                                if should_increment:
+                                    count += 1
+                            connection.execute(
+                                """INSERT INTO outline_remote_keys
+                                   (server_id, outline_key_id, remote_name, managed, status,
+                                    first_seen_at, last_seen_at, last_usage_bytes,
+                                    missing_observation_count, missing_since_at, last_missing_at)
+                                   VALUES (?, ?, NULL, 1, 'missing', ?, ?, ?, ?, ?, ?)
+                                   ON CONFLICT(server_id, outline_key_id) DO UPDATE SET
+                                     managed = 1,
+                                     status = 'missing',
+                                     last_usage_bytes = COALESCE(
+                                         excluded.last_usage_bytes,
+                                         outline_remote_keys.last_usage_bytes
+                                     ),
+                                     missing_observation_count = excluded.missing_observation_count,
+                                     missing_since_at = excluded.missing_since_at,
+                                     last_missing_at = excluded.last_missing_at""",
+                                (
+                                    server_id,
+                                    source_id,
+                                    observed_at,
+                                    observed_at,
+                                    self._metric_bytes(by_key.get(source_id))
+                                    if isinstance(by_key, dict)
+                                    else managed_row.get("last_usage_bytes"),
+                                    count,
+                                    missing_since,
+                                    observed_at,
+                                ),
+                            )
+                            if count >= required_observations and (
+                                previous_status != "missing"
+                                or should_increment
+                                or previous_count < required_observations
+                            ):
+                                repair_status = self._enqueue_managed_key_repair(
+                                    connection,
+                                    managed_row,
+                                    observed_at=observed_at,
+                                    missing_observation_count=count,
+                                    previous_name=(
+                                        str(previous.get("remote_name") or "") if previous else None
+                                    ),
+                                    usage_bytes=(
+                                        self._metric_bytes(by_key.get(source_id))
+                                        if isinstance(by_key, dict)
+                                        else None
+                                    ),
+                                )
+                                if repair_status == "pending":
+                                    repair_jobs_queued += 1
+                                elif repair_status == "manual":
+                                    repair_manual_count += 1
                         orphan_count = int(
                             connection.execute(
                                 """SELECT COUNT(*) AS n FROM outline_remote_keys
@@ -1110,6 +1435,9 @@ class CommerceService(CommerceWorkerMixin):
                         "version": info.get("version"),
                         "remote_key_count": len(remote_items),
                         "remote_orphan_key_count": orphan_count,
+                        "managed_missing_key_count": managed_missing_count,
+                        "repair_jobs_queued": repair_jobs_queued,
+                        "repair_manual_count": repair_manual_count,
                     }
                 )
             except Exception as exc:
@@ -1142,6 +1470,9 @@ class CommerceService(CommerceWorkerMixin):
                         "observed_status": "unreachable",
                         "latency_ms": latency_ms,
                         "health_failure_streak": health["failure_streak"],
+                        "managed_missing_key_count": 0,
+                        "repair_jobs_queued": 0,
+                        "repair_manual_count": 0,
                     }
                 )
         return results
@@ -1298,6 +1629,113 @@ class CommerceService(CommerceWorkerMixin):
             "reviewed_at": now_text,
             "review_note": clean_note,
         }
+
+    def managed_key_repair_jobs(
+        self, *, status: str = "open", limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Return safe operator-facing managed-key repair decisions.
+
+        Secrets are deliberately excluded. ``open`` includes pending, failed,
+        and manual decisions; completed history remains available through the
+        audit ledger and an explicit ``status='all'`` query.
+        """
+        normalized = str(status or "open").strip().lower()
+        if normalized not in {"open", "pending", "failed", "manual", "done", "cancelled", "all"}:
+            raise CommerceError("Repair status must be open, pending, failed, manual, done, cancelled or all")
+        try:
+            page_limit = max(1, min(500, int(limit)))
+        except (TypeError, ValueError):
+            page_limit = 100
+        with self.database.connect() as connection:
+            if not self._table_exists(connection, "managed_key_repair_jobs"):
+                return []
+            clauses: list[str] = []
+            params: list[Any] = []
+            if normalized == "open":
+                clauses.append("status IN ('pending', 'running', 'failed', 'manual')")
+            elif normalized != "all":
+                clauses.append("status = ?")
+                params.append(normalized)
+            params.append(page_limit)
+            rows = connection.execute(
+                """SELECT id, kind, server_id, telegram_id, local_key_ref,
+                          source_external_id, target_external_id, key_name,
+                          quota_bytes, used_bytes, expires_at, status, attempts,
+                          next_attempt_at, locked_at, last_error, observed_at,
+                          created_at, completed_at
+                     FROM managed_key_repair_jobs"""
+                + (" WHERE " + " AND ".join(clauses) if clauses else "")
+                + " ORDER BY CASE status WHEN 'manual' THEN 0 WHEN 'failed' THEN 1 "
+                  "WHEN 'pending' THEN 2 WHEN 'running' THEN 3 ELSE 4 END, created_at DESC LIMIT ?",
+                tuple(params),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def approve_managed_key_repair(
+        self,
+        repair_id: str,
+        owner_id: int,
+        *,
+        allow_unknown_usage: bool = False,
+    ) -> dict[str, Any]:
+        """Owner-approve a manual repair after an explicit quota decision.
+
+        When Outline no longer exposes the old key's traffic, approving a
+        full-quota replacement is intentionally a separate, auditable action.
+        The normal automatic worker never takes this path.
+        """
+        repair = str(repair_id or "").strip()
+        if not repair:
+            raise CommerceError("Repair identity is required")
+        now_text = _now_text()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            row = connection.execute(
+                "SELECT * FROM managed_key_repair_jobs WHERE id = ?",
+                (repair,),
+            ).fetchone()
+            if row is None:
+                raise CommerceError("Managed-key repair was not found")
+            if str(row["status"]) not in {"manual", "failed"}:
+                raise CommerceError("This repair is not awaiting owner review")
+            reason = str(row["last_error"] or "")
+            if reason == "quota_already_exhausted":
+                raise CommerceError("This key has exhausted its quota and cannot be restored")
+            if reason == "usage_observation_required" and not allow_unknown_usage:
+                raise CommerceError(
+                    "Explicitly confirm full-quota restoration when Outline usage is unavailable"
+                )
+            override = reason == "usage_observation_required" and allow_unknown_usage
+            updated = connection.execute(
+                """UPDATE managed_key_repair_jobs
+                      SET status = 'pending', attempts = 0, next_attempt_at = ?,
+                          locked_at = NULL, used_bytes = ?,
+                          last_error = ?, completed_at = NULL
+                    WHERE id = ? AND status IN ('manual', 'failed')""",
+                (
+                    now_text,
+                    0 if override else row["used_bytes"],
+                    "owner_approved_unknown_usage" if override else None,
+                    repair,
+                ),
+            )
+            if int(getattr(updated, "rowcount", 0) or 0) != 1:
+                raise CommerceError("Managed-key repair changed before owner approval")
+            self._audit(
+                connection,
+                "managed_key_repair_approved",
+                "managed_key_repair",
+                repair,
+                "owner",
+                str(owner_id),
+                {
+                    "allow_unknown_usage": bool(allow_unknown_usage),
+                    "usage_override": bool(override),
+                    "previous_status": str(row["status"]),
+                    "previous_error": reason,
+                },
+            )
+        return {"repair_id": repair, "status": "pending", "usage_override": override}
 
     def configure_server_capacity(
         self,
@@ -3500,6 +3938,25 @@ class CommerceService(CommerceWorkerMixin):
             dead_notifications = connection.execute(
                 "SELECT COUNT(*) AS n FROM notifications WHERE dead_lettered_at IS NOT NULL"
             ).fetchone()["n"]
+            managed_key_repairs_pending = 0
+            managed_key_repairs_failed = 0
+            managed_key_repairs_manual = 0
+            managed_key_missing = 0
+            if self._table_exists(connection, "managed_key_repair_jobs"):
+                managed_key_repairs_pending = connection.execute(
+                    "SELECT COUNT(*) AS n FROM managed_key_repair_jobs WHERE status IN ('pending', 'running')"
+                ).fetchone()["n"]
+                managed_key_repairs_failed = connection.execute(
+                    "SELECT COUNT(*) AS n FROM managed_key_repair_jobs WHERE status = 'failed'"
+                ).fetchone()["n"]
+                managed_key_repairs_manual = connection.execute(
+                    "SELECT COUNT(*) AS n FROM managed_key_repair_jobs WHERE status = 'manual'"
+                ).fetchone()["n"]
+            if self._table_exists(connection, "outline_remote_keys"):
+                managed_key_missing = connection.execute(
+                    """SELECT COUNT(*) AS n FROM outline_remote_keys
+                        WHERE managed = 1 AND status = 'missing'"""
+                ).fetchone()["n"]
             wallet_mismatches = 0
             wallets = connection.execute(
                 "SELECT telegram_id, currency, balance_minor FROM wallets"
@@ -3529,6 +3986,10 @@ class CommerceService(CommerceWorkerMixin):
             "failed_revocations": int(failed_revocations),
             "failed_activations": int(failed_activations),
             "dead_notifications": int(dead_notifications),
+            "managed_key_missing": int(managed_key_missing),
+            "managed_key_repairs_pending": int(managed_key_repairs_pending),
+            "managed_key_repairs_failed": int(managed_key_repairs_failed),
+            "managed_key_repairs_manual": int(managed_key_repairs_manual),
             "wallet_balance_mismatches": int(wallet_mismatches),
         }
 

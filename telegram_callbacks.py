@@ -343,6 +343,7 @@ class TelegramCallbackMixin:
                     "prepare": "/capacity",
                     "reconcile": "/reconcile",
                     "failed": "/failed",
+                    "repairs": "/repairs",
                     "migrations": "/migrations",
                     "enforcement": "/enforcement",
                     "promo": "/promo",
@@ -380,7 +381,7 @@ class TelegramCallbackMixin:
                         telegram_id,
                         message_id=message_id if can_edit_text else None,
                     )
-                elif entity_id in {"orders", "receipts", "failed", "migrations", "enforcement"}:
+                elif entity_id in {"orders", "receipts", "failed", "repairs", "migrations", "enforcement"}:
                     if self.commerce is None and entity_id != "enforcement":
                         self.send(chat_id, "Commerce is not configured.")
                     else:
@@ -733,6 +734,31 @@ class TelegramCallbackMixin:
                     entity_id,
                     admin_view=True,
                     message_id=message_id if can_edit_text else None,
+                )
+            elif action == "j":
+                if not self._is_owner(telegram_id):
+                    self._send_customer_fallback(chat_id, telegram_id)
+                    return
+                try:
+                    repair_id, approval_mode = entity_id.split(":", 1)
+                except ValueError:
+                    self.send(chat_id, "That repair action is no longer valid.")
+                    return
+                if approval_mode not in {"safe", "full"} or not repair_id:
+                    self.send(chat_id, "That repair action is no longer valid.")
+                    return
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/approverepair",
+                    [repair_id, *( ["full"] if approval_mode == "full" else [] )],
+                    (
+                        f"Approve managed-key repair {repair_id[:16]} while preserving observed usage?"
+                        if approval_mode == "safe"
+                        else f"Approve managed-key repair {repair_id[:16]} with explicit full-quota restoration?"
+                    ),
+                    "✅ Confirm Repair" if approval_mode == "safe" else "⚠️ Confirm Full Quota",
+                    cancel_data="a:n:repairs",
                 )
             elif action == "p":
                 self._queue_admin_confirmation(

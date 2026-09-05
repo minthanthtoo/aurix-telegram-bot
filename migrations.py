@@ -629,6 +629,70 @@ FREE_ACCESS_MIGRATIONS = (
             "CREATE UNIQUE INDEX IF NOT EXISTS free_provisioning_server_external ON free_provisioning_intents(server_id, outline_key_id)",
         ),
     ),
+    Migration(
+        11,
+        "managed_key_repair_jobs",
+        # The table is intentionally provider-neutral and does not reference
+        # commerce-only tables.  This lets a standalone free-access database
+        # record a safe repair decision while the shared production database
+        # can use the same table for paid and free entitlements.
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS managed_key_repair_jobs (
+                   id TEXT PRIMARY KEY,
+                   kind TEXT NOT NULL CHECK (kind IN ('free', 'paid')),
+                   server_id TEXT NOT NULL,
+                   telegram_id INTEGER NOT NULL,
+                   local_key_ref TEXT NOT NULL,
+                   source_external_id TEXT NOT NULL,
+                   target_external_id TEXT NOT NULL,
+                   key_name TEXT NOT NULL,
+                   quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                   used_bytes INTEGER,
+                   expires_at TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                       status IN ('pending', 'running', 'done', 'failed', 'manual', 'cancelled')
+                   ),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   last_error TEXT,
+                   observed_at TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   UNIQUE (server_id, kind, local_key_ref)
+               )""",
+            """CREATE INDEX IF NOT EXISTS managed_key_repairs_due
+               ON managed_key_repair_jobs(status, next_attempt_at)""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS managed_key_repair_jobs (
+                   id TEXT PRIMARY KEY,
+                   kind TEXT NOT NULL CHECK (kind IN ('free', 'paid')),
+                   server_id TEXT NOT NULL,
+                   telegram_id BIGINT NOT NULL,
+                   local_key_ref TEXT NOT NULL,
+                   source_external_id TEXT NOT NULL,
+                   target_external_id TEXT NOT NULL,
+                   key_name TEXT NOT NULL,
+                   quota_bytes BIGINT NOT NULL CHECK (quota_bytes > 0),
+                   used_bytes BIGINT,
+                   expires_at TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                       status IN ('pending', 'running', 'done', 'failed', 'manual', 'cancelled')
+                   ),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TIMESTAMPTZ,
+                   last_error TEXT,
+                   observed_at TIMESTAMPTZ NOT NULL,
+                   created_at TIMESTAMPTZ NOT NULL,
+                   completed_at TIMESTAMPTZ,
+                   UNIQUE (server_id, kind, local_key_ref)
+               )""",
+            """CREATE INDEX IF NOT EXISTS managed_key_repairs_due
+               ON managed_key_repair_jobs(status, next_attempt_at)""",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (
@@ -1388,6 +1452,70 @@ COMMERCE_MIGRATIONS = (
         postgres_statements=(
             """UPDATE payments
                SET provider = lower(regexp_replace(provider, '[[:space:]]+', '', 'g'))""",
+        ),
+    ),
+    Migration(
+        20,
+        "managed_key_repair_observations",
+        sqlite_statements=(
+            "ALTER TABLE outline_remote_keys ADD COLUMN missing_observation_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE outline_remote_keys ADD COLUMN missing_since_at TEXT",
+            "ALTER TABLE outline_remote_keys ADD COLUMN last_missing_at TEXT",
+            """CREATE TABLE IF NOT EXISTS managed_key_repair_jobs (
+                   id TEXT PRIMARY KEY,
+                   kind TEXT NOT NULL CHECK (kind IN ('free', 'paid')),
+                   server_id TEXT NOT NULL,
+                   telegram_id INTEGER NOT NULL,
+                   local_key_ref TEXT NOT NULL,
+                   source_external_id TEXT NOT NULL,
+                   target_external_id TEXT NOT NULL,
+                   key_name TEXT NOT NULL,
+                   quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                   used_bytes INTEGER,
+                   expires_at TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                       status IN ('pending', 'running', 'done', 'failed', 'manual', 'cancelled')
+                   ),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   last_error TEXT,
+                   observed_at TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   UNIQUE (server_id, kind, local_key_ref)
+               )""",
+            "CREATE INDEX IF NOT EXISTS managed_key_repairs_due ON managed_key_repair_jobs(status, next_attempt_at)",
+        ),
+        postgres_statements=(
+            "ALTER TABLE outline_remote_keys ADD COLUMN IF NOT EXISTS missing_observation_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE outline_remote_keys ADD COLUMN IF NOT EXISTS missing_since_at TIMESTAMPTZ",
+            "ALTER TABLE outline_remote_keys ADD COLUMN IF NOT EXISTS last_missing_at TIMESTAMPTZ",
+            """CREATE TABLE IF NOT EXISTS managed_key_repair_jobs (
+                   id TEXT PRIMARY KEY,
+                   kind TEXT NOT NULL CHECK (kind IN ('free', 'paid')),
+                   server_id TEXT NOT NULL,
+                   telegram_id BIGINT NOT NULL,
+                   local_key_ref TEXT NOT NULL,
+                   source_external_id TEXT NOT NULL,
+                   target_external_id TEXT NOT NULL,
+                   key_name TEXT NOT NULL,
+                   quota_bytes BIGINT NOT NULL CHECK (quota_bytes > 0),
+                   used_bytes BIGINT,
+                   expires_at TIMESTAMPTZ NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                       status IN ('pending', 'running', 'done', 'failed', 'manual', 'cancelled')
+                   ),
+                   attempts INTEGER NOT NULL DEFAULT 0,
+                   next_attempt_at TIMESTAMPTZ NOT NULL,
+                   locked_at TIMESTAMPTZ,
+                   last_error TEXT,
+                   observed_at TIMESTAMPTZ NOT NULL,
+                   created_at TIMESTAMPTZ NOT NULL,
+                   completed_at TIMESTAMPTZ,
+                   UNIQUE (server_id, kind, local_key_ref)
+               )""",
+            "CREATE INDEX IF NOT EXISTS managed_key_repairs_due ON managed_key_repair_jobs(status, next_attempt_at)",
         ),
     ),
 )

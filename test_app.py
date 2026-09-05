@@ -207,6 +207,38 @@ class ClaimServiceTest(unittest.TestCase):
         self.service.claim_trial(123, "Min", self.now, username="min_user")
         self.assertEqual(self.outline.created[0][0], "min_user-FREE3GB-30day-202608270307")
 
+    def test_free_missing_key_repair_updates_intent_and_preserves_remaining_quota(self):
+        commerce = CommerceService(
+            CommerceDatabase(self.db.path),
+            self.outline,
+            Fernet.generate_key(),
+            allow_legacy_text_approval=True,
+        )
+        commerce.initialize()
+        commerce.register_outline_servers({"primary": "Primary"})
+        commerce.refresh_server_inventory(self.now)
+        claimed = self.service.claim(123, "Min", self.now, username="min_user")
+        self.assertTrue(claimed.access_url)
+        commerce.refresh_server_inventory(self.now + timedelta(minutes=1))
+        self.outline.deleted.append("1")
+        self.outline.transfer = {"1": 1_000_000}
+        commerce.refresh_server_inventory(self.now + timedelta(minutes=2))
+        result = commerce.refresh_server_inventory(self.now + timedelta(minutes=3))[0]
+        self.assertEqual(result["repair_jobs_queued"], 1)
+        self.assertEqual(
+            commerce.process_managed_key_repairs(self.now + timedelta(minutes=3)),
+            1,
+        )
+        with self.db.connect() as connection:
+            key = connection.execute(
+                "SELECT outline_key_id, data_limit_bytes, status FROM keys WHERE telegram_id = 123"
+            ).fetchone()
+            intent = connection.execute(
+                "SELECT outline_key_id, status FROM free_provisioning_intents WHERE telegram_id = 123"
+            ).fetchone()
+        self.assertEqual(tuple(key), ("2", 299_000_000, "active"))
+        self.assertEqual(tuple(intent), ("2", "done"))
+
     def test_second_claim_inside_24_hours_is_rejected(self):
         self.service.claim(123, "Min", self.now)
         result = self.service.claim(123, "Min", self.now + timedelta(hours=23, minutes=59))
@@ -1164,7 +1196,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "to inspect its wallet ledger, and run Consistency before taking "
             "payment decisions.\n\n"
             "Queue: 0 receipt(s) pending · 0 upload(s) pending · "
-            "0 upload(s) failed · 0 failed job(s) · 0 stale review(s) · "
+            "0 upload(s) failed · 0 failed job(s) · "
+            "0 key repair(s) pending · 0 key repair(s) manual · 0 stale review(s) · "
             "0 dead notification(s)",
         )
         expected_markup = self.bot.markups[-1]
