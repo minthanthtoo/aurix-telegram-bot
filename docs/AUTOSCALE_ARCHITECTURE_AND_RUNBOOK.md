@@ -495,11 +495,12 @@ identity verification step.
 - Database: persistent SQLite remains valid for the one-host control plane;
   PostgreSQL is mandatory before a second writer/control host.
 
-The latest live inventory check (3 September 2026 UTC) reported 16 remote keys
-on the primary endpoint against 20 saleable slots. The aggregate fleet snapshot
-reported 42 saleable slots and 38.1% utilization, so the current posture is
-**Stable**, not an instruction to provision. Raising a node's declared limit
-merely to silence a warning is not acceptable capacity planning.
+The latest recorded live inventory check (5 September 2026 UTC) reported 17
+remote keys on the primary endpoint against 20 saleable slots. Runtime
+diagnostics and the acceptance audit remain authoritative because key counts
+change as customers are issued, rotated, or revoked keys. The aggregate fleet
+snapshot was **Stable**, not an instruction to provision. Raising a node's
+declared limit merely to silence a warning is not acceptable capacity planning.
 
 Do not scale on one CPU spike or one transient traffic observation. The admin panel may show the current posture
 immediately; before a provider job is approved, confirm two or more consecutive
@@ -659,8 +660,9 @@ stop.
 The MVP decisions are no longer open-ended: use assisted scaling, the explicit
 three-node/$18 envelope above, a 24-hour creation cooldown, no automatic destroy,
 and SQLite until a second control-plane writer exists. The latest recorded live
-observation is 16 primary remote keys against 20 saleable slots, with aggregate
-fleet posture Stable. Node admission remains an owner-approved capacity
+observation is 17 primary remote keys against 20 saleable slots, with aggregate
+fleet posture Stable. Runtime diagnostics are authoritative as keys change.
+Node admission remains an owner-approved capacity
 decision; the provider worker is not authorized to purchase infrastructure
 automatically.
 
