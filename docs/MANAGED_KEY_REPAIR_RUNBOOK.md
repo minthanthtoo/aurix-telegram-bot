@@ -11,7 +11,8 @@ is never replaced from one failed API call.
 - Identity is always `(server_id, outline_key_id)`.
 - A successful inventory must observe the key missing twice; a transient or
   unreachable endpoint is not evidence of deletion.
-- Usage must come from a fresh transfer-metrics observation. Unknown usage is
+- Usage must come from a fresh transfer-metrics observation or a persisted
+  sample younger than the bounded repair window. Unknown or stale usage is
   escalated to `manual`; no automatic quota reset is allowed.
 - A key at or above its configured limit is not repaired. Quota enforcement
   owns that case and hard-deletes it.
@@ -40,7 +41,7 @@ For each due job the worker rechecks, in order:
 1. the local entitlement is still active and unexpired;
 2. the old key ID is still the entitlement's source identity;
 3. the old key is not already present (read-after-ambiguous recovery);
-4. fresh usage is available and below quota;
+4. fresh usage, or a recent cached usage sample, is available and below quota;
 5. the endpoint is healthy and admits the operation;
 6. a deterministic replacement can be created or recovered.
 
@@ -75,11 +76,14 @@ AURIX_KEY_REPAIR_OBSERVATION_INTERVAL_SECONDS=60
 AURIX_KEY_REPAIR_MAX_ATTEMPTS=8
 AURIX_KEY_REPAIR_ALLOW_UNKNOWN_USAGE=0
 AURIX_KEY_REPAIR_ALLOW_STALE_USAGE=0
+AURIX_KEY_REPAIR_CACHED_USAGE_MAX_AGE_SECONDS=900
 ```
 
-Keep the defaults for production. Enabling unknown/stale usage is an explicit
-owner risk decision and should be temporary, documented, and followed by a
-manual receiving-account/traffic review.
+Keep the defaults for production. The cached window is deliberately short and
+only applies to a key whose ID was explicitly present in a prior metrics
+response; a missing map entry does not refresh it. Enabling unknown/stale usage
+is an explicit owner risk decision and should be temporary, documented, and
+followed by a manual receiving-account/traffic review.
 
 ## Incident checklist
 

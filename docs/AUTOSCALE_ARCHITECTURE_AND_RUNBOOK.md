@@ -308,8 +308,9 @@ The repair worker then:
 1. revalidates the local entitlement, expiry, server, and exact old key ID;
 2. re-GETs that ID to recover from an ambiguous inventory/create race;
 3. fetches fresh transfer metrics from the same endpoint;
-4. refuses to guess when usage is unavailable, and refuses to restore an
-   exhausted key;
+4. uses a fresh same-endpoint usage observation, or a persisted observation
+   within the short configured cache window; otherwise it refuses to guess and
+   refuses to restore an exhausted key;
 5. creates or deterministically recreates the key, applies the **remaining**
    allowance (original quota minus observed usage), and commits the new
    server-scoped ID and encrypted access URL atomically;
@@ -331,6 +332,7 @@ AURIX_KEY_REPAIR_OBSERVATION_INTERVAL_SECONDS=60
 AURIX_KEY_REPAIR_MAX_ATTEMPTS=8
 AURIX_KEY_REPAIR_ALLOW_UNKNOWN_USAGE=0
 AURIX_KEY_REPAIR_ALLOW_STALE_USAGE=0
+AURIX_KEY_REPAIR_CACHED_USAGE_MAX_AGE_SECONDS=900
 ```
 
 Use the admin `/repairs` panel for open `pending`, `running`, `failed`, and

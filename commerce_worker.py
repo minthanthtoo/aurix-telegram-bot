@@ -296,6 +296,11 @@ class CommerceWorkerMixin:
                 usage = max(0, int(by_key.get(source_id) or 0))
         except Exception:
             usage = None
+        if usage is None and self._managed_repair_cached_usage_is_recent(row, current):
+            try:
+                usage = max(0, int(row.get("last_usage_bytes")))
+            except (TypeError, ValueError):
+                usage = None
         owner_usage_override = str(job.get("last_error") or "") == "owner_approved_unknown_usage"
         if usage is None and owner_usage_override:
             usage = 0

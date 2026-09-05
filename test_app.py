@@ -239,6 +239,40 @@ class ClaimServiceTest(unittest.TestCase):
         self.assertEqual(tuple(key), ("2", 299_000_000, "active"))
         self.assertEqual(tuple(intent), ("2", "done"))
 
+    def test_free_missing_key_repair_uses_recent_cached_usage_when_metric_disappears(self):
+        commerce = CommerceService(
+            CommerceDatabase(self.db.path),
+            self.outline,
+            Fernet.generate_key(),
+        )
+        commerce.initialize()
+        commerce.register_outline_servers({"primary": "Primary"})
+        commerce.refresh_server_inventory(self.now)
+        claimed = self.service.claim(123, "Min", self.now, username="min_user")
+        self.assertTrue(claimed.access_url)
+
+        # Record a trustworthy usage observation while the key is still in
+        # Outline's inventory, then simulate a deletion plus an unavailable
+        # historical metric entry.
+        self.outline.transfer = {"1": 10_000_000}
+        commerce.refresh_server_inventory(self.now + timedelta(minutes=1))
+        self.outline.deleted.append("1")
+        self.outline.transfer = {}
+        commerce.refresh_server_inventory(self.now + timedelta(minutes=2))
+        result = commerce.refresh_server_inventory(self.now + timedelta(minutes=3))[0]
+
+        self.assertEqual(result["repair_jobs_queued"], 1)
+        self.assertEqual(commerce.process_managed_key_repairs(self.now + timedelta(minutes=3)), 1)
+        with self.db.connect() as connection:
+            key = connection.execute(
+                "SELECT outline_key_id, data_limit_bytes, status FROM keys WHERE telegram_id = 123"
+            ).fetchone()
+            repair = connection.execute(
+                "SELECT status, used_bytes, quota_bytes FROM managed_key_repair_jobs"
+            ).fetchone()
+        self.assertEqual(tuple(key), ("2", 290_000_000, "active"))
+        self.assertEqual(tuple(repair), ("done", 10_000_000, 290_000_000))
+
     def test_second_claim_inside_24_hours_is_rejected(self):
         self.service.claim(123, "Min", self.now)
         result = self.service.claim(123, "Min", self.now + timedelta(hours=23, minutes=59))

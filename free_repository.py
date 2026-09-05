@@ -49,6 +49,7 @@ class Database:
                     data_limit_bytes INTEGER NOT NULL,
                     status TEXT NOT NULL
                         CHECK (status IN ('active', 'revoked', 'revoke_failed')),
+                    last_usage_observed_at TEXT,
                     quota_warning_percent INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS keys_expiry
@@ -142,6 +143,8 @@ class Database:
             )
             if "last_usage_bytes" not in key_columns:
                 connection.execute("ALTER TABLE keys ADD COLUMN last_usage_bytes INTEGER")
+            if "last_usage_observed_at" not in key_columns:
+                connection.execute("ALTER TABLE keys ADD COLUMN last_usage_observed_at TEXT")
             if "quota_reason" not in key_columns:
                 connection.execute("ALTER TABLE keys ADD COLUMN quota_reason TEXT")
             if "quota_warning_percent" not in key_columns:

@@ -1645,9 +1645,10 @@ class ClaimService:
             self.database.begin_write(connection)
             connection.execute(
                 """UPDATE keys SET status = 'active', last_usage_bytes = COALESCE(?, last_usage_bytes),
+                          last_usage_observed_at = COALESCE(?, last_usage_observed_at),
                           quota_reason = CASE WHEN ? = 'quota' THEN 'quota' ELSE quota_reason END
                    WHERE id = ? AND status != 'revoked'""",
-                (used_bytes, reason, row["id"]),
+                (used_bytes, now_text if used_bytes is not None else None, reason, row["id"]),
             )
             connection.execute(
                 """INSERT INTO key_termination_events
@@ -1738,10 +1739,20 @@ class ClaimService:
             if by_key is None:
                 continue
             try:
-                used = int(by_key.get(str(row["outline_key_id"]), 0) or 0)
+                key_id = str(row["outline_key_id"])
+                observed = key_id in by_key
+                used = int(by_key.get(key_id, 0) or 0)
             except (TypeError, ValueError):
                 continue
             if used < int(row["data_limit_bytes"]):
+                if observed:
+                    with self.database.connect() as connection:
+                        connection.execute(
+                            """UPDATE keys
+                                  SET last_usage_bytes = ?, last_usage_observed_at = ?
+                                WHERE id = ? AND status = 'active'""",
+                            (used, current.isoformat(), row["id"]),
+                        )
                 continue
             if self._terminate_key(row, "quota", current, used):
                 revoked += 1

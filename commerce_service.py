@@ -974,6 +974,48 @@ class CommerceService(CommerceWorkerMixin):
             return 60
 
     @staticmethod
+    def _managed_repair_cached_usage_max_age_seconds() -> int:
+        """Bound how long a cached usage sample may authorize a repair.
+
+        A missing Outline key can no longer be queried for its historical
+        transfer count.  A recent, persisted sample is safe to reuse because
+        it is still a lower-bound observation from the same external key; an
+        old sample is escalated instead of silently restoring quota.
+        """
+        try:
+            return max(
+                0,
+                min(
+                    86_400,
+                    int(os.environ.get("AURIX_KEY_REPAIR_CACHED_USAGE_MAX_AGE_SECONDS", "900")),
+                ),
+            )
+        except (TypeError, ValueError):
+            return 900
+
+    @classmethod
+    def _managed_repair_cached_usage_is_recent(cls, row: Any, observed_at: Any) -> bool:
+        """Return whether the entitlement has a bounded, trustworthy sample."""
+        raw_observed = row.get("last_usage_observed_at") if hasattr(row, "get") else None
+        if not raw_observed:
+            return False
+        try:
+            usage_at = (
+                raw_observed
+                if isinstance(raw_observed, datetime)
+                else datetime.fromisoformat(str(raw_observed))
+            ).astimezone(UTC)
+            current = (
+                observed_at
+                if isinstance(observed_at, datetime)
+                else datetime.fromisoformat(str(observed_at))
+            ).astimezone(UTC)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        age = (current - usage_at).total_seconds()
+        return 0 <= age <= cls._managed_repair_cached_usage_max_age_seconds()
+
+    @staticmethod
     def _managed_repair_allow_unknown_usage() -> bool:
         """Return whether an operator explicitly permits a full-quota repair.
 
@@ -1025,7 +1067,8 @@ class CommerceService(CommerceWorkerMixin):
         paid_rows = connection.execute(
             """SELECT 'paid' AS kind, CAST(k.id AS TEXT) AS local_key_ref,
                       k.id AS local_id, k.telegram_id, k.outline_key_id AS source_external_id,
-                      k.quota_bytes, k.last_usage_bytes, k.created_at, s.expires_at,
+                      k.quota_bytes, k.last_usage_bytes, k.last_usage_observed_at,
+                      k.created_at, s.expires_at,
                       s.plan_name, s.plan_code, s.duration_days, u.username
                  FROM paid_vpn_keys k
                  JOIN subscriptions s ON s.id = k.subscription_id
@@ -1040,6 +1083,7 @@ class CommerceService(CommerceWorkerMixin):
                 """SELECT 'free' AS kind, CAST(k.id AS TEXT) AS local_key_ref,
                           k.id AS local_id, k.telegram_id, k.outline_key_id AS source_external_id,
                           k.data_limit_bytes AS quota_bytes, k.last_usage_bytes,
+                          k.last_usage_observed_at,
                           k.created_at, k.expires_at, k.key_type, u.username,
                           g.campaign_code,
                           COALESCE(c.duration_days,
@@ -1090,6 +1134,8 @@ class CommerceService(CommerceWorkerMixin):
             except (TypeError, ValueError):
                 effective_usage = None
             usage_is_fresh = False
+        if not usage_is_fresh and self._managed_repair_cached_usage_is_recent(row, observed_at):
+            usage_is_fresh = effective_usage is not None
         if not usage_is_fresh and os.environ.get(
             "AURIX_KEY_REPAIR_ALLOW_STALE_USAGE", "0"
         ).strip().lower() in {"1", "true", "yes", "on"}:
@@ -1289,6 +1335,42 @@ class CommerceService(CommerceWorkerMixin):
                                     usage_bytes,
                                 ),
                             )
+                        # Persist only metrics that explicitly contain the
+                        # external id.  A missing map entry is ambiguous (it
+                        # may mean zero traffic or a deleted key), so it must
+                        # never refresh the cached-usage freshness window.
+                        if isinstance(by_key, dict):
+                            for managed_row in managed_rows:
+                                external_id = str(managed_row["source_external_id"])
+                                if external_id not in by_key:
+                                    continue
+                                usage_bytes = self._metric_bytes(by_key.get(external_id))
+                                if usage_bytes is None:
+                                    continue
+                                if str(managed_row["kind"]) == "paid":
+                                    connection.execute(
+                                        """UPDATE paid_vpn_keys
+                                              SET last_usage_bytes = ?, last_usage_observed_at = ?
+                                            WHERE id = ? AND server_id = ?""",
+                                        (
+                                            usage_bytes,
+                                            observed_at,
+                                            managed_row["local_id"],
+                                            server_id,
+                                        ),
+                                    )
+                                elif self._table_exists(connection, "keys"):
+                                    connection.execute(
+                                        """UPDATE keys
+                                              SET last_usage_bytes = ?, last_usage_observed_at = ?
+                                            WHERE id = ? AND server_id = ?""",
+                                        (
+                                            usage_bytes,
+                                            observed_at,
+                                            managed_row["local_id"],
+                                            server_id,
+                                        ),
+                                    )
                         remote_ids = {
                             str(item["id"]).strip()
                             for item in remote_items

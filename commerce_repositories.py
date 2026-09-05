@@ -778,6 +778,7 @@ class PostgresCommerceDatabase:
             data_limit_bytes BIGINT NOT NULL,
             status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'revoke_failed')),
             last_usage_bytes BIGINT,
+            last_usage_observed_at TEXT,
             quota_reason TEXT,
             quota_warning_percent INTEGER
         );
@@ -1036,6 +1037,9 @@ class PostgresCommerceDatabase:
             )
             connection.execute(
                 "ALTER TABLE keys ADD COLUMN IF NOT EXISTS key_type TEXT NOT NULL DEFAULT 'daily_free'"
+            )
+            connection.execute(
+                "ALTER TABLE keys ADD COLUMN IF NOT EXISTS last_usage_observed_at TEXT"
             )
             connection.execute(
                 """UPDATE keys SET key_type = 'monthly_trial'

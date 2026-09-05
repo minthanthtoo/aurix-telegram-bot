@@ -65,6 +65,7 @@ def _rebuild_free_keys_for_server_identity(connection: Any) -> None:
                    data_limit_bytes INTEGER NOT NULL,
                    status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'revoke_failed')),
                    last_usage_bytes INTEGER,
+                   last_usage_observed_at TEXT,
                    quota_reason TEXT,
                    quota_warning_percent INTEGER,
                    server_id TEXT NOT NULL DEFAULT 'primary'
@@ -73,11 +74,11 @@ def _rebuild_free_keys_for_server_identity(connection: Any) -> None:
         connection.execute(
             """INSERT INTO keys_server_scoped
                (id, telegram_id, outline_key_id, key_type, created_at, expires_at,
-                data_limit_bytes, status, last_usage_bytes, quota_reason,
-                quota_warning_percent, server_id)
+                data_limit_bytes, status, last_usage_bytes, last_usage_observed_at,
+                quota_reason, quota_warning_percent, server_id)
                SELECT id, telegram_id, outline_key_id, key_type, created_at, expires_at,
-                      data_limit_bytes, status, last_usage_bytes, quota_reason,
-                      quota_warning_percent, server_id FROM keys"""
+                      data_limit_bytes, status, last_usage_bytes, last_usage_observed_at,
+                      quota_reason, quota_warning_percent, server_id FROM keys"""
         )
         connection.execute("DROP TABLE keys")
         connection.execute("ALTER TABLE keys_server_scoped RENAME TO keys")
