@@ -83,6 +83,9 @@ Optional:
 - `AURIX_ENDPOINT_FAILURE_THRESHOLD` / `AURIX_ENDPOINT_RECOVERY_THRESHOLD` —
   bounded health hysteresis (defaults `3` failures / `2` successful probes);
   failed nodes are blocked from new issuance until recovery evidence is stable.
+- `AURIX_KEY_REPAIR_CACHED_USAGE_MAX_AGE_SECONDS` — maximum age of a persisted,
+  explicitly observed per-key usage sample that may be reused during missing
+  key repair (default `900`; older or never-observed usage requires owner review).
 - `OWNER_TELEGRAM_ID` — preferred immutable owner/recovery Telegram numeric ID
 - `ADMIN_TELEGRAM_IDS` — legacy one-time comma-separated administrator bootstrap
 - `AURIX_CONTROL_GROUP_ID` — optional trusted numeric `-100...` bootstrap override. Normally the owner connects the group from **Owner Controls → Choose Control Group**; Telegram supplies and AuriX persists the numeric ID without invite-link parsing.
