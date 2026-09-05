@@ -25,7 +25,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Endpoint drain/retirement lifecycle | Implemented locally | Owner-confirmed active/draining/retired state; draining blocks new assignments, and retirement fails closed until local and remotely observed keys, orders, and setup intents are empty |
 | Provider/region/transport registry | Implemented foundation | Migration 14 mirrors Outline endpoints into stable provider, region, transport, profile, assignment, and credential identities; legacy paid/free rows backfill idempotently without storing management URLs or plaintext access URLs; non-Outline adapters and live migration remain gated |
 | Remote inventory review | Implemented locally | Owner-only in-place classification of untracked present keys as reviewed external or unreviewed; never adopts/deletes credentials and never hides capacity usage |
-| Auditability | Implemented locally | Order, payment, approval, rejection, provision, revoke events |
+| Auditability | Implemented locally | Order, payment, approval, rejection, provision, revoke, and managed-key repair events; missing-key episodes create deduplicated, preference-aware staff alerts |
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
 | Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; guarded `deploy/migrate_sqlite_to_postgres.py` preserves existing SQLite state; hosted DB provisioning, cutover, and live restore remain gates |
 | Independent worker / web control plane | Worker and callback endpoint implemented; live enrollment pending | The guarded DigitalOcean worker/timer and encrypted one-time `/fleet/register` callback (Render or standalone TLS service) are in source; live endpoint/worker canary remains a gate. Render profiles now run read-only Telegram, Supabase, LLM, database, and pinned-Outline startup canaries. |
@@ -49,7 +49,7 @@ engineering estimates, not production traffic or revenue metrics.
   PostgreSQL/node off-site-only recovery and plaintext-hash integrity checks,
   pinned node-bootstrap TLS, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (454 tests passing at the latest verification).
+  production-acceptance suite (456 tests passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**. The current sanitized
   acceptance run passes source, lint, compilation, tests, required secret names,
   fleet-manifest parsing, backup-key validation, and the recovery entrypoint,

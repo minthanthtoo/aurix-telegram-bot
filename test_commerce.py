@@ -886,6 +886,39 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(tuple(key), ("1", 50_000_000_000, "active"))
         self.assertEqual(len(self.outline.created), 1)
 
+    def test_managed_missing_key_queues_one_preference_aware_staff_alert(self):
+        # Commerce-only fixtures do not initialize the free-access/staff
+        # component; production initializes both components on the shared DB.
+        Database(self.database.path).initialize()
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO staff_accounts
+                   (telegram_id, role, status, source, added_at)
+                   VALUES (999, 'owner', 'active', 'test', ?)""",
+                (self.now.isoformat(),),
+            )
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=1))
+        self.outline.keys.pop("1")
+        self.outline.transfer = {}
+
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=2))
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=3))
+        # A repeated poll must not create another alert for the same repair.
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=4))
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT telegram_id, kind, text FROM notifications
+                   WHERE kind = 'staff_key_repairs'"""
+            ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["telegram_id"], 999)
+        self.assertIn("MANAGED KEY MISSING", rows[0]["text"])
+
     def test_recent_durable_snapshot_preserves_quota_when_missing_metrics_race(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)
@@ -1488,7 +1521,7 @@ class PostgresAdapterTest(unittest.TestCase):
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "6784cc2be3943a25e74c1293d7190a792375520970e734813e5b2440a5a690bf",
+            "cfe85fda3e68b76a7f02d4c40ff323474d3f98fc1eb1f3038bbbe5f1e1046292",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

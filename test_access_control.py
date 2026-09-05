@@ -92,6 +92,14 @@ class StaffAccessControlTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             access.bind_control_group(-100123, 20)
 
+    def test_staff_can_toggle_missing_key_repair_alerts(self):
+        access = StaffAccessControl(self.database, 10)
+        access.bootstrap(owner_id=10)
+        preferences = access.notification_preferences(10)
+        self.assertTrue(preferences["key_repairs"])
+        updated = access.set_notification_preference(10, "key_repairs", False)
+        self.assertFalse(updated["key_repairs"])
+
 
 if __name__ == "__main__":
     unittest.main()

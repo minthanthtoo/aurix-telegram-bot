@@ -184,6 +184,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("free_access", 9, "durable_free_provisioning_intents"),
                     ("free_access", 10, "free_intent_server_identity"),
                     ("free_access", 11, "managed_key_repair_jobs"),
+                    ("free_access", 12, "staff_key_repair_notifications"),
                 ],
             )
 

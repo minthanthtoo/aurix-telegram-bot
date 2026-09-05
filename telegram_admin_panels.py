@@ -1008,6 +1008,7 @@ class TelegramAdminMixin:
             "order_created": "New orders",
             "receipt_submitted": "Receipts awaiting review",
             "rejected": "Receipt/order rejections",
+            "key_repairs": "Missing-key repairs",
         }
         lines = [
             "🔔 My Operational Alerts",

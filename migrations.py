@@ -150,6 +150,54 @@ def _rebuild_paid_keys_for_server_identity(connection: Any) -> None:
         raise MigrationError("Paid key identity migration broke a foreign-key reference")
 
 
+def _rebuild_staff_notification_preferences_for_key_repairs(connection: Any) -> None:
+    """Extend the SQLite event check without leaving a half-rebuilt table.
+
+    SQLite cannot alter a CHECK constraint in place. Keep the rebuild inside
+    one explicit transaction so a process interruption rolls back atomically;
+    this matters because the bot may be restarted during a deploy.
+    """
+    table = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'staff_notification_preferences'"
+    ).fetchone()
+    if table is None:
+        return
+    ddl = str(table[0] or "").lower()
+    if "key_repairs" in ddl:
+        return
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """CREATE TABLE staff_notification_preferences_v12 (
+                   telegram_id INTEGER NOT NULL REFERENCES staff_accounts(telegram_id),
+                   event_type TEXT NOT NULL CHECK (
+                       event_type IN ('order_created', 'receipt_submitted', 'rejected', 'key_repairs')
+                   ),
+                   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (telegram_id, event_type)
+               )"""
+        )
+        connection.execute(
+            """INSERT INTO staff_notification_preferences_v12
+               (telegram_id, event_type, enabled, updated_at)
+               SELECT telegram_id, event_type, enabled, updated_at
+                 FROM staff_notification_preferences"""
+        )
+        connection.execute("DROP TABLE staff_notification_preferences")
+        connection.execute(
+            "ALTER TABLE staff_notification_preferences_v12 RENAME TO staff_notification_preferences"
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+
 def _rebuild_free_intents_for_server_identity(connection: Any) -> None:
     """Replace the legacy global intent ID uniqueness with server scope."""
     if not connection.execute(
@@ -692,6 +740,19 @@ FREE_ACCESS_MIGRATIONS = (
                )""",
             """CREATE INDEX IF NOT EXISTS managed_key_repairs_due
                ON managed_key_repair_jobs(status, next_attempt_at)""",
+        ),
+    ),
+    Migration(
+        12,
+        "staff_key_repair_notifications",
+        sqlite_hook=_rebuild_staff_notification_preferences_for_key_repairs,
+        postgres_statements=(
+            """ALTER TABLE staff_notification_preferences
+               DROP CONSTRAINT IF EXISTS staff_notification_preferences_event_type_check""",
+            """ALTER TABLE staff_notification_preferences
+               ADD CONSTRAINT staff_notification_preferences_event_type_check CHECK (
+                   event_type IN ('order_created', 'receipt_submitted', 'rejected', 'key_repairs')
+               )""",
         ),
     ),
 )

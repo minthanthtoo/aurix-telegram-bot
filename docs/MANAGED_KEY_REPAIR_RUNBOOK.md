@@ -69,6 +69,15 @@ freshly observed usage. When usage is unavailable, a second, visibly warned
 confirmation and records `owner_approved_unknown_usage`. This is the only path
 that can restore a full allowance without a fresh source metric.
 
+Every newly opened repair episode also creates one deduplicated staff alert for
+each active owner/admin whose **Missing-key repairs** notification is enabled.
+The alert contains only the repair ID, customer suffix/ID, endpoint, old key
+ID, usage evidence state, and decision state; it never contains an access URL.
+The **🧩 Open Key Repairs** button opens the in-place review queue. Repeated
+inventory polls do not spam staff, and each staff member can toggle this alert
+type from `/notifications` without affecting customer or quota-enforcement
+messages.
+
 `/reconcile` reports `managed_key_missing`, pending, failed, and manual counts.
 The maintenance worker processes bounded leased jobs automatically; a manual
 or failed decision leaves the customer's existing database quota unchanged.

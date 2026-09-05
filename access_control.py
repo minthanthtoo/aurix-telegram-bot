@@ -13,6 +13,7 @@ STAFF_NOTIFICATION_EVENTS = (
     "order_created",
     "receipt_submitted",
     "rejected",
+    "key_repairs",
 )
 
 

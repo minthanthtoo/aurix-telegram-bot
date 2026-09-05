@@ -20,6 +20,7 @@ from commerce_models import (
     OrderResult,
     Plan,
     _new_id,
+    _human_bytes,
     _normalize_reference,
     _now_text,
 )
@@ -1235,6 +1236,7 @@ class CommerceService(CommerceWorkerMixin):
                WHERE server_id = ? AND kind = ? AND local_key_ref = ?""",
             (server_id, kind, local_ref),
         ).fetchone()
+        repair_id = str(existing["id"]) if existing is not None else _new_id()
         allow_unknown = self._managed_repair_allow_unknown_usage()
         effective_usage = usage_bytes
         usage_is_fresh = usage_bytes is not None
@@ -1270,7 +1272,7 @@ class CommerceService(CommerceWorkerMixin):
                     last_error, observed_at, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
                 (
-                    _new_id(), kind, server_id, int(row["telegram_id"]), local_ref,
+                    repair_id, kind, server_id, int(row["telegram_id"]), local_ref,
                     str(row["source_external_id"]), str(row["source_external_id"]), name,
                     quota, effective_usage, str(row["expires_at"]), status,
                     observed_at, error, observed_at, observed_at,
@@ -1318,6 +1320,27 @@ class CommerceService(CommerceWorkerMixin):
                     "quota_bytes": quota,
                     "job_state": job_state,
                 },
+            )
+            # A missing managed key is an operational incident, not a silent
+            # customer-facing outage. Queue one durable, preference-aware
+            # staff alert for this repair episode; the notification dedupe
+            # key prevents repeated inventory polls from spamming staff.
+            usage_text = "unknown (fresh Outline telemetry unavailable)"
+            if effective_usage is not None:
+                usage_text = f"{_human_bytes(effective_usage)} observed"
+            self._queue_staff_notification(
+                connection,
+                "key_repairs",
+                repair_id,
+                "🧩 MANAGED KEY MISSING\n\n"
+                f"Repair: #{repair_id[:8]}\n"
+                f"Customer: tg:{int(row['telegram_id'])}\n"
+                f"Endpoint: {server_id}\n"
+                f"Old key: {str(row['source_external_id'])[:32]}\n"
+                f"Usage: {usage_text}\n"
+                f"Decision: {status.replace('_', ' ')}\n\n"
+                "Open Key Repairs to review. AuriX will not recreate this key or reset quota without the required owner decision.",
+                observed_at,
             )
         # Let the caller distinguish a newly opened repair episode from a
         # repeated observation of the same queued/manual decision.  This keeps

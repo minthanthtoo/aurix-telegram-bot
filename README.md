@@ -592,8 +592,9 @@ Outline key names are operator-readable and use UTC start time: `<username-or-te
 Receipt images are evidence, not proof. AuriX stores each new raw image in a private Supabase Storage bucket and stores only its bucket/path, checksum, MIME type, size, extraction result, and review state in the database. Telegram file metadata remains as a compatibility fallback for older evidence. The upload is completed before the order enters `payment_submitted`; failed uploads remain retryable and are never shown in the admin review queue. Provider-aware AI triage checks completion, selected provider, exact amount/currency, the provider's visible reference label, timestamp relative to the original upload, and the configured merchant recipient. Clear mismatches are reject candidates; missing or ambiguous fields remain manual review. The LLM never approves a payment or credits a wallet. Staff tap **Verify Payment**, compare the candidate fields with the actual receiving account, and confirm; **Approve** appears only after verification. The underlying typed commands remain compatibility/recovery tools, not the primary workflow. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.
 Configure the bucket's lifecycle/retention rule separately after confirming the business and payment-record retention policy; the application does not silently delete evidence.
 
-New orders, submitted receipts, and receipt rejections create deduplicated,
-durable alerts for every active owner/admin who has that event enabled. Each
+New orders, submitted receipts, receipt rejections, and newly opened managed-key
+repairs create deduplicated, durable alerts for every active owner/admin who
+has that event enabled. Each
 staff account controls its own choices through `/notifications`; customer
 confirmations and critical VPN-enforcement alerts are unaffected. Receipt images
 remain private and are opened on demand from the alert rather than copied into

@@ -64,6 +64,13 @@ class TelegramMaintenanceMixin:
                                 [("⚙ Alerts", "a:n:notifications")],
                             ]
                         )
+                    elif notification.get("kind") == "staff_key_repairs":
+                        markup = self._inline_keyboard(
+                            [
+                                [("🧩 Open Key Repairs", "a:n:repairs")],
+                                [("⚙ Alerts", "a:n:notifications")],
+                            ]
+                        )
                     elif entity_id:
                         markup = self._inline_keyboard(
                             [[("🧾 Open Receipt", f"a:r:{entity_id}")], [("⚙ Alerts", "a:n:notifications")]]
