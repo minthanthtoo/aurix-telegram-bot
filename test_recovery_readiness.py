@@ -7,6 +7,7 @@ import os
 import tarfile
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -34,6 +35,7 @@ class RecoveryReadinessTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.env_file = self.root / "aurix.env"
         self.key = Fernet.generate_key().decode()
+        self.fresh_created_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -98,7 +100,7 @@ class RecoveryReadinessTests(unittest.TestCase):
             write_private(archive, ciphertext)
             write_private(metadata_path(archive), json.dumps({
                 "node_id": "sg-a",
-                "created_at": "2026-09-03T00:00:00+00:00",
+                "created_at": self.fresh_created_at,
                 "ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
             }).encode())
         return values
@@ -189,8 +191,13 @@ class RecoveryReadinessTests(unittest.TestCase):
         values["AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE"] = "1"
         self.write_env(values)
         with patch(
-            "deploy.recovery_readiness.database_backup.verify",
-            return_value={"offsite": {"archive": "object://database/archive"}},
+            "deploy.recovery_readiness.postgres_backup.verify",
+            return_value={
+                "offsite": {
+                    "archive": "object://database/archive",
+                    "created_at": self.fresh_created_at,
+                }
+            },
         ) as verify:
             report = run_audit(self.env_file, verify_archives=True)
         verify.assert_called_once()
@@ -228,9 +235,16 @@ class RecoveryReadinessTests(unittest.TestCase):
         self.write_env(values)
 
         with patch("deploy.recovery_readiness.database_backup.verify",
-                   return_value={"local": {}, "offsite": {}}), \
+                   return_value={
+                       "local": {"created_at": self.fresh_created_at},
+                       "offsite": {"created_at": self.fresh_created_at},
+                   }), \
                 patch("deploy.recovery_readiness.verify_node",
-                      return_value={"node": "sg-a", "local": {}, "offsite": {}}):
+                      return_value={
+                          "node": "sg-a",
+                          "local": {"created_at": self.fresh_created_at},
+                          "offsite": {"created_at": self.fresh_created_at},
+                      }):
             report = run_audit(self.env_file, verify_archives=True)
 
         self.assertEqual(report["status"], "pass")
@@ -255,12 +269,83 @@ class RecoveryReadinessTests(unittest.TestCase):
         self.write_env(values)
 
         with patch("deploy.recovery_readiness.database_backup.verify",
-                   return_value={"local": {}, "offsite": {}}), \
+                   return_value={
+                       "local": {"created_at": self.fresh_created_at},
+                       "offsite": {"created_at": self.fresh_created_at},
+                   }), \
                 patch("deploy.recovery_readiness.verify_node",
-                      return_value={"node": "sg-a", "local": {}, "offsite": {}}):
+                      return_value={
+                          "node": "sg-a",
+                          "local": {"created_at": self.fresh_created_at},
+                          "offsite": {"created_at": self.fresh_created_at},
+                      }):
             report = run_audit(self.env_file, verify_archives=True)
 
         self.assertEqual(report["status"], "pass")
+
+    def test_stale_database_archive_fails_freshness_gate(self) -> None:
+        values = self.base_env()
+        values["AURIX_DATABASE_BACKUP_MAX_AGE_HOURS"] = "24"
+        self.write_env(values)
+        stale = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        with patch(
+            "deploy.recovery_readiness.database_backup.verify",
+            return_value={"local": {"created_at": stale}, "offsite": {"created_at": stale}},
+        ):
+            report = run_audit(self.env_file, verify_archives=True)
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["database_recovery"]["status"], "fail")
+        self.assertIn("stale", checks["database_recovery"]["detail"])
+
+    def test_fresh_offsite_database_archive_is_authoritative_over_stale_local(self) -> None:
+        values = self.base_env()
+        values["AURIX_DATABASE_BACKUP_MAX_AGE_HOURS"] = "24"
+        self.write_env(values)
+        stale = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+        with patch(
+            "deploy.recovery_readiness.database_backup.verify",
+            return_value={
+                "local": {"created_at": stale},
+                "offsite": {"created_at": self.fresh_created_at},
+            },
+        ):
+            report = run_audit(self.env_file, verify_archives=True)
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["database_recovery"]["status"], "pass")
+
+    def test_invalid_backup_freshness_configuration_fails(self) -> None:
+        values = self.base_env()
+        values["AURIX_DATABASE_BACKUP_MAX_AGE_HOURS"] = "not-a-duration"
+        self.write_env(values)
+        with patch(
+            "deploy.recovery_readiness.database_backup.verify",
+            return_value={
+                "local": {"created_at": self.fresh_created_at},
+                "offsite": {"created_at": self.fresh_created_at},
+            },
+        ):
+            report = run_audit(self.env_file, verify_archives=True)
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["database_recovery"]["status"], "fail")
+        self.assertIn("MAX_AGE_HOURS", checks["database_recovery"]["detail"])
+
+    def test_stale_fleet_archive_fails_freshness_gate(self) -> None:
+        values = self.fleet_env()
+        values["AURIX_FLEET_BACKUP_MAX_AGE_HOURS"] = "24"
+        self.write_env(values)
+        stale = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        with patch(
+            "deploy.recovery_readiness.verify_node",
+            return_value={
+                "node": "sg-a",
+                "local": {"created_at": stale},
+                "offsite": {"created_at": stale},
+            },
+        ):
+            report = run_audit(self.env_file, verify_archives=True)
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["fleet_backup_archives"]["status"], "fail")
+        self.assertIn("stale", checks["fleet_backup_archives"]["detail"])
 
     def test_legacy_overallocation_is_visible_when_strict_mode_is_disabled(self) -> None:
         values = self.fleet_env()

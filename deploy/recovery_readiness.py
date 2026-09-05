@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sqlite3
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -29,6 +31,7 @@ from deploy.fleet_reconcile import (  # noqa: E402
 from deploy import database_backup  # noqa: E402
 from deploy import dns_records  # noqa: E402
 from deploy import offsite_storage  # noqa: E402
+from deploy import postgres_backup  # noqa: E402
 
 TRUTHY = {"1", "true", "yes", "on"}
 FAIL = "fail"
@@ -71,6 +74,97 @@ def check_repository(env: dict[str, str]) -> Check:
     return Check("source_repository", PASS, "GitHub source and branch are configured")
 
 
+def _backup_max_age_hours(env: dict[str, str], name: str) -> float:
+    """Parse one bounded freshness budget without silently accepting bad input."""
+    raw = env.get(name, "48").strip()
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise FleetError(f"{name} must be a positive number of hours") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise FleetError(f"{name} must be a positive number of hours")
+    return value
+
+
+def _backup_timestamp(value: object, *, kind: str, source: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise FleetError(f"{kind} {source} backup freshness metadata is missing")
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        timestamp = datetime.fromisoformat(normalized)
+    except (TypeError, ValueError) as exc:
+        raise FleetError(f"{kind} {source} backup freshness timestamp is invalid") from exc
+    if timestamp.tzinfo is None:
+        raise FleetError(f"{kind} {source} backup freshness timestamp must include a timezone")
+    timestamp = timestamp.astimezone(timezone.utc)
+    if timestamp > datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise FleetError(f"{kind} {source} backup freshness timestamp is in the future")
+    return timestamp
+
+
+def _backup_freshness_detail(
+    env: dict[str, str],
+    report: object,
+    *,
+    kind: str,
+    require_offsite: bool,
+) -> str:
+    """Require a recent authenticated recovery source after archive verification.
+
+    A stale local copy must not mask a fresh off-site copy.  Conversely, when
+    off-site recovery is required, a fresh local archive alone is insufficient
+    because it would disappear with the control-plane host.
+    """
+    if not isinstance(report, dict):
+        raise FleetError(f"{kind} backup verification returned invalid report data")
+    sources: dict[str, datetime] = {}
+    for source in ("local", "offsite"):
+        if source in report:
+            item = report[source]
+            if not isinstance(item, dict):
+                raise FleetError(f"{kind} {source} backup verification returned invalid metadata")
+            sources[source] = _backup_timestamp(
+                item.get("created_at"), kind=kind, source=source
+            )
+    if not sources:
+        raise FleetError(f"{kind} backup verification returned no timestamped archive")
+    if require_offsite and "offsite" not in sources:
+        raise FleetError(f"{kind} offsite backup freshness cannot be proven")
+
+    limit_name = f"AURIX_{kind.upper()}_BACKUP_MAX_AGE_HOURS"
+    limit_hours = _backup_max_age_hours(env, limit_name)
+    now = datetime.now(timezone.utc)
+    selected_source = "offsite" if require_offsite else max(
+        sources, key=lambda source: sources[source]
+    )
+    age_hours = max(0.0, (now - sources[selected_source]).total_seconds() / 3600)
+    if age_hours > limit_hours:
+        raise FleetError(
+            f"{kind} backup is stale: {selected_source} archive is {age_hours:.1f}h old "
+            f"(limit {limit_hours:g}h)"
+        )
+    return (
+        f"freshness {selected_source} {age_hours:.1f}h old "
+        f"(limit {limit_hours:g}h)"
+    )
+
+
+def _verify_database_archives(env: dict[str, str]) -> str:
+    """Verify the correct archive format and then enforce its freshness."""
+    if env.get("COMMERCE_DATABASE_URL", "").strip():
+        report = postgres_backup.verify(env)
+    else:
+        report = database_backup.verify(env)
+    return _backup_freshness_detail(
+        env,
+        report,
+        kind="database",
+        require_offsite=truthy(env.get("AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE")),
+    )
+
+
 def check_database(env: dict[str, str], verify_archives: bool) -> Check:
     database_url = env.get("COMMERCE_DATABASE_URL", "").strip()
     if database_url:
@@ -104,13 +198,13 @@ def check_database(env: dict[str, str], verify_archives: bool) -> Check:
         archive_configured = any(has_value(env, name) for name in backup_settings)
         if archive_required:
             try:
-                database_backup.verify(env)
+                freshness = _verify_database_archives(env)
             except (FleetError, OSError, ValueError) as exc:
                 return Check("database_recovery", FAIL, str(exc))
             return Check(
                 "database_recovery",
                 PASS,
-                "external PostgreSQL and encrypted backup archive are verified",
+                "external PostgreSQL and encrypted backup archive are verified; " + freshness,
             )
         if archive_configured:
             return Check(
@@ -133,10 +227,14 @@ def check_database(env: dict[str, str], verify_archives: bool) -> Check:
         if not verify_archives:
             return Check("database_recovery", WARN, "run with --verify-archives to prove SQLite backup decryptability")
         try:
-            database_backup.verify(env)
+            freshness = _verify_database_archives(env)
         except (FleetError, OSError, ValueError) as exc:
             return Check("database_recovery", FAIL, str(exc))
-        return Check("database_recovery", PASS, "SQLite local/offsite-object-store backups are verified")
+        return Check(
+            "database_recovery",
+            PASS,
+            "SQLite local/offsite-object-store backups are verified; " + freshness,
+        )
     if has_value(env, "DATABASE_PATH") and has_value(env, "AURIX_DATABASE_BACKUP_OFFSITE_DIR"):
         path = Path(env["AURIX_DATABASE_BACKUP_OFFSITE_DIR"]).expanduser()
         if not path.is_absolute():
@@ -146,10 +244,14 @@ def check_database(env: dict[str, str], verify_archives: bool) -> Check:
         if not verify_archives:
             return Check("database_recovery", WARN, "run with --verify-archives to prove SQLite backup decryptability")
         try:
-            database_backup.verify(env)
+            freshness = _verify_database_archives(env)
         except (FleetError, OSError, ValueError) as exc:
             return Check("database_recovery", FAIL, str(exc))
-        return Check("database_recovery", PASS, "SQLite local/offsite backups are verified")
+        return Check(
+            "database_recovery",
+            PASS,
+            "SQLite local/offsite backups are verified; " + freshness,
+        )
     return Check(
         "database_recovery",
         FAIL,
@@ -286,10 +388,20 @@ def check_backup_archives(env: dict[str, str], nodes: list[FleetNode], verify: b
     if not verify:
         return Check("fleet_backup_archives", WARN, "run with --verify-archives to prove backup decryptability")
     try:
-        verified = [verify_node(node, env)["node"] for node in nodes]
+        reports = [verify_node(node, env) for node in nodes]
+        details = []
+        for report in reports:
+            node_id = str(report.get("node") or "unknown")
+            freshness = _backup_freshness_detail(
+                env,
+                report,
+                kind="fleet",
+                require_offsite=truthy(env.get("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE")),
+            )
+            details.append(f"{node_id} ({freshness})")
     except (FleetError, OSError, ValueError) as exc:
         return Check("fleet_backup_archives", FAIL, str(exc))
-    return Check("fleet_backup_archives", PASS, "verified archives for " + ", ".join(verified))
+    return Check("fleet_backup_archives", PASS, "verified archives for " + ", ".join(details))
 
 
 def check_provider(env: dict[str, str]) -> Check:

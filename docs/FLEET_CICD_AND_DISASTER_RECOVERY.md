@@ -239,6 +239,16 @@ does not grow without bound. Retention values are positive integers capped at
 3,650 copies; malformed values fail the backup rather than silently disabling
 retention.
 
+Archive verification also enforces a freshness budget. Set
+`AURIX_DATABASE_BACKUP_MAX_AGE_HOURS` and
+`AURIX_FLEET_BACKUP_MAX_AGE_HOURS` (default `48`) to the maximum recovery-point
+age your operation can tolerate. The `--verify-archives` readiness audit parses
+the authenticated metadata timestamp and fails on stale, malformed, timezone-
+less, or future-dated archives. When `*_REQUIRE_OFFSITE=1`, a fresh off-site
+archive is mandatory; a fresh local copy cannot satisfy that requirement. If
+off-site recovery is optional, the newest verified local or off-site source is
+used while the separate off-site check remains visible as a warning.
+
 Supabase Storage is also supported when the project already hosts the bot's
 receipt evidence. Create a second **private** bucket (for example
 `aurix-recovery`) and configure the same server-side Supabase URL/key plus an
