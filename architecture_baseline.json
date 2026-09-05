@@ -154,8 +154,13 @@
       "max_sql_calls": 14
     },
     "commerce_worker_notifications.py": {
-      "max_lines": 106,
-      "max_function_lines": 41,
+      "max_lines": 77,
+      "max_function_lines": 25,
+      "max_sql_calls": 0
+    },
+    "commerce_notification_repository.py": {
+      "max_lines": 58,
+      "max_function_lines": 11,
       "max_sql_calls": 5
     },
     "commerce_worker_repairs.py": {
@@ -687,6 +692,7 @@
         "identity_accounts_repository.py",
         "identity_entitlements_repository.py",
         "quota_alert_repository.py",
+        "commerce_notification_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",
