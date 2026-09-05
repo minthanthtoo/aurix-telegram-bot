@@ -346,6 +346,13 @@ python deploy/render_preflight.py --live && python -u deploy/render_web.py
 returns HTTP 200 only while the bot process is alive. If the bot exits, the web
 process exits as well so Render can restart it.
 
+The live preflight requires at least one configured Outline management endpoint
+to be reachable. If one or more other nodes are temporarily offline, startup
+continues in degraded mode and prints a sanitized `x/y` healthy-endpoint warning;
+the runtime keeps those nodes out of allocation and probes them again through its
+normal reconciliation jobs. A fleet with zero healthy endpoints still fails
+closed so Render does not advertise a bot that cannot issue or verify keys.
+
 ### Configure UptimeRobot
 
 Create an HTTP monitor for:

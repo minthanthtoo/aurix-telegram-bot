@@ -296,6 +296,9 @@ acceptance audit. It is intentionally a gate: warnings for allocation policy,
 DNS, canaries, or sustained observation keep the result non-passing.
 `--live` also runs the sanitized Outline management/data-port diagnostic, so a
 node that is configured but unreachable cannot be mistaken for a healthy fleet.
+Render startup accepts a partially unavailable fleet when at least one endpoint
+is healthy (and emits a sanitized degraded-mode warning); it fails closed only
+when every configured Outline endpoint is unreachable.
 When a DigitalOcean token is present, `digitalocean_preflight.py --live` also
 performs a read-only provider inventory canary; it never creates or deletes a
 Droplet.

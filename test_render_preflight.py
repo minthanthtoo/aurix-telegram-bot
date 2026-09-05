@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
@@ -104,6 +105,85 @@ class RenderPreflightTest(unittest.TestCase):
                 side_effect=[{"ok": True}, {"public": False}, {"data": [{"id": "vision-model"}]}],
             ), patch("outline_adapter.OutlineClient", FakeOutline):
                 _validate_live(values)
+
+    def test_live_canary_allows_partial_outline_fleet_in_degraded_mode(self):
+        values = {
+            "telegram_token": "test-token",
+            "supabase_url": "https://project.supabase.co",
+            "supabase_key": "service-role-key",
+            "bucket": "payment-receipts",
+            "llm_url": "https://vision.example/v1",
+            "llm_key": "vision-key",
+            "database_url": "",
+            "database_path": "/tmp/does-not-need-to-exist",
+            "outline_servers": [
+                {"api_url": "https://outline-a.example/secret", "cert_sha256": "a" * 64},
+                {"api_url": "https://outline-b.example/secret", "cert_sha256": "b" * 64},
+            ],
+        }
+
+        class HealthyOutline:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+
+            def server_info(self):
+                return {"version": "1.12.3"}
+
+        class OfflineOutline:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+
+            def server_info(self):
+                raise TimeoutError("simulated outage")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "bot.db"
+            with sqlite3.connect(database) as connection:
+                connection.execute("CREATE TABLE health (id INTEGER)")
+            values["database_path"] = str(database)
+            with patch(
+                "deploy.render_preflight._json_request",
+                side_effect=[{"ok": True}, {"public": False}, {"data": [{"id": "vision-model"}]}],
+            ), patch(
+                "outline_adapter.OutlineClient",
+                side_effect=[HealthyOutline(), OfflineOutline()],
+            ), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                _validate_live(values)
+        self.assertIn("1/2", stderr.getvalue())
+
+    def test_live_canary_fails_when_every_outline_endpoint_is_unreachable(self):
+        values = {
+            "telegram_token": "test-token",
+            "supabase_url": "https://project.supabase.co",
+            "supabase_key": "service-role-key",
+            "bucket": "payment-receipts",
+            "llm_url": "https://vision.example/v1",
+            "llm_key": "vision-key",
+            "database_url": "",
+            "database_path": "/tmp/does-not-need-to-exist",
+            "outline_servers": [
+                {"api_url": "https://outline-a.example/secret", "cert_sha256": "a" * 64},
+            ],
+        }
+
+        class OfflineOutline:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+
+            def server_info(self):
+                raise TimeoutError("simulated outage")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "bot.db"
+            with sqlite3.connect(database) as connection:
+                connection.execute("CREATE TABLE health (id INTEGER)")
+            values["database_path"] = str(database)
+            with patch(
+                "deploy.render_preflight._json_request",
+                side_effect=[{"ok": True}, {"public": False}, {"data": [{"id": "vision-model"}]}],
+            ), patch("outline_adapter.OutlineClient", OfflineOutline):
+                with self.assertRaisesRegex(SystemExit, "no Outline management endpoint"):
+                    _validate_live(values)
 
     def test_live_canary_rejects_public_receipt_bucket(self):
         values = {

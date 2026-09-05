@@ -132,13 +132,31 @@ def _validate_live(values: dict[str, object]) -> None:
     try:
         from outline_adapter import OutlineClient
 
+        outline_errors: list[str] = []
+        outline_ok = 0
+        timeout = float(os.environ.get("OUTLINE_REQUEST_TIMEOUT_SECONDS", "5"))
         for item in values["outline_servers"]:
-            client = OutlineClient(
-                item["api_url"],
-                item["cert_sha256"],
-                timeout_seconds=float(os.environ.get("OUTLINE_REQUEST_TIMEOUT_SECONDS", "5")),
+            try:
+                client = OutlineClient(
+                    item["api_url"],
+                    item["cert_sha256"],
+                    timeout_seconds=timeout,
+                )
+                client.server_info()
+                outline_ok += 1
+            except Exception as exc:  # pragma: no cover - exercised by live deploys
+                outline_errors.append(type(exc).__name__)
+        if not outline_ok:
+            error = outline_errors[0] if outline_errors else "no_configured_endpoint"
+            fail(f"no Outline management endpoint is healthy: {error}")
+        if outline_errors:
+            print(
+                f"Render preflight warning: {outline_ok}/{len(values['outline_servers'])} "
+                "Outline management endpoints healthy; continuing in degraded mode",
+                file=sys.stderr,
             )
-            client.server_info()
+    except ValueError as exc:
+        fail(f"Outline management timeout configuration is invalid: {type(exc).__name__}")
     except Exception as exc:  # pragma: no cover - exercised by live deploys
         fail(f"Outline management check failed: {type(exc).__name__}")
 
