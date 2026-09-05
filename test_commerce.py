@@ -618,6 +618,59 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(self.service.user_vpn(123)["access_url"], "ss://recovered")
         self.assertEqual(self.outline.limits[0][0], "remote-7")
 
+    def test_customer_views_withhold_url_while_missing_key_repair_is_open(self):
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        with self.database.connect() as connection:
+            key = connection.execute(
+                "SELECT id, server_id, outline_key_id, quota_bytes, access_url "
+                "FROM paid_vpn_keys WHERE subscription_id = (SELECT id FROM subscriptions WHERE order_id = ?)",
+                (order.order_id,),
+            ).fetchone()
+            self.assertIsNotNone(key)
+            # The fake single-endpoint fixture does not assign a server ID;
+            # use an explicit one so the repair join exercises the same
+            # server-scoped path as production.
+            connection.execute(
+                "UPDATE paid_vpn_keys SET server_id = 'default' WHERE id = ?",
+                (key["id"],),
+            )
+            server_id = "default"
+            local_ref = str(key["id"])
+            external_id = str(key["outline_key_id"])
+            expires_at = connection.execute(
+                "SELECT expires_at FROM subscriptions WHERE order_id = ?", (order.order_id,)
+            ).fetchone()[0]
+            now_text = self.now.isoformat()
+            connection.execute(
+                """INSERT INTO managed_key_repair_jobs
+                   (id, kind, server_id, telegram_id, local_key_ref,
+                    source_external_id, target_external_id, key_name, quota_bytes,
+                    used_bytes, expires_at, status, attempts, next_attempt_at,
+                    last_error, observed_at, created_at)
+                   VALUES (?, 'paid', ?, 123, ?, ?, ?, 'repair', ?, NULL, ?,
+                           'manual', 0, ?, 'usage_observation_required', ?, ?)""",
+                (
+                    "repair-open-1",
+                    server_id,
+                    local_ref,
+                    external_id,
+                    external_id,
+                    int(key["quota_bytes"]),
+                    str(expires_at),
+                    now_text,
+                    now_text,
+                    now_text,
+                ),
+            )
+            subscription_id = connection.execute(
+                "SELECT id FROM subscriptions WHERE order_id = ?", (order.order_id,)
+            ).fetchone()[0]
+
+        self.assertIsNone(self.service.user_vpn(123)["access_url"])
+        self.assertIsNone(self.service.user_vpn_detail(123, subscription_id)["access_url"])
+
     def test_failed_provision_retries_without_duplicate_remote_keys(self):
         order = self._paid_order()
         self.service.approve_order(order.order_id, 999, self.now)

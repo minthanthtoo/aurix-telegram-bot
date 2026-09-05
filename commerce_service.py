@@ -78,6 +78,24 @@ class CommerceService(CommerceWorkerMixin):
             return None
 
     @staticmethod
+    def _repair_blocks_access(repair_status: Any) -> bool:
+        """Keep a known-missing key out of customer-facing key views.
+
+        The local entitlement row can remain active while the managed repair
+        worker is waiting for observations, retrying, or awaiting an owner
+        decision.  Its encrypted URL is then only historical state; exposing
+        it would make the bot return a credential that the Outline endpoint
+        has already confirmed missing.  Completed/cancelled repairs are not
+        blocked because the normal provisioning path has reconciled them.
+        """
+        return str(repair_status or "").strip().lower() in {
+            "pending",
+            "running",
+            "failed",
+            "manual",
+        }
+
+    @staticmethod
     def _receipt_storage_extension(mime_type: str) -> str:
         normalized = str(mime_type or "").lower().split(";", 1)[0].strip()
         return {
@@ -5246,6 +5264,7 @@ class CommerceService(CommerceWorkerMixin):
             if (
                 result.get("status") != "active"
                 or result.get("key_status") != "active"
+                or self._repair_blocks_access(result.get("repair_status"))
                 or str(result.get("expires_at") or "") <= now_text
             ):
                 result["access_url"] = None
@@ -5296,6 +5315,7 @@ class CommerceService(CommerceWorkerMixin):
         if (
             result.get("status") != "active"
             or result.get("key_status") != "active"
+            or self._repair_blocks_access(result.get("repair_status"))
             or str(result.get("expires_at") or "") <= _now_text()
         ):
             result["access_url"] = None
