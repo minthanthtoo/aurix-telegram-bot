@@ -1,0 +1,710 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "f16c9e7",
+  "purpose": "Ratchet known monolith hotspots downward while preserving the current release baseline.",
+  "hotspots": {
+    "capacity_policy.py": {
+      "max_lines": 97,
+      "max_function_lines": 89,
+      "max_sql_calls": 0
+    },
+    "commerce_order_repository.py": {
+      "max_lines": 46,
+      "max_function_lines": 9,
+      "max_sql_calls": 4
+    },
+    "commerce_payment_repository.py": {
+      "max_lines": 176,
+      "max_function_lines": 17,
+      "max_sql_calls": 18
+    },
+    "commerce_service.py": {
+      "max_lines": 252,
+      "max_function_lines": 29,
+      "max_sql_calls": 0
+    },
+    "commerce_service_allocation.py": {
+      "max_lines": 481,
+      "max_function_lines": 137,
+      "max_sql_calls": 33
+    },
+    "commerce_service_core.py": {
+      "max_lines": 316,
+      "max_function_lines": 49,
+      "max_sql_calls": 11
+    },
+    "commerce_service_customer.py": {
+      "max_lines": 299,
+      "max_function_lines": 83,
+      "max_sql_calls": 8
+    },
+    "commerce_service_dispatch.py": {
+      "max_lines": 282,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_service_fleet.py": {
+      "max_lines": 870,
+      "max_function_lines": 181,
+      "max_sql_calls": 34
+    },
+    "commerce_service_inventory.py": {
+      "max_lines": 911,
+      "max_function_lines": 363,
+      "max_sql_calls": 30
+    },
+    "commerce_service_orders.py": {
+      "max_lines": 753,
+      "max_function_lines": 98,
+      "max_sql_calls": 29
+    },
+    "commerce_service_receipts.py": {
+      "max_lines": 815,
+      "max_function_lines": 317,
+      "max_sql_calls": 30
+    },
+    "commerce_service_repairs.py": {
+      "max_lines": 551,
+      "max_function_lines": 150,
+      "max_sql_calls": 15
+    },
+    "commerce_service_support.py": {
+      "max_lines": 6,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_service_wallet.py": {
+      "max_lines": 21,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_worker.py": {
+      "max_lines": 126,
+      "max_function_lines": 8,
+      "max_sql_calls": 0
+    },
+    "commerce_worker_capacity.py": {
+      "max_lines": 632,
+      "max_function_lines": 294,
+      "max_sql_calls": 27
+    },
+    "commerce_worker_dispatch.py": {
+      "max_lines": 121,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_worker_job_operations.py": {
+      "max_lines": 157,
+      "max_function_lines": 41,
+      "max_sql_calls": 10
+    },
+    "commerce_worker_lifecycle.py": {
+      "max_lines": 535,
+      "max_function_lines": 230,
+      "max_sql_calls": 24
+    },
+    "commerce_worker_migrations.py": {
+      "max_lines": 352,
+      "max_function_lines": 156,
+      "max_sql_calls": 14
+    },
+    "commerce_worker_notifications.py": {
+      "max_lines": 106,
+      "max_function_lines": 41,
+      "max_sql_calls": 5
+    },
+    "commerce_worker_repairs.py": {
+      "max_lines": 538,
+      "max_function_lines": 250,
+      "max_sql_calls": 20
+    },
+    "entitlements.py": {
+      "max_lines": 82,
+      "max_function_lines": 19,
+      "max_sql_calls": 0
+    },
+    "entitlement_dispatch.py": {
+      "max_lines": 128,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "entitlement_giveaways.py": {
+      "max_lines": 836,
+      "max_function_lines": 226,
+      "max_sql_calls": 49
+    },
+    "entitlement_models.py": {
+      "max_lines": 35,
+      "max_function_lines": 3,
+      "max_sql_calls": 0
+    },
+    "entitlement_provisioning.py": {
+      "max_lines": 837,
+      "max_function_lines": 154,
+      "max_sql_calls": 43
+    },
+    "entitlement_quota.py": {
+      "max_lines": 528,
+      "max_function_lines": 105,
+      "max_sql_calls": 20
+    },
+    "entitlement_support.py": {
+      "max_lines": 59,
+      "max_function_lines": 12,
+      "max_sql_calls": 0
+    },
+    "telegram_transport.py": {
+      "max_lines": 394,
+      "max_function_lines": 76,
+      "max_sql_calls": 0
+    },
+    "telegram_transport_admin.py": {
+      "max_lines": 281,
+      "max_function_lines": 90,
+      "max_sql_calls": 0
+    },
+    "telegram_transport_customer.py": {
+      "max_lines": 538,
+      "max_function_lines": 84,
+      "max_sql_calls": 0
+    },
+    "telegram_transport_customer_vpn.py": {
+      "max_lines": 797,
+      "max_function_lines": 274,
+      "max_sql_calls": 1
+    },
+    "telegram_transport_receipts.py": {
+      "max_lines": 466,
+      "max_function_lines": 110,
+      "max_sql_calls": 0
+    },
+    "telegram_transport_runtime.py": {
+      "max_lines": 116,
+      "max_function_lines": 63,
+      "max_sql_calls": 0
+    },
+    "telegram_transport_support.py": {
+      "max_lines": 15,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "telegram_commands.py": {
+      "max_lines": 552,
+      "max_function_lines": 437,
+      "max_sql_calls": 0
+    },
+    "telegram_admin_confirmation.py": {
+      "max_lines": 126,
+      "max_function_lines": 93,
+      "max_sql_calls": 0
+    },
+    "telegram_command_context.py": {
+      "max_lines": 196,
+      "max_function_lines": 172,
+      "max_sql_calls": 0
+    },
+    "telegram_customer_commands.py": {
+      "max_lines": 153,
+      "max_function_lines": 142,
+      "max_sql_calls": 0
+    },
+    "telegram_customer_commerce_commands.py": {
+      "max_lines": 383,
+      "max_function_lines": 345,
+      "max_sql_calls": 0
+    },
+    "telegram_customer_access_commands.py": {
+      "max_lines": 106,
+      "max_function_lines": 89,
+      "max_sql_calls": 0
+    },
+    "telegram_receipt_review_commands.py": {
+      "max_lines": 95,
+      "max_function_lines": 82,
+      "max_sql_calls": 0
+    },
+    "telegram_operations_commands.py": {
+      "max_lines": 175,
+      "max_function_lines": 150,
+      "max_sql_calls": 0
+    },
+    "telegram_approval_commands.py": {
+      "max_lines": 180,
+      "max_function_lines": 157,
+      "max_sql_calls": 0
+    },
+    "telegram_free_claim_commands.py": {
+      "max_lines": 69,
+      "max_function_lines": 58,
+      "max_sql_calls": 0
+    },
+    "telegram_staff_commands.py": {
+      "max_lines": 164,
+      "max_function_lines": 141,
+      "max_sql_calls": 0
+    },
+    "telegram_promo_admin_commands.py": {
+      "max_lines": 118,
+      "max_function_lines": 105,
+      "max_sql_calls": 0
+    },
+    "telegram_receipt_admin_commands.py": {
+      "max_lines": 65,
+      "max_function_lines": 54,
+      "max_sql_calls": 0
+    },
+    "telegram_callbacks.py": {
+      "max_lines": 14,
+      "max_function_lines": 2,
+      "max_sql_calls": 0
+    },
+    "telegram_callback_router.py": {
+      "max_lines": 162,
+      "max_function_lines": 133,
+      "max_sql_calls": 0
+    },
+    "telegram_admin_panels.py": {
+      "max_lines": 20,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_repositories.py": {
+      "max_lines": 9,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "migrations.py": {
+      "max_lines": 25,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "migration_hooks.py": {
+      "max_lines": 317,
+      "max_function_lines": 80,
+      "max_sql_calls": 48
+    },
+    "free_access_migrations.py": {
+      "max_lines": 421,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_migrations.py": {
+      "max_lines": 21,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "lifecycle_policy.py": {
+      "max_lines": 41,
+      "max_function_lines": 13,
+      "max_sql_calls": 0
+    },
+    "runtime.py": {
+      "max_lines": 466,
+      "max_function_lines": 440,
+      "max_sql_calls": 0
+    },
+    "runtime_composition.py": {
+      "max_lines": 13,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "schema_migrations.py": {
+      "max_lines": 91,
+      "max_function_lines": 59,
+      "max_sql_calls": 4
+    },
+    "telegram_components.py": {
+      "max_lines": 83,
+      "max_function_lines": 21,
+      "max_sql_calls": 0
+    },
+    "commerce_worker_coordinator.py": {
+      "max_lines": 117,
+      "max_function_lines": 9,
+      "max_sql_calls": 0
+    },
+    "identity.py": {
+      "max_lines": 32,
+      "max_function_lines": 2,
+      "max_sql_calls": 0
+    },
+    "identity_support.py": {
+      "max_lines": 37,
+      "max_function_lines": 9,
+      "max_sql_calls": 0
+    },
+    "identity_core.py": {
+      "max_lines": 72,
+      "max_function_lines": 50,
+      "max_sql_calls": 2
+    },
+    "identity_accounts.py": {
+      "max_lines": 268,
+      "max_function_lines": 55,
+      "max_sql_calls": 22
+    },
+    "identity_entitlements.py": {
+      "max_lines": 246,
+      "max_function_lines": 157,
+      "max_sql_calls": 9
+    },
+    "identity_generations.py": {
+      "max_lines": 387,
+      "max_function_lines": 94,
+      "max_sql_calls": 29
+    },
+    "identity_usage.py": {
+      "max_lines": 568,
+      "max_function_lines": 351,
+      "max_sql_calls": 25
+    },
+    "telegram_admin_navigation.py": {
+      "max_lines": 504,
+      "max_function_lines": 45,
+      "max_sql_calls": 0
+    },
+    "telegram_admin_capacity.py": {
+      "max_lines": 700,
+      "max_function_lines": 149,
+      "max_sql_calls": 0
+    },
+    "telegram_admin_state.py": {
+      "max_lines": 382,
+      "max_function_lines": 221,
+      "max_sql_calls": 0
+    },
+    "telegram_admin_confirmations.py": {
+      "max_lines": 138,
+      "max_function_lines": 64,
+      "max_sql_calls": 1
+    },
+    "telegram_admin_orders.py": {
+      "max_lines": 248,
+      "max_function_lines": 81,
+      "max_sql_calls": 0
+    },
+    "telegram_callback_customer.py": {
+      "max_lines": 226,
+      "max_function_lines": 25,
+      "max_sql_calls": 0
+    },
+    "telegram_callback_admin.py": {
+      "max_lines": 692,
+      "max_function_lines": 197,
+      "max_sql_calls": 0
+    },
+    "commerce_sqlite_database.py": {
+      "max_lines": 410,
+      "max_function_lines": 283,
+      "max_sql_calls": 28
+    },
+    "commerce_postgres_database.py": {
+      "max_lines": 734,
+      "max_function_lines": 376,
+      "max_sql_calls": 52
+    },
+    "commerce_migrations_receipts.py": {
+      "max_lines": 98,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_migrations_capacity.py": {
+      "max_lines": 250,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_migrations_identity.py": {
+      "max_lines": 306,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_migrations_quota.py": {
+      "max_lines": 270,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_migrations_probes.py": {
+      "max_lines": 256,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_migrations_endpoints.py": {
+      "max_lines": 340,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "commerce_migrations_routing.py": {
+      "max_lines": 236,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "runtime_models.py": {
+      "max_lines": 48,
+      "max_function_lines": 0,
+      "max_sql_calls": 0
+    },
+    "runtime_settings.py": {
+      "max_lines": 199,
+      "max_function_lines": 141,
+      "max_sql_calls": 0
+    },
+    "runtime_outline.py": {
+      "max_lines": 132,
+      "max_function_lines": 70,
+      "max_sql_calls": 0
+    },
+    "runtime_bootstrap.py": {
+      "max_lines": 210,
+      "max_function_lines": 193,
+      "max_sql_calls": 0
+    },
+    "commerce_service_wallet_read.py": {
+      "max_lines": 195,
+      "max_function_lines": 119,
+      "max_sql_calls": 25
+    },
+    "commerce_service_wallet_payment.py": {
+      "max_lines": 163,
+      "max_function_lines": 107,
+      "max_sql_calls": 12
+    },
+    "commerce_service_wallet_approval.py": {
+      "max_lines": 342,
+      "max_function_lines": 332,
+      "max_sql_calls": 24
+    },
+    "commerce_service_wallet_refunds.py": {
+      "max_lines": 243,
+      "max_function_lines": 130,
+      "max_sql_calls": 21
+    },
+    "infrastructure.py": {
+      "max_lines": 18,
+      "max_function_lines": 3,
+      "max_sql_calls": 0
+    },
+    "infrastructure_support.py": {
+      "max_lines": 16,
+      "max_function_lines": 2,
+      "max_sql_calls": 0
+    },
+    "digitalocean_client.py": {
+      "max_lines": 101,
+      "max_function_lines": 22,
+      "max_sql_calls": 0
+    },
+    "infrastructure_inventory.py": {
+      "max_lines": 355,
+      "max_function_lines": 91,
+      "max_sql_calls": 12
+    },
+    "infrastructure_provisioning.py": {
+      "max_lines": 458,
+      "max_function_lines": 134,
+      "max_sql_calls": 23
+    },
+    "commerce_service_inventory_reconciliation.py": {
+      "max_lines": 376,
+      "max_function_lines": 363,
+      "max_sql_calls": 13
+    },
+    "commerce_service_inventory_migration.py": {
+      "max_lines": 159,
+      "max_function_lines": 148,
+      "max_sql_calls": 5
+    },
+    "commerce_service_receipt_submission.py": {
+      "max_lines": 335,
+      "max_function_lines": 317,
+      "max_sql_calls": 7
+    },
+    "commerce_service_receipt_review.py": {
+      "max_lines": 157,
+      "max_function_lines": 147,
+      "max_sql_calls": 6
+    },
+    "commerce_service_wallet_approval_flow.py": {
+      "max_lines": 347,
+      "max_function_lines": 332,
+      "max_sql_calls": 24
+    },
+    "commerce_service_fleet_failover.py": {
+      "max_lines": 232,
+      "max_function_lines": 181,
+      "max_sql_calls": 5
+    },
+    "commerce_service_fleet_health.py": {
+      "max_lines": 272,
+      "max_function_lines": 133,
+      "max_sql_calls": 11
+    },
+    "identity_usage_recording.py": {
+      "max_lines": 364,
+      "max_function_lines": 351,
+      "max_sql_calls": 16
+    },
+    "entitlement_giveaway_campaign.py": {
+      "max_lines": 271,
+      "max_function_lines": 109,
+      "max_sql_calls": 16
+    },
+    "entitlement_giveaway_claim.py": {
+      "max_lines": 243,
+      "max_function_lines": 226,
+      "max_sql_calls": 14
+    },
+    "entitlement_server_allocation.py": {
+      "max_lines": 168,
+      "max_function_lines": 154,
+      "max_sql_calls": 10
+    },
+    "telegram_transport_customer_vpn_dashboard.py": {
+      "max_lines": 285,
+      "max_function_lines": 274,
+      "max_sql_calls": 0
+    },
+    "commerce_worker_capacity_snapshot.py": {
+      "max_lines": 307,
+      "max_function_lines": 294,
+      "max_sql_calls": 13
+    },
+    "commerce_worker_provisioning.py": {
+      "max_lines": 249,
+      "max_function_lines": 230,
+      "max_sql_calls": 11
+    },
+    "commerce_schema_bootstrap.py": {
+      "max_lines": 670,
+      "max_function_lines": 376,
+      "max_sql_calls": 54
+    }
+  },
+  "dependency_rules": [
+    {
+      "name": "foundation-does-not-depend-on-application",
+      "sources": [
+        "commerce_models.py",
+        "ports.py",
+        "repositories.py",
+        "persistence.py"
+      ],
+      "forbidden_prefixes": [
+        "app",
+        "runtime",
+        "telegram_*",
+        "commerce_service",
+        "commerce_worker",
+        "entitlements"
+      ]
+    },
+    {
+      "name": "control-plane-does-not-depend-on-telegram",
+      "sources": [
+        "access_control.py",
+        "commerce_service.py",
+        "commerce_service_allocation.py",
+        "commerce_service_core.py",
+        "commerce_service_customer.py",
+        "commerce_service_dispatch.py",
+        "commerce_service_fleet.py",
+        "commerce_service_fleet_failover.py",
+        "commerce_service_fleet_health.py",
+        "commerce_service_inventory.py",
+        "commerce_service_inventory_migration.py",
+        "commerce_service_inventory_reconciliation.py",
+        "commerce_service_orders.py",
+        "commerce_service_receipts.py",
+        "commerce_service_receipt_review.py",
+        "commerce_service_receipt_submission.py",
+        "commerce_service_repairs.py",
+        "commerce_service_support.py",
+        "commerce_service_wallet.py",
+        "commerce_service_wallet_approval_flow.py",
+        "commerce_worker.py",
+        "commerce_worker_capacity.py",
+        "commerce_worker_capacity_snapshot.py",
+        "commerce_worker_dispatch.py",
+        "commerce_worker_job_operations.py",
+        "commerce_worker_lifecycle.py",
+        "commerce_worker_migrations.py",
+        "commerce_worker_notifications.py",
+        "commerce_worker_provisioning.py",
+        "commerce_worker_repairs.py",
+        "connectivity_adapters.py",
+        "connectivity_registry.py",
+        "entitlements.py",
+        "entitlement_dispatch.py",
+        "entitlement_giveaways.py",
+        "entitlement_giveaway_campaign.py",
+        "entitlement_giveaway_claim.py",
+        "entitlement_models.py",
+        "entitlement_provisioning.py",
+        "entitlement_server_allocation.py",
+        "entitlement_quota.py",
+        "entitlement_support.py",
+        "fleet_enrollment.py",
+        "fleet_probe.py",
+        "identity.py",
+        "infrastructure.py",
+        "quota_alerts.py",
+        "route_failover.py",
+        "identity_support.py",
+        "identity_core.py",
+        "identity_accounts.py",
+        "identity_entitlements.py",
+        "identity_generations.py",
+        "identity_usage.py",
+        "identity_usage_recording.py"
+      ],
+      "forbidden_prefixes": [
+        "app",
+        "runtime",
+        "telegram_*"
+      ]
+    },
+    {
+      "name": "telegram-does-not-depend-on-persistence-implementations",
+      "sources": [
+        "telegram_admin.py",
+        "telegram_admin_confirmation.py",
+        "telegram_admin_panels.py",
+        "telegram_callbacks.py",
+        "telegram_callback_router.py",
+        "telegram_command_context.py",
+        "telegram_commands.py",
+        "telegram_customer_commands.py",
+        "telegram_customer_access_commands.py",
+        "telegram_customer_commerce_commands.py",
+        "telegram_receipt_review_commands.py",
+        "telegram_operations_commands.py",
+        "telegram_approval_commands.py",
+        "telegram_free_claim_commands.py",
+        "telegram_promo_admin_commands.py",
+        "telegram_receipt_admin_commands.py",
+        "telegram_staff_commands.py",
+        "telegram_maintenance.py",
+        "telegram_transport.py",
+        "telegram_transport_admin.py",
+        "telegram_transport_customer.py",
+        "telegram_transport_customer_vpn.py",
+        "telegram_transport_customer_vpn_dashboard.py",
+        "telegram_transport_receipts.py",
+        "telegram_transport_runtime.py",
+        "telegram_transport_support.py",
+        "telegram_admin_navigation.py",
+        "telegram_admin_capacity.py",
+        "telegram_admin_state.py",
+        "telegram_admin_confirmations.py",
+        "telegram_admin_orders.py",
+        "telegram_callback_customer.py",
+        "telegram_callback_admin.py"
+      ],
+      "forbidden_prefixes": [
+        "commerce_repositories",
+        "free_repository",
+        "migrations",
+        "persistence"
+      ]
+    }
+  ]
+}

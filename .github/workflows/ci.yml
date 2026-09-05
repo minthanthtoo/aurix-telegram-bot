@@ -36,6 +36,9 @@ jobs:
       - name: Run Ruff
         run: ruff check .
 
+      - name: Enforce architecture reduction ratchet
+        run: python tools/check_architecture.py
+
       - name: Run unit and integration-contract tests
         run: python -m unittest discover -s . -p 'test_*.py'
 

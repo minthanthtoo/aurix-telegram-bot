@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -100,3 +101,69 @@ class NotificationTransport(Protocol):
         text: str,
         reply_markup: dict[str, Any] | None = None,
     ) -> Any: ...
+
+
+@runtime_checkable
+class CommerceWorkerPort(Protocol):
+    """Explicit background-work surface exposed by the commerce service."""
+
+    def process_jobs(self, now: datetime | None = None, max_jobs: int = 10) -> int: ...
+
+    def expire_and_process(self, now: datetime | None = None) -> int: ...
+
+    def enforce_quotas(
+        self,
+        now: datetime | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> int: ...
+
+    def queue_quota_warnings(
+        self,
+        now: datetime | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> int: ...
+
+    def process_managed_key_repairs(
+        self, now: datetime | None = None, max_jobs: int = 5
+    ) -> int: ...
+
+    def process_endpoint_migrations(
+        self, now: datetime | None = None, max_jobs: int = 5
+    ) -> int: ...
+
+    def failed_jobs(
+        self, limit: int = 20, include_nonterminal: bool = False
+    ) -> list[dict[str, Any]]: ...
+
+    def retry_job(self, job_id: str, admin_id: int, now: datetime | None = None) -> str: ...
+
+    def retry_failed_job(
+        self,
+        order_id: str,
+        admin_id: int,
+        now: datetime | None = None,
+        operation: str | None = None,
+    ) -> str: ...
+
+    def capacity_snapshot(
+        self, now: datetime | None = None, *, refresh_inventory: bool = True
+    ) -> dict[str, Any]: ...
+
+    def pending_notifications(
+        self, now: datetime | None = None, limit: int = 20
+    ) -> list[dict[str, Any]]: ...
+
+    def claim_pending_notifications(
+        self,
+        now: datetime | None = None,
+        limit: int = 20,
+        lease_seconds: int = 120,
+    ) -> list[dict[str, Any]]: ...
+
+    def mark_notification_sent(
+        self, notification_id: str, now: datetime | None = None
+    ) -> None: ...
+
+    def mark_notification_failed(
+        self, notification_id: str, now: datetime | None = None
+    ) -> None: ...

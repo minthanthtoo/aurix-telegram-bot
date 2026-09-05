@@ -4,9 +4,11 @@ Phase 7 makes the executable application module a compatibility facade.
 
 ## Delivered
 
-- `runtime.py` owns environment reads, startup validation, Telegram `getMe`,
-  database/storage/Outline composition, readiness checks, webhook convergence,
-  signal handling, and hosted-connection shutdown.
+- `runtime_composition.py` owns validated settings, injectable factories,
+  database/storage/Outline composition, service construction, and readiness
+  reconciliation.
+- `runtime.py` owns Telegram `getMe`, webhook convergence, signal handling,
+  polling lifecycle, and hosted-connection shutdown.
 - `app.py` is now a small executable facade that preserves the historical
   imports and `main()` entrypoint for deployments, tests, and scripts.
 - Runtime composition tests exercise required-setting failure and a complete
@@ -15,6 +17,6 @@ Phase 7 makes the executable application module a compatibility facade.
 
 ## Dependency direction
 
-`app` -> `runtime` -> adapters/transports -> domain services -> repositories.
-The runtime module does not import `app`; this removes the last reverse
+`app` -> `runtime` -> `runtime_composition` -> adapters/transports -> domain
+services -> repositories. Neither runtime module imports `app`; this removes the last reverse
 dependency risk while retaining `python -u app.py` as the deployment command.

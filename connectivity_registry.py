@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from lifecycle_policy import accepts_new_keys, endpoint_status
 
 def _slug(value: str, fallback: str) -> str:
     normalized = re.sub(r"[^a-z0-9_-]+", "-", str(value or "").strip().lower()).strip("-")
@@ -98,19 +99,8 @@ class ConnectivityRegistry:
                ON CONFLICT(transport_id) DO UPDATE SET updated_at = excluded.updated_at""",
             (transport_id, now_text, now_text),
         )
-        normalized_lifecycle = str(lifecycle_state or "active").lower()
-        normalized_health = str(health_status or "unknown").lower()
-        if normalized_lifecycle == "retired":
-            endpoint_status = "retired"
-        elif normalized_lifecycle == "draining":
-            endpoint_status = "draining"
-        elif normalized_health == "unreachable":
-            endpoint_status = "failed"
-        elif normalized_health == "degraded":
-            endpoint_status = "degraded"
-        else:
-            endpoint_status = "active" if normalized_health == "healthy" else "provisioning"
-        accepts = 1 if normalized_lifecycle == "active" and normalized_health == "healthy" else 0
+        normalized_endpoint_status = endpoint_status(lifecycle_state, health_status)
+        accepts = 1 if accepts_new_keys(lifecycle_state, health_status) else 0
         connection.execute(
             """INSERT INTO connectivity_endpoints
                (endpoint_id, outline_server_id, provider_id, region_id, transport_id,
@@ -131,7 +121,7 @@ class ConnectivityRegistry:
                 provider_id,
                 region_id,
                 transport_id,
-                endpoint_status,
+                normalized_endpoint_status,
                 accepts,
                 f"env:OUTLINE_SERVERS_JSON:{server_id}",
                 now_text,
@@ -173,7 +163,7 @@ class ConnectivityRegistry:
                     route_id,
                     endpoint_id,
                     "outline" if transport_id == "outline" else transport_id,
-                    endpoint_status,
+                    normalized_endpoint_status,
                     supported,
                     supported,
                     supported,
@@ -217,23 +207,12 @@ class ConnectivityRegistry:
         ).fetchone()
         if endpoint is None:
             return
-        lifecycle = str(lifecycle_state or "active").lower()
-        health = str(health_status or "unknown").lower()
-        if lifecycle == "retired":
-            status = "retired"
-        elif lifecycle == "draining":
-            status = "draining"
-        elif health == "unreachable":
-            status = "failed"
-        elif health == "degraded":
-            status = "degraded"
-        else:
-            status = "active" if health == "healthy" else "provisioning"
+        status = endpoint_status(lifecycle_state, health_status)
         connection.execute(
             """UPDATE connectivity_endpoints
                   SET status = ?, accepts_new_keys = ?, updated_at = ?
                 WHERE outline_server_id = ?""",
-            (status, 1 if lifecycle == "active" and health == "healthy" else 0, now_text, server_id),
+            (status, 1 if accepts_new_keys(lifecycle_state, health_status) else 0, now_text, server_id),
         )
         if endpoint["route_id"] and cls._table_exists(connection, "connectivity_routes"):
             connection.execute(

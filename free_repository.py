@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from entitlements import TRIAL_LIMIT_BYTES, UTC
-from migrations import FREE_ACCESS_MIGRATIONS, apply_migrations
+from migrations import FREE_ACCESS_MIGRATIONS
+from schema_migrations import apply_migrations
 from persistence import open_sqlite_connection
 
 

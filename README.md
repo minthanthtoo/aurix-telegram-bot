@@ -560,10 +560,16 @@ cannot be replayed after a restart.
 
 ```sh
 python3 -m pip install --requirement requirements-dev.txt
-ruff check app.py commerce.py commerce_models.py commerce_repositories.py commerce_service.py commerce_worker.py entitlements.py free_repository.py migrations.py observability.py outline_adapter.py persistence.py ports.py repositories.py receipt_llm.py runtime.py supabase_storage.py telegram_transport.py telegram_admin.py telegram_admin_panels.py telegram_callbacks.py telegram_commands.py telegram_maintenance.py deploy test_*.py
-PYTHONWARNINGS=error::ResourceWarning coverage run -m unittest discover
+python3 -m compileall -q .
+ruff check .
+python3 tools/check_architecture.py
+coverage run -m unittest discover -s . -p 'test_*.py'
 coverage report
 ```
+
+The current hotspot budgets, dependency rules, safety invariants, target module
+layout, and sequenced reduction backlog are maintained in
+[`docs/MONOLITH_REDUCTION_PLAN.md`](docs/MONOLITH_REDUCTION_PLAN.md).
 
 The CI and refactor invariants, schema fingerprint, staging smoke checks, and
 backup/rollback gate are documented in
@@ -580,7 +586,8 @@ The external adapter ports and reliable-worker boundary are in
 [`docs/REFACTOR_PHASE5.md`](docs/REFACTOR_PHASE5.md).
 The Telegram presentation and administrator-operation boundary are in
 [`docs/REFACTOR_PHASE6.md`](docs/REFACTOR_PHASE6.md).
-The runtime composition and executable compatibility facade are in
+The runtime composition boundary is in `runtime_composition.py`; `runtime.py` retains
+the executable lifecycle and compatibility facade. The detailed runtime refactor is in
 [`docs/REFACTOR_PHASE7.md`](docs/REFACTOR_PHASE7.md).
 The decomposed Telegram feature-module boundaries are in
 [`docs/REFACTOR_PHASE8.md`](docs/REFACTOR_PHASE8.md).
