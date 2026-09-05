@@ -6,8 +6,12 @@ import os
 from datetime import datetime, timedelta
 from typing import Any
 
+from commerce_capacity_snapshot_repository import CapacitySnapshotRepository
 from commerce_models import UTC, _now_text
 from connectivity_registry import ConnectivityRegistry
+
+
+_CAPACITY_SNAPSHOTS = CapacitySnapshotRepository()
 
 
 def capacity_snapshot(
@@ -22,55 +26,23 @@ def capacity_snapshot(
         except Exception:
             pass
     with self.database.connect() as connection:
-        counts = connection.execute(
-            """SELECT
-                   (SELECT COUNT(*) FROM subscriptions WHERE status = 'active') AS active_subscriptions,
-                   (SELECT COUNT(*) FROM paid_vpn_keys WHERE status = 'active') AS active_keys,
-                   (SELECT COUNT(*) FROM provisioning_jobs WHERE status IN ('pending', 'running')) AS pending_jobs,
-                   (SELECT COUNT(*) FROM provisioning_jobs WHERE status = 'failed') AS failed_jobs,
-                   (SELECT COUNT(*) FROM subscriptions
-                      WHERE status = 'active'
-                        AND expires_at <= ?) AS expiring_24h""",
-            (expiring_at,),
-        ).fetchone()
-        key_rows = connection.execute(
-            """SELECT outline_key_id, telegram_id, quota_bytes, server_id
-               FROM paid_vpn_keys WHERE status = 'active'"""
-        ).fetchall()
-        server_rows = connection.execute(
-            "SELECT * FROM outline_servers ORDER BY enabled DESC, label, server_id"
-        ).fetchall()
+        has_free_keys = self._table_exists(connection, "keys")
+        snapshot = _CAPACITY_SNAPSHOTS.snapshot_inputs(
+            connection,
+            expiring_at=expiring_at,
+            current_time=_now_text(current),
+            include_free_keys=has_free_keys,
+        )
+        counts = snapshot["counts"]
+        key_rows = snapshot["key_rows"]
+        server_rows = snapshot["server_rows"]
         registry_by_server = {
             str(item["outline_server_id"]): item
             for item in ConnectivityRegistry.endpoint_snapshot(connection)
         }
-        allocation_rows = connection.execute(
-            """SELECT a.server_id, a.plan_code, a.slot_limit, p.name,
-                      (SELECT COUNT(*) FROM subscriptions s
-                        WHERE s.server_id = a.server_id AND s.plan_code = a.plan_code
-                          AND s.status IN ('pending', 'active')) AS active_count,
-                      (SELECT COUNT(*) FROM orders o
-                        WHERE o.server_id = a.server_id AND o.plan_code = a.plan_code
-                          AND (o.status = 'payment_submitted' OR
-                               (o.status = 'awaiting_payment' AND o.capacity_reserved_until > ?))) AS reserved_count
-               FROM server_plan_allocations a JOIN plans p ON p.code = a.plan_code
-               ORDER BY a.server_id, p.price_minor""",
-            (_now_text(current),),
-        ).fetchall()
-        tier_allocation_rows = connection.execute(
-            """SELECT server_id, tier_code, slot_limit
-               FROM server_tier_allocations ORDER BY server_id, tier_code"""
-        ).fetchall()
-        free_key_rows = (
-            connection.execute(
-                """SELECT k.server_id, k.key_type,
-                          CASE WHEN g.key_id IS NULL THEN 0 ELSE 1 END AS is_promo
-                   FROM keys k LEFT JOIN giveaway_claims g ON g.key_id = k.id
-                   WHERE k.status IN ('active', 'revoke_failed')"""
-            ).fetchall()
-            if self._table_exists(connection, "keys")
-            else []
-        )
+        allocation_rows = snapshot["allocation_rows"]
+        tier_allocation_rows = snapshot["tier_allocation_rows"]
+        free_key_rows = snapshot["free_key_rows"]
     default_server_id = getattr(self.outline, "default_server_id", None)
     metrics_by_server = (
         dict(getattr(self, "_server_metrics_cache", {}))
@@ -150,61 +122,21 @@ def capacity_snapshot(
         )
         remote = int(item.get("remote_key_count") or 0)
         with self.database.connect() as connection:
-            reserved_orders = int(
-                connection.execute(
-                    """SELECT COUNT(*) AS n FROM orders WHERE server_id = ?
-                       AND (status = 'payment_submitted' OR
-                            (status = 'awaiting_payment' AND capacity_reserved_until > ?))""",
-                    (item["server_id"], _now_text(current)),
-                ).fetchone()["n"]
+            commitments = _CAPACITY_SNAPSHOTS.server_commitments(
+                connection,
+                server_id=str(item["server_id"]),
+                current_time=_now_text(current),
+                include_free_keys=self._table_exists(connection, "keys"),
+                include_free_intents=self._table_exists(
+                    connection, "free_provisioning_intents"
+                ),
             )
-            pending_keys = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS n FROM subscriptions WHERE server_id = ? AND status = 'pending'",
-                    (item["server_id"],),
-                ).fetchone()["n"]
-            )
-            committed_traffic = int(
-                connection.execute(
-                    """SELECT
-                       COALESCE((SELECT SUM(COALESCE(quota_bytes, 0)) FROM subscriptions
-                         WHERE server_id = ? AND status IN ('pending', 'active')), 0) +
-                       COALESCE((SELECT SUM(COALESCE(quota_bytes_snapshot, 0)) FROM orders
-                         WHERE server_id = ? AND (status = 'payment_submitted' OR
-                           (status = 'awaiting_payment' AND capacity_reserved_until > ?))), 0) AS n""",
-                    (item["server_id"], item["server_id"], _now_text(current)),
-                ).fetchone()["n"]
-            )
-        item["reserved_order_count"] = reserved_orders
-        item["pending_key_count"] = pending_keys
-        item["committed_traffic_bytes"] = committed_traffic
+        item.update(commitments)
+        reserved_orders = commitments["reserved_order_count"]
+        pending_keys = commitments["pending_key_count"]
+        committed_traffic = commitments["committed_traffic_bytes"]
         # Drain/retirement evidence is kept beside capacity so the owner
         # can see exactly why an endpoint is still unsafe to remove.
-        with self.database.connect() as readiness_connection:
-            item["active_free_key_count"] = int(
-                readiness_connection.execute(
-                    "SELECT COUNT(*) AS n FROM keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
-                    (item["server_id"],),
-                ).fetchone()["n"]
-            ) if self._table_exists(readiness_connection, "keys") else 0
-            item["active_paid_key_count"] = int(
-                readiness_connection.execute(
-                    "SELECT COUNT(*) AS n FROM paid_vpn_keys WHERE server_id = ? AND status IN ('active', 'revoke_failed')",
-                    (item["server_id"],),
-                ).fetchone()["n"]
-            )
-            item["open_order_count"] = int(
-                readiness_connection.execute(
-                    "SELECT COUNT(*) AS n FROM orders WHERE server_id = ? AND status IN ('awaiting_payment', 'payment_submitted')",
-                    (item["server_id"],),
-                ).fetchone()["n"]
-            )
-            item["pending_provisioning_count"] = int(
-                readiness_connection.execute(
-                    "SELECT COUNT(*) AS n FROM free_provisioning_intents WHERE server_id = ? AND status IN ('pending', 'running')",
-                    (item["server_id"],),
-                ).fetchone()["n"]
-            ) if self._table_exists(readiness_connection, "free_provisioning_intents") else 0
         item["drain_ready_to_retire"] = not any(
             (
                 item["active_free_key_count"],
@@ -304,4 +236,3 @@ def capacity_snapshot(
         "strict_allocation_validation": strict_allocations,
         "scale_advice": advice,
     }
-

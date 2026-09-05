@@ -10,9 +10,14 @@ from commerce_order_repository import OrderRepository
 from commerce_payment_repository import PaymentRepository
 from commerce_wallet_approval_repository import WalletApprovalRepository
 from commerce_inventory_reconciliation_repository import InventoryReconciliationRepository
+from commerce_capacity_snapshot_repository import CapacitySnapshotRepository
 from identity_usage_repository import IdentityUsageRepository
 from persistence import open_sqlite_connection
-from repositories import IdentityUsageRepositoryPort, InventoryReconciliationRepositoryPort
+from repositories import (
+    CapacitySnapshotRepositoryPort,
+    IdentityUsageRepositoryPort,
+    InventoryReconciliationRepositoryPort,
+)
 
 
 UTC = timezone.utc
@@ -144,6 +149,7 @@ class ReductionContractTest(unittest.TestCase):
             self.service.inventory_reconciliation,
             InventoryReconciliationRepositoryPort,
         )
+        self.assertIsInstance(CapacitySnapshotRepository(), CapacitySnapshotRepositoryPort)
         self.assertIsInstance(self.service.identity.usage_recording, IdentityUsageRepository)
         self.assertIsInstance(self.service.identity.usage_recording, IdentityUsageRepositoryPort)
         with self.database.connect() as connection:
