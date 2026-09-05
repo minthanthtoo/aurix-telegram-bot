@@ -15,9 +15,10 @@ from identity import IdentityService
 from lifecycle_policy import normalize_lifecycle_state
 from ports import CommerceWorkerPort, OutlineGateway, ReceiptStorageGateway
 from receipt_rules import load_recipient_profiles
-from repositories import RepositoryDatabase, OrderRepositoryPort, PaymentRepositoryPort
+import repositories
 from commerce_order_repository import OrderRepository
 from commerce_payment_repository import PaymentRepository
+from commerce_wallet_approval_repository import WalletApprovalRepository
 from route_failover import RouteFailoverService
 from supabase_storage import NullReceiptStorage
 
@@ -27,7 +28,7 @@ class CommerceService:
 
     def __init__(
         self,
-        database: RepositoryDatabase,
+        database: repositories.RepositoryDatabase,
         outline: OutlineGateway,
         access_url_key: bytes | str,
         allow_legacy_text_approval: bool = False,
@@ -36,10 +37,10 @@ class CommerceService:
     ):
         self.database = database
         self.outline = outline
-        self.orders: OrderRepositoryPort = OrderRepository()
-        self.payments: PaymentRepositoryPort = PaymentRepository()
-        # Kept only for controlled migration tests. Public deployments must
-        # require verified screenshot evidence or a wallet reservation.
+        self.orders: repositories.OrderRepositoryPort = OrderRepository()
+        self.payments: repositories.PaymentRepositoryPort = PaymentRepository()
+        self.wallet_approvals = WalletApprovalRepository()
+        # Kept only for migration tests; deployments require evidence or a reservation.
         self.allow_legacy_text_approval = bool(allow_legacy_text_approval)
         self.receipt_storage = receipt_storage or NullReceiptStorage()
         self.receipt_storage_required = bool(receipt_storage_required)

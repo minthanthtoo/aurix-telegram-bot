@@ -19,6 +19,7 @@ def approve_order(
     now: datetime | None = None,
 ) -> ApprovalResult:
     starts_at = _now_text(now)
+    repository = self.wallet_approvals
     with self.database.connect() as connection:
         self.database.begin_write(connection)
         self._lock_order(connection, order_id)
@@ -33,20 +34,14 @@ def approve_order(
                 return ApprovalResult(
                     order_id, f"wallet:{order['telegram_id']}", "already_credited"
                 )
-            subscription = connection.execute(
-                "SELECT id FROM subscriptions WHERE order_id = ?", (order_id,)
-            ).fetchone()
-            if subscription is None:
+            subscription_id = repository.subscription_id_for_order(connection, order_id)
+            if subscription_id is None:
                 raise CommerceError("Approved order has no subscription record")
-            return ApprovalResult(order_id, subscription["id"], "already_approved")
+            return ApprovalResult(order_id, subscription_id, "already_approved")
         if order["status"] != "payment_submitted":
             raise CommerceError("Order has no submitted payment for review")
         evidence = self.payments.latest_evidence_for_approval(connection, order_id)
-        wallet_reservation = connection.execute(
-            """SELECT id, amount_minor, currency, status
-               FROM wallet_reservations WHERE order_id = ? LIMIT 1""",
-            (order_id,),
-        ).fetchone()
+        wallet_reservation = repository.wallet_reservation(connection, order_id)
         if evidence is not None and evidence["review_status"] != "verified":
             if wallet_reservation is None or wallet_reservation["status"] != "reserved":
                 raise CommerceError(
@@ -88,54 +83,33 @@ def approve_order(
                 raise CommerceError("Wallet top-up receipt currency does not match")
             payment_id = str(payment["id"])
             credit_idem = f"credit:{payment_id}"
-            connection.execute(
-                """INSERT INTO wallets
-                   (telegram_id, currency, balance_minor, created_at, updated_at)
-                   VALUES (?, ?, 0, ?, ?) ON CONFLICT(telegram_id) DO NOTHING""",
-                (order["telegram_id"], order["currency"], starts_at, starts_at),
+            repository.ensure_wallet(
+                connection,
+                telegram_id=int(order["telegram_id"]),
+                currency=str(order["currency"]),
+                now_text=starts_at,
             )
-            if connection.execute(
-                "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (credit_idem,)
-            ).fetchone() is None:
-                connection.execute(
-                    """UPDATE wallets SET balance_minor = balance_minor + ?, updated_at = ?
-                       WHERE telegram_id = ?""",
-                    (order["amount_minor"], starts_at, order["telegram_id"]),
-                )
-                connection.execute(
-                    """INSERT INTO wallet_ledger
-                       (id, telegram_id, kind, amount_minor, currency, reference_type,
-                        reference_id, idempotency_key, created_at)
-                       VALUES (?, ?, 'credit', ?, ?, 'payment', ?, ?, ?)""",
-                    (
-                        _new_id(),
-                        order["telegram_id"],
-                        order["amount_minor"],
-                        order["currency"],
-                        payment_id,
-                        credit_idem,
-                        starts_at,
-                    ),
-                )
-            connection.execute(
-                "UPDATE orders SET status = 'approved', approved_at = ? WHERE id = ?",
-                (starts_at, order_id),
+            repository.credit_once(
+                connection,
+                entry_id=_new_id(),
+                telegram_id=int(order["telegram_id"]),
+                amount_minor=int(order["amount_minor"]),
+                currency=str(order["currency"]),
+                reference_type="payment",
+                reference_id=payment_id,
+                idempotency_key=credit_idem,
+                now_text=starts_at,
             )
-            connection.execute(
-                """INSERT INTO notifications
-                   (id, dedupe_key, telegram_id, kind, text, status,
-                    next_attempt_at, created_at)
-                   VALUES (?, ?, ?, 'wallet_topup_approved', ?, 'pending', ?, ?)
-                   ON CONFLICT(dedupe_key) DO NOTHING""",
-                (
-                    _new_id(),
-                    f"wallet-topup-approved:{order_id}",
-                    order["telegram_id"],
-                    f"✅ Wallet top-up approved: {int(order['amount_minor']):,} "
-                    f"{order['currency']}.",
-                    starts_at,
-                    starts_at,
-                ),
+            repository.mark_order_approved(connection, order_id, starts_at)
+            repository.queue_notification(
+                connection,
+                notification_id=_new_id(),
+                dedupe_key=f"wallet-topup-approved:{order_id}",
+                telegram_id=int(order["telegram_id"]),
+                kind="wallet_topup_approved",
+                text=f"✅ Wallet top-up approved: {int(order['amount_minor']):,} "
+                f"{order['currency']}.",
+                now_text=starts_at,
             )
             self._audit(
                 connection,
@@ -149,10 +123,7 @@ def approve_order(
             return ApprovalResult(
                 order_id, f"wallet:{order['telegram_id']}", "wallet_credited"
             )
-        plan = connection.execute(
-            "SELECT duration_days, quota_bytes, name FROM plans WHERE code = ?",
-            (order["plan_code"],),
-        ).fetchone()
+        plan = repository.plan(connection, str(order["plan_code"]))
         if plan is None:
             raise CommerceError("Plan record is missing")
         duration_days = int(order["duration_days_snapshot"] or plan["duration_days"])
@@ -170,43 +141,32 @@ def approve_order(
         expires_at = (effective_start + timedelta(days=duration_days)).isoformat()
         subscription_id = _new_id()
         if payment["status"] == "submitted":
-            connection.execute(
-                """UPDATE payments SET status = 'verified', verified_at = ?
-                   WHERE id = ?""",
-                (starts_at, payment["id"]),
-            )
-        connection.execute(
-            """UPDATE orders SET status = 'approved', approved_at = ? WHERE id = ?""",
-            (starts_at, order_id),
-        )
-        connection.execute(
-            """INSERT INTO subscriptions
-               (id, order_id, telegram_id, plan_code, starts_at, expires_at,
-                plan_name, quota_bytes, duration_days, status, server_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
-            (
-                subscription_id,
-                order_id,
-                order["telegram_id"],
-                order["plan_code"],
-                effective_start.isoformat(),
-                expires_at,
-                plan_name,
-                quota_bytes,
-                duration_days,
-                order["server_id"] if "server_id" in order.keys() else None,
-            ),
+            repository.mark_payment_verified(connection, str(payment["id"]), starts_at)
+        repository.mark_order_approved(connection, order_id, starts_at)
+        repository.create_subscription(
+            connection,
+            subscription_id=subscription_id,
+            order_id=order_id,
+            telegram_id=int(order["telegram_id"]),
+            plan_code=str(order["plan_code"]),
+            starts_at=effective_start.isoformat(),
+            expires_at=expires_at,
+            plan_name=plan_name,
+            quota_bytes=quota_bytes,
+            duration_days=duration_days,
+            server_id=order["server_id"] if "server_id" in order.keys() else None,
         )
         # Record money movement as immutable ledger events. External
         # deposits are credited and immediately reserved/captured. Wallet
         # payments already have a reservation; approval only captures it.
         wallet_now = starts_at
-        connection.execute(
-            """INSERT INTO wallets (telegram_id, currency, balance_minor, created_at, updated_at)
-               VALUES (?, ?, 0, ?, ?) ON CONFLICT(telegram_id) DO NOTHING""",
-            (order["telegram_id"], order["currency"], wallet_now, wallet_now),
+        repository.ensure_wallet(
+            connection,
+            telegram_id=int(order["telegram_id"]),
+            currency=str(order["currency"]),
+            now_text=wallet_now,
         )
-        payment_id = payment["id"]
+        payment_id = str(payment["id"])
         credit_amount = int(order["amount_minor"])
         if evidence is not None:
             if str(evidence["verified_currency"]).upper() != str(order["currency"]).upper():
@@ -214,125 +174,50 @@ def approve_order(
             credit_amount = int(evidence["verified_amount_minor"])
         if not wallet_payment:
             credit_idem = f"credit:{payment_id}"
-            credit_exists = connection.execute(
-                "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (credit_idem,)
-            ).fetchone()
-            if credit_exists is None:
-                connection.execute(
-                    "UPDATE wallets SET balance_minor = balance_minor + ?, updated_at = ? WHERE telegram_id = ?",
-                    (credit_amount, wallet_now, order["telegram_id"]),
-                )
-                connection.execute(
-                    """INSERT INTO wallet_ledger
-                       (id, telegram_id, kind, amount_minor, currency, reference_type,
-                        reference_id, idempotency_key, created_at)
-                       VALUES (?, ?, 'credit', ?, ?, 'payment', ?, ?, ?)""",
-                    (
-                        _new_id(),
-                        order["telegram_id"],
-                        credit_amount,
-                        order["currency"],
-                        payment_id,
-                        credit_idem,
-                        wallet_now,
-                    ),
-                )
-            reserve_idem = f"reserve:{order_id}"
-            reserve_exists = connection.execute(
-                "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (reserve_idem,)
-            ).fetchone()
-            if reserve_exists is None:
-                updated = connection.execute(
-                    "UPDATE wallets SET balance_minor = balance_minor - ?, updated_at = ? WHERE telegram_id = ? AND balance_minor >= ?",
-                    (
-                        order["amount_minor"],
-                        wallet_now,
-                        order["telegram_id"],
-                        order["amount_minor"],
-                    ),
-                )
-                if getattr(updated, "rowcount", 1) == 0:
-                    raise CommerceError(
-                        "Verified payment credit is insufficient for this order"
-                    )
-                connection.execute(
-                    """INSERT INTO wallet_ledger
-                       (id, telegram_id, kind, amount_minor, currency, reference_type,
-                        reference_id, idempotency_key, created_at)
-                       VALUES (?, ?, 'reserve', ?, ?, 'order', ?, ?, ?)""",
-                    (
-                        _new_id(),
-                        order["telegram_id"],
-                        order["amount_minor"],
-                        order["currency"],
-                        order_id,
-                        reserve_idem,
-                        wallet_now,
-                    ),
-                )
-                connection.execute(
-                    """INSERT INTO wallet_reservations
-                       (id, telegram_id, order_id, amount_minor, currency, status, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, 'reserved', ?, ?)""",
-                    (
-                        _new_id(),
-                        order["telegram_id"],
-                        order_id,
-                        order["amount_minor"],
-                        order["currency"],
-                        wallet_now,
-                        wallet_now,
-                    ),
-                )
-        capture_idem = f"capture:{order_id}"
-        if (
-            connection.execute(
-                "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (capture_idem,)
-            ).fetchone()
-            is None
-        ):
-            # Capture is a state transition; the reserve already reduced
-            # available balance, so capture must not deduct again.
-            connection.execute(
-                """INSERT INTO wallet_ledger
-                   (id, telegram_id, kind, amount_minor, currency, reference_type,
-                    reference_id, idempotency_key, created_at)
-                   VALUES (?, ?, 'capture', ?, ?, 'order', ?, ?, ?)""",
-                (
-                    _new_id(),
-                    order["telegram_id"],
-                    order["amount_minor"],
-                    order["currency"],
-                    order_id,
-                    capture_idem,
-                    wallet_now,
-                ),
+            repository.credit_once(
+                connection,
+                entry_id=_new_id(),
+                telegram_id=int(order["telegram_id"]),
+                amount_minor=credit_amount,
+                currency=str(order["currency"]),
+                reference_type="payment",
+                reference_id=payment_id,
+                idempotency_key=credit_idem,
+                now_text=wallet_now,
             )
-        connection.execute(
-            """INSERT INTO wallet_reservations
-               (id, telegram_id, order_id, amount_minor, currency, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'captured', ?, ?)
-               ON CONFLICT(order_id) DO UPDATE SET status = 'captured', updated_at = excluded.updated_at""",
-            (
-                _new_id(),
-                order["telegram_id"],
-                order_id,
-                order["amount_minor"],
-                order["currency"],
-                wallet_now,
-                wallet_now,
-            ),
+            reserve_idem = f"reserve:{order_id}"
+            if not repository.reserve_once(
+                connection,
+                ledger_entry_id=_new_id(),
+                reservation_id=_new_id(),
+                telegram_id=int(order["telegram_id"]),
+                order_id=order_id,
+                amount_minor=int(order["amount_minor"]),
+                currency=str(order["currency"]),
+                idempotency_key=reserve_idem,
+                now_text=wallet_now,
+            ):
+                raise CommerceError("Verified payment credit is insufficient for this order")
+        capture_idem = f"capture:{order_id}"
+        # Capture is a state transition; the reserve already reduced
+        # available balance, so capture must not deduct again.
+        repository.capture_once(
+            connection,
+            ledger_entry_id=_new_id(),
+            reservation_id=_new_id(),
+            telegram_id=int(order["telegram_id"]),
+            order_id=order_id,
+            amount_minor=int(order["amount_minor"]),
+            currency=str(order["currency"]),
+            idempotency_key=capture_idem,
+            now_text=wallet_now,
         )
-        connection.execute(
-            """INSERT INTO provisioning_jobs
-               (id, subscription_id, operation, status, next_attempt_at, created_at)
-               VALUES (?, ?, 'provision', 'pending', ?, ?)""",
-            (
-                _new_id(),
-                subscription_id,
-                effective_start.isoformat(),
-                effective_start.isoformat(),
-            ),
+        repository.queue_provisioning(
+            connection,
+            job_id=_new_id(),
+            subscription_id=subscription_id,
+            next_attempt_at=effective_start.isoformat(),
+            created_at=effective_start.isoformat(),
         )
         self._audit(
             connection,
@@ -344,4 +229,3 @@ def approve_order(
             {"subscription_id": subscription_id},
         )
     return ApprovalResult(order_id, subscription_id, "approved")
-

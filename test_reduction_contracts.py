@@ -8,6 +8,7 @@ from cryptography.fernet import Fernet
 from commerce import CommerceDatabase, CommerceError, CommerceService, JOB_RETRY_DELAY
 from commerce_order_repository import OrderRepository
 from commerce_payment_repository import PaymentRepository
+from commerce_wallet_approval_repository import WalletApprovalRepository
 from persistence import open_sqlite_connection
 
 
@@ -131,6 +132,7 @@ class ReductionContractTest(unittest.TestCase):
 
         self.assertIsInstance(self.service.orders, OrderRepository)
         self.assertIsInstance(self.service.payments, PaymentRepository)
+        self.assertIsInstance(self.service.wallet_approvals, WalletApprovalRepository)
         with self.database.connect() as connection:
             self.assertEqual(
                 self.service.orders.get(connection, order.order_id)["id"],

@@ -18,6 +18,11 @@
       "max_function_lines": 17,
       "max_sql_calls": 18
     },
+    "commerce_wallet_approval_repository.py": {
+      "max_lines": 295,
+      "max_function_lines": 56,
+      "max_sql_calls": 19
+    },
     "commerce_service.py": {
       "max_lines": 252,
       "max_function_lines": 29,
@@ -524,9 +529,9 @@
       "max_sql_calls": 6
     },
     "commerce_service_wallet_approval_flow.py": {
-      "max_lines": 347,
-      "max_function_lines": 332,
-      "max_sql_calls": 24
+      "max_lines": 231,
+      "max_function_lines": 217,
+      "max_sql_calls": 0
     },
     "commerce_service_fleet_failover.py": {
       "max_lines": 232,
@@ -584,6 +589,7 @@
       "name": "foundation-does-not-depend-on-application",
       "sources": [
         "commerce_models.py",
+        "commerce_wallet_approval_repository.py",
         "ports.py",
         "repositories.py",
         "persistence.py"
