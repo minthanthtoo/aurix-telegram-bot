@@ -10,6 +10,10 @@ from typing import Any
 from commerce_models import UTC
 from commerce_models import _new_id
 from commerce_models import _human_bytes
+from commerce_repairs_repository import ManagedRepairRepository
+
+
+_REPAIRS = ManagedRepairRepository()
 
 
 def _managed_repair_required_observations() -> int:
@@ -149,17 +153,7 @@ def _record_usage_snapshots(
     except (TypeError, ValueError, OverflowError):
         return 0
     cutoff = (current - timedelta(seconds=self._usage_snapshot_interval_seconds())).isoformat()
-    recent_rows = connection.execute(
-        """SELECT entitlement_kind, local_key_ref, MAX(observed_at) AS observed_at
-             FROM usage_snapshots
-            WHERE server_id = ? AND observed_at >= ?
-            GROUP BY entitlement_kind, local_key_ref""",
-        (str(server_id), cutoff),
-    ).fetchall()
-    recent = {
-        (str(row["entitlement_kind"]), str(row["local_key_ref"]))
-        for row in recent_rows
-    }
+    recent = _REPAIRS.recent_snapshots(connection, str(server_id), cutoff)
     recorded = 0
     for item in managed_rows:
         external_id = str(item.get("source_external_id") or "").strip()
@@ -179,13 +173,8 @@ def _record_usage_snapshots(
             continue
         if (kind, local_ref) in recent:
             continue
-        connection.execute(
-            """INSERT INTO usage_snapshots
-               (id, telegram_id, entitlement_kind, local_key_ref, server_id,
-                outline_key_id, observed_at, used_bytes, quota_bytes, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'outline_metrics')
-               ON CONFLICT(server_id, entitlement_kind, local_key_ref, observed_at)
-               DO NOTHING""",
+        _REPAIRS.insert_snapshot(
+            connection,
             (
                 _new_id(), telegram_id, kind, local_ref, str(server_id),
                 external_id, str(observed_at), int(used), quota,
@@ -209,10 +198,7 @@ def _record_aggregate_usage(
     with self.database.connect() as connection:
         if not self._table_exists(connection, "entitlement_usage_epochs"):
             return {"recorded": 0, "exhausted": 0, "errors": 0}
-        endpoint = connection.execute(
-            "SELECT endpoint_id FROM connectivity_endpoints WHERE outline_server_id = ?",
-            (str(server_id),),
-        ).fetchone()
+        endpoint = _REPAIRS.endpoint(connection, str(server_id))
     if endpoint is None:
         return {"recorded": 0, "exhausted": 0, "errors": 0}
     endpoint_id = str(endpoint["endpoint_id"])
@@ -270,97 +256,30 @@ def _queue_aggregate_revocation(
     with self.database.connect() as connection:
         self.database.begin_write(connection)
         if str(kind).lower() == "paid" and subscription_id:
-            connection.execute(
-                """UPDATE paid_vpn_keys SET quota_reason = 'aggregate_quota'
-                    WHERE subscription_id = ? AND server_id = ? AND outline_key_id = ?
-                      AND status = 'active'""",
-                (str(subscription_id), str(server_id), str(external_id)),
-            )
-            connection.execute(
-                """UPDATE subscriptions SET status = 'revoked'
-                    WHERE id = ? AND status = 'active'""",
-                (str(subscription_id),),
-            )
-            connection.execute(
-                """INSERT INTO provisioning_jobs
-                   (id, subscription_id, operation, status, next_attempt_at, created_at)
-                   VALUES (?, ?, 'revoke', 'pending', ?, ?)
-                   ON CONFLICT(subscription_id, operation) DO NOTHING""",
-                (_new_id(), str(subscription_id), str(observed_at), str(observed_at)),
+            _REPAIRS.aggregate_paid(
+                connection, str(subscription_id), str(server_id), str(external_id), str(observed_at)
             )
         elif local_id is not None and self._table_exists(connection, "keys"):
-            connection.execute(
-                """UPDATE keys SET quota_reason = 'quota'
-                    WHERE id = ? AND server_id = ? AND outline_key_id = ?
-                      AND status = 'active'""",
-                (local_id, str(server_id), str(external_id)),
-            )
             # Free/trial/promo credentials use the ClaimService
             # termination worker rather than a paid provisioning job.
             # Persist the enforcement event now so a process restart
             # between inventory and the next maintenance stage cannot
             # lose the observed quota hit or its staff/customer notices.
-            if self._table_exists(connection, "key_termination_events"):
-                connection.execute(
-                    """INSERT INTO key_termination_events
-                       (key_id, telegram_id, outline_key_id, reason, used_bytes,
-                        quota_bytes, expires_at, detected_at, remote_state)
-                       SELECT id, telegram_id, outline_key_id, 'quota', ?, ?,
-                              expires_at, ?, 'retrying'
-                         FROM keys
-                        WHERE id = ? AND server_id = ? AND outline_key_id = ?
-                       ON CONFLICT(key_id, reason) DO UPDATE SET
-                         used_bytes = COALESCE(excluded.used_bytes,
-                                               key_termination_events.used_bytes),
-                         quota_bytes = excluded.quota_bytes""",
-                    (
-                        max(0, int(used_bytes)),
-                        max(0, int(quota_bytes)),
-                        str(observed_at),
-                        local_id,
-                        str(server_id),
-                        str(external_id),
-                    ),
-                )
+            _REPAIRS.aggregate_free(
+                connection,
+                local_id=local_id,
+                server_id=str(server_id),
+                external_id=str(external_id),
+                used_bytes=used_bytes,
+                quota_bytes=quota_bytes,
+                observed_at=str(observed_at),
+            )
 
 def _managed_repair_rows(self, connection: Any, server_id: str) -> list[dict[str, Any]]:
     """Return active managed entitlements that may need remote repair."""
-    rows: list[dict[str, Any]] = []
-    paid_rows = connection.execute(
-        """SELECT 'paid' AS kind, CAST(k.id AS TEXT) AS local_key_ref,
-                  k.id AS local_id, k.telegram_id, k.outline_key_id AS source_external_id,
-                  k.quota_bytes, k.last_usage_bytes, k.last_usage_observed_at,
-                  k.created_at, s.expires_at,
-                  s.plan_name, s.plan_code, s.duration_days, u.username
-             FROM paid_vpn_keys k
-             JOIN subscriptions s ON s.id = k.subscription_id
-             JOIN users u ON u.telegram_id = k.telegram_id
-            WHERE k.server_id = ? AND k.status = 'active' AND s.status = 'active'
-              AND k.quota_bytes IS NOT NULL AND COALESCE(k.quota_reason, '') = ''""",
-        (server_id,),
-    ).fetchall()
-    rows.extend(dict(row) for row in paid_rows)
+    rows: list[dict[str, Any]] = _REPAIRS.managed_paid_rows(connection, server_id)
     if self._table_exists(connection, "keys"):
-        free_rows = connection.execute(
-            """SELECT 'free' AS kind, CAST(k.id AS TEXT) AS local_key_ref,
-                      k.id AS local_id, k.telegram_id, k.outline_key_id AS source_external_id,
-                      k.data_limit_bytes AS quota_bytes, k.last_usage_bytes,
-                      k.last_usage_observed_at,
-                      k.created_at, k.expires_at, k.key_type, u.username,
-                      g.campaign_code,
-                      COALESCE(c.duration_days,
-                               CASE WHEN k.key_type = 'monthly_trial' THEN 30 ELSE 1 END)
-                          AS duration_days
-                 FROM keys k
-                 JOIN users u ON u.telegram_id = k.telegram_id
-                 LEFT JOIN giveaway_claims g ON g.key_id = k.id
-                 LEFT JOIN giveaway_campaigns c ON c.code = g.campaign_code
-                WHERE k.server_id = ? AND k.status = 'active'
-                  AND COALESCE(k.quota_reason, '') = ''
-                  AND k.data_limit_bytes IS NOT NULL""",
-            (server_id,),
-        ).fetchall()
-        rows.extend(dict(row) for row in free_rows)
+        rows.extend(_REPAIRS.managed_free_rows(connection, server_id))
     # A missing key cannot be queried for historical transfer usage.  If
     # the durable telemetry ledger has a newer sample than the live key
     # row, use that same-key lower bound for repair decisions.  This keeps
@@ -368,14 +287,7 @@ def _managed_repair_rows(self, connection: Any, server_id: str) -> list[dict[str
     # while the bounded freshness check below still escalates old data.
     snapshot_by_ref: dict[tuple[str, str], dict[str, Any]] = {}
     if self._table_exists(connection, "usage_snapshots"):
-        snapshot_rows = connection.execute(
-            """SELECT entitlement_kind, local_key_ref, used_bytes, observed_at
-                 FROM usage_snapshots
-                WHERE server_id = ?
-                ORDER BY observed_at DESC""",
-            (server_id,),
-        ).fetchall()
-        for snapshot in snapshot_rows:
+        for snapshot in _REPAIRS.usage_snapshots(connection, server_id):
             key = (str(snapshot["entitlement_kind"]), str(snapshot["local_key_ref"]))
             snapshot_by_ref.setdefault(key, dict(snapshot))
     for row in rows:
@@ -415,11 +327,7 @@ def _enqueue_managed_key_repair(
     kind = str(row["kind"])
     quota = int(row["quota_bytes"] or 0)
     name = self._managed_repair_key_name(row, previous_name)
-    existing = connection.execute(
-        """SELECT * FROM managed_key_repair_jobs
-           WHERE server_id = ? AND kind = ? AND local_key_ref = ?""",
-        (server_id, kind, local_ref),
-    ).fetchone()
+    existing = _REPAIRS.existing_repair(connection, server_id, kind, local_ref)
     repair_id = str(existing["id"]) if existing is not None else _new_id()
     allow_unknown = self._managed_repair_allow_unknown_usage()
     effective_usage = usage_bytes
@@ -448,13 +356,8 @@ def _enqueue_managed_key_repair(
         status = "pending"
         error = None
     if existing is None:
-        connection.execute(
-            """INSERT INTO managed_key_repair_jobs
-               (id, kind, server_id, telegram_id, local_key_ref,
-                source_external_id, target_external_id, key_name, quota_bytes,
-                used_bytes, expires_at, status, attempts, next_attempt_at,
-                last_error, observed_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
+        _REPAIRS.insert_repair(
+            connection,
             (
                 repair_id, kind, server_id, int(row["telegram_id"]), local_ref,
                 str(row["source_external_id"]), str(row["source_external_id"]), name,
@@ -472,13 +375,8 @@ def _enqueue_managed_key_repair(
             existing["source_external_id"]
         ) != str(row["source_external_id"])
         if reopen:
-            connection.execute(
-                """UPDATE managed_key_repair_jobs
-                   SET source_external_id = ?, target_external_id = ?, key_name = ?,
-                       quota_bytes = ?, used_bytes = ?, expires_at = ?, status = ?,
-                       attempts = 0, next_attempt_at = ?, locked_at = NULL,
-                       last_error = ?, observed_at = ?, completed_at = NULL
-                     WHERE id = ?""",
+            _REPAIRS.reopen_repair(
+                connection,
                 (
                     str(row["source_external_id"]), str(row["source_external_id"]), name,
                     quota, effective_usage, str(row["expires_at"]), status, observed_at,
@@ -493,11 +391,7 @@ def _enqueue_managed_key_repair(
         # Backfill the alert for a repair that was opened by an older
         # release before staff key-repair notifications existed. The
         # per-staff dedupe key makes this safe across every poll.
-        alert_exists = connection.execute(
-            "SELECT 1 FROM notifications WHERE dedupe_key LIKE ? LIMIT 1",
-            (f"staff:key_repairs:{repair_id}:%",),
-        ).fetchone()
-        alert_needed = alert_exists is None
+        alert_needed = not _REPAIRS.repair_alert_exists(connection, repair_id)
     if job_state in {"created", "reopened"}:
         self._audit(
             connection,

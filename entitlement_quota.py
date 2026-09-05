@@ -23,6 +23,7 @@ from quota_alerts import (
 )
 from repositories import RepositoryDatabase
 from entitlement_models import ClaimResult, GiveawayResult, OutlineError
+from entitlement_quota_repository import EntitlementQuotaRepository
 from entitlement_support import (
     CLAIM_PERIOD,
     FREE_INTENT_MAX_ATTEMPTS,
@@ -43,6 +44,9 @@ from entitlement_support import (
     new_id as _new_id,
     outline_key_name as _outline_key_name,
 )
+
+
+_QUOTA = EntitlementQuotaRepository()
 
 
 def collect_metrics(self) -> dict[str, Any]:
@@ -89,31 +93,7 @@ def _terminate_key(
     now_text = now.astimezone(UTC).isoformat()
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        connection.execute(
-            """UPDATE keys SET status = 'active', last_usage_bytes = COALESCE(?, last_usage_bytes),
-                      last_usage_observed_at = COALESCE(?, last_usage_observed_at),
-                      quota_reason = CASE WHEN ? = 'quota' THEN 'quota' ELSE quota_reason END
-               WHERE id = ? AND status != 'revoked'""",
-            (used_bytes, now_text if used_bytes is not None else None, reason, row["id"]),
-        )
-        connection.execute(
-            """INSERT INTO key_termination_events
-               (key_id, telegram_id, outline_key_id, reason, used_bytes, quota_bytes,
-                expires_at, detected_at, remote_state)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'retrying')
-               ON CONFLICT(key_id, reason) DO UPDATE SET
-                   used_bytes = COALESCE(excluded.used_bytes, key_termination_events.used_bytes)""",
-            (
-                row["id"],
-                row["telegram_id"],
-                str(row["outline_key_id"]),
-                reason,
-                used_bytes,
-                int(row["data_limit_bytes"]),
-                row["expires_at"],
-                now_text,
-            ),
-        )
+        _QUOTA.begin_termination(connection, row, reason, used_bytes, now_text)
     outline = self._outline_client(str(row["server_id"] or self._default_server_id()))
     try:
         outline.delete_key(str(row["outline_key_id"]))
@@ -123,21 +103,11 @@ def _terminate_key(
             raise OutlineError("Outline key still exists after delete")
     except Exception as exc:
         with self.database.connect() as connection:
-            connection.execute(
-                """UPDATE key_termination_events
-                   SET remote_state = CASE
-                           WHEN delete_attempts + 1 >= 10 THEN 'escalated'
-                           ELSE 'retrying'
-                       END,
-                       delete_attempts = delete_attempts + 1,
-                       last_error = ? WHERE key_id = ? AND reason = ?""",
-                (type(exc).__name__, row["id"], reason),
-            )
+            _QUOTA.mark_termination_failed(connection, row["id"], reason, type(exc).__name__)
         return False
     remote_state = "deleted_verified" if verified else "delete_accepted"
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        connection.execute("UPDATE keys SET status = 'revoked' WHERE id = ?", (row["id"],))
         self._adjust_remote_key_count(
             connection, str(row["server_id"] or self._default_server_id()), -1
         )
@@ -147,12 +117,12 @@ def _terminate_key(
             external_id=str(row["outline_key_id"]),
             now_text=now_text,
         )
-        connection.execute(
-            """UPDATE key_termination_events
-               SET remote_state = ?, delete_attempts = delete_attempts + 1,
-                   last_error = NULL, deletion_verified_at = ?
-               WHERE key_id = ? AND reason = ?""",
-            (remote_state, now_text if verified else None, row["id"], reason),
+        _QUOTA.finish_termination(
+            connection,
+            key_id=row["id"],
+            reason=reason,
+            state=remote_state,
+            verified_at=now_text if verified else None,
         )
     return True
 
@@ -171,11 +141,7 @@ def enforce_quota(
         # A notification outage must never delay the hard quota revoke.
         print(f"quota warning error: {type(exc).__name__}", file=sys.stderr)
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT id, telegram_id, server_id, outline_key_id,
-                      data_limit_bytes, expires_at FROM keys
-               WHERE status = 'active' OR (status = 'revoke_failed' AND quota_reason = 'quota')"""
-        ).fetchall()
+        rows = _QUOTA.enforceable_keys(connection)
     revoked = 0
     for row in rows:
         try:
@@ -207,12 +173,7 @@ def enforce_quota(
         if used < int(row["data_limit_bytes"]):
             if observed:
                 with self.database.connect() as connection:
-                    connection.execute(
-                        """UPDATE keys
-                              SET last_usage_bytes = ?, last_usage_observed_at = ?
-                            WHERE id = ? AND status = 'active'""",
-                        (used, current.isoformat(), row["id"]),
-                    )
+                    _QUOTA.update_key_usage(connection, row["id"], used, current.isoformat())
             continue
         if self._terminate_key(row, "quota", current, used):
             revoked += 1
@@ -236,14 +197,7 @@ def queue_quota_warnings(
     queued = 0
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        rows = connection.execute(
-            """SELECT keys.id, keys.telegram_id, keys.server_id, keys.outline_key_id,
-                      keys.data_limit_bytes, keys.expires_at,
-                      keys.quota_warning_percent, g.campaign_code
-               FROM keys
-               LEFT JOIN giveaway_claims g ON g.key_id = keys.id
-               WHERE keys.status = 'active'"""
-        ).fetchall()
+        rows = _QUOTA.warning_rows(connection)
         for row in rows:
             by_key = self._usage_for_server(
                 metrics, str(row["server_id"] or self._default_server_id())
@@ -269,11 +223,7 @@ def queue_quota_warnings(
                 f"{threshold_bytes}"
             )
             try:
-                existing = connection.execute(
-                    "SELECT id FROM notifications WHERE dedupe_key = ?",
-                    (dedupe_key,),
-                ).fetchone()
-                if existing is None:
+                if not _QUOTA.warning_exists(connection, dedupe_key):
                     if row["campaign_code"]:
                         tier = f"promo {row['campaign_code']}"
                     elif quota == TRIAL_LIMIT_BYTES:
@@ -292,18 +242,16 @@ def queue_quota_warnings(
                         "When no quota remains, the key will be blocked and deleted. "
                         f"Expires: {row['expires_at']}"
                     )
-                    connection.execute(
-                        """INSERT INTO notifications
-                           (id, dedupe_key, telegram_id, kind, text, status,
-                            next_attempt_at, created_at)
-                           VALUES (?, ?, ?, 'quota_warning', ?, 'pending', ?, ?)""",
-                        (_new_id(), dedupe_key, row["telegram_id"], text, now_text, now_text),
+                    _QUOTA.insert_warning(
+                        connection,
+                        notification_id=_new_id(),
+                        dedupe_key=dedupe_key,
+                        telegram_id=int(row["telegram_id"]),
+                        text=text,
+                        now_text=now_text,
                     )
                     queued += 1
-                connection.execute(
-                    "UPDATE keys SET quota_warning_percent = ? WHERE id = ?",
-                    (int(remaining_percent), row["id"]),
-                )
+                _QUOTA.update_warning_percent(connection, row["id"], int(remaining_percent))
             except Exception as exc:
                 if self.database.is_integrity_error(exc):
                     continue
@@ -320,30 +268,7 @@ def user_usage(
     access_by_key = access_by_key or {}
     now = datetime.now(UTC)
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT keys.server_id, keys.outline_key_id, keys.key_type, keys.created_at,
-                      keys.expires_at, keys.data_limit_bytes, keys.status,
-                      keys.last_usage_bytes, keys.quota_reason,
-                      g.campaign_code,
-                      (SELECT remote_state FROM key_termination_events e
-                       WHERE e.key_id = keys.id ORDER BY e.detected_at DESC LIMIT 1) AS termination_state,
-                      (SELECT r.status FROM managed_key_repair_jobs r
-                       WHERE r.kind = 'free'
-                         AND r.server_id = keys.server_id
-                         AND r.local_key_ref = CAST(keys.id AS TEXT)
-                       ORDER BY r.created_at DESC LIMIT 1) AS repair_status,
-                      (SELECT r.last_error FROM managed_key_repair_jobs r
-                       WHERE r.kind = 'free'
-                         AND r.server_id = keys.server_id
-                         AND r.local_key_ref = CAST(keys.id AS TEXT)
-                       ORDER BY r.created_at DESC LIMIT 1) AS repair_reason
-               FROM keys
-               LEFT JOIN giveaway_claims g ON g.key_id = keys.id
-               WHERE keys.telegram_id = ?
-                 AND (keys.status IN ('active', 'revoke_failed') OR keys.quota_reason = 'quota')
-               ORDER BY keys.created_at DESC LIMIT 10""",
-            (telegram_id,),
-        ).fetchall()
+        rows = _QUOTA.user_usage_rows(connection, telegram_id)
     tiers = {
         300_000_000: "Daily Free 300 MB",
         3_000_000_000: "Monthly Free 3 GB",
@@ -426,27 +351,9 @@ def user_migrated_usage(self, telegram_id: int) -> int:
     """
     with self.database.connect() as connection:
         try:
-            if connection.__class__.__name__ == "_PostgresConnection":
-                exists = connection.execute(
-                    "SELECT to_regclass('public.connectivity_migration_jobs') AS table_name"
-                ).fetchone()
-                if not (exists and exists["table_name"]):
-                    return 0
-            else:
-                exists = connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                    ("connectivity_migration_jobs",),
-                ).fetchone()
-                if exists is None:
-                    return 0
-            row = connection.execute(
-                """SELECT COALESCE(SUM(source_used_bytes), 0) AS used
-                     FROM connectivity_migration_jobs
-                    WHERE telegram_id = ?
-                      AND status IN ('source_delete_pending', 'completed')
-                      AND source_used_bytes IS NOT NULL""",
-                (int(telegram_id),),
-            ).fetchone()
+            if not _QUOTA.table_exists(connection, "connectivity_migration_jobs"):
+                return 0
+            row = _QUOTA.migrated_usage(connection, telegram_id)
         except Exception:
             # This is a read-only enhancement. A migration-table outage
             # must not hide the user's current keys or block the bot.
@@ -460,12 +367,7 @@ def revoke_expired(self, now: datetime | None = None) -> int:
     current = (now or datetime.now(UTC)).astimezone(UTC)
     now_text = current.isoformat()
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT id, telegram_id, server_id, outline_key_id,
-                      data_limit_bytes, expires_at FROM keys
-               WHERE status IN ('active', 'revoke_failed') AND expires_at <= ?""",
-            (now_text,),
-        ).fetchall()
+        rows = _QUOTA.expired_keys(connection, now_text)
     revoked = 0
     for row in rows:
         if self._terminate_key(row, "expiry", current):
@@ -476,14 +378,7 @@ def reconcile_terminations(self, now: datetime | None = None, limit: int = 20) -
     """Retry recorded remote deletions, including paid-upgrade cleanup."""
     current = (now or datetime.now(UTC)).astimezone(UTC)
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT k.id, k.telegram_id, k.server_id, k.outline_key_id, k.data_limit_bytes,
-                      k.expires_at, e.reason, e.used_bytes
-               FROM keys k JOIN key_termination_events e ON e.key_id = k.id
-               WHERE e.remote_state IN ('retrying', 'escalated') AND k.status != 'revoked'
-               ORDER BY e.detected_at LIMIT ?""",
-            (max(1, min(int(limit), 100)),),
-        ).fetchall()
+        rows = _QUOTA.pending_terminations(connection, max(1, min(int(limit), 100)))
     completed = 0
     for row in rows:
         if self._terminate_key(row, str(row["reason"]), current, row["used_bytes"]):
@@ -493,33 +388,16 @@ def reconcile_terminations(self, now: datetime | None = None, limit: int = 20) -
 def pending_termination_notices(self, audience: str) -> list[dict[str, Any]]:
     column = "admin_notice_state" if audience == "admin" else "user_notice_state"
     with self.database.connect() as connection:
-        return [
-            dict(row)
-            for row in connection.execute(
-                f"""SELECT * FROM key_termination_events
-                    WHERE COALESCE({column}, '') != remote_state
-                    ORDER BY detected_at LIMIT 50"""
-            ).fetchall()
-        ]
+        return _QUOTA.termination_notices(connection, column)
 
 def mark_termination_notice(self, event_id: int, audience: str, state: str) -> None:
     column = "admin_notice_state" if audience == "admin" else "user_notice_state"
     with self.database.connect() as connection:
-        connection.execute(
-            f"UPDATE key_termination_events SET {column} = ? WHERE id = ?",
-            (state, event_id),
-        )
+        _QUOTA.mark_termination_notice(connection, column, event_id, state)
 
 def termination_summary(self, limit: int = 20) -> list[dict[str, Any]]:
     with self.database.connect() as connection:
-        return [
-            dict(row)
-            for row in connection.execute(
-                """SELECT * FROM key_termination_events
-               ORDER BY detected_at DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
-        ]
+        return _QUOTA.termination_summary(connection, limit)
 
 def quota_alert_preferences(self, telegram_id: int) -> dict[str, Any]:
     return get_quota_alert_preferences(self.database, telegram_id)

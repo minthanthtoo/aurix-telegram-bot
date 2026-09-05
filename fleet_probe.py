@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
+from fleet_probe_repository import FleetProbeRepository
 
 UTC = timezone.utc
 
@@ -138,6 +139,7 @@ class FleetProbeService:
         self.agent_secrets = {str(key): str(value) for key, value in (agent_secrets or {}).items() if value}
         self.stale_after_seconds = int(stale_after_seconds)
         self.job_ttl_seconds = int(job_ttl_seconds)
+        self.repository = FleetProbeRepository()
 
     @staticmethod
     def _require_identifier(value: Any, *, name: str, maximum: int = 128) -> str:
@@ -170,14 +172,8 @@ class FleetProbeService:
         timestamp = str(now or _now_text())
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                """INSERT INTO probe_targets
-                   (target_id, label, target_kind, host, port, scheme, enabled, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(target_id) DO UPDATE SET
-                     label = excluded.label, target_kind = excluded.target_kind,
-                     host = excluded.host, port = excluded.port, scheme = excluded.scheme,
-                     enabled = excluded.enabled, updated_at = excluded.updated_at""",
+            self.repository.upsert_target(
+                connection,
                 (target_id, label, target_kind, host, normalized_port, scheme, int(bool(enabled)), timestamp, timestamp),
             )
         return {"target_id": target_id, "label": label, "target_kind": target_kind, "host": host, "port": normalized_port}
@@ -212,25 +208,10 @@ class FleetProbeService:
         next_run = str(next_run_at or timestamp)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            source = connection.execute(
-                "SELECT 1 FROM outline_servers WHERE server_id = ?", (source_server_id,)
-            ).fetchone()
-            target = connection.execute(
-                "SELECT 1 FROM probe_targets WHERE target_id = ?", (target_id,)
-            ).fetchone()
-            if source is None or target is None:
+            if not self.repository.schedule_dependencies(connection, source_server_id, target_id):
                 raise FleetProbeError("schedule references an unknown server or target")
-            connection.execute(
-                """INSERT INTO probe_schedules
-                   (schedule_id, source_server_id, target_id, probe_type, interval_seconds,
-                    timeout_ms, payload_bytes, enabled, next_run_at, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(schedule_id) DO UPDATE SET
-                     source_server_id = excluded.source_server_id, target_id = excluded.target_id,
-                     probe_type = excluded.probe_type, interval_seconds = excluded.interval_seconds,
-                     timeout_ms = excluded.timeout_ms, payload_bytes = excluded.payload_bytes,
-                     enabled = excluded.enabled, next_run_at = excluded.next_run_at,
-                     updated_at = excluded.updated_at""",
+            self.repository.upsert_schedule(
+                connection,
                 (schedule_id, source_server_id, target_id, probe_type, int(interval_seconds), int(timeout_ms),
                  int(payload_bytes), int(bool(enabled)), next_run, timestamp, timestamp),
             )
@@ -244,15 +225,7 @@ class FleetProbeService:
             raise ValueError("limit must be between 1 and 1000")
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            rows = connection.execute(
-                """SELECT s.*, t.host, t.port, t.scheme, t.target_kind, t.label AS target_label
-                     FROM probe_schedules s
-                     JOIN probe_targets t ON t.target_id = s.target_id
-                    WHERE s.enabled = 1 AND t.enabled = 1 AND s.next_run_at <= ?
-                    ORDER BY s.next_run_at, s.schedule_id
-                    LIMIT ?""",
-                (timestamp, int(limit)),
-            ).fetchall()
+            rows = self.repository.due_schedules(connection, timestamp, int(limit))
             count = 0
             now_dt = _parse_time(timestamp)
             expires = (now_dt + timedelta(seconds=self.job_ttl_seconds)).isoformat()
@@ -279,19 +252,14 @@ class FleetProbeService:
                 encoded = json.dumps(instruction, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
                 if len(encoded.encode("utf-8")) > MAX_INSTRUCTION_BYTES:
                     raise FleetProbeError("probe instruction is too large")
-                connection.execute(
-                    """INSERT INTO probe_jobs
-                       (job_id, schedule_id, source_server_id, target_id, probe_type,
-                        instruction_json, nonce, status, expires_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                self.repository.insert_job(
+                    connection,
                     (job_id, schedule_id, row["source_server_id"], row["target_id"], row["probe_type"],
                      encoded, nonce, expires, timestamp),
                 )
                 next_run = (now_dt + timedelta(seconds=int(row["interval_seconds"]))).isoformat()
-                connection.execute(
-                    """UPDATE probe_schedules
-                          SET next_run_at = ?, last_enqueued_at = ?, updated_at = ?
-                        WHERE schedule_id = ?""",
+                self.repository.advance_schedule(
+                    connection,
                     (next_run, timestamp, timestamp, schedule_id),
                 )
                 count += 1
@@ -315,33 +283,26 @@ class FleetProbeService:
             raise ValueError("lease_seconds must be between 30 and 900")
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            params: list[Any] = [timestamp, timestamp]
-            source_clause = ""
-            if source_server_id:
-                source_clause = " AND source_server_id = ?"
-                params.append(str(source_server_id))
-            params.append(int(limit))
-            rows = connection.execute(
-                """SELECT * FROM probe_jobs
-                    WHERE (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))
-                      AND expires_at > ?""" + source_clause + " ORDER BY created_at, job_id LIMIT ?",
-                tuple(params),
-            ).fetchall()
+            rows = self.repository.claimable_jobs(
+                connection,
+                timestamp=timestamp,
+                source_server_id=source_server_id,
+                limit=int(limit),
+            )
             claimed_at = _parse_time(timestamp)
             lease_at = (claimed_at + timedelta(seconds=int(lease_seconds))).isoformat()
             jobs: list[ProbeJob] = []
             for row in rows:
                 if source_server_id is None and str(row["source_server_id"]) != agent_id:
                     continue
-                updated = connection.execute(
-                    """UPDATE probe_jobs
-                          SET status = 'claimed', claimed_by = ?, claimed_at = ?,
-                              attempts = attempts + 1
-                        WHERE job_id = ?
-                          AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))""",
-                    (agent_id, lease_at, row["job_id"], timestamp),
+                updated = self.repository.claim_job(
+                    connection,
+                    agent_id=agent_id,
+                    lease_at=lease_at,
+                    job_id=str(row["job_id"]),
+                    timestamp=timestamp,
                 )
-                if int(getattr(updated, "rowcount", 0) or 0) != 1:
+                if not updated:
                     continue
                 instruction = json.loads(str(row["instruction_json"]))
                 jobs.append(ProbeJob(
@@ -394,40 +355,28 @@ class FleetProbeService:
         }
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            job = connection.execute("SELECT * FROM probe_jobs WHERE job_id = ?", (job_id,)).fetchone()
+            job = self.repository.job(connection, job_id)
             if job is None:
                 raise FleetProbeError("probe job does not exist")
             if str(job["source_server_id"]) != agent_id:
                 raise FleetProbeError("agent is not assigned to this probe job")
             if _parse_time(str(job["expires_at"])) < now_time:
-                connection.execute(
-                    "UPDATE probe_jobs SET status = 'expired', last_error = ? WHERE job_id = ?",
-                    ("result_after_expiry", job_id),
-                )
+                self.repository.expire_job(connection, job_id)
                 raise FleetProbeError("probe job has expired")
             if str(job["status"]) == "completed":
-                existing = connection.execute(
-                    "SELECT observation_id, status FROM probe_observations WHERE job_id = ?", (job_id,)
-                ).fetchone()
+                existing = self.repository.observation_for_job(connection, job_id)
                 return {"accepted": False, "duplicate": True, "observation_id": existing["observation_id"] if existing else None}
             if str(job["claimed_by"] or "") != agent_id:
                 raise FleetProbeError("probe job is not leased to this agent")
             observation_id = f"observation-{job_id}"
-            connection.execute(
-                """INSERT INTO probe_observations
-                   (observation_id, job_id, source_server_id, target_id, probe_type, agent_id,
-                    status, latency_ms, packet_loss_percent, bytes_transferred, duration_ms,
-                    error_class, result_json, signature, observed_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            self.repository.insert_observation(
+                connection,
                 (observation_id, job_id, job["source_server_id"], job["target_id"], job["probe_type"],
                  agent_id, status, latency_ms, loss, bytes_transferred, duration_ms, error_class,
                  json.dumps(sanitized_payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
                  str(signature), observed_at, timestamp),
             )
-            connection.execute(
-                "UPDATE probe_jobs SET status = 'completed', completed_at = ?, last_error = NULL WHERE job_id = ?",
-                (timestamp, job_id),
-            )
+            self.repository.complete_job(connection, job_id, timestamp)
         self.recompute_health(server_id=str(job["source_server_id"]), now=timestamp)
         return {"accepted": True, "duplicate": False, "observation_id": observation_id}
 
@@ -435,12 +384,7 @@ class FleetProbeService:
         timestamp = str(now or _now_text())
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            result = connection.execute(
-                """UPDATE probe_jobs SET status = 'expired', last_error = COALESCE(last_error, 'job_expired')
-                    WHERE status IN ('pending', 'claimed') AND expires_at <= ?""",
-                (timestamp,),
-            )
-            return int(getattr(result, "rowcount", 0) or 0)
+            return self.repository.expire_jobs(connection, timestamp)
 
     def recompute_health(self, *, server_id: str, now: str | None = None) -> dict[str, Any]:
         """Build a deterministic health projection from recent observations."""
@@ -448,15 +392,7 @@ class FleetProbeService:
         timestamp = str(now or _now_text())
         cutoff = (_parse_time(timestamp) - timedelta(seconds=self.stale_after_seconds)).isoformat()
         with self.database.connect() as connection:
-            rows = connection.execute(
-                """SELECT status, latency_ms, packet_loss_percent, bytes_transferred,
-                          duration_ms, observed_at
-                     FROM probe_observations
-                    WHERE source_server_id = ? AND observed_at >= ?
-                    ORDER BY observed_at DESC""",
-                (server_id, cutoff),
-            ).fetchall()
-            samples = [dict(row) for row in rows]
+            samples = self.repository.recent_observations(connection, server_id, cutoff)
             count = len(samples)
             success = [row for row in samples if row["status"] == "success"]
             availability = (len(success) / count * 100) if count else None
@@ -494,18 +430,8 @@ class FleetProbeService:
                 reason = "fresh_probe_evidence"
             last_observed = samples[0]["observed_at"] if samples else None
             freshness = int(max(0, (_parse_time(timestamp) - _parse_time(str(last_observed))).total_seconds())) if last_observed else None
-            connection.execute(
-                """INSERT INTO route_health_snapshots
-                   (server_id, status, score, availability_score, latency_score, loss_score,
-                    throughput_score, sample_count, freshness_seconds, last_observed_at, reason, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(server_id) DO UPDATE SET
-                     status = excluded.status, score = excluded.score,
-                     availability_score = excluded.availability_score, latency_score = excluded.latency_score,
-                     loss_score = excluded.loss_score, throughput_score = excluded.throughput_score,
-                     sample_count = excluded.sample_count, freshness_seconds = excluded.freshness_seconds,
-                     last_observed_at = excluded.last_observed_at, reason = excluded.reason,
-                     updated_at = excluded.updated_at""",
+            self.repository.save_health_snapshot(
+                connection,
                 (server_id, status, score, availability, latency_score, loss_score, throughput_score,
                  count, freshness, last_observed, reason, timestamp),
             )
@@ -523,31 +449,10 @@ class FleetProbeService:
     ) -> list[RouteRecommendation]:
         timestamp = str(now or _now_text())
         cutoff = (_parse_time(timestamp) - timedelta(seconds=self.stale_after_seconds)).isoformat()
-        where = ["s.enabled = 1", "COALESCE(s.lifecycle_state, 'active') = 'active'"]
-        params: list[Any] = []
-        if region:
-            where.append("LOWER(COALESCE(r.display_name, '')) = LOWER(?)")
-            params.append(str(region))
-        params.append(int(limit))
         with self.database.connect() as connection:
-            query = """SELECT s.server_id, s.label, COALESCE(r.display_name, 'Unknown') AS region,
-                              COALESCE(h.status, 'unknown') AS probe_status, h.score,
-                              COALESCE(h.sample_count, 0) AS sample_count,
-                              h.last_observed_at, h.reason
-                         FROM outline_servers s
-                         LEFT JOIN connectivity_endpoints e ON e.outline_server_id = s.server_id
-                         LEFT JOIN connectivity_regions r ON r.region_id = e.region_id
-                         LEFT JOIN route_health_snapshots h ON h.server_id = s.server_id
-                        WHERE """ + " AND ".join(where) + """
-                          AND (h.last_observed_at IS NULL OR h.last_observed_at >= ?)
-                        ORDER BY CASE COALESCE(h.status, 'unknown')
-                                   WHEN 'healthy' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END,
-                                 h.score DESC NULLS LAST, s.server_id
-                        LIMIT ?"""
-            rows = connection.execute(
-                query,
-                tuple([*params[:-1], cutoff, params[-1]]),
-            ).fetchall()
+            rows = self.repository.recommendation_rows(
+                connection, region=region, cutoff=cutoff, limit=int(limit)
+            )
         return [RouteRecommendation(
             server_id=str(row["server_id"]), label=str(row["label"]), region=str(row["region"]),
             status=str(row["probe_status"]), score=float(row["score"]) if row["score"] is not None else None,
@@ -576,11 +481,8 @@ class FleetProbeService:
         timestamp = str(now or _now_text())
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                """INSERT INTO route_decisions
-                   (decision_id, telegram_id, entitlement_ref, requested_region,
-                    selected_server_id, decision_mode, score, evidence_json, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            self.repository.record_decision(
+                connection,
                 (decision_id, telegram_id, entitlement_ref, requested_region, selected_server_id,
                  decision_mode, score, json.dumps(dict(evidence), ensure_ascii=True, separators=(",", ":"), sort_keys=True), timestamp),
             )

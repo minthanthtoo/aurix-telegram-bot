@@ -90,15 +90,11 @@ class TelegramAdminConfirmationMixin:
             # record through the store's actor-bound consume operation. The
             # fallback below handles legacy in-memory tokens only.
             try:
-                with store.connect() as connection:
-                    row = connection.execute(
-                        "SELECT command, args_json FROM admin_action_challenges WHERE token_hash = ?",
-                        (hashlib.sha256(token.encode()).hexdigest(),),
-                    ).fetchone()
+                row = store.peek_admin_challenge(hashlib.sha256(token.encode()).hexdigest())
                 if row is None:
                     return None
-                command = str(row["command"] if isinstance(row, dict) else row[0])
-                raw_args = row["args_json"] if isinstance(row, dict) else row[1]
+                command = str(row["command"])
+                raw_args = row["args_json"]
                 args = json.loads(raw_args or "[]")
                 if not isinstance(args, list):
                     return None

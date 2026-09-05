@@ -229,33 +229,14 @@ class TelegramCustomerVpnTransportMixin(TelegramCustomerVpnDashboardMixin):
         The query is best-effort: if the legacy schema cannot be inspected we
         fall back to the default endpoint, preserving the old behaviour.
         """
-        server_ids: set[str] = set()
-        databases = [getattr(self.service, "database", None)]
+        server_ids: tuple[str, ...] = ()
         if self.commerce is not None:
-            databases.append(getattr(self.commerce, "database", None))
-        for database in databases:
-            if database is None:
-                continue
             try:
-                with database.connect() as connection:
-                    for table in ("keys", "paid_vpn_keys"):
-                        try:
-                            rows = connection.execute(
-                                f"SELECT DISTINCT server_id FROM {table} "
-                                "WHERE telegram_id = ? AND server_id IS NOT NULL",
-                                (telegram_id,),
-                            ).fetchall()
-                        except Exception:
-                            continue
-                        server_ids.update(
-                            str(row["server_id"] if isinstance(row, dict) else row[0]).strip()
-                            for row in rows
-                            if str(row["server_id"] if isinstance(row, dict) else row[0]).strip()
-                        )
+                server_ids = tuple(self.commerce.customer_server_ids(telegram_id) or ())
             except Exception:
-                continue
+                server_ids = ()
         if server_ids:
-            return tuple(sorted(server_ids))
+            return server_ids
         default_id = str(getattr(self.service.outline, "default_server_id", "primary"))
         return (default_id,)
 

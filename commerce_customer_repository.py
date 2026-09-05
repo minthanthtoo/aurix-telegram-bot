@@ -35,6 +35,25 @@ class CustomerRepository:
         ).fetchall()
 
     @staticmethod
+    def customer_server_ids(connection: Any, telegram_id: int) -> tuple[str, ...]:
+        server_ids: set[str] = set()
+        for table in ("keys", "paid_vpn_keys"):
+            try:
+                rows = connection.execute(
+                    f"SELECT DISTINCT server_id FROM {table} "
+                    "WHERE telegram_id = ? AND server_id IS NOT NULL",
+                    (int(telegram_id),),
+                ).fetchall()
+            except Exception:
+                continue
+            server_ids.update(
+                str(row["server_id"] if isinstance(row, dict) else row[0]).strip()
+                for row in rows
+                if str(row["server_id"] if isinstance(row, dict) else row[0]).strip()
+            )
+        return tuple(sorted(server_ids))
+
+    @staticmethod
     def migrated_usage(connection: Any, telegram_id: int) -> Any:
         return connection.execute(
             """SELECT COALESCE(SUM(source_used_bytes), 0) AS used

@@ -233,6 +233,21 @@ class PostgresCommerceDatabase:
             return None
         return result
 
+    def peek_admin_challenge(self, token_hash: str) -> dict[str, Any] | None:
+        """Read a pending challenge envelope without consuming it."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT command, args_json FROM admin_action_challenges
+                   WHERE token_hash = ? AND status = 'pending'""",
+                (token_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "command": str(row["command"] if isinstance(row, dict) else row[0]),
+            "args_json": row["args_json"] if isinstance(row, dict) else row[1],
+        }
+
     def cancel_admin_challenge(
         self, token_hash: str, admin_id: int, chat_id: int, now: str
     ) -> bool:

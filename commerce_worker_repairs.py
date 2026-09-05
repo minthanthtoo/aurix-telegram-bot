@@ -18,6 +18,10 @@ from commerce_models import (
     _new_id,
     _now_text,
 )
+from commerce_repairs_repository import ManagedRepairRepository
+
+
+_REPAIRS = ManagedRepairRepository()
 
 
 def _sync_identity_binding(
@@ -55,12 +59,7 @@ def _sync_identity_binding(
         ref = local_key_ref
         if ref is None:
             with self.database.connect() as connection:
-                row = connection.execute(
-                    """SELECT id FROM keys
-                        WHERE server_id = ? AND outline_key_id = ?
-                        ORDER BY id DESC LIMIT 1""",
-                    (str(server_id), str(external_id)),
-                ).fetchone()
+                row = _REPAIRS.free_key_ref(connection, str(server_id), str(external_id))
             ref = str(row["id"]) if row is not None else None
         if ref is None:
             raise IdentityError("free credential is missing its local key reference")
@@ -74,14 +73,7 @@ def _sync_identity_binding(
             status="active",
         )
     with self.database.connect() as connection:
-        credential = connection.execute(
-            """SELECT c.credential_id, c.endpoint_id
-                 FROM connectivity_credentials c
-                 JOIN connectivity_endpoints e ON e.endpoint_id = c.endpoint_id
-                WHERE e.outline_server_id = ? AND c.external_id = ?
-                  AND c.status = 'active'""",
-            (str(server_id), str(external_id)),
-        ).fetchone()
+        credential = _REPAIRS.active_credential(connection, str(server_id), str(external_id))
     if credential is None:
         return
     generation_id = identity.ensure_generation_for_credential(
@@ -111,32 +103,13 @@ def _claim_managed_key_repair(self, now: datetime) -> dict[str, Any] | None:
         if not self._table_exists(connection, "managed_key_repair_jobs"):
             return None
         self.database.begin_write(connection)
-        connection.execute(
-            """UPDATE managed_key_repair_jobs
-                  SET status = 'pending', locked_at = NULL
-                WHERE status = 'running' AND locked_at < ?""",
-            (stale_before,),
+        _REPAIRS.reset_stale_repairs(connection, stale_before)
+        row, updated_ok = _REPAIRS.claim_repair(
+            connection, max_attempts=self._managed_repair_max_attempts(), now_text=now_text
         )
-        lock_clause = (
-            " FOR UPDATE SKIP LOCKED" if isinstance(connection, _PostgresConnection) else ""
-        )
-        row = connection.execute(
-            """SELECT * FROM managed_key_repair_jobs
-                WHERE status IN ('pending', 'failed')
-                  AND attempts < ? AND next_attempt_at <= ?
-                ORDER BY created_at LIMIT 1"""
-            + lock_clause,
-            (self._managed_repair_max_attempts(), now_text),
-        ).fetchone()
         if row is None:
             return None
-        updated = connection.execute(
-            """UPDATE managed_key_repair_jobs
-                  SET status = 'running', attempts = attempts + 1, locked_at = ?
-                WHERE id = ? AND status IN ('pending', 'failed')""",
-            (now_text, row["id"]),
-        )
-        if isinstance(connection, _PostgresConnection) and int(updated.rowcount or 0) != 1:
+        if not updated_ok:
             return None
         result = dict(row)
         result["status"] = "running"
@@ -149,38 +122,25 @@ def _managed_repair_failed(self, job_id: str, error: Exception, now: datetime) -
     current = (now or datetime.now(UTC)).astimezone(UTC)
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        row = connection.execute(
-            "SELECT attempts FROM managed_key_repair_jobs WHERE id = ?",
-            (str(job_id),),
-        ).fetchone()
+        row = _REPAIRS.repair_attempts(connection, str(job_id))
         attempts = int(row["attempts"] or 0) if row else self._managed_repair_max_attempts()
         terminal = attempts >= self._managed_repair_max_attempts()
-        connection.execute(
-            """UPDATE managed_key_repair_jobs
-                  SET status = ?, next_attempt_at = ?, locked_at = NULL, last_error = ?
-                WHERE id = ?""",
-            (
-                "manual" if terminal else "failed",
+        _REPAIRS.update_failed(
+            connection,
+            job_id=str(job_id),
+            status="manual" if terminal else "failed",
+            next_attempt_at=(
                 _now_text(current + JOB_RETRY_DELAY)
-                if not terminal
-                else "9999-12-31T00:00:00+00:00",
-                safe_error,
-                str(job_id),
+                if not terminal else "9999-12-31T00:00:00+00:00"
             ),
+            error=safe_error,
         )
 
 def _managed_repair_manual(self, job: dict[str, Any], reason: str, now: datetime) -> None:
     """Escalate an unsafe repair without mutating local entitlement state."""
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        changed = connection.execute(
-            """UPDATE managed_key_repair_jobs
-                  SET status = 'manual', locked_at = NULL,
-                      next_attempt_at = '9999-12-31T00:00:00+00:00', last_error = ?
-                WHERE id = ? AND status = 'running'""",
-            (str(reason)[:500], str(job["id"])),
-        )
-        if int(getattr(changed, "rowcount", 0) or 0) == 1:
+        if _REPAIRS.mark_manual(connection, str(job["id"]), str(reason)[:500]):
             self._audit(
                 connection,
                 "managed_key_repair_escalated",
@@ -249,29 +209,9 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
     source_id = str(job["source_external_id"])
     local_ref = str(job["local_key_ref"])
     with self.database.connect() as connection:
-        if kind == "paid":
-            row = connection.execute(
-                """SELECT k.*, s.status AS subscription_status, s.expires_at,
-                          s.plan_name, s.plan_code, s.duration_days, u.username
-                     FROM paid_vpn_keys k
-                     JOIN subscriptions s ON s.id = k.subscription_id
-                     JOIN users u ON u.telegram_id = k.telegram_id
-                    WHERE CAST(k.id AS TEXT) = ? AND k.server_id = ?""",
-                (local_ref, server_id),
-            ).fetchone()
-        else:
-            row = connection.execute(
-                """SELECT k.*, u.username, g.campaign_code,
-                          COALESCE(c.duration_days,
-                                   CASE WHEN k.key_type = 'monthly_trial' THEN 30 ELSE 1 END)
-                              AS duration_days
-                     FROM keys k
-                     JOIN users u ON u.telegram_id = k.telegram_id
-                     LEFT JOIN giveaway_claims g ON g.key_id = k.id
-                     LEFT JOIN giveaway_campaigns c ON c.code = g.campaign_code
-                    WHERE CAST(k.id AS TEXT) = ? AND k.server_id = ?""",
-                (local_ref, server_id),
-            ).fetchone()
+        row = _REPAIRS.repair_entitlement(
+            connection, kind=kind, local_ref=local_ref, server_id=server_id
+        )
     if row is None:
         self._managed_repair_manual(job, "managed entitlement no longer exists", current)
         return False
@@ -353,35 +293,24 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
     now_text = _now_text(current)
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        current_job = connection.execute(
-            "SELECT status FROM managed_key_repair_jobs WHERE id = ?",
-            (str(job["id"]),),
-        ).fetchone()
+        current_job = _REPAIRS.current_repair(connection, str(job["id"]))
         if current_job is None or str(current_job["status"]) != "running":
             return False
         if kind == "paid":
-            changed = connection.execute(
-                """UPDATE paid_vpn_keys
-                      SET outline_key_id = ?, access_url = ?, quota_bytes = ?,
-                          last_usage_bytes = 0, last_usage_observed_at = ?, quota_reason = NULL
-                    WHERE CAST(id AS TEXT) = ? AND server_id = ?
-                      AND outline_key_id = ? AND status = 'active'""",
+            changed = _REPAIRS.update_paid(
+                connection,
                 (remote_id, encrypted, remaining, now_text, local_ref, server_id, source_id),
             )
-            if int(getattr(changed, "rowcount", 0) or 0) != 1:
+            if not changed:
                 raise CommerceError("Paid entitlement changed before repair cutover")
             subscription_id = str(row["subscription_id"])
             profile_kind = "paid"
         else:
-            changed = connection.execute(
-                """UPDATE keys
-                      SET outline_key_id = ?, data_limit_bytes = ?,
-                          last_usage_bytes = 0, quota_reason = NULL
-                    WHERE CAST(id AS TEXT) = ? AND server_id = ?
-                      AND outline_key_id = ? AND status = 'active'""",
+            changed = _REPAIRS.update_free(
+                connection,
                 (remote_id, remaining, local_ref, server_id, source_id),
             )
-            if int(getattr(changed, "rowcount", 0) or 0) != 1:
+            if not changed:
                 raise CommerceError("Free entitlement changed before repair cutover")
             subscription_id = None
             profile_kind = (
@@ -390,11 +319,8 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
                 else "free"
             )
             if self._table_exists(connection, "free_provisioning_intents"):
-                connection.execute(
-                    """UPDATE free_provisioning_intents
-                          SET outline_key_id = ?
-                        WHERE key_id = ? AND server_id = ?""",
-                    (remote_id, int(row["id"]), server_id),
+                _REPAIRS.update_free_intent(
+                    connection, remote_id, int(row["id"]), server_id
                 )
         ConnectivityRegistry.revoke_credential(
             connection,
@@ -413,53 +339,25 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
             subscription_id=subscription_id,
         )
         if self._table_exists(connection, "outline_remote_keys"):
-            connection.execute(
-                """UPDATE outline_remote_keys
-                      SET status = 'missing', managed = 1,
-                          missing_observation_count = 0,
-                          missing_since_at = NULL, last_missing_at = NULL
-                    WHERE server_id = ? AND outline_key_id = ?""",
-                (server_id, source_id),
-            )
-            connection.execute(
-                """INSERT INTO outline_remote_keys
-                   (server_id, outline_key_id, remote_name, managed, status,
-                    first_seen_at, last_seen_at, last_usage_bytes,
-                    missing_observation_count, missing_since_at, last_missing_at)
-                   VALUES (?, ?, ?, 1, 'present', ?, ?, 0, 0, NULL, NULL)
-                   ON CONFLICT(server_id, outline_key_id) DO UPDATE SET
-                     remote_name = excluded.remote_name, managed = 1,
-                     status = 'present', last_seen_at = excluded.last_seen_at,
-                     last_usage_bytes = excluded.last_usage_bytes,
-                     missing_observation_count = 0,
-                     missing_since_at = NULL, last_missing_at = NULL""",
-                (server_id, remote_id, name, now_text, now_text),
-            )
-        connection.execute(
-            """UPDATE managed_key_repair_jobs
-                  SET source_external_id = ?, target_external_id = ?,
-                      quota_bytes = ?, used_bytes = ?, status = 'done',
-                      locked_at = NULL, last_error = NULL, completed_at = ?
-                WHERE id = ? AND status = 'running'""",
-            (remote_id, remote_id, remaining, usage, now_text, str(job["id"])),
+            _REPAIRS.mark_remote_missing(connection, server_id, source_id)
+            _REPAIRS.upsert_remote_present(connection, server_id, remote_id, name, now_text)
+        _REPAIRS.complete_repair(
+            connection, str(job["id"]), remote_id, remaining, usage, now_text
         )
         notification_key = f"managed-key-repaired:{kind}:{local_ref}"
-        connection.execute(
-            """INSERT INTO notifications
-               (id, dedupe_key, telegram_id, kind, text, access_url_ciphertext,
-                status, next_attempt_at, created_at)
-               VALUES (?, ?, ?, 'vpn_key_repaired', ?, ?, 'pending', ?, ?)
-               ON CONFLICT(dedupe_key) DO NOTHING""",
-            (
-                _new_id(), notification_key, int(row["telegram_id"]),
+        _REPAIRS.queue_repaired_notification(
+            connection,
+            notification_id=_new_id(),
+            dedupe_key=notification_key,
+            telegram_id=int(row["telegram_id"]),
+            text=(
                 "Your AuriX VPN key was safely refreshed after the previous remote credential disappeared.\n"
                 f"Remaining quota preserved: {_human_bytes(remaining)}\n"
                 f"Expires: {row['expires_at']}\n"
-                "The previous key is no longer active in AuriX.",
-                encrypted,
-                now_text,
-                now_text,
+                "The previous key is no longer active in AuriX."
             ),
+            encrypted=encrypted,
+            now_text=now_text,
         )
         self._audit(
             connection,
@@ -499,24 +397,14 @@ def _mark_managed_repair_converged(
     now_text = _now_text(now)
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        connection.execute(
-            """UPDATE managed_key_repair_jobs
-                  SET status = 'done', locked_at = NULL, last_error = NULL,
-                      completed_at = ?
-                WHERE id = ? AND status = 'running'""",
-            (now_text, str(job["id"])),
-        )
+        _REPAIRS.mark_converged(connection, str(job["id"]), now_text)
         if self._table_exists(connection, "outline_remote_keys"):
-            connection.execute(
-                """UPDATE outline_remote_keys
-                      SET status = 'present', managed = 1,
-                          remote_name = COALESCE(?, remote_name),
-                          missing_observation_count = 0,
-                          missing_since_at = NULL, last_missing_at = NULL,
-                          last_seen_at = ?
-                    WHERE server_id = ? AND outline_key_id = ?""",
-                (str(key.get("name") or "")[:256] or None, now_text,
-                 str(job["server_id"]), str(key.get("id") or job["source_external_id"])),
+            _REPAIRS.mark_remote_present(
+                connection,
+                name=str(key.get("name") or "")[:256] or None,
+                now_text=now_text,
+                server_id=str(job["server_id"]),
+                external_id=str(key.get("id") or job["source_external_id"]),
             )
 
 def process_managed_key_repairs(

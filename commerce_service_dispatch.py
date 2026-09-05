@@ -39,6 +39,7 @@ from commerce_service_core import (
 )
 from commerce_service_customer import (
     _usage_snapshot_table_available,
+    customer_server_ids,
     prune_usage_snapshots,
     receipt_policy,
     set_receipt_mode,
@@ -153,6 +154,7 @@ SERVICE_IMPLEMENTATIONS: dict[str, Any] = {
         "_storage_is_configured": _storage_is_configured,
         "_table_exists": _table_exists,
         "_usage_snapshot_table_available": _usage_snapshot_table_available,
+        "customer_server_ids": customer_server_ids,
         "initialize": initialize,
         "prune_usage_snapshots": prune_usage_snapshots,
         "receipt_policy": receipt_policy,

@@ -72,6 +72,11 @@ def user_usage(self, telegram_id: int, usage_by_key: dict[str, Any]) -> list[dic
         )
     return result
 
+def customer_server_ids(self, telegram_id: int) -> tuple[str, ...]:
+    """Return the bounded set of fleet endpoints owned by one customer."""
+    with self.database.connect() as connection:
+        return self.customer_reads.customer_server_ids(connection, telegram_id)
+
 def user_migrated_usage(self, telegram_id: int) -> int:
     """Return usage already consumed by this user before key turnover.
 

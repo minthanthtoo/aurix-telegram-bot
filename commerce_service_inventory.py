@@ -11,6 +11,10 @@ from commerce_models import _new_id
 from commerce_models import _human_bytes
 from commerce_models import _now_text
 from connectivity_registry import ConnectivityRegistry
+from commerce_inventory_operations_repository import InventoryOperationsRepository
+
+
+_INVENTORY = InventoryOperationsRepository()
 
 
 def endpoint_migration_jobs(
@@ -27,37 +31,12 @@ def endpoint_migration_jobs(
         page_limit = max(1, min(200, int(limit)))
     except (TypeError, ValueError):
         page_limit = 50
-    statuses = (
-        "('pending', 'creating', 'source_delete_pending', 'failed', 'cancelled')"
-        if not include_completed
-        else "('pending', 'creating', 'source_delete_pending', 'failed', 'cancelled', 'completed')"
-    )
     with self.database.connect() as connection:
-        if not self._table_exists(connection, "connectivity_migration_jobs"):
+        if not _INVENTORY.table_exists(connection, "connectivity_migration_jobs"):
             return []
-        rows = connection.execute(
-            f"""SELECT id AS job_id, profile_kind, telegram_id,
-                              source_server_id, target_server_id,
-                              source_external_id, target_external_id,
-                              status AS job_status, attempts,
-                              source_used_bytes, quota_bytes,
-                              next_attempt_at, last_error,
-                              requested_by, created_at, updated_at,
-                              completed_at
-                         FROM connectivity_migration_jobs
-                        WHERE status IN {statuses}
-                        ORDER BY CASE status
-                                   WHEN 'failed' THEN 0
-                                   WHEN 'source_delete_pending' THEN 1
-                                   WHEN 'creating' THEN 2
-                                   WHEN 'pending' THEN 3
-                                   ELSE 4
-                                 END,
-                                 created_at DESC
-                        LIMIT ?""",
-            (page_limit,),
-        ).fetchall()
-    return [dict(row) for row in rows]
+        return _INVENTORY.endpoint_migration_jobs(
+            connection, limit=page_limit, include_completed=include_completed
+        )
 
 from commerce_service_inventory_migration import queue_endpoint_migration
 def migratable_credentials(self, source_server_id: str) -> list[dict[str, Any]]:
@@ -68,17 +47,7 @@ def migratable_credentials(self, source_server_id: str) -> list[dict[str, Any]]:
     with self.database.connect() as connection:
         if not ConnectivityRegistry.available(connection):
             return []
-        rows = connection.execute(
-            """SELECT c.credential_id, c.external_id, p.profile_kind,
-                      p.telegram_id, c.created_at, c.status
-                 FROM connectivity_credentials c
-                 JOIN connectivity_profiles p ON p.profile_id = c.profile_id
-                 JOIN connectivity_endpoints e ON e.endpoint_id = c.endpoint_id
-                WHERE e.outline_server_id = ? AND c.status = 'active'
-                ORDER BY c.created_at, c.external_id""",
-            (source,),
-        ).fetchall()
-    return [dict(row) for row in rows]
+        return _INVENTORY.migratable_credentials(connection, source)
 
 from commerce_service_inventory_reconciliation import refresh_server_inventory
 def ensure_managed_key_repair_notifications(
@@ -95,25 +64,16 @@ def ensure_managed_key_repair_notifications(
     created_at = _now_text(now)
     queued = 0
     with self.database.connect() as connection:
-        if not self._table_exists(connection, "managed_key_repair_jobs"):
+        if not _INVENTORY.table_exists(connection, "managed_key_repair_jobs"):
             return 0
-        rows = connection.execute(
-            """SELECT id, kind, server_id, telegram_id, source_external_id,
-                      quota_bytes, used_bytes, status
-                 FROM managed_key_repair_jobs
-                WHERE status IN ('pending', 'running', 'manual', 'failed')
-                ORDER BY created_at, id"""
-        ).fetchall()
+        rows = _INVENTORY.open_managed_repairs(connection)
         for row in rows:
             repair_id = str(row["id"])
-            exists = connection.execute(
-                "SELECT 1 FROM notifications WHERE dedupe_key LIKE ? LIMIT 1",
-                (f"staff:key_repairs:{repair_id}:%",),
-            ).fetchone()
+            exists = _INVENTORY.repair_notification_exists(connection, repair_id)
             usage_text = "unknown (fresh Outline telemetry unavailable)"
             if row["used_bytes"] is not None:
                 usage_text = f"{_human_bytes(max(0, int(row['used_bytes'])))} observed"
-            if exists is None:
+            if not exists:
                 self._queue_staff_notification(
                     connection,
                     "key_repairs",
@@ -162,45 +122,18 @@ def remote_key_inventory(
     except (TypeError, ValueError):
         page_limit = 100
     with self.database.connect() as connection:
-        if not self._table_exists(connection, "outline_remote_keys"):
+        if not _INVENTORY.table_exists(connection, "outline_remote_keys"):
             return []
-        # Validate the server id so a stale button is distinguishable from
-        # a server which genuinely has no audit rows.
-        if connection.execute(
-            "SELECT 1 FROM outline_servers WHERE server_id = ?", (str(server_id),)
-        ).fetchone() is None:
-            raise CommerceError("Outline server is unavailable")
-        clauses = ["outline_remote_keys.server_id = ?"]
-        params: list[Any] = [str(server_id)]
-        if normalized_status != "all":
-            clauses.append("outline_remote_keys.status = ?")
-            params.append(normalized_status)
-        if managed is not None:
-            clauses.append("outline_remote_keys.managed = ?")
-            params.append(1 if managed else 0)
-        params.append(page_limit)
-        rows = connection.execute(
-            """SELECT outline_remote_keys.server_id, outline_remote_keys.outline_key_id,
-                      outline_remote_keys.remote_name, outline_remote_keys.managed,
-                      outline_remote_keys.status, outline_remote_keys.first_seen_at,
-                      outline_remote_keys.last_seen_at, outline_remote_keys.last_usage_bytes,
-                      COALESCE(r.review_state,
-                               CASE WHEN outline_remote_keys.managed = 1
-                                    THEN 'managed' ELSE 'unreviewed' END) AS review_state,
-                      r.reviewed_by, r.reviewed_at, r.review_note
-                 FROM outline_remote_keys
-                 LEFT JOIN outline_remote_key_reviews r
-                   ON r.server_id = outline_remote_keys.server_id
-                  AND r.outline_key_id = outline_remote_keys.outline_key_id
-                WHERE """
-            + " AND ".join(clauses)
-            + """ ORDER BY CASE WHEN outline_remote_keys.status = 'present' THEN 0 ELSE 1 END,
-                              outline_remote_keys.last_seen_at DESC,
-                              outline_remote_keys.outline_key_id
-                LIMIT ?""",
-            tuple(params),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        try:
+            return _INVENTORY.remote_key_inventory(
+                connection,
+                str(server_id),
+                status=normalized_status,
+                managed=managed,
+                limit=page_limit,
+            )
+        except ValueError as exc:
+            raise CommerceError(str(exc)) from exc
 
 def review_remote_key(
     self,
@@ -230,46 +163,21 @@ def review_remote_key(
     clean_note = str(note or "").strip()[:512] or None
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        row = connection.execute(
-            """SELECT managed, status FROM outline_remote_keys
-               WHERE server_id = ? AND outline_key_id = ?""",
-            (server, key_id),
-        ).fetchone()
+        row = _INVENTORY.remote_key_for_review(connection, server, key_id)
         if row is None:
             raise CommerceError("Remote key is not present in the audit inventory")
         if int(row["managed"] or 0) == 1:
             raise CommerceError("Managed AuriX keys do not need orphan review")
-        connection.execute(
-            """INSERT INTO outline_remote_key_reviews
-               (server_id, outline_key_id, review_state, reviewed_by, reviewed_at, review_note)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(server_id, outline_key_id) DO UPDATE SET
-                 review_state = excluded.review_state,
-                 reviewed_by = excluded.reviewed_by,
-                 reviewed_at = excluded.reviewed_at,
-                 review_note = excluded.review_note""",
-            (server, key_id, normalized_state, int(reviewer_id), now_text, clean_note),
+        _INVENTORY.save_remote_key_review(
+            connection,
+            server_id=server,
+            key_id=key_id,
+            review_state=normalized_state,
+            reviewer_id=int(reviewer_id),
+            reviewed_at=now_text,
+            note=clean_note,
         )
-        connection.execute(
-            """UPDATE outline_servers
-                  SET remote_orphan_key_count = (
-                      SELECT COUNT(*)
-                        FROM outline_remote_keys remote
-                       WHERE remote.server_id = outline_servers.server_id
-                         AND remote.status = 'present'
-                         AND remote.managed = 0
-                         AND COALESCE(
-                               (SELECT review_state
-                                  FROM outline_remote_key_reviews review
-                                 WHERE review.server_id = remote.server_id
-                                   AND review.outline_key_id = remote.outline_key_id),
-                               'unreviewed'
-                             ) = 'unreviewed'
-                  ),
-                      updated_at = ?
-                WHERE server_id = ?""",
-            (now_text, server),
-        )
+        _INVENTORY.recompute_orphan_count(connection, server, now_text)
         self._audit(
             connection,
             "remote_key_reviewed",
@@ -309,29 +217,11 @@ def managed_key_repair_jobs(
     except (TypeError, ValueError):
         page_limit = 100
     with self.database.connect() as connection:
-        if not self._table_exists(connection, "managed_key_repair_jobs"):
+        if not _INVENTORY.table_exists(connection, "managed_key_repair_jobs"):
             return []
-        clauses: list[str] = []
-        params: list[Any] = []
-        if normalized == "open":
-            clauses.append("status IN ('pending', 'running', 'failed', 'manual')")
-        elif normalized != "all":
-            clauses.append("status = ?")
-            params.append(normalized)
-        params.append(page_limit)
-        rows = connection.execute(
-            """SELECT id, kind, server_id, telegram_id, local_key_ref,
-                      source_external_id, target_external_id, key_name,
-                      quota_bytes, used_bytes, expires_at, status, attempts,
-                      next_attempt_at, locked_at, last_error, observed_at,
-                      created_at, completed_at
-                 FROM managed_key_repair_jobs"""
-            + (" WHERE " + " AND ".join(clauses) if clauses else "")
-            + " ORDER BY CASE status WHEN 'manual' THEN 0 WHEN 'failed' THEN 1 "
-              "WHEN 'pending' THEN 2 WHEN 'running' THEN 3 ELSE 4 END, created_at DESC LIMIT ?",
-            tuple(params),
-        ).fetchall()
-    return [dict(row) for row in rows]
+        return _INVENTORY.managed_key_repair_jobs(
+            connection, status=normalized, limit=page_limit
+        )
 
 def approve_managed_key_repair(
     self,
@@ -352,10 +242,7 @@ def approve_managed_key_repair(
     now_text = _now_text()
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        row = connection.execute(
-            "SELECT * FROM managed_key_repair_jobs WHERE id = ?",
-            (repair,),
-        ).fetchone()
+        row = _INVENTORY.managed_key_repair(connection, repair)
         if row is None:
             raise CommerceError("Managed-key repair was not found")
         if str(row["status"]) not in {"manual", "failed"}:
@@ -368,20 +255,14 @@ def approve_managed_key_repair(
                 "Explicitly confirm full-quota restoration when Outline usage is unavailable"
             )
         override = reason == "usage_observation_required" and allow_unknown_usage
-        updated = connection.execute(
-            """UPDATE managed_key_repair_jobs
-                  SET status = 'pending', attempts = 0, next_attempt_at = ?,
-                      locked_at = NULL, used_bytes = ?,
-                      last_error = ?, completed_at = NULL
-                WHERE id = ? AND status IN ('manual', 'failed')""",
-            (
-                now_text,
-                0 if override else row["used_bytes"],
-                "owner_approved_unknown_usage" if override else None,
-                repair,
-            ),
+        updated = _INVENTORY.approve_managed_key_repair(
+            connection,
+            repair_id=repair,
+            now_text=now_text,
+            used_bytes=0 if override else row["used_bytes"],
+            last_error="owner_approved_unknown_usage" if override else None,
         )
-        if int(getattr(updated, "rowcount", 0) or 0) != 1:
+        if not updated:
             raise CommerceError("Managed-key repair changed before owner approval")
         self._audit(
             connection,

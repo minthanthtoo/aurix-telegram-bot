@@ -25,6 +25,7 @@ from commerce_payment_repository import PaymentRepository
 from commerce_wallet_read_repository import WalletReadRepository
 from commerce_wallet_approval_repository import WalletApprovalRepository
 from commerce_inventory_reconciliation_repository import InventoryReconciliationRepository
+from commerce_inventory_operations_repository import InventoryOperationsRepository
 from route_failover import RouteFailoverService
 from supabase_storage import NullReceiptStorage
 
@@ -53,6 +54,7 @@ class CommerceService:
         self.capacity_operations = CapacityOperationsRepository()
         self.payments: repositories.PaymentRepositoryPort = PaymentRepository()
         self.wallet_approvals = WalletApprovalRepository()
+        self.inventory_operations = InventoryOperationsRepository()
         # Kept only for migration tests; deployments require evidence or a reservation.
         self.allow_legacy_text_approval = bool(allow_legacy_text_approval)
         self.receipt_storage = receipt_storage or NullReceiptStorage()

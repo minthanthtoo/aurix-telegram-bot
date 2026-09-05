@@ -44,9 +44,9 @@
       "max_sql_calls": 12
     },
     "commerce_fleet_health_repository.py": {
-      "max_lines": 155,
+      "max_lines": 186,
       "max_function_lines": 43,
-      "max_sql_calls": 11
+      "max_sql_calls": 12
     },
     "commerce_wallet_approval_repository.py": {
       "max_lines": 446,
@@ -54,8 +54,8 @@
       "max_sql_calls": 39
     },
     "commerce_service.py": {
-      "max_lines": 262,
-      "max_function_lines": 33,
+      "max_lines": 264,
+      "max_function_lines": 34,
       "max_sql_calls": 0
     },
     "commerce_service_wallet_refunds.py": {
@@ -79,9 +79,9 @@
       "max_sql_calls": 0
     },
     "commerce_service_core.py": {
-      "max_lines": 316,
-      "max_function_lines": 49,
-      "max_sql_calls": 11
+      "max_lines": 200,
+      "max_function_lines": 20,
+      "max_sql_calls": 0
     },
     "commerce_service_customer.py": {
       "max_lines": 299,
@@ -94,14 +94,14 @@
       "max_sql_calls": 0
     },
     "commerce_service_fleet.py": {
-      "max_lines": 870,
-      "max_function_lines": 181,
-      "max_sql_calls": 34
+      "max_lines": 323,
+      "max_function_lines": 73,
+      "max_sql_calls": 0
     },
     "commerce_service_inventory.py": {
-      "max_lines": 911,
-      "max_function_lines": 363,
-      "max_sql_calls": 30
+      "max_lines": 281,
+      "max_function_lines": 64,
+      "max_sql_calls": 0
     },
     "commerce_service_orders.py": {
       "max_lines": 753,
@@ -114,9 +114,9 @@
       "max_sql_calls": 0
     },
     "commerce_service_repairs.py": {
-      "max_lines": 551,
-      "max_function_lines": 150,
-      "max_sql_calls": 15
+      "max_lines": 445,
+      "max_function_lines": 132,
+      "max_sql_calls": 0
     },
     "commerce_service_support.py": {
       "max_lines": 6,
@@ -174,9 +174,9 @@
       "max_sql_calls": 5
     },
     "commerce_worker_repairs.py": {
-      "max_lines": 538,
-      "max_function_lines": 250,
-      "max_sql_calls": 20
+      "max_lines": 426,
+      "max_function_lines": 188,
+      "max_sql_calls": 0
     },
     "entitlements.py": {
       "max_lines": 82,
@@ -214,9 +214,9 @@
       "max_sql_calls": 0
     },
     "entitlement_quota.py": {
-      "max_lines": 528,
-      "max_function_lines": 105,
-      "max_sql_calls": 20
+      "max_lines": 406,
+      "max_function_lines": 82,
+      "max_sql_calls": 0
     },
     "entitlement_support.py": {
       "max_lines": 59,
@@ -239,9 +239,9 @@
       "max_sql_calls": 0
     },
     "telegram_transport_customer_vpn.py": {
-      "max_lines": 797,
-      "max_function_lines": 274,
-      "max_sql_calls": 1
+      "max_lines": 506,
+      "max_function_lines": 121,
+      "max_sql_calls": 0
     },
     "telegram_transport_receipts.py": {
       "max_lines": 466,
@@ -699,9 +699,9 @@
       "max_sql_calls": 22
     },
     "commerce_customer_repository.py": {
-      "max_lines": 159,
+      "max_lines": 178,
       "max_function_lines": 29,
-      "max_sql_calls": 10
+      "max_sql_calls": 11
     },
     "commerce_failover_repository.py": {
       "max_lines": 93,
@@ -732,6 +732,51 @@
       "max_lines": 295,
       "max_function_lines": 19,
       "max_sql_calls": 26
+    },
+    "commerce_fleet_registration_repository.py": {
+      "max_lines": 92,
+      "max_function_lines": 31,
+      "max_sql_calls": 9
+    },
+    "commerce_fleet_routing_repository.py": {
+      "max_lines": 43,
+      "max_function_lines": 34,
+      "max_sql_calls": 3
+    },
+    "commerce_inventory_operations_repository.py": {
+      "max_lines": 236,
+      "max_function_lines": 43,
+      "max_sql_calls": 14
+    },
+    "commerce_shared_repository.py": {
+      "max_lines": 194,
+      "max_function_lines": 43,
+      "max_sql_calls": 11
+    },
+    "entitlement_quota_repository.py": {
+      "max_lines": 194,
+      "max_function_lines": 21,
+      "max_sql_calls": 20
+    },
+    "fleet_probe_repository.py": {
+      "max_lines": 220,
+      "max_function_lines": 27,
+      "max_sql_calls": 19
+    },
+    "commerce_repairs_repository.py": {
+      "max_lines": 385,
+      "max_function_lines": 25,
+      "max_sql_calls": 37
+    },
+    "fleet_probe.py": {
+      "max_lines": 500,
+      "max_function_lines": 66,
+      "max_sql_calls": 0
+    },
+    "telegram_admin_confirmations.py": {
+      "max_lines": 134,
+      "max_function_lines": 64,
+      "max_sql_calls": 0
     },
     "entitlement_server_allocation.py": {
       "max_lines": 122,
@@ -789,6 +834,13 @@
         "access_control_repository.py",
         "commerce_lifecycle_repository.py",
         "commerce_capacity_operations_repository.py",
+        "commerce_fleet_registration_repository.py",
+        "commerce_fleet_routing_repository.py",
+        "commerce_inventory_operations_repository.py",
+        "commerce_shared_repository.py",
+        "commerce_repairs_repository.py",
+        "entitlement_quota_repository.py",
+        "fleet_probe_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",

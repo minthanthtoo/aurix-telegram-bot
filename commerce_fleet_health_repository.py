@@ -60,6 +60,37 @@ class FleetHealthRepository:
         }
 
     @staticmethod
+    def drain_snapshot(
+        connection: Any,
+        server_id: str,
+        *,
+        include_free_keys: bool,
+        include_free_intents: bool,
+    ) -> dict[str, Any] | None:
+        row = FleetHealthRepository.server(connection, server_id)
+        if row is None:
+            return None
+        counts = FleetHealthRepository.retirement_counts(
+            connection,
+            server_id,
+            include_free_keys=include_free_keys,
+            include_free_intents=include_free_intents,
+        )
+        return {**dict(row), **counts}
+
+    @staticmethod
+    def health_history(connection: Any, server_id: str, limit: int) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            """SELECT observed_at, observed_status, state_before, state_after,
+                      latency_ms, remote_key_count, error_type
+                 FROM endpoint_health_observations
+                WHERE server_id = ?
+                ORDER BY observed_at DESC LIMIT ?""",
+            (server_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
     def set_lifecycle(
         connection: Any,
         *,
