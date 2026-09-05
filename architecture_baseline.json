@@ -158,6 +158,11 @@
       "max_function_lines": 17,
       "max_sql_calls": 10
     },
+    "entitlement_provisioning_repository.py": {
+      "max_lines": 329,
+      "max_function_lines": 57,
+      "max_sql_calls": 32
+    },
     "entitlement_dispatch.py": {
       "max_lines": 128,
       "max_function_lines": 0,
@@ -174,9 +179,9 @@
       "max_sql_calls": 0
     },
     "entitlement_provisioning.py": {
-      "max_lines": 837,
-      "max_function_lines": 154,
-      "max_sql_calls": 43
+      "max_lines": 550,
+      "max_function_lines": 118,
+      "max_sql_calls": 0
     },
     "entitlement_quota.py": {
       "max_lines": 528,
@@ -638,6 +643,7 @@
         "identity_usage_policy.py",
         "identity_usage_repository.py",
         "entitlement_allocation_repository.py",
+        "entitlement_provisioning_repository.py",
         "ports.py",
         "repositories.py",
         "persistence.py"
