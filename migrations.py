@@ -1519,6 +1519,52 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS managed_key_repairs_due ON managed_key_repair_jobs(status, next_attempt_at)",
         ),
     ),
+    Migration(
+        21,
+        "durable_usage_snapshots",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS usage_snapshots (
+                   id TEXT PRIMARY KEY,
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   entitlement_kind TEXT NOT NULL CHECK (
+                       entitlement_kind IN ('free', 'paid', 'trial', 'promo')
+                   ),
+                   local_key_ref TEXT NOT NULL,
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   outline_key_id TEXT NOT NULL,
+                   observed_at TEXT NOT NULL,
+                   used_bytes INTEGER NOT NULL CHECK (used_bytes >= 0),
+                   quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                   source TEXT NOT NULL DEFAULT 'outline_metrics',
+                   UNIQUE (server_id, entitlement_kind, local_key_ref, observed_at)
+               )""",
+            """CREATE INDEX IF NOT EXISTS usage_snapshots_user_time
+               ON usage_snapshots(telegram_id, observed_at)""",
+            """CREATE INDEX IF NOT EXISTS usage_snapshots_server_time
+               ON usage_snapshots(server_id, observed_at)""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS usage_snapshots (
+                   id TEXT PRIMARY KEY,
+                   telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
+                   entitlement_kind TEXT NOT NULL CHECK (
+                       entitlement_kind IN ('free', 'paid', 'trial', 'promo')
+                   ),
+                   local_key_ref TEXT NOT NULL,
+                   server_id TEXT NOT NULL REFERENCES outline_servers(server_id),
+                   outline_key_id TEXT NOT NULL,
+                   observed_at TIMESTAMPTZ NOT NULL,
+                   used_bytes BIGINT NOT NULL CHECK (used_bytes >= 0),
+                   quota_bytes BIGINT NOT NULL CHECK (quota_bytes > 0),
+                   source TEXT NOT NULL DEFAULT 'outline_metrics',
+                   UNIQUE (server_id, entitlement_kind, local_key_ref, observed_at)
+               )""",
+            """CREATE INDEX IF NOT EXISTS usage_snapshots_user_time
+               ON usage_snapshots(telegram_id, observed_at)""",
+            """CREATE INDEX IF NOT EXISTS usage_snapshots_server_time
+               ON usage_snapshots(server_id, observed_at)""",
+        ),
+    ),
 )
 
 

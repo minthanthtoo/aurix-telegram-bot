@@ -18,9 +18,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from receipt_llm import ReceiptExtractionError, build_receipt_extractor  # noqa: E402
-
-
 def mask(value: Any, prefix: int = 3, suffix: int = 3) -> str:
     text = str(value or "").strip()
     if not text:
@@ -90,6 +87,10 @@ def main() -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         raise SystemExit("Receipt smoke test failed: TELEGRAM_BOT_TOKEN is not configured")
+
+    # Keep the CLI help/preflight paths dependency-light.  The actual smoke
+    # run still imports the configured vision extractor here.
+    from receipt_llm import ReceiptExtractionError, build_receipt_extractor
 
     receipt = latest_receipt(
         Path(args.database) if args.database and not args.database_url else None,

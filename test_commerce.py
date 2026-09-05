@@ -708,6 +708,57 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(orphan, 0)
         self.assertEqual(status, "missing")
 
+    def test_inventory_persists_throttled_usage_snapshots_without_access_urls(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.outline.transfer = {"1": 123456}
+
+        first = self.service.refresh_server_inventory(self.now)
+        self.assertEqual(first[0]["usage_snapshots_recorded"], 1)
+        self.outline.transfer = {"1": 234567}
+        second = self.service.refresh_server_inventory(self.now + timedelta(minutes=2))
+        self.assertEqual(second[0]["usage_snapshots_recorded"], 0)
+        third = self.service.refresh_server_inventory(self.now + timedelta(minutes=7))
+        self.assertEqual(third[0]["usage_snapshots_recorded"], 1)
+
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT telegram_id, entitlement_kind, local_key_ref, server_id,
+                          outline_key_id, used_bytes, quota_bytes, source
+                     FROM usage_snapshots ORDER BY observed_at"""
+            ).fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row["used_bytes"] for row in rows], [123456, 234567])
+        self.assertEqual(rows[0]["telegram_id"], 123)
+        self.assertEqual(rows[0]["entitlement_kind"], "paid")
+        self.assertEqual(rows[0]["server_id"], "default")
+        self.assertEqual(rows[0]["outline_key_id"], "1")
+        self.assertEqual(rows[0]["source"], "outline_metrics")
+        self.assertTrue(all("ss://" not in json.dumps(dict(row)) for row in rows))
+
+    def test_usage_snapshot_retention_is_bounded_to_a_minimum_audit_window(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.outline.transfer = {"1": 1}
+        self.service.refresh_server_inventory(self.now)
+
+        self.assertEqual(
+            self.service.prune_usage_snapshots(self.now + timedelta(days=6), retention_days=1),
+            0,
+        )
+        self.assertEqual(
+            self.service.prune_usage_snapshots(self.now + timedelta(days=8), retention_days=1),
+            1,
+        )
+        with self.database.connect() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM usage_snapshots").fetchone()[0], 0)
+
     def test_owner_remote_key_review_clears_only_the_reviewed_orphan(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.outline.add_key("legacy-7", "legacy operator key")
@@ -1409,15 +1460,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "c307f2331a41a54ad88b26e08e82e5b9a2a8c068a727f7d52d4822ffbc0772ab",
+            "b55c0cd644364390d39f0ddb8e8910d4baa185a1784154fc61f567c74e9a5ffc",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "72936fe8579dbded4019a9629c44bf1f5cb397c3529fe89040780e9261d4641f",
+            "60057ad967ec1fed7bb4962ae6b2ae7c3d3e82cf5d9a5132c66ef41470c2c190",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "a35479b548017cd4a3242687e0242c4f8394a9e58e8c799cede50c4ed26706f8",
+            "6784cc2be3943a25e74c1293d7190a792375520970e734813e5b2440a5a690bf",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

@@ -974,6 +974,20 @@ class CommerceService(CommerceWorkerMixin):
             return 60
 
     @staticmethod
+    def _usage_snapshot_interval_seconds() -> int:
+        """Throttle durable usage samples without reducing live enforcement."""
+        try:
+            return max(
+                60,
+                min(
+                    86_400,
+                    int(os.environ.get("AURIX_USAGE_SNAPSHOT_INTERVAL_SECONDS", "300")),
+                ),
+            )
+        except (TypeError, ValueError):
+            return 300
+
+    @staticmethod
     def _managed_repair_cached_usage_max_age_seconds() -> int:
         """Bound how long a cached usage sample may authorize a repair.
 
@@ -1060,6 +1074,69 @@ class CommerceService(CommerceWorkerMixin):
         except (TypeError, ValueError, OverflowError):
             timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M")
         return f"{identity}-{tier}-{duration}-{timestamp}"[:128]
+
+    def _record_usage_snapshots(
+        self,
+        connection: Any,
+        *,
+        server_id: str,
+        observed_at: str,
+        managed_rows: list[dict[str, Any]],
+        by_key: dict[str, Any],
+    ) -> int:
+        """Persist bounded, non-secret transfer evidence for managed keys."""
+        if not self._table_exists(connection, "usage_snapshots") or not isinstance(by_key, dict):
+            return 0
+        try:
+            current = datetime.fromisoformat(str(observed_at)).astimezone(UTC)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        cutoff = (current - timedelta(seconds=self._usage_snapshot_interval_seconds())).isoformat()
+        recent_rows = connection.execute(
+            """SELECT entitlement_kind, local_key_ref, MAX(observed_at) AS observed_at
+                 FROM usage_snapshots
+                WHERE server_id = ? AND observed_at >= ?
+                GROUP BY entitlement_kind, local_key_ref""",
+            (str(server_id), cutoff),
+        ).fetchall()
+        recent = {
+            (str(row["entitlement_kind"]), str(row["local_key_ref"]))
+            for row in recent_rows
+        }
+        recorded = 0
+        for item in managed_rows:
+            external_id = str(item.get("source_external_id") or "").strip()
+            if not external_id or external_id not in by_key:
+                continue
+            try:
+                used = self._metric_bytes(by_key.get(external_id))
+                quota = int(item.get("quota_bytes") or 0)
+                telegram_id = int(item["telegram_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if used is None or quota <= 0:
+                continue
+            kind = str(item.get("kind") or "free").lower()
+            local_ref = str(item.get("local_key_ref") or "").strip()
+            if kind not in {"free", "paid", "trial", "promo"} or not local_ref:
+                continue
+            if (kind, local_ref) in recent:
+                continue
+            connection.execute(
+                """INSERT INTO usage_snapshots
+                   (id, telegram_id, entitlement_kind, local_key_ref, server_id,
+                    outline_key_id, observed_at, used_bytes, quota_bytes, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'outline_metrics')
+                   ON CONFLICT(server_id, entitlement_kind, local_key_ref, observed_at)
+                   DO NOTHING""",
+                (
+                    _new_id(), telegram_id, kind, local_ref, str(server_id),
+                    external_id, str(observed_at), int(used), quota,
+                ),
+            )
+            recent.add((kind, local_ref))
+            recorded += 1
+        return recorded
 
     def _managed_repair_rows(self, connection: Any, server_id: str) -> list[dict[str, Any]]:
         """Return active managed entitlements that may need remote repair."""
@@ -1265,10 +1342,18 @@ class CommerceService(CommerceWorkerMixin):
                     managed_missing_count = 0
                     repair_jobs_queued = 0
                     repair_manual_count = 0
+                    usage_snapshots_recorded = 0
                     if self._table_exists(connection, "outline_remote_keys"):
                         managed_rows = self._managed_repair_rows(connection, server_id)
                         for managed_row in managed_rows:
                             managed_row["server_id"] = server_id
+                        usage_snapshots_recorded = self._record_usage_snapshots(
+                            connection,
+                            server_id=server_id,
+                            observed_at=observed_at,
+                            managed_rows=managed_rows,
+                            by_key=by_key,
+                        )
                         ledger_rows = {
                             str(item["outline_key_id"]): dict(item)
                             for item in connection.execute(
@@ -1520,6 +1605,7 @@ class CommerceService(CommerceWorkerMixin):
                         "managed_missing_key_count": managed_missing_count,
                         "repair_jobs_queued": repair_jobs_queued,
                         "repair_manual_count": repair_manual_count,
+                        "usage_snapshots_recorded": usage_snapshots_recorded,
                     }
                 )
             except Exception as exc:
@@ -4970,6 +5056,34 @@ class CommerceService(CommerceWorkerMixin):
             return max(0, int(row["used"] if row is not None else 0))
         except (KeyError, TypeError, ValueError):
             return 0
+
+    def prune_usage_snapshots(
+        self,
+        now: datetime | None = None,
+        *,
+        retention_days: int | None = None,
+    ) -> int:
+        """Bound telemetry storage while keeping a useful audit window."""
+        if not self._usage_snapshot_table_available():
+            return 0
+        if retention_days is None:
+            try:
+                retention_days = int(os.environ.get("AURIX_USAGE_SNAPSHOT_RETENTION_DAYS", "90"))
+            except (TypeError, ValueError):
+                retention_days = 90
+        retention_days = max(7, min(3_650, int(retention_days)))
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        cutoff = (current - timedelta(days=retention_days)).isoformat()
+        with self.database.connect() as connection:
+            deleted = connection.execute(
+                "DELETE FROM usage_snapshots WHERE observed_at < ?",
+                (cutoff,),
+            )
+        return max(0, int(getattr(deleted, "rowcount", 0) or 0))
+
+    def _usage_snapshot_table_available(self) -> bool:
+        with self.database.connect() as connection:
+            return self._table_exists(connection, "usage_snapshots")
 
     def user_vpns(self, telegram_id: int, limit: int = 20) -> list[dict[str, Any]]:
         """Return all of a user's paid entitlements without exposing secrets.

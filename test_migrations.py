@@ -172,6 +172,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 18, "normalized_payment_reference_uniqueness"),
                     ("commerce", 19, "canonical_payment_provider_identity"),
                     ("commerce", 20, "managed_key_repair_observations"),
+                    ("commerce", 21, "durable_usage_snapshots"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

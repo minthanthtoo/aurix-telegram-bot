@@ -214,6 +214,15 @@ Quota enforcement skips keys on an unobserved endpoint and retries after
 telemetry recovers. This is health evidence and admission protection, not
 automatic customer migration or protocol failover.
 
+Successful inventory observations are also written to the durable
+`usage_snapshots` ledger as non-secret `(server, entitlement, key, time,
+used_bytes, quota_bytes)` samples. Sampling is bounded by
+`AURIX_USAGE_SNAPSHOT_INTERVAL_SECONDS` (default 300 seconds) and cleanup is
+bounded by `AURIX_USAGE_SNAPSHOT_RETENTION_DAYS` (default 90 days, never less
+than seven days). This history supports account roll-ups, key-turnover
+continuity, and dispute review; it is not used to infer zero usage when an
+endpoint has stopped reporting.
+
 Startup is intentionally degraded rather than fatal: Telegram/admin functions
 remain available, issuance is rejected by the health gate, and maintenance keeps
 probing. This prevents a VPN outage from removing the recovery interface.

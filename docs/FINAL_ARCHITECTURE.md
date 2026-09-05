@@ -182,6 +182,13 @@ presentation and accounting view; it never relaxes the per-key hard DELETE
 guard or silently converts independent subscriptions into an unlimited global
 key.
 
+Every successful inventory pass also records a non-secret `usage_snapshots`
+sample for each mapped entitlement, throttled by
+`AURIX_USAGE_SNAPSHOT_INTERVAL_SECONDS` (default five minutes). The maintenance
+worker prunes samples using `AURIX_USAGE_SNAPSHOT_RETENTION_DAYS` (default 90,
+with a seven-day minimum), preserving an auditable history for turnover,
+disputes, and quota investigations without storing `ss://` access URLs.
+
 Outline does not decide whether a Telegram customer paid, qualifies for a referral, or owns an active subscription. AuriX does not claim a remote key exists until it is observed or reconciled with Outline.
 
 ## Core database

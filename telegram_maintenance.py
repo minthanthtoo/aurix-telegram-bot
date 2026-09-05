@@ -292,6 +292,9 @@ class TelegramMaintenanceMixin:
             refresh_inventory = getattr(self.commerce, "refresh_server_inventory", None)
             if callable(refresh_inventory):
                 run_stage("server_inventory", refresh_inventory)
+            prune_usage_snapshots = getattr(self.commerce, "prune_usage_snapshots", None)
+            if callable(prune_usage_snapshots):
+                run_stage("usage_snapshot_cleanup", prune_usage_snapshots)
             process_managed_key_repairs = getattr(
                 self.commerce, "process_managed_key_repairs", None
             )
