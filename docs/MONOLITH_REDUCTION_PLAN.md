@@ -264,16 +264,23 @@ persistence + schema
 Add aggregate repositories that accept the caller's active connection or unit of work. Prioritize
 the current orchestration hotspots by execute-family call count:
 
-| Workflow owner | Current calls | Repository boundary to introduce |
-|---|---:|---|
-| `commerce_service_wallet_approval_flow.py` | 24 | wallet/order approval aggregate |
-| `identity_usage_recording.py` | 16 | entitlement usage epoch and quota ledger |
-| `commerce_service_inventory_reconciliation.py` | 13 | endpoint inventory and repair read/write model |
-| `commerce_worker_capacity_snapshot.py` | 13 | capacity and admission snapshot repository |
-| `commerce_worker_provisioning.py` | 11 | subscription provisioning aggregate |
-| `commerce_service_fleet_health.py` | 11 | endpoint lifecycle and health repository |
-| `entitlement_server_allocation.py` | 10 | allocation candidate read model |
-| `commerce_service_receipt_submission.py` | 7 | receipt evidence aggregate |
+| Workflow owner | Before | Now | Repository boundary introduced |
+|---|---:|---:|---|
+| `commerce_service_wallet_approval_flow.py` | 24 | 0 | wallet/order approval aggregate |
+| `identity_usage_recording.py` | 16 | 0 | entitlement usage epoch and quota ledger |
+| `commerce_service_inventory_reconciliation.py` | 13 | 0 | endpoint inventory and repair read/write model |
+| `commerce_worker_capacity_snapshot.py` | 13 | 0 | capacity and admission snapshot repository |
+| `commerce_worker_provisioning.py` | 11 | 0 | subscription provisioning aggregate |
+| `commerce_service_fleet_health.py` | 11 | 0 | endpoint lifecycle and health repository |
+| `entitlement_server_allocation.py` | 10 | 0 | allocation candidate read model |
+| `commerce_service_receipt_submission.py` | 7 | 0 | receipt evidence aggregate |
+
+Execution status (2026-09-06): all eight priority boundaries are implemented and guarded at zero
+direct SQL. A repository-wide AST audit then found 37 remaining non-persistence modules with 567
+execute-family calls. Therefore MR-08 is not closed yet; the remaining modules must be migrated in
+descending call-count order, beginning with entitlement provisioning, commerce allocation,
+identity generations, commerce orders, wallet reads/refunds, and route failover. Repository,
+database-adapter, migration/schema, and explicit persistence modules are excluded from that count.
 
 Implementation rules:
 
