@@ -13,13 +13,11 @@ from connectivity_registry import ConnectivityRegistry
 def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str, Any]]:
     """Reconcile remote inventory and telemetry without storing access URLs."""
     observed_at = _now_text(now)
+    repository = self.inventory_reconciliation
     with self.database.connect() as connection:
-        rows = connection.execute(
-            "SELECT server_id FROM outline_servers WHERE enabled = 1 ORDER BY server_id"
-        ).fetchall()
+        server_ids = repository.enabled_server_ids(connection)
     results: list[dict[str, Any]] = []
-    for row in rows:
-        server_id = str(row["server_id"])
+    for server_id in server_ids:
         client = self._outline_client(server_id)
         probe_started = time.perf_counter()
         try:
@@ -74,71 +72,29 @@ def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str
                         managed_rows=managed_rows,
                         by_key=by_key,
                     )
-                    ledger_rows = {
-                        str(item["outline_key_id"]): dict(item)
-                        for item in connection.execute(
-                            """SELECT * FROM outline_remote_keys
-                               WHERE server_id = ?""",
-                            (server_id,),
-                        ).fetchall()
-                    }
-                    managed_ids = {
-                        str(item["outline_key_id"])
-                        for item in connection.execute(
-                            """SELECT outline_key_id FROM paid_vpn_keys
-                               WHERE server_id = ? AND outline_key_id IS NOT NULL""",
-                            (server_id,),
-                        ).fetchall()
-                    }
-                    if self._table_exists(connection, "keys"):
-                        managed_ids.update(
-                            str(item["outline_key_id"])
-                            for item in connection.execute(
-                                """SELECT outline_key_id FROM keys
-                                   WHERE server_id = ? AND outline_key_id IS NOT NULL""",
-                                (server_id,),
-                            ).fetchall()
-                        )
+                    ledger_rows = repository.remote_key_ledger(connection, server_id)
+                    has_free_keys = self._table_exists(connection, "keys")
+                    managed_ids = repository.managed_key_ids(
+                        connection,
+                        server_id,
+                        include_free_keys=has_free_keys,
+                    )
                     # A successful inventory containing zero keys is authoritative:
                     # previously observed records become missing, but remain in the
                     # audit ledger for later reconciliation.
-                    connection.execute(
-                        """UPDATE outline_remote_keys
-                           SET status = 'missing'
-                           WHERE server_id = ? AND status = 'present'""",
-                        (server_id,),
-                    )
+                    repository.mark_present_keys_missing(connection, server_id)
                     for item in remote_items:
                         outline_key_id = str(item["id"]).strip()
                         remote_name = str(item.get("name") or "").strip()[:256] or None
                         usage_bytes = self._metric_bytes(by_key.get(outline_key_id)) if isinstance(by_key, dict) else None
-                        connection.execute(
-                            """INSERT INTO outline_remote_keys
-                               (server_id, outline_key_id, remote_name, managed, status,
-                                first_seen_at, last_seen_at, last_usage_bytes,
-                                missing_observation_count, missing_since_at, last_missing_at)
-                               VALUES (?, ?, ?, ?, 'present', ?, ?, ?, 0, NULL, NULL)
-                               ON CONFLICT(server_id, outline_key_id) DO UPDATE SET
-                                 remote_name = excluded.remote_name,
-                                 managed = excluded.managed,
-                                 status = 'present',
-                                 last_seen_at = excluded.last_seen_at,
-                                 last_usage_bytes = COALESCE(
-                                     excluded.last_usage_bytes,
-                                     outline_remote_keys.last_usage_bytes
-                                 ),
-                                 missing_observation_count = 0,
-                                 missing_since_at = NULL,
-                                 last_missing_at = NULL""",
-                            (
-                                server_id,
-                                outline_key_id,
-                                remote_name,
-                                1 if outline_key_id in managed_ids else 0,
-                                observed_at,
-                                observed_at,
-                                usage_bytes,
-                            ),
+                        repository.upsert_present_key(
+                            connection,
+                            server_id=server_id,
+                            outline_key_id=outline_key_id,
+                            remote_name=remote_name,
+                            managed=outline_key_id in managed_ids,
+                            observed_at=observed_at,
+                            usage_bytes=usage_bytes,
                         )
                     # Persist only metrics that explicitly contain the
                     # external id.  A missing map entry is ambiguous (it
@@ -152,29 +108,15 @@ def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str
                             usage_bytes = self._metric_bytes(by_key.get(external_id))
                             if usage_bytes is None:
                                 continue
-                            if str(managed_row["kind"]) == "paid":
-                                connection.execute(
-                                    """UPDATE paid_vpn_keys
-                                          SET last_usage_bytes = ?, last_usage_observed_at = ?
-                                        WHERE id = ? AND server_id = ?""",
-                                    (
-                                        usage_bytes,
-                                        observed_at,
-                                        managed_row["local_id"],
-                                        server_id,
-                                    ),
-                                )
-                            elif self._table_exists(connection, "keys"):
-                                connection.execute(
-                                    """UPDATE keys
-                                          SET last_usage_bytes = ?, last_usage_observed_at = ?
-                                        WHERE id = ? AND server_id = ?""",
-                                    (
-                                        usage_bytes,
-                                        observed_at,
-                                        managed_row["local_id"],
-                                        server_id,
-                                    ),
+                            kind = str(managed_row["kind"])
+                            if kind == "paid" or has_free_keys:
+                                repository.update_managed_usage(
+                                    connection,
+                                    kind=kind,
+                                    local_id=str(managed_row["local_id"]),
+                                    server_id=server_id,
+                                    usage_bytes=usage_bytes,
+                                    observed_at=observed_at,
                                 )
                     remote_ids = {
                         str(item["id"]).strip()
@@ -211,34 +153,18 @@ def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str
                                     should_increment = True
                             if should_increment:
                                 count += 1
-                        connection.execute(
-                            """INSERT INTO outline_remote_keys
-                               (server_id, outline_key_id, remote_name, managed, status,
-                                first_seen_at, last_seen_at, last_usage_bytes,
-                                missing_observation_count, missing_since_at, last_missing_at)
-                               VALUES (?, ?, NULL, 1, 'missing', ?, ?, ?, ?, ?, ?)
-                               ON CONFLICT(server_id, outline_key_id) DO UPDATE SET
-                                 managed = 1,
-                                 status = 'missing',
-                                 last_usage_bytes = COALESCE(
-                                     excluded.last_usage_bytes,
-                                     outline_remote_keys.last_usage_bytes
-                                 ),
-                                 missing_observation_count = excluded.missing_observation_count,
-                                 missing_since_at = excluded.missing_since_at,
-                                 last_missing_at = excluded.last_missing_at""",
-                            (
-                                server_id,
-                                source_id,
-                                observed_at,
-                                observed_at,
+                        repository.upsert_missing_key(
+                            connection,
+                            server_id=server_id,
+                            outline_key_id=source_id,
+                            observed_at=observed_at,
+                            usage_bytes=(
                                 self._metric_bytes(by_key.get(source_id))
                                 if isinstance(by_key, dict)
-                                else managed_row.get("last_usage_bytes"),
-                                count,
-                                missing_since,
-                                observed_at,
+                                else managed_row.get("last_usage_bytes")
                             ),
+                            observation_count=count,
+                            missing_since=missing_since,
                         )
                         if count >= required_observations and (
                             previous_status != "missing"
@@ -263,20 +189,7 @@ def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str
                                 repair_jobs_queued += 1
                             elif repair_status == "manual":
                                 repair_manual_count += 1
-                    orphan_count = int(
-                        connection.execute(
-                            """SELECT COUNT(*) AS n FROM outline_remote_keys
-                               WHERE server_id = ? AND status = 'present' AND managed = 0
-                                 AND COALESCE(
-                                       (SELECT review_state
-                                          FROM outline_remote_key_reviews r
-                                         WHERE r.server_id = outline_remote_keys.server_id
-                                           AND r.outline_key_id = outline_remote_keys.outline_key_id),
-                                       'unreviewed'
-                                     ) = 'unreviewed'""",
-                            (server_id,),
-                        ).fetchone()["n"]
-                    )
+                    orphan_count = repository.unreviewed_orphan_count(connection, server_id)
                 latency_ms = round((time.perf_counter() - probe_started) * 1000, 3)
                 health = self._record_endpoint_health(
                     connection,
@@ -286,29 +199,20 @@ def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str
                     latency_ms=latency_ms,
                     remote_key_count=len(remote_items),
                 )
-                connection.execute(
-                    """UPDATE outline_servers SET remote_key_count = ?, remote_transfer_bytes = ?,
-                              current_bandwidth_bytes = ?, peak_bandwidth_bytes = ?,
-                              telemetry_experimental = ?, remote_orphan_key_count = ?
-                           WHERE server_id = ?""",
-                    (
-                        len(remote_items),
-                        total_transfer,
-                        current_bandwidth,
-                        peak_bandwidth,
-                        experimental,
-                        orphan_count,
-                        server_id,
-                    ),
+                repository.update_server_metrics(
+                    connection,
+                    server_id=server_id,
+                    remote_key_count=len(remote_items),
+                    remote_transfer_bytes=total_transfer,
+                    current_bandwidth_bytes=current_bandwidth,
+                    peak_bandwidth_bytes=peak_bandwidth,
+                    telemetry_experimental=bool(experimental),
+                    remote_orphan_key_count=orphan_count,
                 )
-                lifecycle_row = connection.execute(
-                    "SELECT lifecycle_state FROM outline_servers WHERE server_id = ?",
-                    (server_id,),
-                ).fetchone()
                 ConnectivityRegistry.sync_outline_health(
                     connection,
                     server_id=server_id,
-                    lifecycle_state=str(lifecycle_row["lifecycle_state"] if lifecycle_row else "active"),
+                    lifecycle_state=repository.lifecycle_state(connection, server_id),
                     health_status=str(health["state"]),
                     now_text=observed_at,
                 )
@@ -349,14 +253,10 @@ def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str
                     latency_ms=latency_ms,
                     error_type=type(exc).__name__,
                 )
-                lifecycle_row = connection.execute(
-                    "SELECT lifecycle_state FROM outline_servers WHERE server_id = ?",
-                    (server_id,),
-                ).fetchone()
                 ConnectivityRegistry.sync_outline_health(
                     connection,
                     server_id=server_id,
-                    lifecycle_state=str(lifecycle_row["lifecycle_state"] if lifecycle_row else "active"),
+                    lifecycle_state=repository.lifecycle_state(connection, server_id),
                     health_status=str(health["state"]),
                     now_text=observed_at,
                 )
@@ -373,4 +273,3 @@ def refresh_server_inventory(self, now: datetime | None = None) -> list[dict[str
                 }
             )
     return results
-

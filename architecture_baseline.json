@@ -18,6 +18,11 @@
       "max_function_lines": 17,
       "max_sql_calls": 18
     },
+    "commerce_inventory_reconciliation_repository.py": {
+      "max_lines": 197,
+      "max_function_lines": 34,
+      "max_sql_calls": 12
+    },
     "commerce_wallet_approval_repository.py": {
       "max_lines": 295,
       "max_function_lines": 56,
@@ -519,9 +524,9 @@
       "max_sql_calls": 23
     },
     "commerce_service_inventory_reconciliation.py": {
-      "max_lines": 376,
-      "max_function_lines": 363,
-      "max_sql_calls": 13
+      "max_lines": 275,
+      "max_function_lines": 263,
+      "max_sql_calls": 0
     },
     "commerce_service_inventory_migration.py": {
       "max_lines": 159,
@@ -599,6 +604,7 @@
       "name": "foundation-does-not-depend-on-application",
       "sources": [
         "commerce_models.py",
+        "commerce_inventory_reconciliation_repository.py",
         "commerce_wallet_approval_repository.py",
         "identity_usage_policy.py",
         "identity_usage_repository.py",

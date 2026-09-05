@@ -9,9 +9,10 @@ from commerce import CommerceDatabase, CommerceError, CommerceService, JOB_RETRY
 from commerce_order_repository import OrderRepository
 from commerce_payment_repository import PaymentRepository
 from commerce_wallet_approval_repository import WalletApprovalRepository
+from commerce_inventory_reconciliation_repository import InventoryReconciliationRepository
 from identity_usage_repository import IdentityUsageRepository
 from persistence import open_sqlite_connection
-from repositories import IdentityUsageRepositoryPort
+from repositories import IdentityUsageRepositoryPort, InventoryReconciliationRepositoryPort
 
 
 UTC = timezone.utc
@@ -135,6 +136,14 @@ class ReductionContractTest(unittest.TestCase):
         self.assertIsInstance(self.service.orders, OrderRepository)
         self.assertIsInstance(self.service.payments, PaymentRepository)
         self.assertIsInstance(self.service.wallet_approvals, WalletApprovalRepository)
+        self.assertIsInstance(
+            self.service.inventory_reconciliation,
+            InventoryReconciliationRepository,
+        )
+        self.assertIsInstance(
+            self.service.inventory_reconciliation,
+            InventoryReconciliationRepositoryPort,
+        )
         self.assertIsInstance(self.service.identity.usage_recording, IdentityUsageRepository)
         self.assertIsInstance(self.service.identity.usage_recording, IdentityUsageRepositoryPort)
         with self.database.connect() as connection:

@@ -19,12 +19,15 @@ import repositories
 from commerce_order_repository import OrderRepository
 from commerce_payment_repository import PaymentRepository
 from commerce_wallet_approval_repository import WalletApprovalRepository
+from commerce_inventory_reconciliation_repository import InventoryReconciliationRepository
 from route_failover import RouteFailoverService
 from supabase_storage import NullReceiptStorage
 
 
 class CommerceService:
     """Stable application-service facade over responsibility-owned use cases."""
+
+    inventory_reconciliation = InventoryReconciliationRepository()
 
     def __init__(
         self,
