@@ -53,63 +53,43 @@ class FleetProvisioningMixin:
         # Preserve idempotency during a provider outage: an already-created
         # request must be returned without requiring a fresh inventory call.
         with self.database.connect() as connection:
-            existing = connection.execute(
-                "SELECT id FROM infrastructure_jobs WHERE request_fingerprint = ?",
-                (fingerprint,),
-            ).fetchone()
+            existing = self.provisioning_repository.job_by_fingerprint(connection, fingerprint)
         if existing is not None:
             return str(existing["id"])
         provider_inventory = self._provider_inventory()
         node_count = self._known_node_count(provider_inventory)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            existing = connection.execute(
-                "SELECT id FROM infrastructure_jobs WHERE request_fingerprint = ?",
-                (fingerprint,),
-            ).fetchone()
+            existing = self.provisioning_repository.job_by_fingerprint(connection, fingerprint)
             if existing is not None:
                 return str(existing["id"])
             if node_count >= max(1, int(os.environ.get("AURIX_MAX_VPN_NODES", "3"))):
                 raise InfrastructureError("Configured VPN node limit has been reached")
             day_start = current.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-            created_today = int(
-                connection.execute(
-                    """SELECT COUNT(*) AS n FROM infrastructure_jobs
-                       WHERE operation = 'provision' AND created_at >= ?""",
-                    (day_start,),
-                ).fetchone()["n"]
-            )
+            created_today = self.provisioning_repository.created_today(connection, day_start)
             if created_today >= max(
                 1, int(os.environ.get("AURIX_MAX_NODE_CREATIONS_PER_DAY", "1"))
             ):
                 raise InfrastructureError("Daily VPN node creation limit has been reached")
-            latest = connection.execute(
-                """SELECT created_at FROM infrastructure_jobs
-                   WHERE operation = 'provision' ORDER BY created_at DESC LIMIT 1"""
-            ).fetchone()
+            latest = self.provisioning_repository.latest_provision(connection)
             cooldown = max(0, int(os.environ.get("AURIX_NODE_CREATION_COOLDOWN_SECONDS", "86400")))
             if latest is not None:
                 latest_at = datetime.fromisoformat(str(latest["created_at"])).astimezone(UTC)
                 if current < latest_at + timedelta(seconds=cooldown):
                     raise InfrastructureError("VPN node creation cooldown is still active")
-            if connection.execute(
-                """SELECT 1 FROM infrastructure_jobs
-                   WHERE operation = 'provision' AND status IN ('pending', 'running') LIMIT 1"""
-            ).fetchone() is not None:
+            if self.provisioning_repository.active_provision(connection) is not None:
                 raise InfrastructureError("Another server provisioning job is already active")
             job_id = uuid.uuid4().hex
-            connection.execute(
-                """INSERT INTO infrastructure_jobs
-                   (id, operation, status, attempts, next_attempt_at,
-                    request_fingerprint, created_at)
-                   VALUES (?, 'provision', 'pending', 0, ?, ?, ?)""",
-                (job_id, now_text, fingerprint, now_text),
+            self.provisioning_repository.insert_job(
+                connection, job_id, fingerprint, now_text
             )
-            connection.execute(
-                """INSERT INTO infrastructure_events
-                   (id, infrastructure_job_id, event_type, metadata_json, created_at)
-                   VALUES (?, ?, 'provision_requested', ?, ?)""",
-                (uuid.uuid4().hex, job_id, json.dumps(request, sort_keys=True), now_text),
+            self.provisioning_repository.insert_event(
+                connection,
+                event_id=uuid.uuid4().hex,
+                job_id=job_id,
+                event_type="provision_requested",
+                metadata=request,
+                now_text=now_text,
             )
         return job_id
 
@@ -198,32 +178,17 @@ class FleetProvisioningMixin:
             raise InfrastructureError("Infrastructure mutations are disabled")
         auto_enrollment: tuple[str, str] | None = None
         with self.database.connect() as connection:
-            pending = connection.execute(
-                "SELECT id FROM infrastructure_jobs WHERE id = ? AND status = 'pending'",
-                (job_id,),
-            ).fetchone()
+            pending = self.provisioning_repository.pending_job(connection, job_id)
         if pending is None:
             raise InfrastructureError("Provisioning job is not pending")
         provider_inventory = self._provider_inventory()
         self._budget_guard(existing_nodes=self._known_node_count(provider_inventory))
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            lock_clause = (
-                " FOR UPDATE SKIP LOCKED"
-                if connection.__class__.__name__ == "_PostgresConnection"
-                else ""
+            job = self.provisioning_repository.pending_job(connection, job_id, lock=True)
+            event = self.provisioning_repository.provision_event(
+                connection, job_id, "provision_requested"
             )
-            job = connection.execute(
-                "SELECT * FROM infrastructure_jobs WHERE id = ? AND status = 'pending'"
-                + lock_clause,
-                (job_id,),
-            ).fetchone()
-            event = connection.execute(
-                """SELECT metadata_json FROM infrastructure_events
-                   WHERE infrastructure_job_id = ? AND event_type = 'provision_requested'
-                   ORDER BY created_at LIMIT 1""",
-                (job_id,),
-            ).fetchone()
             if job is None or event is None:
                 raise InfrastructureError("Provisioning job is not pending")
             specification = json.loads(str(event["metadata_json"]))
@@ -255,10 +220,8 @@ class FleetProvisioningMixin:
                 raise InfrastructureError(
                     f"automatic node enrollment could not be prepared: {type(exc).__name__}"
                 ) from exc
-            connection.execute(
-                """UPDATE infrastructure_jobs SET status = 'running', attempts = attempts + 1,
-                          locked_at = ? WHERE id = ?""",
-                (datetime.now(UTC).isoformat(), job_id),
+            self.provisioning_repository.mark_running(
+                connection, job_id, datetime.now(UTC).isoformat()
             )
         try:
             droplet = self.provider.create_droplet(specification)  # type: ignore[union-attr]
@@ -278,32 +241,16 @@ class FleetProvisioningMixin:
                 now_text = datetime.now(UTC).isoformat()
                 with self.database.connect() as connection:
                     self.database.begin_write(connection)
-                    connection.execute(
-                        """UPDATE infrastructure_jobs
-                              SET status = 'running', provider_resource_id = ?,
-                                  provider_action_id = ?, locked_at = ?, last_error = ?
-                            WHERE id = ?""",
-                        (
-                            recovered_id,
-                            recovered_action,
-                            now_text,
-                            "create response ambiguous; recovered by exact name",
-                            job_id,
-                        ),
+                    self.provisioning_repository.recover_created(
+                        connection, job_id, recovered_id, recovered_action, now_text
                     )
-                    connection.execute(
-                        """INSERT INTO infrastructure_events
-                           (id, infrastructure_job_id, event_type, metadata_json, created_at)
-                           VALUES (?, ?, 'provider_create_recovered', ?, ?)""",
-                        (
-                            uuid.uuid4().hex,
-                            job_id,
-                            json.dumps(
-                                {"provider_resource_id": recovered_id},
-                                sort_keys=True,
-                            ),
-                            now_text,
-                        ),
+                    self.provisioning_repository.insert_event(
+                        connection,
+                        event_id=uuid.uuid4().hex,
+                        job_id=job_id,
+                        event_type="provider_create_recovered",
+                        metadata={"provider_resource_id": recovered_id},
+                        now_text=now_text,
                     )
                 return {
                     "job_id": job_id,
@@ -313,18 +260,14 @@ class FleetProvisioningMixin:
                 }
             with self.database.connect() as connection:
                 self.database.begin_write(connection)
-                connection.execute(
-                    """UPDATE infrastructure_jobs SET status = 'failed', locked_at = NULL,
-                              last_error = ? WHERE id = ?""",
-                    (type(exc).__name__, job_id),
+                self.provisioning_repository.mark_failed(
+                    connection, job_id, type(exc).__name__
                 )
             raise
         actions = droplet.get("action_ids") or []
         with self.database.connect() as connection:
-            connection.execute(
-                """UPDATE infrastructure_jobs SET provider_resource_id = ?,
-                          provider_action_id = ? WHERE id = ?""",
-                (str(droplet["id"]), str(actions[0]) if actions else None, job_id),
+            self.provisioning_repository.set_provider_ids(
+                connection, job_id, str(droplet["id"]), str(actions[0]) if actions else None
             )
         return {"job_id": job_id, "droplet_id": str(droplet["id"]), "status": "creating"}
 
@@ -333,22 +276,16 @@ class FleetProvisioningMixin:
         if self.provider is None:
             raise InfrastructureError("DigitalOcean provider is not configured")
         with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM infrastructure_jobs WHERE id = ? AND operation = 'provision'",
-                (job_id,),
-            ).fetchone()
+            row = self.provisioning_repository.job(connection, job_id)
         if row is None:
             raise InfrastructureError("Provisioning job does not exist")
         if row["status"] in ("failed", "awaiting_verification", "completed"):
             result = {"job_id": job_id, "status": str(row["status"])}
             if row["status"] == "awaiting_verification":
                 with self.database.connect() as connection:
-                    event = connection.execute(
-                        """SELECT metadata_json FROM infrastructure_events
-                           WHERE infrastructure_job_id = ? AND event_type = 'droplet_active'
-                           ORDER BY created_at DESC LIMIT 1""",
-                        (job_id,),
-                    ).fetchone()
+                    event = self.provisioning_repository.latest_event(
+                        connection, job_id, "droplet_active"
+                    )
                 if event is not None:
                     try:
                         metadata = json.loads(str(event["metadata_json"]))
@@ -362,10 +299,7 @@ class FleetProvisioningMixin:
             status = str(action.get("status") or "unknown")
             if status == "errored":
                 with self.database.connect() as connection:
-                    connection.execute(
-                        "UPDATE infrastructure_jobs SET status = 'failed', last_error = ? WHERE id = ?",
-                        ("provider action failed", job_id),
-                    )
+                    self.provisioning_repository.mark_action_failed(connection, job_id)
                 return {"job_id": job_id, "status": "failed"}
             if status != "completed":
                 return {"job_id": job_id, "status": "creating", "provider_status": status}
@@ -383,16 +317,14 @@ class FleetProvisioningMixin:
         now_text = datetime.now(UTC).isoformat()
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                """UPDATE infrastructure_jobs SET status = 'awaiting_verification',
-                          locked_at = NULL WHERE id = ? AND status = 'running'""",
-                (job_id,),
-            )
-            connection.execute(
-                """INSERT INTO infrastructure_events
-                   (id, infrastructure_job_id, event_type, metadata_json, created_at)
-                   VALUES (?, ?, 'droplet_active', ?, ?)""",
-                (uuid.uuid4().hex, job_id, json.dumps({"public_ip": public_ip}), now_text),
+            self.provisioning_repository.mark_awaiting_verification(connection, job_id)
+            self.provisioning_repository.insert_event(
+                connection,
+                event_id=uuid.uuid4().hex,
+                job_id=job_id,
+                event_type="droplet_active",
+                metadata={"public_ip": public_ip},
+                now_text=now_text,
             )
         return {
             "job_id": job_id,
@@ -414,14 +346,9 @@ class FleetProvisioningMixin:
         now_text = datetime.now(UTC).isoformat()
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            row = connection.execute(
-                """SELECT j.status, j.provider_resource_id,
-                          s.provider_resource_id AS node_provider_resource_id
-                   FROM infrastructure_jobs AS j
-                   LEFT JOIN outline_servers AS s ON s.server_id = ?
-                   WHERE j.id = ? AND j.operation = 'provision'""",
-                (normalized_node, job_id),
-            ).fetchone()
+            row = self.provisioning_repository.activated_job(
+                connection, job_id, normalized_node
+            )
             if row is None:
                 raise InfrastructureError("provisioning job does not exist")
             status = str(row["status"])
@@ -437,22 +364,14 @@ class FleetProvisioningMixin:
                 raise InfrastructureError(
                     "activated node is not registered for this provider resource"
                 )
-            connection.execute(
-                """UPDATE infrastructure_jobs
-                   SET status = 'completed', completed_at = ?, locked_at = NULL, last_error = NULL
-                   WHERE id = ? AND status = 'awaiting_verification'""",
-                (now_text, job_id),
-            )
-            connection.execute(
-                """INSERT INTO infrastructure_events
-                   (id, infrastructure_job_id, server_id, event_type, metadata_json, created_at)
-                   VALUES (?, ?, ?, 'endpoint_activated', ?, ?)""",
-                (
-                    uuid.uuid4().hex,
-                    job_id,
-                    normalized_node,
-                    json.dumps({"node_id": normalized_node}, sort_keys=True),
-                    now_text,
-                ),
+            self.provisioning_repository.mark_completed(connection, job_id, now_text)
+            self.provisioning_repository.insert_event(
+                connection,
+                event_id=uuid.uuid4().hex,
+                job_id=job_id,
+                server_id=normalized_node,
+                event_type="endpoint_activated",
+                metadata={"node_id": normalized_node},
+                now_text=now_text,
             )
         return {"job_id": job_id, "status": "completed", "node_id": normalized_node}

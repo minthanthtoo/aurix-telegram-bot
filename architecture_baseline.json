@@ -584,8 +584,8 @@
       "max_sql_calls": 21
     },
     "infrastructure.py": {
-      "max_lines": 18,
-      "max_function_lines": 3,
+      "max_lines": 20,
+      "max_function_lines": 4,
       "max_sql_calls": 0
     },
     "infrastructure_support.py": {
@@ -609,9 +609,14 @@
       "max_sql_calls": 10
     },
     "infrastructure_provisioning.py": {
-      "max_lines": 458,
-      "max_function_lines": 134,
-      "max_sql_calls": 23
+      "max_lines": 377,
+      "max_function_lines": 97,
+      "max_sql_calls": 0
+    },
+    "infrastructure_provisioning_repository.py": {
+      "max_lines": 185,
+      "max_function_lines": 24,
+      "max_sql_calls": 19
     },
     "commerce_service_inventory_reconciliation.py": {
       "max_lines": 275,
@@ -739,6 +744,7 @@
         "commerce_failover_repository.py",
         "entitlement_giveaway_repository.py",
         "route_failover_repository.py",
+        "infrastructure_provisioning_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",
