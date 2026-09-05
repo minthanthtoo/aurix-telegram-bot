@@ -12,7 +12,6 @@ from commerce_models import Plan
 from commerce_models import _new_id
 from commerce_models import _normalize_reference
 from commerce_models import _now_text
-from commerce_repositories import _PostgresConnection
 from receipt_fingerprint import NEAR_DUPLICATE_DISTANCE
 from receipt_fingerprint import fingerprint_distance
 from receipt_fingerprint import receipt_perceptual_hash
@@ -40,11 +39,7 @@ def create_wallet_topup(
     with self.database.connect() as connection:
         self.database.begin_write(connection)
         self._ensure_user(connection, telegram_id, first_name, username)
-        if isinstance(connection, _PostgresConnection):
-            connection.execute(
-                "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
-                (telegram_id,),
-            ).fetchone()
+        self.orders.lock_user(connection, telegram_id)
         existing = self.orders.find_open_for_user(connection, telegram_id)
         if existing is not None:
             existing_plan = Plan(
@@ -63,13 +58,12 @@ def create_wallet_topup(
                 str(existing["plan_code"]) != "wallet_topup"
                 or int(existing["amount_minor"]) != amount_minor,
             )
-        connection.execute(
-            """INSERT INTO orders
-               (id, telegram_id, plan_code, amount_minor, currency, plan_name,
-                quota_bytes_snapshot, duration_days_snapshot, status, created_at)
-               VALUES (?, ?, 'wallet_topup', ?, 'MMK', 'Wallet Top-up',
-                       NULL, 1, 'awaiting_payment', ?)""",
-            (order_id, telegram_id, amount_minor, created_at),
+        self.orders.insert_wallet_topup(
+            connection,
+            order_id=order_id,
+            telegram_id=telegram_id,
+            amount_minor=amount_minor,
+            created_at=created_at,
         )
         self._audit(
             connection,
@@ -105,11 +99,7 @@ def create_order(
     with self.database.connect() as connection:
         self.database.begin_write(connection)
         self._ensure_user(connection, telegram_id, first_name, username)
-        if isinstance(connection, _PostgresConnection):
-            connection.execute(
-                "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
-                (telegram_id,),
-            ).fetchone()
+        self.orders.lock_user(connection, telegram_id)
         self._assert_no_active_promo(connection, telegram_id)
         existing = self.orders.find_open_for_user(connection, telegram_id)
         if existing is not None:
@@ -132,9 +122,7 @@ def create_order(
                 False,
                 existing_plan.code != plan.code,
             )
-        registered = connection.execute(
-            "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
-        ).fetchone()["n"]
+        registered = self.orders.enabled_server_count(connection)
         server_id = (
             self._select_server_for_plan(
                 connection, plan.code, created_at, telegram_id=telegram_id
@@ -147,25 +135,19 @@ def create_order(
             if server_id
             else None
         )
-        connection.execute(
-            """INSERT INTO orders
-               (id, telegram_id, plan_code, amount_minor, currency, plan_name,
-                quota_bytes_snapshot, duration_days_snapshot, status, created_at,
-                server_id, capacity_reserved_until)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?, ?, ?)""",
-            (
-                order_id,
-                telegram_id,
-                plan.code,
-                plan.price_minor,
-                plan.currency,
-                plan.name,
-                plan.quota_bytes,
-                plan.duration_days,
-                created_at,
-                server_id,
-                reserved_until,
-            ),
+        self.orders.insert_order(
+            connection,
+            order_id=order_id,
+            telegram_id=telegram_id,
+            plan_code=plan.code,
+            amount_minor=plan.price_minor,
+            currency=plan.currency,
+            plan_name=plan.name,
+            quota_bytes=plan.quota_bytes,
+            duration_days=plan.duration_days,
+            created_at=created_at,
+            server_id=server_id,
+            reserved_until=reserved_until,
         )
         self._audit(
             connection,
@@ -206,11 +188,7 @@ def replace_open_order(
     with self.database.connect() as connection:
         self.database.begin_write(connection)
         self._ensure_user(connection, telegram_id, first_name, username)
-        if isinstance(connection, _PostgresConnection):
-            connection.execute(
-                "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
-                (telegram_id,),
-            ).fetchone()
+        self.orders.lock_user(connection, telegram_id)
         self._assert_no_active_promo(connection, telegram_id)
         existing = self.orders.find_open_for_user(connection, telegram_id)
         if existing is None:
@@ -227,13 +205,8 @@ def replace_open_order(
             raise CommerceError(
                 "This order has payment activity and cannot be replaced; ask staff to review it"
             )
-        connection.execute(
-            "UPDATE orders SET status = 'cancelled', rejected_at = ? WHERE id = ?",
-            (created_at, existing["id"]),
-        )
-        registered = connection.execute(
-            "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
-        ).fetchone()["n"]
+        self.orders.cancel(connection, str(existing["id"]), created_at)
+        registered = self.orders.enabled_server_count(connection)
         server_id = (
             self._select_server_for_plan(
                 connection, plan.code, created_at, telegram_id=telegram_id
@@ -255,25 +228,19 @@ def replace_open_order(
             str(telegram_id),
             {"new_order_id": new_order_id, "plan_code": plan.code},
         )
-        connection.execute(
-            """INSERT INTO orders
-               (id, telegram_id, plan_code, amount_minor, currency, plan_name,
-                quota_bytes_snapshot, duration_days_snapshot, status, created_at,
-                server_id, capacity_reserved_until)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?, ?, ?)""",
-            (
-                new_order_id,
-                telegram_id,
-                plan.code,
-                plan.price_minor,
-                plan.currency,
-                plan.name,
-                plan.quota_bytes,
-                plan.duration_days,
-                created_at,
-                server_id,
-                reserved_until,
-            ),
+        self.orders.insert_order(
+            connection,
+            order_id=new_order_id,
+            telegram_id=telegram_id,
+            plan_code=plan.code,
+            amount_minor=plan.price_minor,
+            currency=plan.currency,
+            plan_name=plan.name,
+            quota_bytes=plan.quota_bytes,
+            duration_days=plan.duration_days,
+            created_at=created_at,
+            server_id=server_id,
+            reserved_until=reserved_until,
         )
         self._audit(
             connection,
@@ -304,10 +271,7 @@ def cancel_order(self, telegram_id: int, order_id: str, now: datetime | None = N
             raise CommerceError(
                 "This order has payment activity; ask staff to reject or refund it"
             )
-        connection.execute(
-            "UPDATE orders SET status = 'cancelled', rejected_at = ? WHERE id = ?",
-            (cancelled_at, order_id),
-        )
+        self.orders.cancel(connection, order_id, cancelled_at)
         self._audit(
             connection,
             "order_cancelled",
@@ -329,18 +293,9 @@ def expire_open_orders(
     closed = 0
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        rows = connection.execute(
-            """SELECT o.id FROM orders o
-               WHERE o.status = 'awaiting_payment' AND o.created_at <= ?
-                 AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id)
-                 AND NOT EXISTS (SELECT 1 FROM payment_evidence e WHERE e.order_id = o.id)""",
-            (cutoff,),
-        ).fetchall()
+        rows = self.orders.expired_open_orders(connection, cutoff)
         for row in rows:
-            connection.execute(
-                "UPDATE orders SET status = 'cancelled', rejected_at = ? WHERE id = ?",
-                (_now_text(current), row["id"]),
-            )
+            self.orders.cancel(connection, str(row["id"]), _now_text(current))
             self._audit(
                 connection,
                 "order_expired",
@@ -363,65 +318,40 @@ def release_expired_wallet_reservations(
     released = 0
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        rows = connection.execute(
-            """SELECT r.order_id, r.telegram_id, r.amount_minor, r.currency
-               FROM wallet_reservations r JOIN orders o ON o.id = r.order_id
-               WHERE r.status = 'reserved' AND r.created_at <= ?
-                 AND o.status = 'payment_submitted'""",
-            (cutoff,),
-        ).fetchall()
+        rows = self.orders.expired_wallet_reservations(connection, cutoff)
         for row in rows:
             idem = f"release:{row['order_id']}"
-            if (
-                connection.execute(
-                    "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (idem,)
-                ).fetchone()
-                is None
-            ):
-                connection.execute(
-                    "UPDATE wallets SET balance_minor = balance_minor + ?, updated_at = ? WHERE telegram_id = ?",
-                    (row["amount_minor"], _now_text(current), row["telegram_id"]),
+            if not self.orders.wallet_ledger_exists(connection, idem):
+                self.orders.credit_wallet(
+                    connection,
+                    telegram_id=int(row["telegram_id"]),
+                    amount_minor=int(row["amount_minor"]),
+                    updated_at=_now_text(current),
                 )
-                connection.execute(
-                    """INSERT INTO wallet_ledger
-                       (id, telegram_id, kind, amount_minor, currency, reference_type,
-                        reference_id, idempotency_key, created_at)
-                       VALUES (?, ?, 'release', ?, ?, 'order', ?, ?, ?)""",
-                    (
-                        _new_id(),
-                        row["telegram_id"],
-                        row["amount_minor"],
-                        row["currency"],
-                        row["order_id"],
-                        idem,
-                        _now_text(current),
-                    ),
+                self.orders.insert_wallet_ledger(
+                    connection,
+                    ledger_id=_new_id(),
+                    telegram_id=int(row["telegram_id"]),
+                    amount_minor=int(row["amount_minor"]),
+                    currency=str(row["currency"]),
+                    order_id=str(row["order_id"]),
+                    idempotency_key=idem,
+                    created_at=_now_text(current),
                 )
-            connection.execute(
-                "UPDATE wallet_reservations SET status = 'released', updated_at = ? WHERE order_id = ?",
-                (_now_text(current), row["order_id"]),
+            self.orders.release_wallet_reservation(
+                connection, str(row["order_id"]), _now_text(current)
             )
-            connection.execute(
-                "UPDATE payments SET status = 'rejected' WHERE order_id = ? AND provider = 'wallet' AND status = 'submitted'",
-                (row["order_id"],),
+            self.orders.reject_wallet_payment(connection, str(row["order_id"]))
+            self.orders.cancel_submitted_order(
+                connection, str(row["order_id"]), _now_text(current)
             )
-            connection.execute(
-                "UPDATE orders SET status = 'cancelled', rejected_at = ? WHERE id = ? AND status = 'payment_submitted'",
-                (_now_text(current), row["order_id"]),
-            )
-            connection.execute(
-                """INSERT INTO notifications
-                   (id, dedupe_key, telegram_id, kind, text, status, next_attempt_at, created_at)
-                   VALUES (?, ?, ?, 'wallet_reservation_expired', ?, 'pending', ?, ?)
-                   ON CONFLICT(dedupe_key) DO NOTHING""",
-                (
-                    _new_id(),
-                    f"wallet-reservation-expired:{row['order_id']}",
-                    row["telegram_id"],
-                    "Your wallet payment hold expired before approval; the funds were returned to your wallet.",
-                    _now_text(current),
-                    _now_text(current),
-                ),
+            self.orders.insert_notification(
+                connection,
+                notification_id=_new_id(),
+                dedupe_key=f"wallet-reservation-expired:{row['order_id']}",
+                telegram_id=int(row["telegram_id"]),
+                text="Your wallet payment hold expired before approval; the funds were returned to your wallet.",
+                now_text=_now_text(current),
             )
             self._audit(
                 connection,
@@ -469,29 +399,9 @@ def _order_stage(order: dict[str, Any]) -> str:
 
 def list_user_orders(self, telegram_id: int, limit: int = 10) -> list[dict[str, Any]]:
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT o.id, o.plan_code, o.plan_name, o.amount_minor, o.currency,
-                      o.status, o.refund_status, o.created_at,
-                      (SELECT p.status FROM payments p WHERE p.order_id = o.id
-                       ORDER BY p.submitted_at DESC LIMIT 1) AS payment_status,
-                      (SELECT e.review_status FROM payment_evidence e WHERE e.order_id = o.id
-                       ORDER BY e.submitted_at DESC LIMIT 1) AS receipt_status,
-                      (SELECT s.status FROM subscriptions s WHERE s.order_id = o.id
-                       LIMIT 1) AS subscription_status,
-                      (SELECT s.expires_at FROM subscriptions s WHERE s.order_id = o.id
-                       LIMIT 1) AS expires_at,
-                      (SELECT j.status FROM provisioning_jobs j JOIN subscriptions s
-                       ON s.id = j.subscription_id WHERE s.order_id = o.id
-                       AND j.operation = 'provision' LIMIT 1) AS provisioning_status,
-                      (SELECT j.status FROM provisioning_jobs j JOIN subscriptions s
-                       ON s.id = j.subscription_id WHERE s.order_id = o.id
-                       AND j.operation = 'revoke' LIMIT 1) AS revocation_status,
-                      (SELECT r.status FROM wallet_reservations r WHERE r.order_id = o.id
-                       LIMIT 1) AS wallet_reservation_status
-               FROM orders o WHERE o.telegram_id = ?
-               ORDER BY o.created_at DESC LIMIT ?""",
-            (telegram_id, max(1, min(limit, 50))),
-        ).fetchall()
+        rows = self.orders.list_user_orders(
+            connection, telegram_id, max(1, min(limit, 50))
+        )
     result = []
     for row in rows:
         item = dict(row)
@@ -505,21 +415,9 @@ def reconcile_duplicate_open_orders(self) -> dict[str, int]:
     manual_conflicts = 0
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        users = connection.execute(
-            """SELECT telegram_id FROM orders
-               WHERE status IN ('awaiting_payment', 'payment_submitted')
-               GROUP BY telegram_id HAVING COUNT(*) > 1"""
-        ).fetchall()
+        users = self.orders.open_order_users(connection)
         for user in users:
-            rows = connection.execute(
-                """SELECT o.id, o.created_at,
-                          (SELECT COUNT(*) FROM payments p WHERE p.order_id = o.id) AS payments,
-                          (SELECT COUNT(*) FROM payment_evidence e WHERE e.order_id = o.id) AS evidence
-                   FROM orders o WHERE o.telegram_id = ?
-                     AND o.status IN ('awaiting_payment', 'payment_submitted')
-                   ORDER BY o.created_at""",
-                (user["telegram_id"],),
-            ).fetchall()
+            rows = self.orders.open_orders_for_user(connection, int(user["telegram_id"]))
             protected = [row for row in rows if int(row["payments"]) or int(row["evidence"])]
             keeper_id = (protected[0] if protected else rows[0])["id"]
             if len(protected) > 1:
@@ -529,10 +427,7 @@ def reconcile_duplicate_open_orders(self) -> dict[str, int]:
                     continue
                 if int(row["payments"]) or int(row["evidence"]):
                     continue
-                connection.execute(
-                    "UPDATE orders SET status = 'cancelled' WHERE id = ?",
-                    (row["id"],),
-                )
+                self.orders.cancel_duplicate(connection, str(row["id"]))
                 self._audit(
                     connection,
                     "duplicate_empty_order_cancelled",
@@ -549,33 +444,7 @@ def order_detail(
     self, order_id: str, requester_id: int, is_admin: bool = False
 ) -> dict[str, Any] | None:
     with self.database.connect() as connection:
-        row = connection.execute(
-            """SELECT o.*,
-                      (SELECT p.status FROM payments p WHERE p.order_id = o.id
-                       ORDER BY p.submitted_at DESC LIMIT 1) AS payment_status,
-                      (SELECT p.provider FROM payments p WHERE p.order_id = o.id
-                       ORDER BY p.submitted_at DESC LIMIT 1) AS payment_provider,
-                      (SELECT e.review_status FROM payment_evidence e WHERE e.order_id = o.id
-                       ORDER BY e.submitted_at DESC LIMIT 1) AS receipt_status,
-                      (SELECT e.id FROM payment_evidence e WHERE e.order_id = o.id
-                       ORDER BY e.submitted_at DESC LIMIT 1) AS evidence_id,
-                      (SELECT s.status FROM subscriptions s WHERE s.order_id = o.id
-                       LIMIT 1) AS subscription_status,
-                      (SELECT s.expires_at FROM subscriptions s WHERE s.order_id = o.id
-                       LIMIT 1) AS expires_at,
-                      (SELECT j.status FROM provisioning_jobs j JOIN subscriptions s
-                       ON s.id = j.subscription_id
-                       WHERE s.order_id = o.id AND j.operation = 'provision'
-                       LIMIT 1) AS provisioning_status,
-                      (SELECT j.status FROM provisioning_jobs j JOIN subscriptions s
-                       ON s.id = j.subscription_id
-                       WHERE s.order_id = o.id AND j.operation = 'revoke'
-                       LIMIT 1) AS revocation_status,
-                      (SELECT r.status FROM wallet_reservations r WHERE r.order_id = o.id
-                       LIMIT 1) AS wallet_reservation_status
-               FROM orders o WHERE o.id = ?""",
-            (order_id,),
-        ).fetchone()
+        row = self.orders.detail(connection, order_id)
     if row is None:
         return None
     result = dict(row)
@@ -601,9 +470,7 @@ def choose_payment_method(
             raise CommerceError("The payment method can no longer be changed")
         if self.payments.has_evidence(connection, order_id):
             raise CommerceError("A receipt is already attached to this order")
-        connection.execute(
-            "UPDATE orders SET payment_method = ? WHERE id = ?", (method, order_id)
-        )
+        self.orders.update_payment_method(connection, order_id, method)
         self._audit(
             connection,
             "payment_method_selected",
@@ -655,27 +522,20 @@ def submit_payment(
                 return "already_submitted"
             raise CommerceError("A payment reference is already attached to this order")
         try:
-            connection.execute(
-                """INSERT INTO payments
-                   (id, order_id, provider, provider_reference, normalized_reference, status, submitted_at)
-                   VALUES (?, ?, ?, ?, ?, 'submitted', ?)""",
-                (
-                    _new_id(),
-                    order_id,
-                    provider,
-                    provider_reference,
-                    normalized_reference,
-                    _now_text(now),
-                ),
+            self.orders.insert_payment(
+                connection,
+                payment_id=_new_id(),
+                order_id=order_id,
+                provider=provider,
+                provider_reference=provider_reference,
+                normalized_reference=normalized_reference,
+                submitted_at=_now_text(now),
             )
         except Exception as exc:
             if self.database.is_integrity_error(exc):
                 raise CommerceError("Payment reference has already been submitted") from exc
             raise
-        connection.execute(
-            "UPDATE orders SET status = 'payment_submitted' WHERE id = ?",
-            (order_id,),
-        )
+        self.orders.mark_payment_submitted(connection, order_id)
         self._audit(
             connection,
             "payment_submitted",
@@ -702,14 +562,9 @@ def open_order_ids_for_user(self, telegram_id: int, limit: int = 20) -> list[str
     selects the intended order.
     """
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT id FROM orders
-               WHERE telegram_id = ?
-                 AND status IN ('awaiting_payment', 'payment_submitted')
-                 AND COALESCE(refund_status, 'none') != 'refunded'
-               ORDER BY created_at LIMIT ?""",
-            (telegram_id, max(1, min(int(limit), 100))),
-        ).fetchall()
+        rows = self.orders.open_order_ids(
+            connection, telegram_id, max(1, min(int(limit), 100))
+        )
     return [str(row["id"]) for row in rows]
 
 def receipt_duplicate_status(

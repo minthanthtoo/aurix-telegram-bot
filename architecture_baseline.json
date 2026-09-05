@@ -19,9 +19,9 @@
       "max_sql_calls": 29
     },
     "commerce_order_repository.py": {
-      "max_lines": 46,
-      "max_function_lines": 9,
-      "max_sql_calls": 4
+      "max_lines": 353,
+      "max_function_lines": 35,
+      "max_sql_calls": 27
     },
     "commerce_payment_repository.py": {
       "max_lines": 176,
