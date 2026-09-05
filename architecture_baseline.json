@@ -599,9 +599,14 @@
       "max_sql_calls": 0
     },
     "infrastructure_inventory.py": {
-      "max_lines": 355,
-      "max_function_lines": 91,
-      "max_sql_calls": 12
+      "max_lines": 301,
+      "max_function_lines": 78,
+      "max_sql_calls": 0
+    },
+    "infrastructure_inventory_repository.py": {
+      "max_lines": 79,
+      "max_function_lines": 15,
+      "max_sql_calls": 10
     },
     "infrastructure_provisioning.py": {
       "max_lines": 458,
@@ -704,6 +709,7 @@
         "quota_alert_repository.py",
         "commerce_notification_repository.py",
         "commerce_job_repository.py",
+        "infrastructure_inventory_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",

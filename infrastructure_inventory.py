@@ -10,9 +10,11 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from infrastructure_support import InfrastructureError, UTC, _enabled
+from infrastructure_inventory_repository import InfrastructureInventoryRepository
 
 
 class FleetInventoryMixin:
+    inventory_repository = InfrastructureInventoryRepository()
     @staticmethod
     def _allowlist(name: str, default: str) -> set[str]:
         return {item.strip() for item in os.environ.get(name, default).split(",") if item.strip()}
@@ -63,9 +65,7 @@ class FleetInventoryMixin:
         droplets = listing()
         managed_ids = self._managed_provider_ids()
         with self.database.connect() as connection:
-            configured_ids = connection.execute(
-                "SELECT provider_resource_id FROM outline_servers WHERE provider_resource_id IS NOT NULL"
-            ).fetchall()
+            configured_ids = self.inventory_repository.configured_provider_ids(connection)
         managed_ids.update(str(row["provider_resource_id"]) for row in configured_ids)
         managed_tag = os.environ.get("AURIX_MANAGED_DROPLET_TAG", "aurix-vpn-node").strip()
         result: list[dict[str, Any]] = []
@@ -103,18 +103,7 @@ class FleetInventoryMixin:
 
     def _known_node_count(self, provider_inventory: list[dict[str, Any]] | None = None) -> int:
         with self.database.connect() as connection:
-            database_count = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
-                ).fetchone()["n"]
-            )
-            job_count = int(
-                connection.execute(
-                    """SELECT COUNT(*) AS n FROM infrastructure_jobs
-                       WHERE operation = 'provision' AND status IN
-                       ('running', 'awaiting_verification', 'completed')"""
-                ).fetchone()["n"]
-            )
+            database_count, job_count = self.inventory_repository.known_counts(connection)
         provider_count = len(provider_inventory or [])
         configured_provider_count = len(self._managed_provider_ids())
         return max(database_count, job_count, provider_count, configured_provider_count)
@@ -133,12 +122,9 @@ class FleetInventoryMixin:
                 provider_id = str(droplet["id"])
                 status = str(droplet.get("status") or "unknown")[:32]
                 region = droplet.get("region") if isinstance(droplet.get("region"), dict) else {}
-                updated = connection.execute(
-                    """UPDATE outline_servers
-                       SET provider_status = ?, provider_last_seen_at = ?, updated_at = ?
-                       WHERE provider_resource_id = ?""",
-                    (status, now_text, now_text, provider_id),
-                ).rowcount
+                updated = self.inventory_repository.update_server(
+                    connection, status=status, now_text=now_text, provider_id=provider_id
+                )
                 if updated:
                     matched += 1
                 else:
@@ -156,18 +142,12 @@ class FleetInventoryMixin:
                     },
                     sort_keys=True,
                 )
-                recent = connection.execute(
-                    """SELECT 1 FROM infrastructure_events
-                       WHERE event_type = 'provider_inventory_observed'
-                         AND metadata_json = ? AND created_at >= ? LIMIT 1""",
-                    (metadata, (datetime.now(UTC) - timedelta(hours=1)).isoformat()),
-                ).fetchone()
-                if recent is None:
-                    connection.execute(
-                        """INSERT INTO infrastructure_events
-                           (id, event_type, metadata_json, created_at)
-                           VALUES (?, 'provider_inventory_observed', ?, ?)""",
-                        (uuid.uuid4().hex, metadata, now_text),
+                recent = self.inventory_repository.recent_event(
+                    connection, metadata, (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+                )
+                if not recent:
+                    self.inventory_repository.insert_event(
+                        connection, uuid.uuid4().hex, "provider_inventory_observed", metadata, now_text
                     )
         return {"managed": len(inventory), "matched": matched, "unmatched": unmatched}
 
@@ -206,20 +186,7 @@ class FleetInventoryMixin:
         managed_tag = os.environ.get("AURIX_MANAGED_DROPLET_TAG", "aurix-vpn-node").strip()
         explicit_ids = self._managed_provider_ids()
         with self.database.connect() as connection:
-            registered_rows = connection.execute(
-                "SELECT provider_resource_id FROM outline_servers "
-                "WHERE provider_resource_id IS NOT NULL"
-            ).fetchall()
-            job_rows = connection.execute(
-                "SELECT provider_resource_id FROM infrastructure_jobs "
-                "WHERE provider_resource_id IS NOT NULL "
-                "AND status NOT IN ('failed', 'completed')"
-            ).fetchall()
-            event_rows = connection.execute(
-                """SELECT metadata_json, created_at FROM infrastructure_events
-                   WHERE event_type = 'provider_inventory_observed'
-                   ORDER BY created_at DESC LIMIT 2000"""
-            ).fetchall()
+            registered_rows, job_rows, event_rows = self.inventory_repository.orphan_inputs(connection)
         registered = {str(row["provider_resource_id"]) for row in registered_rows}
         referenced_by_job = {str(row["provider_resource_id"]) for row in job_rows}
         observations: dict[str, list[datetime]] = {}
@@ -296,17 +263,8 @@ class FleetInventoryMixin:
         for candidate in candidates:
             provider_id = str(candidate["provider_resource_id"])
             with self.database.connect() as connection:
-                protected = connection.execute(
-                    """SELECT 1 FROM outline_servers
-                       WHERE provider_resource_id = ?
-                       UNION ALL
-                       SELECT 1 FROM infrastructure_jobs
-                       WHERE provider_resource_id = ?
-                         AND status NOT IN ('failed', 'completed')
-                       LIMIT 1""",
-                    (provider_id, provider_id),
-                ).fetchone()
-            if protected is not None:
+                protected = self.inventory_repository.protected(connection, provider_id)
+            if protected:
                 continue
             try:
                 self.provider.delete_droplet(provider_id)
@@ -315,41 +273,29 @@ class FleetInventoryMixin:
                 now_text = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
                 with self.database.connect() as connection:
                     self.database.begin_write(connection)
-                    connection.execute(
-                        """INSERT INTO infrastructure_events
-                           (id, event_type, metadata_json, created_at)
-                           VALUES (?, 'provider_orphan_delete_failed', ?, ?)""",
-                        (
-                            uuid.uuid4().hex,
-                            json.dumps(
-                                {
-                                    "provider_resource_id": provider_id,
-                                    "error_type": type(exc).__name__,
-                                },
-                                sort_keys=True,
-                            ),
-                            now_text,
+                    self.inventory_repository.insert_event(
+                        connection,
+                        uuid.uuid4().hex,
+                        "provider_orphan_delete_failed",
+                        json.dumps(
+                            {"provider_resource_id": provider_id, "error_type": type(exc).__name__},
+                            sort_keys=True,
                         ),
+                        now_text,
                     )
                 continue
             result["deleted"] += 1
             now_text = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
             with self.database.connect() as connection:
                 self.database.begin_write(connection)
-                connection.execute(
-                    """INSERT INTO infrastructure_events
-                       (id, event_type, metadata_json, created_at)
-                       VALUES (?, 'provider_orphan_deleted', ?, ?)""",
-                    (
-                        uuid.uuid4().hex,
-                        json.dumps(
-                            {
-                                "provider_resource_id": provider_id,
-                                "observation_count": candidate["observation_count"],
-                            },
-                            sort_keys=True,
-                        ),
-                        now_text,
+                self.inventory_repository.insert_event(
+                    connection,
+                    uuid.uuid4().hex,
+                    "provider_orphan_deleted",
+                    json.dumps(
+                        {"provider_resource_id": provider_id, "observation_count": candidate["observation_count"]},
+                        sort_keys=True,
                     ),
+                    now_text,
                 )
         return result
