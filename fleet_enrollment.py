@@ -16,12 +16,12 @@ import re
 import secrets
 import shlex
 import base64
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
+from fleet_enrollment_repository import FleetEnrollmentRepository
 
 
 UTC = timezone.utc
@@ -38,6 +38,9 @@ SSH_KEY_RE = re.compile(
 
 class EnrollmentError(RuntimeError):
     """Raised when a node enrollment request cannot be trusted or recovered."""
+
+
+_REPOSITORY = FleetEnrollmentRepository()
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -133,32 +136,16 @@ def create_pending_enrollment(
     expiry_text = expiry.isoformat()
 
     def insert_row(active_connection: Any) -> dict[str, str]:
-        existing = active_connection.execute(
-            "SELECT job_id, token_hash, expires_at FROM infrastructure_enrollments WHERE job_id = ?",
-            (normalized_job,),
-        ).fetchone()
+        existing = _REPOSITORY.existing(active_connection, normalized_job)
         if existing is not None:
             if str(existing["token_hash"]) != digest:
                 raise EnrollmentError("fleet enrollment already exists for this job")
             return {"job_id": normalized_job, "expires_at": str(existing["expires_at"])}
-        job = active_connection.execute(
-            "SELECT id, operation FROM infrastructure_jobs WHERE id = ?",
-            (normalized_job,),
-        ).fetchone()
+        job = _REPOSITORY.job(active_connection, normalized_job)
         if job is None or str(job["operation"]) != "provision":
             raise EnrollmentError("fleet enrollment job does not exist")
-        active_connection.execute(
-            """INSERT INTO infrastructure_enrollments
-               (job_id, token_hash, expires_at, status, created_at)
-               VALUES (?, ?, ?, 'pending', ?)""",
-            (normalized_job, digest, expiry_text, now_text),
-        )
-        active_connection.execute(
-            """INSERT INTO infrastructure_events
-               (id, infrastructure_job_id, event_type, metadata_json, created_at)
-               VALUES (?, ?, 'enrollment_created', ?, ?)""",
-            (uuid.uuid4().hex, normalized_job, "{}", now_text),
-        )
+        _REPOSITORY.insert_enrollment(active_connection, normalized_job, digest, expiry_text, now_text)
+        _REPOSITORY.event(active_connection, normalized_job, "enrollment_created", now_text, {})
         return {"job_id": normalized_job, "expires_at": expiry_text}
 
     if connection is not None:
@@ -184,19 +171,12 @@ def receive_enrollment(
     now_text = current.isoformat()
     with database.connect() as connection:
         database.begin_write(connection)
-        lock_clause = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
-        row = connection.execute(
-            "SELECT * FROM infrastructure_enrollments WHERE token_hash = ?" + lock_clause,
-            (digest,),
-        ).fetchone()
+        row = _REPOSITORY.by_token(connection, digest)
         if row is None:
             raise EnrollmentError("fleet enrollment token is unknown")
         if str(row["status"]) == "consumed":
-            connection.execute(
-                """INSERT INTO infrastructure_events
-                   (id, infrastructure_job_id, event_type, metadata_json, created_at)
-                   VALUES (?, ?, 'enrollment_replay', ?, ?)""",
-                (uuid.uuid4().hex, row["job_id"], json.dumps({"status": "consumed"}), now_text),
+            _REPOSITORY.event(
+                connection, str(row["job_id"]), "enrollment_replay", now_text, {"status": "consumed"}
             )
             return {"status": "already_consumed", "job_id": str(row["job_id"])}
         try:
@@ -204,50 +184,23 @@ def receive_enrollment(
         except (TypeError, ValueError) as exc:
             raise EnrollmentError("fleet enrollment expiry is invalid") from exc
         if expires_at <= current:
-            connection.execute(
-                "UPDATE infrastructure_enrollments SET status = 'expired', last_error = ? WHERE job_id = ?",
-                ("enrollment token expired", row["job_id"]),
-            )
-            connection.execute(
-                """INSERT INTO infrastructure_events
-                   (id, infrastructure_job_id, event_type, metadata_json, created_at)
-                   VALUES (?, ?, 'enrollment_expired', ?, ?)""",
-                (uuid.uuid4().hex, row["job_id"], "{}", now_text),
-            )
+            _REPOSITORY.mark_expired(connection, str(row["job_id"]), "enrollment token expired")
+            _REPOSITORY.event(connection, str(row["job_id"]), "enrollment_expired", now_text, {})
             raise EnrollmentError("fleet enrollment token has expired")
         if values["job_id"] != str(row["job_id"]):
-            connection.execute(
-                """INSERT INTO infrastructure_events
-                   (id, infrastructure_job_id, event_type, metadata_json, created_at)
-                   VALUES (?, ?, 'enrollment_rejected', ?, ?)""",
-                (
-                    uuid.uuid4().hex,
-                    row["job_id"],
-                    json.dumps({"reason": "job_binding_mismatch"}),
-                    now_text,
-                ),
+            _REPOSITORY.event(
+                connection,
+                str(row["job_id"]),
+                "enrollment_rejected",
+                now_text,
+                {"reason": "job_binding_mismatch"},
             )
             raise EnrollmentError("fleet enrollment job binding does not match")
         if row["payload_ciphertext"]:
-            connection.execute(
-                """INSERT INTO infrastructure_events
-                   (id, infrastructure_job_id, event_type, metadata_json, created_at)
-                   VALUES (?, ?, 'enrollment_replay', ?, ?)""",
-                (uuid.uuid4().hex, row["job_id"], "{}", now_text),
-            )
+            _REPOSITORY.event(connection, str(row["job_id"]), "enrollment_replay", now_text, {})
             return {"status": "already_received", "job_id": str(row["job_id"])}
-        connection.execute(
-            """UPDATE infrastructure_enrollments
-               SET payload_ciphertext = ?, received_at = ?, last_error = NULL
-               WHERE job_id = ? AND status = 'pending'""",
-            (ciphertext, now_text, row["job_id"]),
-        )
-        connection.execute(
-            """INSERT INTO infrastructure_events
-               (id, infrastructure_job_id, event_type, metadata_json, created_at)
-               VALUES (?, ?, 'enrollment_received', ?, ?)""",
-            (uuid.uuid4().hex, row["job_id"], "{}", now_text),
-        )
+        _REPOSITORY.update_payload(connection, str(row["job_id"]), ciphertext, now_text)
+        _REPOSITORY.event(connection, str(row["job_id"]), "enrollment_received", now_text, {})
     return {"status": "accepted", "job_id": str(values["job_id"])}
 
 
@@ -262,10 +215,7 @@ def read_enrollment(
     normalized_job = str(job_id).strip()
     current = _now(now)
     with database.connect() as connection:
-        row = connection.execute(
-            "SELECT * FROM infrastructure_enrollments WHERE job_id = ?",
-            (normalized_job,),
-        ).fetchone()
+        row = _REPOSITORY.pending_payload(connection, normalized_job)
     if row is None or str(row["status"]) != "pending" or not row["payload_ciphertext"]:
         return None
     try:
@@ -275,11 +225,8 @@ def read_enrollment(
     if expires_at <= current:
         with database.connect() as connection:
             database.begin_write(connection)
-            connection.execute(
-                """UPDATE infrastructure_enrollments
-                   SET status = 'expired', last_error = ?
-                   WHERE job_id = ? AND status = 'pending'""",
-                ("enrollment token expired before activation", normalized_job),
+            _REPOSITORY.expire_one(
+                connection, normalized_job, "enrollment token expired before activation"
             )
         return None
     return _decrypted_payload(encryption_key, str(row["payload_ciphertext"]))
@@ -296,19 +243,11 @@ def mark_consumed(
     now_text = _now(now).isoformat()
     with database.connect() as connection:
         database.begin_write(connection)
-        updated = connection.execute(
-            """UPDATE infrastructure_enrollments
-               SET status = 'consumed', consumed_at = ?, last_error = NULL
-               WHERE job_id = ? AND status = 'pending' AND payload_ciphertext IS NOT NULL""",
-            (now_text, normalized_job),
-        ).rowcount
+        updated = _REPOSITORY.mark_consumed(connection, normalized_job, now_text)
     if updated:
         return True
     with database.connect() as connection:
-        row = connection.execute(
-            "SELECT status FROM infrastructure_enrollments WHERE job_id = ?",
-            (normalized_job,),
-        ).fetchone()
+        row = _REPOSITORY.status(connection, normalized_job)
     return row is not None and str(row["status"]) == "consumed"
 
 
@@ -317,22 +256,14 @@ def expire_pending_enrollments(database: Any, now: datetime | None = None) -> in
     now_text = _now(now).isoformat()
     with database.connect() as connection:
         database.begin_write(connection)
-        rows = connection.execute(
-            "SELECT job_id FROM infrastructure_enrollments WHERE status = 'pending' AND expires_at <= ?",
-            (now_text,),
-        ).fetchall()
-        updated = connection.execute(
-            """UPDATE infrastructure_enrollments
-               SET status = 'expired', last_error = COALESCE(last_error, ?)
-               WHERE status = 'pending' AND expires_at <= ?""",
-            ("enrollment token expired", now_text),
-        ).rowcount
+        rows = _REPOSITORY.expired_jobs(connection, now_text)
+        updated = _REPOSITORY.expire_pending(
+            connection, now_text, "enrollment token expired"
+        )
         for row in rows:
-            connection.execute(
-                """INSERT INTO infrastructure_events
-                   (id, infrastructure_job_id, event_type, metadata_json, created_at)
-                   VALUES (?, ?, 'enrollment_expired', ?, ?)""",
-                (uuid.uuid4().hex, row["job_id"], json.dumps({"source": "expiry_pass"}), now_text),
+            _REPOSITORY.event(
+                connection, str(row["job_id"]), "enrollment_expired", now_text,
+                {"source": "expiry_pass"},
             )
         return updated
 
