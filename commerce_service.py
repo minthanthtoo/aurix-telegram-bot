@@ -4784,12 +4784,14 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT s.plan_code, s.plan_name, s.status AS subscription_status, s.expires_at, s.starts_at,
-                          k.server_id, k.outline_key_id, k.quota_bytes, k.status,
+                          k.server_id, os.label AS server_label, os.health_status AS server_health_status,
+                          k.outline_key_id, k.quota_bytes, k.status,
                           k.last_usage_bytes, k.quota_reason, k.created_at,
                           (SELECT j.status FROM provisioning_jobs j WHERE j.subscription_id = s.id
                            AND j.operation = 'revoke' LIMIT 1) AS revocation_status
                    FROM subscriptions s
                    JOIN paid_vpn_keys k ON k.subscription_id = s.id
+                   LEFT JOIN outline_servers os ON os.server_id = k.server_id
                    WHERE s.telegram_id = ?
                      AND (k.status IN ('active', 'revoke_failed') OR k.quota_reason = 'quota')
                    ORDER BY k.created_at DESC LIMIT 10""",
@@ -4823,6 +4825,8 @@ class CommerceService(CommerceWorkerMixin):
                 {
                     "outline_key_id": key_id,
                     "server_id": server_id,
+                    "server_label": row["server_label"],
+                    "server_health_status": row["server_health_status"],
                     "tier": row["plan_name"] or row["plan_code"],
                     "used_bytes": used,
                     "quota_bytes": quota,
@@ -4858,10 +4862,17 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
-                          s.expires_at, s.starts_at, k.server_id, k.outline_key_id, k.access_url,
+                          s.expires_at, s.starts_at,
+                          COALESCE(k.server_id, s.server_id) AS server_id,
+                          os.label AS server_label, os.health_status AS server_health_status,
+                          os.last_synced_at AS server_last_synced_at,
+                          k.outline_key_id, k.access_url,
                           COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
                           k.status AS key_status, k.created_at, k.quota_reason
-                   FROM subscriptions s LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
+                   FROM subscriptions s
+                   LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
+                   LEFT JOIN outline_servers os
+                     ON os.server_id = COALESCE(k.server_id, s.server_id)
                    WHERE s.telegram_id = ? AND s.status IN ('pending', 'active', 'expired', 'revoked')
                    ORDER BY CASE s.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
                             s.starts_at DESC LIMIT ?""",
@@ -4893,11 +4904,18 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             row = connection.execute(
                 """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
-                          s.expires_at, s.starts_at, k.server_id, k.outline_key_id, k.access_url,
+                          s.expires_at, s.starts_at,
+                          COALESCE(k.server_id, s.server_id) AS server_id,
+                          os.label AS server_label, os.health_status AS server_health_status,
+                          os.last_synced_at AS server_last_synced_at,
+                          k.outline_key_id, k.access_url,
                           COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
                           k.status AS key_status, k.created_at, k.quota_reason,
                           k.last_usage_bytes, k.last_usage_observed_at
-                   FROM subscriptions s LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
+                   FROM subscriptions s
+                   LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
+                   LEFT JOIN outline_servers os
+                     ON os.server_id = COALESCE(k.server_id, s.server_id)
                    WHERE s.telegram_id = ? AND s.id = ?""",
                 (telegram_id, subscription_id),
             ).fetchone()

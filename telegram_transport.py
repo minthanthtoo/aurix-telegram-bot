@@ -1906,6 +1906,14 @@ class TelegramBot(
             f"Key reference: {subscription_id[-6:]}",
             f"Expires: {format_user_datetime(item.get('expires_at'), 'pending')}",
         ]
+        server_label = str(
+            item.get("server_label") or item.get("server_id") or "assigned endpoint"
+        )
+        server_health = str(item.get("server_health_status") or "unknown")
+        lines.append(
+            f"Endpoint: {server_label}"
+            + (f" · {server_health}" if server_health != "healthy" else "")
+        )
         if quota:
             percent = min(100.0, used * 100 / quota)
             filled = min(10, max(0, int(percent / 10)))
@@ -2023,6 +2031,8 @@ class TelegramBot(
                         "access_url": current_access or item.get("access_url"),
                         "subscription_id": item.get("subscription_id"),
                         "created_at": item.get("created_at") or item.get("starts_at"),
+                        "server_label": item.get("server_label"),
+                        "server_health_status": item.get("server_health_status"),
                     }
                 )
             orders = self.commerce.list_user_orders(telegram_id, limit=5)
@@ -2072,6 +2082,15 @@ class TelegramBot(
                         f"Used {formatter(used)} · Remaining "
                         f"{formatter(remaining)} / {formatter(quota)}",
                     ]
+                )
+            if (
+                entry.get("key_type") == "paid"
+                and str(entry.get("server_health_status") or "unknown") != "healthy"
+                and entry.get("server_label")
+            ):
+                lines.append(
+                    f"Endpoint: {entry['server_label']} is currently unavailable; "
+                    "new issuance is paused until it recovers."
                 )
             access_url = entry.get("access_url")
             if isinstance(access_url, str) and access_url:
@@ -2217,6 +2236,12 @@ class TelegramBot(
                 f"Remaining: {self._format_bytes(remaining)} of {self._format_bytes(quota)}\n"
                 f"Expires: {format_user_datetime(entry['expires_at'])}\n"
                 f"State: {entry['status']}"
+                + (
+                    f"\nEndpoint: {entry['server_label']} · {entry['server_health_status']}"
+                    if entry.get("server_label")
+                    and str(entry.get("server_health_status") or "unknown") != "healthy"
+                    else ""
+                )
             )
         blocks.append(
             "Traffic is bytes reported by Outline for each key. It is not live speed, "
