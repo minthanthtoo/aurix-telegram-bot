@@ -1182,6 +1182,21 @@ class TelegramCommandMixin:
                     )
                 else:
                     self._open_admin_panel(chat["id"], telegram_id, "migrations")
+        elif command == "/failover":
+            if not self._is_admin(telegram_id):
+                self._send_customer_fallback(chat["id"], telegram_id)
+            elif self.commerce is None:
+                self.send(chat["id"], "Commerce is not configured.")
+            else:
+                decisions = self._admin_call(telegram_id, "route_failover_decisions", limit=100)
+                if not decisions:
+                    self.send(
+                        chat["id"],
+                        "No route failover decisions recorded.",
+                        self._admin_keyboard(telegram_id),
+                    )
+                else:
+                    self._open_admin_panel(chat["id"], telegram_id, "failover")
         elif command == "/retry":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)

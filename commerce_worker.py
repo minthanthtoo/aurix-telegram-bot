@@ -1463,13 +1463,14 @@ class CommerceWorkerMixin:
                 quota_reason = key["quota_reason"] if "quota_reason" in key.keys() else None
                 quota_event = connection.execute(
                     """SELECT observed_bytes, quota_bytes, observed_at FROM quota_events
-                       WHERE subscription_id = ? AND reason = 'quota'""",
+                       WHERE subscription_id = ? AND reason IN ('quota', 'aggregate_quota')
+                       ORDER BY observed_at DESC LIMIT 1""",
                     (job["subscription_id"],),
                 ).fetchone()
                 if key["refund_status"] == "refunded":
                     notice = "Your AuriX order was refunded to your wallet and its VPN access was terminated."
                     notice_kind = "payment_refunded"
-                elif quota_reason == "quota":
+                elif quota_reason in {"quota", "aggregate_quota"}:
                     usage = (
                         f" Observed usage: {int(quota_event['observed_bytes']):,} / "
                         f"{int(quota_event['quota_bytes']):,} bytes."
@@ -1652,7 +1653,8 @@ class CommerceWorkerMixin:
     ) -> int:
         """Observe Outline transfer metrics and queue one idempotent hard revoke.
 
-        Outline's per-key data limit is the immediate safety brake.  Metrics are
+        Aggregate entitlement state is the authoritative safety brake. Outline's
+        per-key data limit remains the immediate remote safety brake. Metrics are
         only an observation; once ``used >= quota`` is seen we fail closed in
         AuriX and delete the known remote key.  Missing/stale metrics never
         restore or disable a key.
@@ -1680,39 +1682,53 @@ class CommerceWorkerMixin:
             ).fetchall()
         scheduled = 0
         for row in rows:
-            try:
-                server_key = row["server_id"] or default_server_id
-                by_key = metrics_by_server.get(server_key, {})
-                used = int(by_key.get(str(row["outline_key_id"]), 0) or 0)
-            except (TypeError, ValueError):
-                continue
             quota = int(row["quota_bytes"])
-            if used < quota:
-                with self.database.connect() as connection:
-                    connection.execute(
-                        "UPDATE paid_vpn_keys SET last_usage_bytes = ?, last_usage_observed_at = ? WHERE id = ?",
-                        (used, _now_text(current), row["id"]),
-                    )
-                continue
+            aggregate_exhausted = False
+            identity = getattr(self, "identity", None)
+            if identity is not None:
+                try:
+                    aggregate_exhausted = identity.subscription_is_exhausted(str(row["subscription_id"]))
+                except Exception:
+                    aggregate_exhausted = False
+            if aggregate_exhausted:
+                # Aggregate ledger state remains authoritative even when the
+                # endpoint that served the credential is currently unreachable.
+                used = quota
+                quota_reason = "aggregate_quota"
+            else:
+                try:
+                    server_key = row["server_id"] or default_server_id
+                    by_key = metrics_by_server.get(server_key, {})
+                    used = int(by_key.get(str(row["outline_key_id"]), 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if used < quota:
+                    with self.database.connect() as connection:
+                        connection.execute(
+                            "UPDATE paid_vpn_keys SET last_usage_bytes = ?, last_usage_observed_at = ? WHERE id = ?",
+                            (used, _now_text(current), row["id"]),
+                        )
+                    continue
+                quota_reason = "quota"
             with self.database.connect() as connection:
                 self.database.begin_write(connection)
                 existing = connection.execute(
-                    "SELECT id FROM quota_events WHERE subscription_id = ? AND reason = 'quota'",
-                    (row["subscription_id"],),
+                    "SELECT id FROM quota_events WHERE subscription_id = ? AND reason = ?",
+                    (row["subscription_id"], quota_reason),
                 ).fetchone()
                 if existing is None:
                     connection.execute(
                         """INSERT INTO quota_events
                            (id, subscription_id, reason, observed_bytes, quota_bytes, observed_at)
-                           VALUES (?, ?, 'quota', ?, ?, ?)""",
-                        (_new_id(), row["subscription_id"], used, quota, _now_text(current)),
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (_new_id(), row["subscription_id"], quota_reason, used, quota, _now_text(current)),
                     )
                     scheduled += 1
                 connection.execute(
                     """UPDATE paid_vpn_keys SET status = 'active',
-                              last_usage_bytes = ?, last_usage_observed_at = ?, quota_reason = 'quota'
+                              last_usage_bytes = ?, last_usage_observed_at = ?, quota_reason = ?
                        WHERE id = ? AND status = 'active'""",
-                    (used, _now_text(current), row["id"]),
+                    (used, _now_text(current), quota_reason, row["id"]),
                 )
                 connection.execute(
                     "UPDATE subscriptions SET status = 'revoked' WHERE id = ? AND status = 'active'",

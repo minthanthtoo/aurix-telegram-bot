@@ -92,6 +92,16 @@ class TelegramAdminMixin:
                 f"expires:{str(item.get('expires_at') or '-')[:19]}"
                 + (f"\n{error}" if error else "")
             )
+        elif view == "failover":
+            source = str(item.get("source_endpoint_id") or "-")[:16]
+            target = str(item.get("target_endpoint_id") or "-")[:16]
+            error = str(item.get("last_error") or "")[:180]
+            text = (
+                f"{str(item.get('state') or '-').replace('_', ' ').title()} · decision:{short_id}\n"
+                f"ent:{str(item.get('entitlement_id') or '-')[-16:]} · attempts:{item.get('attempts') or 0}\n"
+                f"{source} → {target} · trigger:{str(item.get('trigger') or '-')[:80]}"
+                + (f"\n{error}" if error else "")
+            )
         else:
             text = f"tg:{str(item.get('telegram_id') or '-')[-6:]} · key:{str(item.get('outline_key_id') or '-')[:12]}\n{item.get('reason') or '-'} · {item.get('remote_state') or '-'}"
         return text[:700], short_id
@@ -115,6 +125,10 @@ class TelegramAdminMixin:
             return list(
                 self._admin_call(telegram_id, "managed_key_repair_jobs", status="open", limit=100)
                 or []
+            )
+        if view == "failover":
+            return list(
+                self._admin_call(telegram_id, "route_failover_decisions", limit=100) or []
             )
         if view == "enforcement":
             return list(
@@ -146,6 +160,7 @@ class TelegramAdminMixin:
             "failed": "🔁 Worker Jobs",
             "migrations": "🔁 Endpoint Migrations",
             "repairs": "🧩 Managed Key Repairs",
+            "failover": "🛡 Route Failover",
             "enforcement": "🚨 Enforcement",
         }.get(view, "AuriX Admin")
         text = f"{title} · {len(items)} open\nPage {page + 1}/{pages} · updated {datetime.now(UTC).strftime('%H:%M UTC')}"
@@ -175,6 +190,7 @@ class TelegramAdminMixin:
                 "failed": "No terminal worker failures.",
                 "migrations": "No open endpoint migrations.",
                 "repairs": "No managed-key repairs are waiting for action.",
+                "failover": "No route failover decisions are pending.",
                 "enforcement": "No free/trial termination events recorded.",
             }.get(view, "Nothing needs attention.")
             if message_id is not None:
@@ -207,6 +223,7 @@ class TelegramAdminMixin:
                     ("🔁 Failed Jobs", "a:n:failed"),
                     ("🧩 Key Repairs", "a:n:repairs"),
                     ("🔁 Migrations", "a:n:migrations"),
+                    ("🛡 Failover", "a:n:failover"),
                     ("🚨 Enforcement", "a:n:enforcement"),
                 ],
                 [("🧪 Receipt System", "a:n:receiptsystem"), ("🎁 Promotions", "a:n:promo")],

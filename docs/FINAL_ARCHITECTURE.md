@@ -48,12 +48,12 @@ boundary for future work:
 | Client dependency | Correctly separated: node-to-target and node-to-node ICMP/TCP/UDP/DNS/HTTPS/throughput probes run on server agents. A VPN client is required only to establish a customer tunnel; the managed client is optional. |
 | Opaque account, pairing, signed manifest/config, and device revocation | Implemented source contract and reference client; Android/iOS tunnel-engine integration is not implemented here. |
 | Independent entitlements and credential generations | Implemented additive tables, backfill, provisioning convergence, route metadata, encrypted config delivery, and generation cutover. |
-| Aggregate quota leases, usage epochs, counter-reset protection, and bounded refill enforcement | Lease schema and bounded grant/usage primitives exist; the live commerce path still uses the proven per-key Outline quota/enforcement model. Full aggregate-ledger shadowing and enforcement remain a gate. |
+| Aggregate quota leases, usage epochs, counter-reset protection, and bounded refill enforcement | Implemented for the current Outline path: every managed endpoint counter is folded into one entitlement ledger with monotonic epochs, reset/deduplication handling, bounded runtime lease refill, and account-wide hard stop/revocation. Full billing-period/network telemetry remains a later V13 capability. |
 | Protocol-neutral adapter contract with Xray/VLESS/WireGuard routes | Provider/region/transport registry and Outline boundary exist; non-Outline adapters and multi-route-per-node capabilities remain future work. |
 | Automatic failover and silent migration | Not enabled. Credential generations and owner-confirmed endpoint migration provide the safe cutover boundary; outage-driven automatic migration still requires canary/SLO evidence. |
 | Autoscaling and disaster recovery | Guarded worker, probe, backup, recovery, and deployment artifacts exist; live provider mutation, multi-writer cutover, and full restore/fencing drills remain operational gates. |
 
-Local verification for this implementation pass: **481 tests passed**, Ruff,
+Local verification for this implementation pass: **494 tests passed**, Ruff,
 Python compilation, and whitespace validation passed. Live node serving state,
 canary results, and backup freshness remain operational evidence rather than
 claims inferred from this document.

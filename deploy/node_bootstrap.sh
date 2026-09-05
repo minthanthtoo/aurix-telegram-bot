@@ -78,6 +78,129 @@ configure_firewall() {
 }
 configure_firewall
 
+disable_probe_agent() {
+  # Keep previously installed files for forensic/recovery purposes, but stop
+  # the node from making any control-plane calls when the feature is disabled.
+  systemctl disable --now aurix-fleet-probe-agent.timer >/dev/null 2>&1 || true
+  systemctl disable --now aurix-fleet-probe-agent.service >/dev/null 2>&1 || true
+}
+
+install_probe_agent() {
+  local enabled="${AURIX_PROBE_AGENT_INSTALL_ENABLED:-0}"
+  case "$enabled" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *)
+      disable_probe_agent
+      return 0
+      ;;
+  esac
+  require_value AURIX_PROBE_API_URL
+  require_value AURIX_PROBE_AGENT_ID
+  require_value AURIX_PROBE_AGENT_BUNDLE_B64
+  require_value AURIX_PROBE_AGENT_BUNDLE_SHA256
+  [[ "$AURIX_PROBE_API_URL" =~ ^https://[^[:space:]/]+(/[^[:space:]]*)?$ ]] || \
+    fail "AURIX_PROBE_API_URL must be an HTTPS URL"
+  [[ "$AURIX_PROBE_AGENT_ID" == "$AURIX_NODE_ID" ]] || \
+    fail "probe agent id must match the node id"
+  [[ "$AURIX_PROBE_AGENT_BUNDLE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || \
+    fail "invalid probe-agent bundle SHA-256"
+  [[ "$AURIX_PROBE_AGENT_BUNDLE_B64" != *$'\n'* && "$AURIX_PROBE_AGENT_BUNDLE_B64" != *$'\r'* ]] || \
+    fail "probe-agent bundle contains an invalid newline"
+  [[ "$AURIX_PROBE_AGENT_SECRET" =~ ^[^[:space:]]{16,256}$ ]] || \
+    fail "invalid probe-agent secret"
+
+  command -v base64 >/dev/null 2>&1 || fail "base64 is required for probe-agent installation"
+  command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required for probe-agent installation"
+  command -v tar >/dev/null 2>&1 || fail "tar is required for probe-agent installation"
+  command -v useradd >/dev/null 2>&1 || fail "useradd is required for probe-agent installation"
+  id aurix >/dev/null 2>&1 || useradd --system --user-group --home-dir /nonexistent \
+    --no-create-home --shell /usr/sbin/nologin aurix
+  getent group aurix >/dev/null 2>&1 || fail "aurix system group is unavailable"
+  install -d -o root -g root -m 0755 /opt/aurix-agent
+  install -d -o root -g aurix -m 0750 /etc/aurix-bot
+
+  local bundle_file bundle_dir release_dir expected_path
+  bundle_file="$(mktemp /tmp/aurix-probe-agent-bundle.XXXXXX)"
+  bundle_dir="$(mktemp -d /tmp/aurix-probe-agent.XXXXXX)"
+  trap 'rm -f "${bundle_file:-}"; rm -rf "${bundle_dir:-}"' RETURN
+  printf '%s' "$AURIX_PROBE_AGENT_BUNDLE_B64" | base64 --decode >"$bundle_file" || \
+    fail "probe-agent bundle is not valid base64"
+  printf '%s  %s\n' "$AURIX_PROBE_AGENT_BUNDLE_SHA256" "$bundle_file" | \
+    sha256sum --check --status || fail "probe-agent bundle checksum mismatch"
+  tar -tzf "$bundle_file" >/dev/null || fail "probe-agent bundle is not a gzip tar archive"
+  while IFS= read -r expected_path; do
+    case "$expected_path" in
+      fleet_probe.py|fleet_probe_api.py|fleet_probe_agent.py) ;;
+      *) fail "probe-agent bundle contains an unexpected path" ;;
+    esac
+  done < <(tar -tzf "$bundle_file")
+  tar -xzf "$bundle_file" -C "$bundle_dir" --no-same-owner --no-same-permissions
+  for expected_path in fleet_probe.py fleet_probe_api.py fleet_probe_agent.py; do
+    [[ -s "$bundle_dir/$expected_path" ]] || fail "probe-agent bundle is incomplete"
+  done
+
+  release_dir="/opt/aurix-agent/$AURIX_FLEET_REVISION"
+  [[ "$AURIX_FLEET_REVISION" =~ ^[0-9a-fA-F]{40}$ ]] || fail "probe-agent revision is invalid"
+  install -d -o root -g root -m 0755 "$release_dir"
+  for expected_path in fleet_probe.py fleet_probe_api.py fleet_probe_agent.py; do
+    install -o root -g root -m 0644 "$bundle_dir/$expected_path" "$release_dir/$expected_path"
+  done
+  ln -sfn "$release_dir" /opt/aurix-agent/current
+
+  local env_file
+  env_file="$(mktemp /etc/aurix-bot/.aurix-agent.env.XXXXXX)"
+  umask 077
+  printf 'AURIX_PROBE_API_URL=%q\nAURIX_PROBE_AGENT_ID=%q\nAURIX_PROBE_AGENT_SECRET=%q\n' \
+    "$AURIX_PROBE_API_URL" "$AURIX_PROBE_AGENT_ID" "$AURIX_PROBE_AGENT_SECRET" >"$env_file"
+  chown root:aurix "$env_file"
+  chmod 0640 "$env_file"
+  mv -f "$env_file" /etc/aurix-bot/aurix-agent.env
+  trap - RETURN
+  rm -f "$bundle_file"
+  rm -rf "$bundle_dir"
+
+  cat > /etc/systemd/system/aurix-fleet-probe-agent.service <<'UNIT'
+[Unit]
+Description=AuriX node-side fleet probe agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aurix
+Group=aurix
+EnvironmentFile=/etc/aurix-bot/aurix-agent.env
+ExecStart=/usr/bin/python3 /opt/aurix-agent/current/fleet_probe_agent.py --limit 10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UNIT
+  cat > /etc/systemd/system/aurix-fleet-probe-agent.timer <<'UNIT'
+[Unit]
+Description=Run AuriX node-side fleet probes
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+RandomizedDelaySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable --now aurix-fleet-probe-agent.timer >/dev/null || \
+    fail "probe-agent timer could not be enabled"
+  # Queue one immediate run without making a temporary control-plane outage
+  # fail Outline bootstrap; the timer will retry on its normal cadence.
+  systemctl start --no-block aurix-fleet-probe-agent.service >/dev/null || \
+    fail "probe-agent service could not be started"
+}
+
 if [[ "${AURIX_HARDEN_SSH:-1}" == "1" ]]; then
   install -d -m 0755 /etc/ssh/sshd_config.d
   install -m 0600 /dev/null /etc/ssh/sshd_config.d/99-aurix-fleet.conf
@@ -212,6 +335,8 @@ for item in keys:
     request("DELETE", "/access-keys/" + key_id)
 PY
 fi
+
+install_probe_agent
 
 if [[ ! -e /swapfile && "${AURIX_NODE_SWAP_MB:-1024}" =~ ^[0-9]+$ ]] && \
    (( AURIX_NODE_SWAP_MB > 0 )); then

@@ -362,6 +362,7 @@ class TelegramCallbackMixin:
                     "failed": "/failed",
                     "repairs": "/repairs",
                     "migrations": "/migrations",
+                    "failover": "/failover",
                     "enforcement": "/enforcement",
                     "promo": "/promo",
                 }
@@ -398,7 +399,7 @@ class TelegramCallbackMixin:
                         telegram_id,
                         message_id=message_id if can_edit_text else None,
                     )
-                elif entity_id in {"orders", "receipts", "failed", "repairs", "migrations", "enforcement"}:
+                elif entity_id in {"orders", "receipts", "failed", "repairs", "migrations", "failover", "enforcement"}:
                     if self.commerce is None and entity_id != "enforcement":
                         self.send(chat_id, "Commerce is not configured.")
                     else:

@@ -805,6 +805,37 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(rows[0]["source"], "outline_metrics")
         self.assertTrue(all("ss://" not in json.dumps(dict(row)) for row in rows))
 
+    def test_inventory_credits_aggregate_entitlement_and_queues_legacy_revoke(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.outline.transfer = {"1": 40_000_000_000}
+        first = self.service.refresh_server_inventory(self.now + timedelta(minutes=1))
+        self.assertEqual(first[0]["aggregate_usage_recorded"], 1)
+        self.outline.transfer = {"1": 50_000_000_000}
+        second = self.service.refresh_server_inventory(self.now + timedelta(minutes=2))
+        self.assertEqual(second[0]["aggregate_exhausted"], 1)
+        with self.database.connect() as connection:
+            subscription = connection.execute(
+                "SELECT id FROM subscriptions WHERE order_id = ?", (order.order_id,)
+            ).fetchone()
+            entitlement = connection.execute(
+                "SELECT consumed_bytes, status, quota_exhausted_at FROM entitlements WHERE subscription_id = ?",
+                (subscription["id"],),
+            ).fetchone()
+            key = connection.execute(
+                "SELECT quota_reason FROM paid_vpn_keys WHERE subscription_id = ?",
+                (subscription["id"],),
+            ).fetchone()
+        self.assertEqual(entitlement["consumed_bytes"], 50_000_000_000)
+        self.assertEqual(entitlement["status"], "revoked")
+        self.assertIsNotNone(entitlement["quota_exhausted_at"])
+        self.assertEqual(key["quota_reason"], "aggregate_quota")
+        self.assertEqual(self.service.process_jobs(self.now + timedelta(minutes=3)), 1)
+        self.assertEqual(self.outline.deleted, ["1"])
+
     def test_usage_snapshot_retention_is_bounded_to_a_minimum_audit_window(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)
@@ -1637,15 +1668,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "869e81c93d9c04b73c099fef00fb7aeeaa7836fdeed410206804da296dddb50b",
+            "8f9c6608da9f932c1a1ad896e0a870a9387d74166456e496e382e9636949145e",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "bc67bbf79f31c059adf79239804db363f18ec11c06bccc5850bc099f857a91e5",
+            "a54d0ad10b085e8463ec979ebda0a62e990c85ec4dfeb5659bb28e32ccd5b559",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "fa4e261a9b595eaed2324b2f9b3471bcfb58526e407402dcfff6cc9b83429dd3",
+            "e281b1cc3c18e751638ba9acf406926875105f8b54e177e20fd82a111b04b043",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

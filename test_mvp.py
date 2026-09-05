@@ -67,6 +67,9 @@ class Outline:
     def transfer_metrics(self):
         return {"bytesTransferredByUserId": self.transfer}
 
+    def server_info(self):
+        return {"version": "fake-outline-1"}
+
     def list_keys(self):
         return {"accessKeys": []}
 
@@ -138,6 +141,38 @@ class MvpFeatureTest(unittest.TestCase):
         self.assertEqual(plans["basic_50gb"].quota_bytes, 50_000_000_000)
         self.assertEqual(plans["standard_100gb"].price_minor, 6000)
         self.assertEqual(plans["standard_100gb"].quota_bytes, 100_000_000_000)
+
+    def test_inventory_aggregate_quota_records_free_termination_event(self):
+        self.commerce.register_outline_servers({"primary": "Primary"})
+        with self.commerce.database.connect() as connection:
+            connection.execute(
+                """UPDATE outline_servers
+                      SET health_status = 'healthy', last_synced_at = ?, updated_at = ?
+                    WHERE server_id = 'primary'""",
+                (self.now.isoformat(), self.now.isoformat()),
+            )
+        self.claims.claim(101, "A", self.now)
+        self.outline.transfer = {"1": PUBLIC_LIMIT_BYTES}
+        result = self.commerce.refresh_server_inventory(self.now + timedelta(minutes=1))
+        self.assertEqual(result[0]["aggregate_exhausted"], 1)
+        with self.free_db.connect() as connection:
+            event = connection.execute(
+                """SELECT reason, used_bytes, quota_bytes, remote_state
+                     FROM key_termination_events WHERE key_id = 1"""
+            ).fetchone()
+        self.assertIsNotNone(event)
+        self.assertEqual(event["reason"], "quota")
+        self.assertEqual(event["used_bytes"], PUBLIC_LIMIT_BYTES)
+        self.assertEqual(event["quota_bytes"], PUBLIC_LIMIT_BYTES)
+        self.assertEqual(event["remote_state"], "retrying")
+        self.assertEqual(
+            self.claims.enforce_quota(
+                self.now + timedelta(minutes=2),
+                {"bytesTransferredByUserId": {"1": PUBLIC_LIMIT_BYTES}},
+            ),
+            1,
+        )
+        self.assertEqual(self.outline.deleted, ["1"])
 
     def test_receipt_submission_is_idempotent_and_extracts_transaction(self):
         order = self.commerce.create_order(101, "A", "basic_50gb", self.now)

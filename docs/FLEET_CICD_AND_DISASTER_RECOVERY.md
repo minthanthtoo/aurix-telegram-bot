@@ -134,6 +134,14 @@ configured, enables:
   (and both persistent signing/encryption keys are present), the same release
   installs and enables `aurix-fleet-probe-api.service`. The default is off;
   recovery disables a previously enabled unit when the gate is not satisfied.
+- When `AURIX_PROBE_AGENT_INSTALL_ENABLED=1`, `AURIX_PROBE_API_URL` is a public
+  HTTPS origin, `AURIX_PROBE_AGENT_SECRETS_JSON` contains the matching node
+  secret, and `AURIX_FLEET_REVISION` is a CI-approved commit SHA, the same SSH
+  reconciliation transfers a checksum-verified, non-secret probe bundle and
+  installs/enables the node agent automatically. The secret is delivered on a
+  separate stdin line and written only to the node's root-owned environment
+  file. Setting the flag to `0` disables the timer while retaining files for
+  recovery inspection.
 
 ```bash
 systemctl list-timers 'aurix-*'

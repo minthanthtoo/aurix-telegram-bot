@@ -1900,6 +1900,20 @@ class ClaimService:
             ).fetchall()
         revoked = 0
         for row in rows:
+            try:
+                aggregate_exhausted = self.identity.key_is_exhausted(
+                    server_id=str(row["server_id"] or self._default_server_id()),
+                    local_key_ref=str(row["id"]),
+                )
+            except Exception:
+                aggregate_exhausted = False
+            if aggregate_exhausted:
+                # Aggregate entitlement state is authoritative even when this
+                # endpoint's latest metrics call is unavailable. Do not let a
+                # telemetry outage keep a globally exhausted key alive.
+                if self._terminate_key(row, "quota", current, int(row["data_limit_bytes"])):
+                    revoked += 1
+                continue
             by_key = self._usage_for_server(
                 metrics, str(row["server_id"] or self._default_server_id())
             )

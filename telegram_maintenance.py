@@ -323,6 +323,9 @@ class TelegramMaintenanceMixin:
             process_endpoint_migrations = getattr(self.commerce, "process_endpoint_migrations", None)
             if callable(process_endpoint_migrations):
                 run_stage("endpoint_migrations", process_endpoint_migrations)
+            process_route_failovers = getattr(self.commerce, "process_route_failovers", None)
+            if callable(process_route_failovers):
+                run_stage("route_failover", process_route_failovers)
             capacity_snapshot = getattr(self.commerce, "capacity_snapshot", None)
             capacity_snapshot_result = None
             if callable(capacity_snapshot):

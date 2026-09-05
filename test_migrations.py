@@ -176,6 +176,8 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 22, "fleet_probe_control_loop"),
                     ("commerce", 23, "accounts_entitlements_devices_and_leases"),
                     ("commerce", 24, "entitlement_source_identity"),
+                    ("commerce", 25, "aggregate_entitlement_usage_ledger"),
+                    ("commerce", 26, "service_routes_and_failover_control"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

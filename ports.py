@@ -31,6 +31,49 @@ class OutlineGateway(Protocol):
 
 
 @runtime_checkable
+class ConnectivityAdapter(Protocol):
+    """Protocol-neutral boundary for a customer-facing service route.
+
+    Implementations must expose capability truthfully.  In particular,
+    ``terminate_sessions`` means a documented, immediate session operation;
+    deleting credentials alone must not be reported as force-disconnect.
+    Methods exchange bounded dictionaries so adapters can evolve without
+    leaking provider-specific objects into commerce policy.
+    """
+
+    protocol: str
+
+    @property
+    def capabilities(self) -> dict[str, bool]: ...
+
+    def provision(
+        self, route: dict[str, Any], credential_intent: dict[str, Any]
+    ) -> dict[str, Any]: ...
+
+    def render_managed_config(self, grant: dict[str, Any]) -> dict[str, Any]: ...
+
+    def render_manual_export(self, grant: dict[str, Any]) -> str: ...
+
+    def apply_quota_cap(self, grant: dict[str, Any], absolute_limit: int) -> None: ...
+
+    def read_usage(self, grant: dict[str, Any]) -> dict[str, Any]: ...
+
+    def rotate(
+        self, grant: dict[str, Any], credential_intent: dict[str, Any]
+    ) -> dict[str, Any]: ...
+
+    def revoke_auth(self, grant: dict[str, Any]) -> None: ...
+
+    def terminate_sessions(self, grant: dict[str, Any]) -> dict[str, Any]: ...
+
+    def probe_management(self, route: dict[str, Any]) -> dict[str, Any]: ...
+
+    def probe_data_plane(self, route: dict[str, Any]) -> dict[str, Any]: ...
+
+    def reconcile(self, route: dict[str, Any]) -> dict[str, Any]: ...
+
+
+@runtime_checkable
 class ReceiptStorageGateway(Protocol):
     configured: bool
     bucket: str | None

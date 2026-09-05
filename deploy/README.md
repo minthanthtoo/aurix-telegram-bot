@@ -28,20 +28,32 @@ On the control-plane host, install `aurix-fleet-probe-api.service` behind a
 TLS-terminating reverse proxy and configure the server-only
 `AURIX_PROBE_AGENT_SECRETS_JSON` map plus a persistent URL-safe base64 Ed25519
 `AURIX_MANIFEST_SIGNING_KEY`. Losing the manifest signing key requires a
-controlled client re-enrollment. On each VPN node, install
-`aurix-fleet-probe-agent.service` and `aurix-fleet-probe-agent.timer` with a
-root-readable `/etc/aurix-bot/aurix-agent.env`:
+controlled client re-enrollment. The normal fleet-reconcile path can install
+the node agent automatically from the CI-approved source bundle. Set
+`AURIX_PROBE_AGENT_INSTALL_ENABLED=1` and a public `AURIX_PROBE_API_URL`; the
+map must contain one unique secret for every node and `AURIX_FLEET_REVISION`
+must be the exact 40-character release commit:
 
 ```dotenv
 AURIX_PROBE_API_URL=https://control.example
-AURIX_PROBE_AGENT_ID=sg-a
-AURIX_PROBE_AGENT_SECRET=replace-with-a-unique-random-secret
+AURIX_PROBE_AGENT_INSTALL_ENABLED=1
+AURIX_PROBE_AGENT_SECRETS_JSON='{"sg-a":"replace-with-a-unique-random-secret"}'
+AURIX_FLEET_REVISION=<40-character-ci-approved-commit>
 ```
 
-Use one secret per node. Rotate it by updating the control-plane map and node
-environment during a controlled maintenance window. The probe API rejects
-unsigned, replayed and expired requests; duplicate result submissions are
-idempotent.
+During `fleet_reconcile.py reconcile`, the controller transfers only the three
+probe source files plus the selected node's secret over the pinned SSH channel,
+creates the unprivileged `aurix` account, writes a root-owned
+`/etc/aurix-bot/aurix-agent.env`, and enables the timer. The secret is sent as a
+dedicated stdin line rather than a command argument. Use one secret per node;
+rotation is a controlled reconcile after updating the control-plane map. The
+probe API rejects unsigned, replayed and expired requests; duplicate result
+submissions are idempotent. Set the install flag back to `0` to disable the
+timer without deleting its forensic files.
+
+If automatic installation is unavailable, the same unit files and environment
+layout can still be installed manually on an already enrolled node as a
+recovery procedure.
 
 The agent unit reads `AURIX_PROBE_API_URL` and `AURIX_PROBE_AGENT_ID` from the
 environment file itself; it does not rely on shell-variable expansion in

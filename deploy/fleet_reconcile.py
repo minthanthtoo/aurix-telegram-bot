@@ -13,13 +13,17 @@ import argparse
 import base64
 import binascii
 import fcntl
+import gzip
+import hashlib
 import ipaddress
+import io
 import json
 import os
 import re
 import shlex
 import subprocess
 import sys
+import tarfile
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +40,7 @@ from outline_adapter import OutlineClient, OutlineServerPool  # noqa: E402
 
 NODE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,24}\Z")
 FINGERPRINT_RE = re.compile(r"[0-9a-fA-F]{64}\Z")
+REVISION_RE = re.compile(r"[0-9a-f]{40}\Z")
 KNOWN_TIERS = ("FREE300MB", "FREE3GB", "PROMO")
 KNOWN_PLANS = ("basic_50gb", "standard_100gb")
 
@@ -262,6 +267,75 @@ def run_ssh(node: FleetNode, env: dict[str, str], command: str, *, stdin: bytes 
     return result.stdout.decode("utf-8", "replace")
 
 
+PROBE_AGENT_FILES = ("fleet_probe.py", "fleet_probe_api.py", "fleet_probe_agent.py")
+
+
+def build_probe_agent_bundle() -> tuple[str, str]:
+    """Build a deterministic, non-secret node-agent bundle for SSH bootstrap.
+
+    The bundle contains only the narrow probe runner and its signing helpers;
+    it never contains Outline credentials, database state, or control-plane
+    secrets.  The controller passes the base64 archive as a checked release
+    value, while the per-node HMAC secret is delivered through a separate
+    first stdin line so it never appears in the remote command arguments.
+    """
+    archive_bytes = io.BytesIO()
+    with gzip.GzipFile(fileobj=archive_bytes, mode="wb", mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w") as archive:
+            for relative in PROBE_AGENT_FILES:
+                source = ROOT / relative
+                if not source.is_file():
+                    raise FleetError(f"probe-agent source is missing: {relative}")
+                content = source.read_bytes()
+                info = tarfile.TarInfo(relative)
+                info.size = len(content)
+                info.mode = 0o644
+                info.mtime = 0
+                info.uid = 0
+                info.gid = 0
+                info.uname = ""
+                info.gname = ""
+                archive.addfile(info, io.BytesIO(content))
+    payload = archive_bytes.getvalue()
+    return base64.b64encode(payload).decode("ascii"), hashlib.sha256(payload).hexdigest()
+
+
+def probe_agent_settings(node: FleetNode, env: dict[str, str]) -> dict[str, str] | None:
+    """Validate explicit node-agent enrollment settings without logging secrets."""
+    enabled = env.get("AURIX_PROBE_AGENT_INSTALL_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if not enabled:
+        return None
+    api_url = env.get("AURIX_PROBE_API_URL", "").strip().rstrip("/")
+    parsed = urlsplit(api_url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.query or parsed.fragment:
+        raise FleetError("AURIX_PROBE_API_URL must be a public HTTPS origin without query or fragment")
+    if parsed.username or parsed.password:
+        raise FleetError("AURIX_PROBE_API_URL must not contain credentials")
+    try:
+        secrets_value = json.loads(env.get("AURIX_PROBE_AGENT_SECRETS_JSON", "{}") or "{}")
+    except json.JSONDecodeError as exc:
+        raise FleetError("AURIX_PROBE_AGENT_SECRETS_JSON is not valid JSON") from exc
+    if not isinstance(secrets_value, dict):
+        raise FleetError("AURIX_PROBE_AGENT_SECRETS_JSON must be an object")
+    secret = str(secrets_value.get(node.node_id) or "")
+    if not re.fullmatch(r"[^\s]{16,256}", secret):
+        raise FleetError(f"probe-agent secret is missing or invalid for node {node.node_id}")
+    revision = env.get("AURIX_FLEET_REVISION", "").strip().lower()
+    if not REVISION_RE.fullmatch(revision):
+        raise FleetError("AURIX_FLEET_REVISION must be a 40-character commit SHA when probe agents are enabled")
+    bundle, bundle_sha256 = build_probe_agent_bundle()
+    return {
+        "api_url": api_url,
+        "agent_id": node.node_id,
+        "secret": secret,
+        "revision": revision,
+        "bundle_b64": bundle,
+        "bundle_sha256": bundle_sha256,
+    }
+
+
 def parse_access_text(text: str, node: FleetNode) -> dict[str, str]:
     values: dict[str, str] = {}
     for line in text.splitlines():
@@ -301,8 +375,27 @@ def bootstrap(node: FleetNode, env: dict[str, str]) -> dict[str, Any]:
         "AURIX_OUTLINE_INSTALLER_URL": env.get("AURIX_OUTLINE_INSTALLER_URL", ""),
         "AURIX_OUTLINE_INSTALLER_SHA256": env.get("AURIX_OUTLINE_INSTALLER_SHA256", ""),
     }
+    agent = probe_agent_settings(node, env)
+    if agent is not None:
+        variables.update({
+            "AURIX_PROBE_AGENT_INSTALL_ENABLED": "1",
+            "AURIX_PROBE_API_URL": agent["api_url"],
+            "AURIX_PROBE_AGENT_ID": agent["agent_id"],
+            "AURIX_FLEET_REVISION": agent["revision"],
+            "AURIX_PROBE_AGENT_BUNDLE_B64": agent["bundle_b64"],
+            "AURIX_PROBE_AGENT_BUNDLE_SHA256": agent["bundle_sha256"],
+        })
     prefix = " ".join(f"{key}={shlex.quote(value)}" for key, value in variables.items() if value)
-    raw = run_ssh(node, env, f"{prefix} bash -s", stdin=script)
+    if agent is None:
+        command = f"{prefix} bash -s"
+        stdin = script
+    else:
+        # Read the secret from a dedicated first stdin line.  It is then
+        # exported only in the remote shell environment and never appears in
+        # the SSH command string, process list, or bootstrap output.
+        command = f"IFS= read -r AURIX_PROBE_AGENT_SECRET; export AURIX_PROBE_AGENT_SECRET; {prefix} bash -s"
+        stdin = agent["secret"].encode("ascii") + b"\n" + script
+    raw = run_ssh(node, env, command, stdin=stdin)
     try:
         result = json.loads(raw.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as exc:

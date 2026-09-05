@@ -34,7 +34,7 @@ multi-node Outline control plane with conservative health evidence, not a
 complete adaptive V13 connectivity platform and not something that should be
 replaced wholesale.
 
-Current evidence is strong for code and controlled operations (481 tests,
+Current evidence is strong for code and controlled operations (494 tests,
 CI-gated deployment, a three-node registry, and backup-verification tooling),
 but
 not yet for unrestricted customer admission: allocation normalization, orphan
@@ -355,7 +355,11 @@ provider-supported idempotent delivery boundary exists.
 
 ### P2 — usage is enforcement data, not yet a V13 telemetry system
 
-The code reads Outline's rolling transfer counters and updates last-observed usage. It does not retain normalized raw/aggregate usage by endpoint, transport, billing period, ISP/network, or time bucket.
+The current branch now folds each managed Outline counter into an account-level
+entitlement ledger with monotonic epochs, counter-reset protection, duplicate
+sample suppression, bounded lease refill, and aggregate hard-stop revocation.
+It still does not retain normalized usage by transport, billing period,
+ISP/network, or time bucket, so it is not yet the full V13 telemetry system.
 
 This is enough for current key limits. It is not enough for:
 

@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import json
 import base64
+import gzip
+import hashlib
 import os
 import tempfile
+import tarfile
+from io import BytesIO
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from deploy.fleet_reconcile import (
@@ -13,6 +18,8 @@ from deploy.fleet_reconcile import (
     parse_access_text,
     parse_manifest,
     materialize_trust_files,
+    bootstrap,
+    probe_agent_settings,
     server_config,
     update_env_file,
 )
@@ -140,6 +147,54 @@ class FleetManifestTests(unittest.TestCase):
             self.assertIn(b"PRIVATE KEY", key.read_bytes())
             self.assertEqual(key.stat().st_mode & 0o777, 0o600)
             self.assertIn(b"ssh-ed25519", hosts.read_bytes())
+
+    def test_probe_agent_settings_is_explicit_and_bundle_is_non_secret(self) -> None:
+        node = parse_manifest(manifest())[0]
+        base_env = {
+            "AURIX_PROBE_AGENT_INSTALL_ENABLED": "1",
+            "AURIX_PROBE_API_URL": "https://control.example",
+            "AURIX_PROBE_AGENT_SECRETS_JSON": json.dumps({"sg-a": "node-secret-123456"}),
+            "AURIX_FLEET_REVISION": "a" * 40,
+        }
+        settings = probe_agent_settings(node, base_env)
+        self.assertIsNotNone(settings)
+        assert settings is not None
+        self.assertEqual(settings["agent_id"], "sg-a")
+        self.assertEqual(settings["secret"], "node-secret-123456")
+        self.assertNotIn(settings["secret"], settings["bundle_b64"])
+        archive = base64.b64decode(settings["bundle_b64"])
+        self.assertEqual(settings["bundle_sha256"], hashlib.sha256(archive).hexdigest())
+        with tarfile.open(fileobj=BytesIO(gzip.decompress(archive)), mode="r:") as bundle:
+            self.assertEqual(
+                bundle.getnames(),
+                ["fleet_probe.py", "fleet_probe_api.py", "fleet_probe_agent.py"],
+            )
+        with self.assertRaisesRegex(FleetError, "public HTTPS"):
+            probe_agent_settings(node, {**base_env, "AURIX_PROBE_API_URL": "http://control.example"})
+        with self.assertRaisesRegex(FleetError, "secret is missing"):
+            probe_agent_settings(node, {**base_env, "AURIX_PROBE_AGENT_SECRETS_JSON": "{}"})
+
+    def test_bootstrap_keeps_agent_secret_out_of_ssh_command(self) -> None:
+        node = parse_manifest(manifest())[0]
+        env = {
+            "AURIX_FLEET_CONTROL_PLANE_SOURCE": "192.0.2.7/32",
+            "AURIX_FLEET_REVISION": "a" * 40,
+            "AURIX_PROBE_AGENT_INSTALL_ENABLED": "1",
+            "AURIX_PROBE_API_URL": "https://control.example",
+            "AURIX_PROBE_AGENT_SECRETS_JSON": json.dumps({"sg-a": "node-secret-123456"}),
+        }
+        captured: dict[str, object] = {}
+
+        def fake_ssh(_node, _env, command, *, stdin=None):
+            captured["command"] = command
+            captured["stdin"] = stdin
+            return '{"status":"ready"}'
+
+        with patch("deploy.fleet_reconcile.run_ssh", side_effect=fake_ssh):
+            result = bootstrap(node, env)
+        self.assertEqual(result["status"], "ready")
+        self.assertNotIn("node-secret-123456", str(captured["command"]))
+        self.assertTrue(bytes(captured["stdin"]).startswith(b"node-secret-123456\n"))
 
 
 if __name__ == "__main__":

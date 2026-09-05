@@ -138,6 +138,55 @@ class ConnectivityRegistry:
                 now_text,
             ),
         )
+        # Migration 26 separates a physical endpoint from its service route.
+        # Keep the compatibility route synchronized when a new server is
+        # registered after the migration has already run.
+        if cls._table_exists(connection, "connectivity_routes"):
+            route_id = f"route-{endpoint_id}"
+            outline_capabilities = (
+                '{"managed_config":true,"manual_export":true,"quota_cap":true,'
+                '"usage":true,"rotation":true,"terminate_sessions":false,'
+                '"management_probe":true,"data_plane_probe":true,"reconcile":true}'
+            ) if transport_id == "outline" else "{}"
+            supported = transport_id == "outline"
+            connection.execute(
+                """INSERT INTO connectivity_routes
+                   (route_id, endpoint_id, route_name, protocol, status, priority,
+                    supports_managed_config, supports_manual_export, supports_quota_cap,
+                    supports_usage, supports_rotation, supports_terminate_sessions,
+                    supports_management_probe, supports_data_plane_probe, supports_reconcile,
+                    capabilities_json, created_at, updated_at)
+                   VALUES (?, ?, 'primary', ?, ?, 100, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(endpoint_id, route_name) DO UPDATE SET
+                     protocol = excluded.protocol, status = excluded.status,
+                     supports_managed_config = excluded.supports_managed_config,
+                     supports_manual_export = excluded.supports_manual_export,
+                     supports_quota_cap = excluded.supports_quota_cap,
+                     supports_usage = excluded.supports_usage,
+                     supports_rotation = excluded.supports_rotation,
+                     supports_management_probe = excluded.supports_management_probe,
+                     supports_data_plane_probe = excluded.supports_data_plane_probe,
+                     supports_reconcile = excluded.supports_reconcile,
+                     capabilities_json = excluded.capabilities_json,
+                     updated_at = excluded.updated_at""",
+                (
+                    route_id,
+                    endpoint_id,
+                    "outline" if transport_id == "outline" else transport_id,
+                    endpoint_status,
+                    supported,
+                    supported,
+                    supported,
+                    supported,
+                    supported,
+                    supported,
+                    supported,
+                    supported,
+                    outline_capabilities,
+                    now_text,
+                    now_text,
+                ),
+            )
         return {
             "endpoint_id": endpoint_id,
             "provider_id": provider_id,
@@ -159,7 +208,11 @@ class ConnectivityRegistry:
         if not cls.available(connection):
             return
         endpoint = connection.execute(
-            "SELECT endpoint_id FROM connectivity_endpoints WHERE outline_server_id = ?",
+            """SELECT e.endpoint_id, r.route_id
+                 FROM connectivity_endpoints e
+                 LEFT JOIN connectivity_routes r
+                   ON r.endpoint_id = e.endpoint_id AND r.route_name = 'primary'
+                WHERE e.outline_server_id = ?""",
             (server_id,),
         ).fetchone()
         if endpoint is None:
@@ -182,6 +235,13 @@ class ConnectivityRegistry:
                 WHERE outline_server_id = ?""",
             (status, 1 if lifecycle == "active" and health == "healthy" else 0, now_text, server_id),
         )
+        if endpoint["route_id"] and cls._table_exists(connection, "connectivity_routes"):
+            connection.execute(
+                """UPDATE connectivity_routes
+                      SET status = ?, updated_at = ?
+                    WHERE route_id = ?""",
+                (status, now_text, str(endpoint["route_id"])),
+            )
 
     @classmethod
     def endpoint_snapshot(cls, connection: Any) -> list[dict[str, Any]]:
@@ -203,6 +263,25 @@ class ConnectivityRegistry:
         return [dict(row) for row in rows]
 
     @classmethod
+    def route_snapshot(cls, connection: Any) -> list[dict[str, Any]]:
+        """Return service-route identities and honest adapter capabilities."""
+        if not cls._table_exists(connection, "connectivity_routes"):
+            return []
+        rows = connection.execute(
+            """SELECT r.route_id, r.endpoint_id, e.outline_server_id,
+                      r.route_name, r.protocol, r.status, r.priority,
+                      r.supports_managed_config, r.supports_manual_export,
+                      r.supports_quota_cap, r.supports_usage, r.supports_rotation,
+                      r.supports_terminate_sessions, r.supports_management_probe,
+                      r.supports_data_plane_probe, r.supports_reconcile,
+                      r.capabilities_json, r.updated_at
+                 FROM connectivity_routes r
+                 JOIN connectivity_endpoints e ON e.endpoint_id = r.endpoint_id
+                ORDER BY e.outline_server_id, r.priority, r.route_id"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @classmethod
     def bind_credential(
         cls,
         connection: Any,
@@ -214,19 +293,29 @@ class ConnectivityRegistry:
         now_text: str,
         profile_kind: str,
         subscription_id: str | None = None,
+        route_id: str | None = None,
     ) -> None:
         """Create/update a generic profile, assignment, and credential binding."""
         if not cls.available(connection):
             return
         if secret_ciphertext and str(secret_ciphertext).startswith("ss://"):
             raise ValueError("connectivity credential secret must be encrypted")
+        route_join_type = "JOIN" if route_id else "LEFT JOIN"
+        route_join = "AND r.route_id = ?" if route_id else "AND r.route_name = 'primary'"
         endpoint = connection.execute(
-            "SELECT endpoint_id FROM connectivity_endpoints WHERE outline_server_id = ?",
-            (server_id,),
+            f"""SELECT e.endpoint_id, r.route_id
+                  FROM connectivity_endpoints e
+                  {route_join_type} connectivity_routes r
+                    ON r.endpoint_id = e.endpoint_id {route_join}
+                 WHERE e.outline_server_id = ?""",
+            # The route predicate belongs to the JOIN, so its value precedes
+            # the endpoint identity in the explicit-route variant.
+            ((str(route_id), server_id) if route_id else (server_id,)),
         ).fetchone()
         if endpoint is None:
             return
         endpoint_id = str(endpoint["endpoint_id"])
+        route_id = str(endpoint["route_id"]) if endpoint["route_id"] else None
         normalized_kind = str(profile_kind or "free").lower()
         if normalized_kind not in {"free", "paid", "trial", "promo"}:
             normalized_kind = "free"
@@ -247,25 +336,27 @@ class ConnectivityRegistry:
         assignment_id = _stable_id("assignment", profile_id, endpoint_id)
         connection.execute(
             """INSERT INTO endpoint_assignments
-               (assignment_id, profile_id, endpoint_id, status, assigned_at, reason)
-               VALUES (?, ?, ?, 'active', ?, 'initial compatibility binding')
+               (assignment_id, profile_id, endpoint_id, route_id, status, assigned_at, reason)
+               VALUES (?, ?, ?, ?, 'active', ?, 'initial compatibility binding')
                ON CONFLICT(assignment_id) DO UPDATE SET
+                 route_id = excluded.route_id,
                  status = 'active', ended_at = NULL, reason = excluded.reason""",
-            (assignment_id, profile_id, endpoint_id, now_text),
+            (assignment_id, profile_id, endpoint_id, route_id, now_text),
         )
         credential_id = _stable_id("credential", endpoint_id, external_id)
         connection.execute(
             """INSERT INTO connectivity_credentials
-               (credential_id, profile_id, endpoint_id, transport_id, external_id,
+               (credential_id, profile_id, endpoint_id, route_id, transport_id, external_id,
                 secret_ciphertext, status, created_at, revoked_at)
-               VALUES (?, ?, ?, 'outline', ?, ?, 'active', ?, NULL)
+               VALUES (?, ?, ?, ?, 'outline', ?, ?, 'active', ?, NULL)
                ON CONFLICT(credential_id) DO UPDATE SET
                  profile_id = excluded.profile_id,
                  endpoint_id = excluded.endpoint_id,
+                 route_id = excluded.route_id,
                  external_id = excluded.external_id,
                  secret_ciphertext = COALESCE(excluded.secret_ciphertext, connectivity_credentials.secret_ciphertext),
                  status = 'active', revoked_at = NULL""",
-            (credential_id, profile_id, endpoint_id, str(external_id), secret_ciphertext, now_text),
+            (credential_id, profile_id, endpoint_id, route_id, str(external_id), secret_ciphertext, now_text),
         )
 
     @classmethod
