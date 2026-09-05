@@ -1,10 +1,16 @@
 # AuriX node-two installation and canary runbook
 
 This runbook is for the existing DigitalOcean Droplet `139.59.122.170`
-(`595616487`, `sgp1`, `s-1vcpu-1gb`). It is currently an active but
-unregistered capacity node. The primary node is `157.245.63.95`
+(`595616487`, `sgp1`, `s-1vcpu-1gb`). It is currently an active, registered,
+but empty capacity node. The primary node is `157.245.63.95`
 (`595626749`). The two Droplets are peers, not replicas: an Outline access key
 belongs to the Management API endpoint that created it.
+
+Current evidence (5 September 2026): Singapore-B's pinned Management API is
+healthy and reports Outline 1.12.3 with zero keys. A direct SSH probe from the
+control-plane host timed out, so provider-side enrollment/rebuild automation
+must remain disabled until the SSH path is restored and re-pinned; this does
+not invalidate the read-only Management API health result.
 
 Do not perform the installation while the AuriX bot is serving a live customer
 rollout unless the owner has explicitly approved the maintenance window. Keep
@@ -93,8 +99,9 @@ systemctl restart aurix-bot
 journalctl -u aurix-bot -n 80 --no-pager -o cat
 ```
 
-Expected state: both endpoints pass `/server`, `/access-keys`, and metrics;
-the bot reports `2/2 server(s) healthy`; no Management URL or access key is
+Expected state for the two DigitalOcean endpoints: both pass `/server`,
+`/access-keys`, and metrics. The current full fleet (including BKK/Nube) is
+reported as `3/3 server(s) healthy`; no Management URL or access key is
 printed.
 
 Run the separate worker once and expect `inventory=2 managed/2 registered`:
