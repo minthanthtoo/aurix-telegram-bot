@@ -2084,8 +2084,7 @@ class TelegramBot(
                     ]
                 )
             if (
-                entry.get("key_type") == "paid"
-                and str(entry.get("server_health_status") or "unknown") != "healthy"
+                str(entry.get("server_health_status") or "unknown") != "healthy"
                 and entry.get("server_label")
             ):
                 lines.append(
