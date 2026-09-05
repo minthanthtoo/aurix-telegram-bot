@@ -2,7 +2,7 @@
 
 Status: historical baseline with current-state addendum
 Original date: 2026-08-29 (Asia/Rangoon)
-Current evidence refresh: 2026-09-04 (Asia/Rangoon)
+Current evidence refresh: 2026-09-05 (Asia/Rangoon)
 Scope: repository against the extracted Outline, V0–V13, resilience, and
 market/final-architecture conversations. For live status, prefer
 [`MVP_STATUS.md`](MVP_STATUS.md) and
@@ -34,7 +34,7 @@ multi-node Outline control plane with conservative health evidence, not a
 complete adaptive V13 connectivity platform and not something that should be
 replaced wholesale.
 
-Current evidence is strong for code and controlled operations (427 tests,
+Current evidence is strong for code and controlled operations (439 tests,
 CI-gated deployment, a three-node registry, and backup-verification tooling),
 but
 not yet for unrestricted customer admission: allocation normalization, orphan
@@ -126,7 +126,7 @@ Key evidence:
 
 The code is therefore not “behind” in a simple feature-count sense. It correctly built much of the commercial foundation first. The mismatch is that some documents call the Outline-only target “final,” while the later conversations redefine the final target as protocol-agnostic V13.
 
-## Current-state corrections (2026-09-04)
+## Current-state corrections (2026-09-05)
 
 The historical matrix below intentionally preserves the earlier snapshot. The
 following facts supersede its Outline-fleet rows for release decisions:
@@ -160,7 +160,11 @@ following facts supersede its Outline-fleet rows for release decisions:
   read-only.
 - The live acceptance audit is `WARN`, not `PASS`: primary capacity is
   overallocated and has untracked remote keys, provider mutations are disabled,
-  and stable DNS automation is not configured.
+  stable DNS automation is not configured, and the latest pinned read-only
+  probe finds only the primary management/data plane healthy; Singapore-B
+  times out and BKK's management port times out while its configured data port
+  refuses connections. Render startup now tolerates this partial fleet but
+  keeps unhealthy nodes out of new admission.
 
 ## Historical capability matrix (2026-08-29 baseline)
 
@@ -646,18 +650,18 @@ Do not build yet:
 | Production evidence | 2/10 | Unit-tested; live external behavior remains unverified |
 | V13 completion | about 2/10 | Stable commercial foundation exists; connectivity operating system does not |
 
-## Current scorecard (2026-09-04 evidence refresh)
+## Current scorecard (2026-09-05 evidence refresh)
 
 | Area | Current judgement | Evidence / remaining gate |
 |---|---:|---|
 | Paid-concierge business logic | 8.5/10 | Wallet, orders, receipts, plans, promo, notifications, and audit paths are covered by the live-tested suite |
-| Outline provisioning | 9/10 | Three healthy, server-scoped endpoints; deterministic create/recovery and hard-delete enforcement |
+| Outline provisioning | 8/10 | Server-scoped deterministic create/recovery and hard-delete enforcement are covered locally; only 1/3 configured management/data planes is currently reachable |
 | Free/trial/promo provisioning | 8.5/10 | Durable pre-call intents, PostgreSQL claim locks, bounded retries, deterministic slot IDs, and ambiguous-create recovery; legacy POST adapters remain bounded |
 | Durability/recovery | 8.5/10 | SQLite/PostgreSQL paths, durable jobs, offsite database/fleet backups, and verified archive decrypt/restore |
 | Multi-node allocation | 7.5/10 | Capacity, admission, traffic, orphan audit, and provider identity are implemented; primary policy still needs normalization |
 | Provider automation | 6/10 | Budgeted, allowlisted DO worker plus identity-pinned activation; provider mutation intentionally disabled |
 | Receipt verification | 7/10 | Evidence-only LLM ranking/consensus with manual authority; production-vendor benchmark remains |
-| Production evidence | 5/10 | Live health/preflight are green; real Telegram/payment canary and 24–72 hour observation remain |
+| Production evidence | 4/10 | Primary live health is green but the fleet is degraded; real Telegram/payment canary, node restoration, and 24–72 hour observation remain |
 | Adaptive V10–V13 resilience | 1/10 | No network-aware failover, protocol migration, or custom client; intentionally deferred |
 
 ## Bottom line

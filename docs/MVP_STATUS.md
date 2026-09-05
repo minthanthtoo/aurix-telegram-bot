@@ -1,6 +1,6 @@
 # AuriX MVP status
 
-Status date: 2026-09-04 (Asia/Rangoon)
+Status date: 2026-09-05 (Asia/Rangoon)
 
 The percentages below separate code completion from live readiness. They are
 engineering estimates, not production traffic or revenue metrics.
@@ -29,10 +29,10 @@ engineering estimates, not production traffic or revenue metrics.
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
 | Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; guarded `deploy/migrate_sqlite_to_postgres.py` preserves existing SQLite state; hosted DB provisioning, cutover, and live restore remain gates |
 | Independent worker / web control plane | Worker and callback endpoint implemented; live enrollment pending | The guarded DigitalOcean worker/timer and encrypted one-time `/fleet/register` callback (Render or standalone TLS service) are in source; live endpoint/worker canary remains a gate. Render profiles now run read-only Telegram, Supabase, LLM, database, and pinned-Outline startup canaries. |
-| Live Telegram and Outline smoke test | Three management/data endpoints verified; customer tranche controlled | Bot, primary, Singapore-B, and BKK/Nube Outline endpoints, firewall, pinned-TLS API canaries, and a reversible BKK data-port/key create-delete canary are verified; a real Telegram-account canary and longer observation remain |
+| Live Telegram and Outline smoke test | Degraded: 1/3 management endpoints healthy | Primary (`157.245.63.95`) is healthy on Outline 1.12.3 with 17 remote keys and data port 45524 open; Singapore-B management times out, while BKK management times out and its configured data port 443 refuses; a real Telegram-account canary and longer observation remain |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
 | Referrals, affiliates, and resellers | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
-| Multi-node allocation and guarded scale-out | Implemented; BKK admission deliberately closed | Server-scoped allocation, provider inventory, provider-side SSH-key attachment, two-observation provider-orphan audit with separately gated cleanup, non-secret remote-key audit, durable two-observation scale gate, capacity posture, stable provider identity checks, idempotent intents, encrypted single-use enrollment, and worker safety gates are live; free/trial/promo provisioning is restart-safe and counts pending reservations against node admission; untracked remote keys remain a migration blocker and BKK is healthy/canary-verified but remains at zero plan/tier slots until its owner-approved tranche is set |
+| Multi-node allocation and guarded scale-out | Implemented; unavailable nodes blocked from admission | Server-scoped allocation, provider inventory, provider-side SSH-key attachment, two-observation provider-orphan audit with separately gated cleanup, non-secret remote-key audit, durable two-observation scale gate, capacity posture, stable provider identity checks, idempotent intents, encrypted single-use enrollment, and worker safety gates are live; free/trial/promo provisioning is restart-safe and counts pending reservations against node admission; untracked remote keys remain a migration blocker, and Singapore-B/BKK remain at zero issuance slots until their management and data planes are restored and owner-approved tranches are set |
 
 ## Honest aggregate view
 
@@ -49,12 +49,15 @@ engineering estimates, not production traffic or revenue metrics.
   PostgreSQL/node off-site-only recovery and plaintext-hash integrity checks,
   pinned node-bootstrap TLS, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (430 tests passing at the latest verification).
+  production-acceptance suite (439 tests passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**. The current sanitized
   acceptance run passes source, lint, compilation, tests, required secret names,
   fleet-manifest parsing, backup-key validation, and the recovery entrypoint,
   but fails database/off-site recovery readiness because the local `.env` does
-  not declare a hosted database or off-site database/fleet destination. Legacy
+  not declare a hosted database or off-site database/fleet destination. The
+  latest read-only fleet probe also reports only 1/3 healthy management
+  endpoints, so the live topology is degraded even though the primary data
+  plane is reachable. Legacy
   primary allocation is also over-subscribed (70 declared slots against 20
   saleable keys), archive decryptability has not been run in this environment,
   provider mutations remain disabled, stable DNS is not configured, and live
@@ -73,8 +76,9 @@ engineering estimates, not production traffic or revenue metrics.
    → LLM/manual review → approve → provision → quota-hit DELETE → `/myvpn` smoke
    tests, with before/after key inventories and a receiving-account transaction
    comparison. Confirm whether active sessions stop within the promised window.
-2. Keep BKK/Nube at zero issuance slots until the owner sets a conservative
-   allocation tranche after the data-plane canary; expand only after measured
+2. Restore and verify Singapore-B and BKK/Nube management plus access ports;
+   keep both at zero issuance slots until their data-plane canaries pass and the
+   owner sets conservative allocation tranches. Expand only after measured
    demand, support ownership, and quota/revocation evidence.
 3. Complete the 100% acceptance checklist in
    `docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`, then decide whether the paid
