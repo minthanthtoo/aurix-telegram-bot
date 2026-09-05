@@ -59,6 +59,13 @@ The current code provides:
   retry, preventing duplicate billable nodes after a provider timeout.
 - encrypted, single-use fleet enrollment callbacks with provider-IP and
   pinned-SSH verification before automatic manifest activation.
+- a server-side fleet-probe control loop: due probe schedules become short-lived
+  jobs, node agents execute the instruction, and signed bounded observations
+  are persisted into route health and Telegram-admin recommendations. This
+  loop measures node-to-node and node-to-target reachability/latency/throughput;
+  it does not require a customer VPN client.
+- an optional opaque-account managed-device API with signed manifests and
+  per-generation route configuration. Manual Outline clients remain supported.
 
 The controller deliberately separates provider creation from endpoint
 activation. It never stores an Outline Management URL in the database and does
@@ -105,6 +112,9 @@ Not implemented or intentionally not automatic:
 - no automatic activation from a merely `active` Droplet state;
 - no automatic failover or silent migration of existing customer keys;
   migration 15 provides an owner-confirmed, durable assisted replacement path.
+- no client-side measurement is treated as the primary discovery signal;
+  customer-device ping/speed tests may be added as supplemental evidence, but
+  server-side observations are the admission and auto-discovery authority.
 
 The provider worker now has a bounded, lock-protected one-pass entrypoint and
 systemd timer. It reconciles existing tagged/explicitly managed Droplets before

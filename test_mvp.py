@@ -51,6 +51,10 @@ class Outline:
         self.created = []
         self.deleted = []
         self.transfer = {}
+        self.default_server_id = "primary"
+
+    def server_ids(self):
+        return (self.default_server_id,)
 
     def create_key(self, name, limit_bytes):
         key = {"id": str(len(self.created) + 1), "accessUrl": f"ss://{len(self.created) + 1}"}
@@ -77,11 +81,17 @@ class MvpFeatureTest(unittest.TestCase):
         self.free_db = Database(self.path)
         self.free_db.initialize()
         self.outline = Outline()
-        self.claims = ClaimService(self.free_db, self.outline, limit_bytes=PUBLIC_LIMIT_BYTES)
+        self.access_url_key = Fernet.generate_key()
+        self.claims = ClaimService(
+            self.free_db,
+            self.outline,
+            limit_bytes=PUBLIC_LIMIT_BYTES,
+            access_url_key=self.access_url_key,
+        )
         self.commerce = CommerceService(
             CommerceDatabase(self.path),
             self.outline,
-            Fernet.generate_key(),
+            self.access_url_key,
             allow_legacy_text_approval=True,
         )
         self.commerce.initialize()
@@ -91,6 +101,17 @@ class MvpFeatureTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_public_300_mib_daily_and_3_gib_monthly(self):
+        # Exercise the same endpoint registration lifecycle used by hosted
+        # runtime so the free key's encrypted generic credential is covered.
+        self.commerce.register_outline_servers({"primary": "Primary"})
+        with self.commerce.database.connect() as connection:
+            connection.execute(
+                """UPDATE outline_servers
+                      SET health_status = 'healthy', last_synced_at = ?,
+                          updated_at = ?
+                    WHERE server_id = 'primary'""",
+                ((self.now + timedelta(days=31)).isoformat(), self.now.isoformat()),
+            )
         free = self.claims.claim(101, "A", self.now)
         self.assertEqual(self.outline.created[0][1], PUBLIC_LIMIT_BYTES)
         trial = self.claims.claim_trial(101, "A", self.now)
@@ -102,6 +123,14 @@ class MvpFeatureTest(unittest.TestCase):
         self.assertTrue(monthly.access_url)
         self.assertEqual(len(self.outline.created), 3)
         self.assertTrue(free.access_url)
+        with self.free_db.connect() as connection:
+            ciphertext = connection.execute(
+                """SELECT c.secret_ciphertext
+                     FROM connectivity_credentials c
+                     JOIN connectivity_endpoints e ON e.endpoint_id = c.endpoint_id
+                    WHERE e.outline_server_id = 'primary' AND c.external_id = '1'"""
+            ).fetchone()[0]
+        self.assertEqual(Fernet(self.access_url_key).decrypt(ciphertext.encode()).decode(), free.access_url)
 
     def test_paid_catalog_contains_50gb_and_100gb_monthly(self):
         plans = {plan.code: plan for plan in self.commerce.plans()}

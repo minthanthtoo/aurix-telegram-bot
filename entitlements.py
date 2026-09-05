@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import sys
@@ -11,9 +12,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from cryptography.fernet import Fernet
+
 from ports import OutlineGateway
 from commerce_models import CommerceError
 from connectivity_registry import ConnectivityRegistry
+from identity import IdentityService
 from quota_alerts import (
     get_quota_alert_preferences,
     reached_alert,
@@ -138,11 +142,31 @@ class ClaimService:
         outline: OutlineGateway,
         limit_bytes: int = LIMIT_BYTES,
         trial_limit_bytes: int = TRIAL_LIMIT_BYTES,
+        probe_service: Any | None = None,
+        access_url_key: bytes | str | None = None,
     ):
         self.database = database
         self.outline = outline
         self.limit_bytes = int(limit_bytes)
         self.trial_limit_bytes = int(trial_limit_bytes)
+        self.identity = IdentityService(database)
+        self.probe_service = probe_service
+        try:
+            self.access_url_cipher = Fernet(access_url_key) if access_url_key else None
+        except (TypeError, ValueError) as exc:
+            raise ValueError("access_url_key must be a Fernet key") from exc
+
+    def _encrypt_access_url(self, access_url: str) -> str | None:
+        """Encrypt an access URL for generic device delivery when configured.
+
+        Legacy/free rows intentionally do not store plaintext URLs.  Keeping
+        the cipher optional preserves the local test/staging compatibility
+        path, while hosted runtime always supplies the same durable key used
+        by paid-key notifications.
+        """
+        if self.access_url_cipher is None:
+            return None
+        return self.access_url_cipher.encrypt(str(access_url).encode()).decode()
 
     def _outline_client(self, server_id: str | None = None) -> OutlineGateway:
         getter = getattr(self.outline, "client", None)
@@ -150,6 +174,17 @@ class ClaimService:
 
     def _default_server_id(self) -> str:
         return str(getattr(self.outline, "default_server_id", "primary"))
+
+    @staticmethod
+    def _table_exists(connection: Any, name: str) -> bool:
+        if connection.__class__.__name__ == "_PostgresConnection":
+            row = connection.execute(
+                "SELECT to_regclass(?) AS table_name", (f"public.{name}",)
+            ).fetchone()
+            return bool(row and row["table_name"])
+        return connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone() is not None
 
     @staticmethod
     def _server_tables_exist(connection: Any) -> bool:
@@ -166,7 +201,13 @@ class ClaimService:
         )
 
     def _select_server_for_tier(
-        self, connection: Any, tier_code: str, quota_bytes: int, now: datetime
+        self,
+        connection: Any,
+        tier_code: str,
+        quota_bytes: int,
+        now: datetime,
+        *,
+        telegram_id: int | None = None,
     ) -> str:
         """Select a fresh, healthy server using shared key and traffic headroom."""
         if not self._server_tables_exist(connection):
@@ -191,9 +232,32 @@ class ClaimService:
                 (tier_code,),
             ).fetchone()["n"]
         ) > 0
-        candidates: list[tuple[float, str]] = []
+        candidates: list[tuple[float, int, float, str]] = []
         for server in servers:
             server_id = str(server["server_id"])
+            probe_status = "unknown"
+            probe_score = -1.0
+            probe = (
+                connection.execute(
+                    """SELECT status, score, last_observed_at
+                         FROM route_health_snapshots WHERE server_id = ?""",
+                    (server_id,),
+                ).fetchone()
+                if self._table_exists(connection, "route_health_snapshots")
+                else None
+            )
+            if probe is not None and probe["last_observed_at"] is not None:
+                try:
+                    probe_fresh = datetime.fromisoformat(str(probe["last_observed_at"])).astimezone(UTC) >= now - timedelta(seconds=max_age)
+                except (TypeError, ValueError, OverflowError):
+                    probe_fresh = False
+                if probe_fresh:
+                    probe_status = str(probe["status"] or "unknown")
+                    probe_score = float(probe["score"]) if probe["score"] is not None else -1.0
+                    if probe_status == "unreachable":
+                        continue
+                    if os.environ.get("AURIX_REQUIRE_PROBE_EVIDENCE_FOR_ISSUANCE", "0").strip().lower() in {"1", "true", "yes", "on"} and probe_status == "unknown":
+                        continue
             allocation = connection.execute(
                 """SELECT slot_limit FROM server_tier_allocations
                    WHERE server_id = ? AND tier_code = ?""",
@@ -259,10 +323,37 @@ class ClaimService:
                 if allocation is not None and int(allocation["slot_limit"])
                 else (usable or max(1, remote_keys + 1))
             )
-            candidates.append((int(active_tier) / max(1, denominator), server_id))
+            probe_rank = {"healthy": 0, "degraded": 1, "unknown": 2}.get(probe_status, 2)
+            candidates.append((int(active_tier) / max(1, denominator), probe_rank, -probe_score, server_id))
         if not candidates:
             raise OutlineError("No healthy VPN server currently has capacity for this tier")
-        return min(candidates)[1]
+        selected = min(candidates)
+        if self._table_exists(connection, "route_decisions"):
+            selected_score = -selected[2] if selected[2] >= 0 else None
+            connection.execute(
+                """INSERT INTO route_decisions
+                   (decision_id, telegram_id, entitlement_ref, requested_region,
+                    selected_server_id, decision_mode, score, evidence_json, created_at)
+                   VALUES (?, ?, NULL, NULL, ?, 'automatic', ?, ?, ?)""",
+                (
+                    f"decision-{_new_id()}",
+                    telegram_id,
+                    selected[3],
+                    selected_score,
+                    json.dumps(
+                        {
+                            "basis": "capacity_and_fresh_probe",
+                            "tier_code": str(tier_code),
+                            "probe_rank": selected[1],
+                        },
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    now.astimezone(UTC).isoformat(),
+                ),
+            )
+        return selected[3]
 
     def _adjust_remote_key_count(self, connection: Any, server_id: str, delta: int) -> None:
         if not self._server_tables_exist(connection):
@@ -275,6 +366,56 @@ class ClaimService:
                    END
                WHERE server_id = ?""",
             (int(delta), int(delta), server_id),
+        )
+
+    def _sync_identity_key(
+        self,
+        *,
+        telegram_id: int,
+        local_key_id: int,
+        kind: str,
+        quota_bytes: int,
+        expires_at: str,
+        server_id: str,
+        external_id: str,
+        now: str | None = None,
+    ) -> None:
+        """Converge a committed free/trial key into managed identity state."""
+        timestamp = str(now or datetime.now(UTC).isoformat())
+        entitlement_id = self.identity.ensure_key_entitlement(
+            int(telegram_id),
+            server_id=str(server_id),
+            local_key_ref=str(local_key_id),
+            kind=str(kind),
+            quota_bytes=int(quota_bytes),
+            expires_at=str(expires_at),
+            status="active",
+            now=timestamp,
+        )
+        with self.database.connect() as connection:
+            credential = connection.execute(
+                """SELECT c.credential_id, c.endpoint_id
+                     FROM connectivity_credentials c
+                     JOIN connectivity_endpoints e ON e.endpoint_id = c.endpoint_id
+                    WHERE e.outline_server_id = ? AND c.external_id = ?
+                      AND c.status = 'active'""",
+                (str(server_id), str(external_id)),
+            ).fetchone()
+        if credential is None:
+            return
+        generation_id = self.identity.ensure_generation_for_credential(
+            entitlement_id,
+            str(credential["endpoint_id"]),
+            credential_id=str(credential["credential_id"]),
+            now=timestamp,
+        )
+        self.identity.ensure_generation_lease(
+            entitlement_id,
+            generation_id,
+            str(credential["endpoint_id"]),
+            int(quota_bytes),
+            str(expires_at),
+            now=timestamp,
         )
 
     @staticmethod
@@ -516,6 +657,7 @@ class ClaimService:
         if remote_id != str(intent["outline_key_id"]) or not key.get("accessUrl"):
             raise OutlineError("Outline free entitlement response lacks the expected key")
         now_text = now.astimezone(UTC).isoformat()
+        encrypted_access_url = self._encrypt_access_url(str(key["accessUrl"]))
         local_key_id: int | None = None
         with self.database.connect() as connection:
             self.database.begin_write(connection)
@@ -616,7 +758,7 @@ class ClaimService:
                 telegram_id=int(intent["telegram_id"]),
                 server_id=str(intent["server_id"]),
                 external_id=remote_id,
-                secret_ciphertext=None,
+                secret_ciphertext=encrypted_access_url,
                 now_text=now_text,
                 profile_kind=(
                     "promo" if intent["kind"] == "promo"
@@ -631,6 +773,28 @@ class ClaimService:
                  WHERE id = ?""",
                 (local_key_id, now_text, str(intent["id"])),
             )
+        try:
+            self._sync_identity_key(
+                telegram_id=int(intent["telegram_id"]),
+                local_key_id=int(local_key_id or 0),
+                kind=(
+                    "promo" if intent["kind"] == "promo"
+                    else "trial" if intent["kind"] == "trial"
+                    else "free"
+                ),
+                quota_bytes=int(intent["quota_bytes"]),
+                expires_at=(
+                    datetime.fromisoformat(str(intent["claim_started_at"])).astimezone(UTC)
+                    + timedelta(days=int(intent["duration_days"]))
+                ).isoformat(),
+                server_id=str(intent["server_id"]),
+                external_id=remote_id,
+                now=now_text,
+            )
+        except Exception as exc:
+            # The free key is already durably committed. Startup backfill is
+            # able to repair the additive identity view without reissuing it.
+            print(f"identity free-key sync error: {type(exc).__name__}", file=sys.stderr)
         return key
 
     def _execute_free_intent(
@@ -1343,7 +1507,8 @@ class ClaimService:
                             reason="An open or completed paid order already belongs to this account.",
                         )
                 server_id = self._select_server_for_tier(
-                    connection, "PROMO", int(campaign["quota_bytes"]), current
+                    connection, "PROMO", int(campaign["quota_bytes"]), current,
+                    telegram_id=telegram_id,
                 )
                 key_name = _outline_key_name(
                     telegram_id,
@@ -1428,6 +1593,7 @@ class ClaimService:
                        username = excluded.username""",
                 (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
             )
+        self.identity.ensure_account(telegram_id, now=now_text)
 
     def claim(
         self,
@@ -1481,7 +1647,8 @@ class ClaimService:
                     if current < next_claim:
                         return ClaimResult(next_claim_at=next_claim)
                 server_id = self._select_server_for_tier(
-                    connection, "FREE300MB", self.limit_bytes, current
+                    connection, "FREE300MB", self.limit_bytes, current,
+                    telegram_id=telegram_id,
                 )
                 key_name = _outline_key_name(
                     telegram_id, username, "FREE300MB", "24hr", current
@@ -1583,7 +1750,8 @@ class ClaimService:
                     if current < next_claim:
                         return ClaimResult(next_claim_at=next_claim)
                 server_id = self._select_server_for_tier(
-                    connection, "FREE3GB", self.trial_limit_bytes, current
+                    connection, "FREE3GB", self.trial_limit_bytes, current,
+                    telegram_id=telegram_id,
                 )
                 key_name = _outline_key_name(
                     telegram_id, username, "FREE3GB", "30day", current

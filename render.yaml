@@ -81,5 +81,21 @@ services:
         value: "0"
       - key: AURIX_FLEET_NODES_JSON
         sync: false
+      - key: AURIX_PROBE_AGENT_SECRETS_JSON
+        sync: false
+      - key: AURIX_PROBE_TARGETS_JSON
+        sync: false
+      - key: AURIX_PROBE_SCHEDULES_JSON
+        sync: false
+      - key: AURIX_PROBE_STALE_AFTER_SECONDS
+        value: "900"
+      - key: AURIX_PROBE_JOB_TTL_SECONDS
+        value: "180"
+      - key: AURIX_DEVICE_API_URL
+        sync: false
+      - key: AURIX_MANIFEST_SIGNING_KEY
+        sync: false
+      - key: AURIX_REQUIRE_PROBE_EVIDENCE_FOR_ISSUANCE
+        value: "0"
       - key: AURIX_FLEET_STRICT_ALLOCATION_VALIDATION
         value: "0"

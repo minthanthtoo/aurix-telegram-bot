@@ -24,6 +24,7 @@ class DigitalOceanDeployTest(unittest.TestCase):
         self.assertIn("aurix-fleet-registration.service", VERSIONED_UNIT_NAMES)
         self.assertIn("aurix-dns-sync.service", VERSIONED_UNIT_NAMES)
         self.assertIn("aurix-dns-sync.timer", VERSIONED_UNIT_NAMES)
+        self.assertIn("aurix-fleet-probe-api.service", VERSIONED_UNIT_NAMES)
     def test_receipt_smoke_is_directly_executable_outside_repository(self):
         script = Path(__file__).resolve().parent / "deploy/receipt_pipeline_smoke.py"
         with tempfile.TemporaryDirectory() as temporary:

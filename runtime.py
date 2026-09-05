@@ -16,6 +16,8 @@ from typing import Any
 from access_control import StaffAccessControl, StaffAccessError
 from commerce import CommerceDatabase, CommerceError, CommerceService, PostgresCommerceDatabase
 from entitlements import PUBLIC_LIMIT_BYTES, ClaimService, OutlineError
+from fleet_probe import FleetProbeError, FleetProbeService
+from identity import IdentityService
 from free_repository import Database
 from outline_adapter import OutlineClient, OutlineServerPool
 from supabase_storage import NullReceiptStorage, SupabaseReceiptStorage
@@ -181,6 +183,35 @@ def main() -> None:
         receipt_storage_required=receipt_storage_required,
     )
     commerce.initialize()
+    try:
+        probe_agent_secrets = json.loads(
+            os.environ.get("AURIX_PROBE_AGENT_SECRETS_JSON", "{}").strip() or "{}"
+        )
+    except json.JSONDecodeError as exc:
+        raise SystemExit("AURIX_PROBE_AGENT_SECRETS_JSON must be a JSON object") from exc
+    if not isinstance(probe_agent_secrets, dict):
+        raise SystemExit("AURIX_PROBE_AGENT_SECRETS_JSON must be a JSON object")
+    try:
+        probe_stale_after = int(os.environ.get("AURIX_PROBE_STALE_AFTER_SECONDS", "900"))
+        probe_job_ttl = int(os.environ.get("AURIX_PROBE_JOB_TTL_SECONDS", "180"))
+    except ValueError as exc:
+        raise SystemExit("AURIX_PROBE_STALE_AFTER_SECONDS and AURIX_PROBE_JOB_TTL_SECONDS must be integers") from exc
+    try:
+        probe_service = FleetProbeService(
+            commerce_database,
+            agent_secrets={str(key): str(value) for key, value in probe_agent_secrets.items()},
+            stale_after_seconds=probe_stale_after,
+            job_ttl_seconds=probe_job_ttl,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"Fleet probe configuration is invalid: {exc}") from exc
+    commerce.probe_service = probe_service
+    if not probe_agent_secrets:
+        print(
+            "WARNING: fleet probes are configured without agent secrets; scheduling is available "
+            "but node result submission is disabled.",
+            file=sys.stderr,
+        )
     register_servers = getattr(commerce, "register_outline_servers", None)
     if callable(register_servers):
         try:
@@ -191,6 +222,31 @@ def main() -> None:
             )
         except CommerceError as exc:
             raise SystemExit(f"Outline server registration failed: {exc}") from exc
+    try:
+        configured_targets = json.loads(os.environ.get("AURIX_PROBE_TARGETS_JSON", "[]") or "[]")
+        configured_schedules = json.loads(os.environ.get("AURIX_PROBE_SCHEDULES_JSON", "[]") or "[]")
+        if not isinstance(configured_targets, list) or not isinstance(configured_schedules, list):
+            raise ValueError("probe target and schedule settings must be arrays")
+        for item in configured_targets:
+            if not isinstance(item, dict):
+                raise ValueError("probe targets must be objects")
+            probe_service.register_target(**item)
+        for item in configured_schedules:
+            if not isinstance(item, dict):
+                raise ValueError("probe schedules must be objects")
+            probe_service.register_schedule(**item)
+    except (ValueError, TypeError, json.JSONDecodeError, FleetProbeError) as exc:
+        raise SystemExit(f"Fleet probe target configuration is invalid: {exc}") from exc
+    # Endpoint registration rebuilds the provider-neutral credential registry;
+    # only then can existing legacy credentials converge into generations and
+    # device-manifest routes.
+    try:
+        identity_service = IdentityService(commerce_database)
+        if callable(getattr(commerce_database, "connect", None)):
+            identity_service.sync_existing_users()
+            identity_service.sync_existing_entitlements()
+    except Exception as exc:
+        raise SystemExit(f"Identity backfill failed: {type(exc).__name__}") from exc
     order_reconciliation = commerce.reconcile_duplicate_open_orders()
     if order_reconciliation["cancelled"]:
         print(f"Reconciled {order_reconciliation['cancelled']} empty duplicate open order(s).")
@@ -225,7 +281,13 @@ def main() -> None:
                 "WARNING: Outline endpoint is unavailable; Telegram/admin recovery remains available.",
                 file=sys.stderr,
             )
-    claim_service = ClaimService(database, outline, limit_bytes=PUBLIC_LIMIT_BYTES)
+    claim_service = ClaimService(
+        database,
+        outline,
+        limit_bytes=PUBLIC_LIMIT_BYTES,
+        probe_service=probe_service,
+        access_url_key=access_url_key,
+    )
     try:
         promo_limits_reconciled = claim_service.reconcile_giveaway_limits()
     except OutlineError as exc:
@@ -364,6 +426,8 @@ def main() -> None:
         command_scope_cleanup_ids=command_scope_cleanup_ids,
         staff_access=staff_access,
         control_group_id=control_group_id,
+        probe_service=probe_service,
+        device_api_url=os.environ.get("AURIX_DEVICE_API_URL", "").strip(),
     )
     # Long polling cannot coexist with a previously configured webhook. Keep
     # queued updates while explicitly converging the bot into polling mode.

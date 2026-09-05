@@ -281,7 +281,22 @@ class TelegramCallbackMixin:
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat_id, telegram_id)
                 return
-            if action == "k":
+            if action == "p":
+                if entity_id == "enqueue":
+                    try:
+                        self._admin_probe_call(telegram_id, "enqueue_due_probes", limit=100)
+                    except Exception as exc:
+                        self.send(chat_id, "Probe jobs could not be queued.", self._admin_keyboard(telegram_id))
+                        print(f"probe enqueue error: {type(exc).__name__}", file=sys.stderr)
+                    else:
+                        self._show_probes(
+                            chat_id,
+                            telegram_id,
+                            message_id=message_id if can_edit_text else None,
+                        )
+                else:
+                    self.send(chat_id, "This probe action is no longer valid.")
+            elif action == "k":
                 challenge = self._consume_admin_confirmation(chat_id, telegram_id, entity_id)
                 if challenge is None:
                     self.send(
@@ -340,6 +355,7 @@ class TelegramCallbackMixin:
                     "orders": "/orders",
                     "receipts": "/receipts",
                     "capacity": "/capacity",
+                    "probes": "/probes",
                     "prepare": "/capacity",
                     "reconcile": "/reconcile",
                     "failed": "/failed",

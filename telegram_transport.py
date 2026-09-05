@@ -68,6 +68,7 @@ class TelegramBot(
         "📥 Pending Orders": "/orders",
         "🧾 Receipt Review": "/receipts",
         "📈 Capacity": "/capacity",
+        "🛰 Fleet Probes": "/probes",
         "🔎 Consistency": "/reconcile",
         "🔁 Failed Jobs": "/failed",
         "🧩 Key Repairs": "/repairs",
@@ -84,6 +85,7 @@ class TelegramBot(
             "/orders",
             "/receipts",
             "/capacity",
+            "/probes",
             "/reconcile",
             "/enforcement",
             "/promo",
@@ -156,6 +158,8 @@ class TelegramBot(
         command_scope_cleanup_ids: set[int] | None = None,
         staff_access: Any | None = None,
         control_group_id: int | None = None,
+        probe_service: Any | None = None,
+        device_api_url: str | None = None,
     ):
         self.api = f"https://api.telegram.org/bot{token}"
         # urllib.request establishes a fresh TLS connection for every Bot API
@@ -171,11 +175,17 @@ class TelegramBot(
         )
         self.service = service
         self.commerce = commerce
+        self.probe_service = probe_service
+        self.device_api_url = str(device_api_url or "").rstrip("/")
         self.admin_ids = admin_ids or set()
         self.staff_access = staff_access
         self.control_group_id = int(control_group_id) if control_group_id else None
         self.admin_operations = AdminOperations(
-            self.commerce, self.admin_ids, self.service, staff_access=self.staff_access
+            self.commerce,
+            self.admin_ids,
+            self.service,
+            staff_access=self.staff_access,
+            probe_service=self.probe_service,
         )
         self.trial_ids = trial_ids or set()
         self.receipt_extractor = receipt_extractor or build_receipt_extractor()

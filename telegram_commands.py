@@ -758,6 +758,26 @@ class TelegramCommandMixin:
             # /status and /usage remain safe aliases for links and old Telegram
             # keyboards, but My VPN is the single customer-facing dashboard.
             self._send_my_vpn(chat["id"], telegram_id)
+        elif command == "/pair":
+            device_url = str(getattr(self, "device_api_url", "") or "").rstrip("/")
+            identity = getattr(self.service, "identity", None)
+            if not device_url or identity is None or not callable(getattr(identity, "create_pairing_token", None)):
+                self.send(chat["id"], "Managed-device pairing is not enabled on this AuriX deployment.")
+            else:
+                try:
+                    token = identity.create_pairing_token(telegram_id)
+                except Exception as exc:
+                    print(f"device pairing token error: {type(exc).__name__}", file=sys.stderr)
+                    self.send(chat["id"], "A device pairing token could not be created. Try again later.")
+                else:
+                    self.send(
+                        chat["id"],
+                        "📱 AuriX managed-device pairing\n\n"
+                        f"API: {device_url}\n"
+                        f"One-time token (expires in 5 minutes):\n`{token}`\n\n"
+                        "Enter this token in the official AuriX client. Do not post it in a group or share it with anyone.",
+                        parse_mode="Markdown",
+                    )
         elif command == "/alerts":
             self._send_quota_alert_settings(chat["id"], telegram_id)
         elif command == "/keysastext":
@@ -1054,6 +1074,17 @@ class TelegramCommandMixin:
                 except Exception as exc:
                     self.send(chat["id"], "Outline capacity metrics are temporarily unavailable.")
                     print(f"capacity error: {type(exc).__name__}", file=sys.stderr)
+        elif command == "/probes":
+            if not self._is_admin(telegram_id):
+                self._send_customer_fallback(chat["id"], telegram_id)
+            elif self.probe_service is None:
+                self.send(chat["id"], "Fleet probes are not configured.", self._admin_keyboard(telegram_id))
+            else:
+                try:
+                    self._show_probes(chat["id"], telegram_id)
+                except Exception as exc:
+                    self.send(chat["id"], "Fleet probe results are temporarily unavailable.", self._admin_keyboard(telegram_id))
+                    print(f"probe panel error: {type(exc).__name__}", file=sys.stderr)
         elif command == "/reconcile":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)

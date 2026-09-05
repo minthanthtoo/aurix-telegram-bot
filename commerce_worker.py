@@ -22,11 +22,89 @@ from commerce_models import (
 )
 from commerce_repositories import _PostgresConnection
 from connectivity_registry import ConnectivityRegistry
+from identity import IdentityError, IdentityService
 from quota_alerts import get_quota_alert_preferences, reached_alert
 
 
 class CommerceWorkerMixin:
     """Reliable-worker operations sharing the service transaction boundary."""
+
+    def _sync_identity_binding(
+        self,
+        *,
+        telegram_id: int,
+        kind: str,
+        quota_bytes: int,
+        expires_at: str,
+        server_id: str,
+        external_id: str,
+        subscription_id: str | None = None,
+        local_key_ref: str | None = None,
+    ) -> None:
+        """Converge a legacy credential into account/generation/lease state.
+
+        This is deliberately called after the commerce transaction commits:
+        the identity service owns its own transaction and must never nest a
+        second SQLite write transaction inside Outline provisioning.
+        """
+        identity = IdentityService(self.database)
+        normalized_kind = str(kind).lower()
+        if normalized_kind == "paid":
+            if not subscription_id:
+                raise IdentityError("paid credential is missing its subscription")
+            entitlement_id = identity.ensure_subscription_entitlement(
+                int(telegram_id),
+                str(subscription_id),
+                kind="paid",
+                quota_bytes=int(quota_bytes),
+                expires_at=str(expires_at),
+                status="active",
+            )
+        else:
+            ref = local_key_ref
+            if ref is None:
+                with self.database.connect() as connection:
+                    row = connection.execute(
+                        """SELECT id FROM keys
+                            WHERE server_id = ? AND outline_key_id = ?
+                            ORDER BY id DESC LIMIT 1""",
+                        (str(server_id), str(external_id)),
+                    ).fetchone()
+                ref = str(row["id"]) if row is not None else None
+            if ref is None:
+                raise IdentityError("free credential is missing its local key reference")
+            entitlement_id = identity.ensure_key_entitlement(
+                int(telegram_id),
+                server_id=str(server_id),
+                local_key_ref=str(ref),
+                kind=normalized_kind if normalized_kind in {"free", "trial", "promo"} else "free",
+                quota_bytes=int(quota_bytes),
+                expires_at=str(expires_at),
+                status="active",
+            )
+        with self.database.connect() as connection:
+            credential = connection.execute(
+                """SELECT c.credential_id, c.endpoint_id
+                     FROM connectivity_credentials c
+                     JOIN connectivity_endpoints e ON e.endpoint_id = c.endpoint_id
+                    WHERE e.outline_server_id = ? AND c.external_id = ?
+                      AND c.status = 'active'""",
+                (str(server_id), str(external_id)),
+            ).fetchone()
+        if credential is None:
+            return
+        generation_id = identity.ensure_generation_for_credential(
+            entitlement_id,
+            str(credential["endpoint_id"]),
+            credential_id=str(credential["credential_id"]),
+        )
+        identity.ensure_generation_lease(
+            entitlement_id,
+            generation_id,
+            str(credential["endpoint_id"]),
+            int(quota_bytes),
+            str(expires_at),
+        )
 
     def _claim_job(self, operation: str, now: datetime) -> dict[str, Any] | None:
         now_text = _now_text(now)
@@ -461,6 +539,19 @@ class CommerceWorkerMixin:
                     "expires_at": str(row["expires_at"]),
                 },
             )
+        try:
+            self._sync_identity_binding(
+                telegram_id=int(row["telegram_id"]),
+                kind=profile_kind,
+                quota_bytes=int(remaining),
+                expires_at=str(row["expires_at"]),
+                server_id=server_id,
+                external_id=remote_id,
+                subscription_id=subscription_id,
+                local_key_ref=local_ref if profile_kind != "paid" else None,
+            )
+        except Exception as exc:
+            print(f"identity repair sync error: {type(exc).__name__}", file=sys.stderr)
         return True
 
     def _mark_managed_repair_converged(
@@ -810,6 +901,18 @@ class CommerceWorkerMixin:
         self._delete_migration_source(
             {**job, "target_external_id": target_id}, current
         )
+        try:
+            self._sync_identity_binding(
+                telegram_id=int(job["telegram_id"]),
+                kind=str(job["profile_kind"]),
+                quota_bytes=int(remaining),
+                expires_at=str(job["expires_at"]),
+                server_id=str(job["target_server_id"]),
+                external_id=target_id,
+                subscription_id=str(subscription_id) if subscription_id else None,
+            )
+        except Exception as exc:
+            print(f"identity migration sync error: {type(exc).__name__}", file=sys.stderr)
 
     def process_endpoint_migrations(self, now: datetime | None = None, max_jobs: int = 5) -> int:
         """Run bounded replacement-key migrations after durable owner intent."""
@@ -1116,6 +1219,19 @@ class CommerceWorkerMixin:
                 )
             return
         if existing is not None:
+            if str(subscription["status"]) == "active":
+                try:
+                    self._sync_identity_binding(
+                        telegram_id=int(subscription["telegram_id"]),
+                        kind="paid",
+                        quota_bytes=int(existing["quota_bytes"] or desired_quota),
+                        expires_at=str(subscription["expires_at"]),
+                        server_id=str(existing["server_id"] or server_id),
+                        external_id=str(existing["outline_key_id"]),
+                        subscription_id=str(subscription["id"]),
+                    )
+                except Exception as exc:
+                    print(f"identity binding sync error: {type(exc).__name__}", file=sys.stderr)
             self._job_done(job["id"])
             return
         key_name = _paid_outline_key_name(subscription)
@@ -1247,6 +1363,20 @@ class CommerceWorkerMixin:
             self._revoke_legacy_free_keys(
                 subscription["telegram_id"], str(key["id"]), subscription["username"]
             )
+            try:
+                self._sync_identity_binding(
+                    telegram_id=int(subscription["telegram_id"]),
+                    kind="paid",
+                    quota_bytes=int(desired_quota),
+                    expires_at=str(activated_expires_at),
+                    server_id=str(server_id),
+                    external_id=str(key["id"]),
+                    subscription_id=str(subscription["id"]),
+                )
+            except Exception as exc:
+                # The paid key and job are already committed. Startup
+                # backfill/maintenance will retry the additive identity view.
+                print(f"identity binding sync error: {type(exc).__name__}", file=sys.stderr)
         except Exception:
             if created_remote and isinstance(key, dict) and key.get("id"):
                 try:

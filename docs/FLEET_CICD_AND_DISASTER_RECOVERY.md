@@ -130,6 +130,10 @@ configured, enables:
 - `aurix-infrastructure-worker.timer`, provider request reconciliation.
   When the standalone HTTPS callback is selected, the recovery script also
   installs/enables `aurix-fleet-registration.service` from the same release.
+- When the optional node-agent API is enabled with `AURIX_PROBE_API_ENABLED=1`
+  (and both persistent signing/encryption keys are present), the same release
+  installs and enables `aurix-fleet-probe-api.service`. The default is off;
+  recovery disables a previously enabled unit when the gate is not satisfied.
 
 ```bash
 systemctl list-timers 'aurix-*'

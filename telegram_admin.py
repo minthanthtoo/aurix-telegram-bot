@@ -68,6 +68,7 @@ class AdminOperations:
             "set_giveaway_active",
         }
     )
+    PROBE_OPERATIONS = frozenset({"summary", "recommendations", "enqueue_due_probes", "expire_jobs"})
 
     def __init__(
         self,
@@ -75,11 +76,13 @@ class AdminOperations:
         admin_ids: set[int],
         service: Any | None = None,
         staff_access: Any | None = None,
+        probe_service: Any | None = None,
     ):
         self.commerce = commerce
         self.admin_ids = admin_ids
         self.service = service
         self.staff_access = staff_access
+        self.probe_service = probe_service
 
     def require_admin(self, telegram_id: int) -> None:
         if self.staff_access is not None:
@@ -108,6 +111,16 @@ class AdminOperations:
         method = getattr(self.service, operation, None)
         if not callable(method):
             raise CommerceError("That administrator operation is unavailable.")
+        return method(*args, **kwargs)
+
+    def call_probe(self, telegram_id: int, operation: str, *args: Any, **kwargs: Any) -> Any:
+        """Invoke a probe operation behind the administrator authorization boundary."""
+        self.require_admin(telegram_id)
+        if self.probe_service is None or operation not in self.PROBE_OPERATIONS:
+            raise CommerceError("That probe operation is unavailable.")
+        method = getattr(self.probe_service, operation, None)
+        if not callable(method):
+            raise CommerceError("That probe operation is unavailable.")
         return method(*args, **kwargs)
 
     def call_owner(self, telegram_id: int, operation: str, *args: Any, **kwargs: Any) -> Any:

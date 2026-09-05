@@ -54,6 +54,7 @@ VERSIONED_UNIT_NAMES = (
     "aurix-fleet-registration.service",
     "aurix-dns-sync.service",
     "aurix-dns-sync.timer",
+    "aurix-fleet-probe-api.service",
 )
 
 
@@ -327,6 +328,24 @@ def install_fleet_automation(target: Path) -> None:
         "1", "true", "yes", "on",
     }:
         run("systemctl", "enable", "--now", "aurix-dns-sync.timer", timeout=30)
+    probe_api_enabled = os.environ.get("AURIX_PROBE_API_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if probe_api_enabled:
+        if not os.environ.get("AURIX_MANIFEST_SIGNING_KEY", "").strip() or not os.environ.get(
+            "AURIX_ACCESS_URL_KEY", ""
+        ).strip():
+            raise DeployError(
+                "AURIX_PROBE_API_ENABLED requires AURIX_MANIFEST_SIGNING_KEY and AURIX_ACCESS_URL_KEY"
+            )
+        run("systemctl", "enable", "--now", "aurix-fleet-probe-api.service", timeout=30)
+    else:
+        subprocess.run(
+            ("systemctl", "disable", "--now", "aurix-fleet-probe-api.service"),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
 
 
 def _write_state(sha: str) -> None:

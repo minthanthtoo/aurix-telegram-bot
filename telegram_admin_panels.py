@@ -201,7 +201,8 @@ class TelegramAdminMixin:
         return self._inline_keyboard(
             [
                 [("📥 Pending Orders", "a:n:orders"), ("🧾 Receipt Review", "a:n:receipts")],
-                [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
+                [("📈 Capacity", "a:n:capacity"), ("🛰 Fleet Probes", "a:n:probes")],
+                [("🔎 Consistency", "a:n:reconcile")],
                 [
                     ("🔁 Failed Jobs", "a:n:failed"),
                     ("🧩 Key Repairs", "a:n:repairs"),
@@ -941,7 +942,8 @@ class TelegramAdminMixin:
                 [("📥 Pending Orders", "a:n:orders"), ("🧾 Receipt Review", "a:n:receipts")],
                 [("🧪 Receipt System", "a:n:receiptsystem"), ("🎁 Promotions", "a:n:promo")],
                 [("🔔 My Alerts", "a:n:notifications")],
-                [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
+                [("📈 Capacity", "a:n:capacity"), ("🛰 Fleet Probes", "a:n:probes")],
+                [("🔎 Consistency", "a:n:reconcile")],
                 [
                     ("🔁 Failed Jobs", "a:n:failed"),
                     ("🧩 Key Repairs", "a:n:repairs"),
@@ -1121,6 +1123,54 @@ class TelegramAdminMixin:
         self, telegram_id: int, operation: str, *args: Any, **kwargs: Any
     ) -> Any:
         return self.admin_operations.call_service(telegram_id, operation, *args, **kwargs)
+
+    def _admin_probe_call(
+        self, telegram_id: int, operation: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        return self.admin_operations.call_probe(telegram_id, operation, *args, **kwargs)
+
+    def _show_probes(
+        self, chat_id: int, telegram_id: int, message_id: int | None = None
+    ) -> None:
+        """Show authenticated server-agent probe evidence and route scores."""
+        if not self._is_admin(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        summary = self._admin_probe_call(telegram_id, "summary")
+        routes = summary.get("routes") or []
+        lines = [
+            "🛰 AuriX Fleet Probes",
+            "",
+            f"Servers: {summary.get('server_count', 0)} · "
+            f"healthy {summary.get('healthy', 0)} · degraded {summary.get('degraded', 0)} · "
+            f"unreachable {summary.get('unreachable', 0)} · unknown {summary.get('unknown', 0)}",
+            "Measurements are performed by AuriX server agents; they are not phone-to-server latency.",
+        ]
+        for route in routes[:12]:
+            status = str(route.get("status") or "unknown")
+            icon = {"healthy": "🟢", "degraded": "🟡", "unreachable": "🔴"}.get(status, "⚪️")
+            score = route.get("score")
+            score_text = "-" if score is None else f"{float(score):.1f}/100"
+            observed = str(route.get("last_observed_at") or "never")[:19]
+            lines.append(
+                f"\n{icon} {str(route.get('label') or route.get('server_id'))[:32]} · "
+                f"{route.get('region') or 'Unknown'}\n"
+                f"Status: {status} · score {score_text} · samples {route.get('sample_count', 0)}\n"
+                f"Last evidence: {observed}"
+            )
+        if not routes:
+            lines.extend(["", "No routes are configured for server-agent probing."])
+        markup = self._inline_keyboard(
+            [[("🔄 Enqueue Due Probes", "a:p:enqueue")], [("🏠 Admin Home", "a:n:admin")]]
+        )
+        text = "\n".join(lines)[:4096]
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)
 
     def _send_customer_fallback(self, chat_id: int, telegram_id: int) -> None:
         """Return a role-neutral response for unknown or unauthorized input."""

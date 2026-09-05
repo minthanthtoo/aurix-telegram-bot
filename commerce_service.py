@@ -61,6 +61,7 @@ class CommerceService(CommerceWorkerMixin):
         self.receipt_storage_required = bool(receipt_storage_required)
         self.receipt_recipient_profiles = load_recipient_profiles()
         self._server_metrics_cache: dict[str, dict[str, Any]] = {}
+        self.probe_service: Any | None = None
         try:
             self.access_url_cipher = Fernet(access_url_key)
         except (TypeError, ValueError) as exc:
@@ -2315,7 +2316,14 @@ class CommerceService(CommerceWorkerMixin):
                 },
             )
 
-    def _select_server_for_plan(self, connection: Any, plan_code: str, now_text: str) -> str:
+    def _select_server_for_plan(
+        self,
+        connection: Any,
+        plan_code: str,
+        now_text: str,
+        *,
+        telegram_id: int | None = None,
+    ) -> str:
         plan = connection.execute(
             "SELECT quota_bytes FROM plans WHERE code = ? AND active = 1", (plan_code,)
         ).fetchone()
@@ -2341,9 +2349,33 @@ class CommerceService(CommerceWorkerMixin):
                ORDER BY server_id""",
             (fresh_after,),
         ).fetchall()
-        candidates: list[tuple[float, str]] = []
+        candidates: list[tuple[float, int, float, str]] = []
         for server in servers:
             server_id = str(server["server_id"])
+            probe_status = "unknown"
+            probe_score = -1.0
+            probe = (
+                connection.execute(
+                    """SELECT status, score, last_observed_at
+                         FROM route_health_snapshots WHERE server_id = ?""",
+                    (server_id,),
+                ).fetchone()
+                if self._table_exists(connection, "route_health_snapshots")
+                else None
+            )
+            if probe is not None and probe["last_observed_at"] is not None:
+                try:
+                    probe_fresh = datetime.fromisoformat(str(probe["last_observed_at"])).astimezone(UTC) >= selection_time - timedelta(seconds=health_max_age)
+                except (TypeError, ValueError, OverflowError):
+                    probe_fresh = False
+                if probe_fresh:
+                    probe_status = str(probe["status"] or "unknown")
+                    probe_score = float(probe["score"]) if probe["score"] is not None else -1.0
+                    if probe_status == "unreachable":
+                        continue
+                    require_probe = os.environ.get("AURIX_REQUIRE_PROBE_EVIDENCE_FOR_ISSUANCE", "0").strip().lower() in {"1", "true", "yes", "on"}
+                    if require_probe and probe_status == "unknown":
+                        continue
             allocation = connection.execute(
                 "SELECT slot_limit FROM server_plan_allocations WHERE server_id = ? AND plan_code = ?",
                 (server_id, plan_code),
@@ -2390,10 +2422,37 @@ class CommerceService(CommerceWorkerMixin):
                 if int(committed or 0) + requested_quota > int(traffic_budget):
                     continue
             denominator = int(allocation["slot_limit"]) if allocation is not None and int(allocation["slot_limit"]) else (usable or 1)
-            candidates.append((int(allocated_count) / max(1, denominator), server_id))
+            probe_rank = {"healthy": 0, "degraded": 1, "unknown": 2}.get(probe_status, 2)
+            candidates.append((int(allocated_count) / max(1, denominator), probe_rank, -probe_score, server_id))
         if not candidates:
             raise CommerceError("This plan is temporarily full. Please check again later.")
-        return min(candidates)[1]
+        selected = min(candidates)
+        if self._table_exists(connection, "route_decisions"):
+            selected_score = -selected[2] if selected[2] >= 0 else None
+            connection.execute(
+                """INSERT INTO route_decisions
+                   (decision_id, telegram_id, entitlement_ref, requested_region,
+                    selected_server_id, decision_mode, score, evidence_json, created_at)
+                   VALUES (?, ?, NULL, NULL, ?, 'automatic', ?, ?, ?)""",
+                (
+                    f"decision-{_new_id()}",
+                    telegram_id,
+                    selected[3],
+                    selected_score,
+                    json.dumps(
+                        {
+                            "basis": "capacity_and_fresh_probe",
+                            "plan_code": str(plan_code),
+                            "probe_rank": selected[1],
+                        },
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    now_text,
+                ),
+            )
+        return selected[3]
 
     def plans(self) -> list[Plan]:
         with self.database.connect() as connection:
@@ -2780,7 +2839,9 @@ class CommerceService(CommerceWorkerMixin):
                 "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
             ).fetchone()["n"]
             server_id = (
-                self._select_server_for_plan(connection, plan.code, created_at)
+                self._select_server_for_plan(
+                    connection, plan.code, created_at, telegram_id=telegram_id
+                )
                 if int(registered)
                 else None
             )
@@ -2888,7 +2949,9 @@ class CommerceService(CommerceWorkerMixin):
                 "SELECT COUNT(*) AS n FROM outline_servers WHERE enabled = 1"
             ).fetchone()["n"]
             server_id = (
-                self._select_server_for_plan(connection, plan.code, created_at)
+                self._select_server_for_plan(
+                    connection, plan.code, created_at, telegram_id=telegram_id
+                )
                 if int(registered)
                 else None
             )

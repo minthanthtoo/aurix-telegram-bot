@@ -19,6 +19,20 @@ VPS pool = bandwidth, public IP, and regional exit
 
 The control plane must never carry customer VPN traffic. Once a key is provisioned, an API or Telegram outage must not interrupt existing VPN sessions.
 
+The current implementation extends this Outline-first MVP with two optional
+control-plane capabilities that do not change that boundary:
+
+- authenticated node agents perform server-side ICMP/TCP/UDP/DNS/HTTPS and
+  bounded throughput probes; the control plane persists signed observations and
+  uses fresh evidence for route admission/recommendation;
+- an optional managed-device API uses opaque accounts, one-time pairing,
+  Ed25519-signed requests/manifests, credential generations, and bounded quota
+  leases. Manual third-party Outline clients remain fully supported.
+
+Neither VPN traffic nor server-side auto-discovery requires the managed device
+client. A native client is an enhancement for automatic manifest refresh and
+route selection, not a prerequisite for issuing or using an Outline key.
+
 ## System context
 
 ```mermaid
@@ -90,7 +104,7 @@ flowchart TB
 | VPN integration | Version-pinned Outline adapter with certificate pinning |
 | VPN hosting | Public Linux VPS, initially Singapore |
 | Management access | Private/allowlisted path; never exposed to customers |
-| Customer identity | Telegram user ID; not a physical-device identity |
+| Customer identity | Opaque AuriX account mapped to Telegram; device identity is optional and separate |
 | Product entitlement | Time plus bandwidth; no dependency on device fingerprinting |
 | Payment | Staff-assisted verification in the first paid pilot |
 | Scaling | Add Outline nodes from measured bandwidth and health data |
@@ -140,6 +154,12 @@ The modules live in one deployable application and share one PostgreSQL database
 
 9. **Server operations**
    - Health, transfer, capacity status, failed jobs, and alerts.
+
+10. **Fleet probes and managed devices**
+   - Server-side probe scheduling, authenticated node-agent results, health
+     scoring, and Telegram/admin recommendations.
+   - Optional device pairing, signed manifests, route configuration delivery,
+     revocation epochs, credential generations, and quota leases.
 
 ### Later modules
 

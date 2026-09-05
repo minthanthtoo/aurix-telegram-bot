@@ -1,0 +1,19 @@
+[Unit]
+Description=AuriX node-side fleet probe agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aurix
+Group=aurix
+WorkingDirectory=/opt/aurix-current
+EnvironmentFile=/etc/aurix-bot/aurix-agent.env
+ExecStart=/opt/aurix-current/.venv/bin/python /opt/aurix-current/fleet_probe_agent.py --limit 10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

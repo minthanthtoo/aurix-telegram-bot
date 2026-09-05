@@ -66,10 +66,12 @@ class _Commerce:
 
 
 class _ClaimService:
-    def __init__(self, database, outline, limit_bytes):
+    def __init__(self, database, outline, limit_bytes, probe_service=None, access_url_key=None):
         self.database = database
         self.outline = outline
         self.limit_bytes = limit_bytes
+        self.probe_service = probe_service
+        self.access_url_key = access_url_key
 
     def reconcile_giveaway_limits(self):
         return 1

@@ -262,6 +262,10 @@ class TelegramMaintenanceMixin:
                 self._record_maintenance_heartbeat(stage=name, error=f"{type(exc).__name__}: {exc}")
                 return None
 
+        if getattr(self, "probe_service", None) is not None:
+            run_stage("probe_expiry", self.probe_service.expire_jobs)
+            run_stage("probe_enqueue", self.probe_service.enqueue_due_probes)
+
         if (
             self._command_menu_retry_enabled
             and self._command_menu_configure_attempted
@@ -299,6 +303,10 @@ class TelegramMaintenanceMixin:
             refresh_inventory = getattr(self.commerce, "refresh_server_inventory", None)
             if callable(refresh_inventory):
                 run_stage("server_inventory", refresh_inventory)
+            identity = getattr(self.service, "identity", None)
+            converge_identity = getattr(identity, "sync_existing_entitlements", None)
+            if callable(converge_identity):
+                run_stage("identity_convergence", converge_identity)
             prune_usage_snapshots = getattr(self.commerce, "prune_usage_snapshots", None)
             if callable(prune_usage_snapshots):
                 run_stage("usage_snapshot_cleanup", prune_usage_snapshots)

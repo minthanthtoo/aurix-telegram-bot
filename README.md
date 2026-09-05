@@ -115,6 +115,23 @@ reject an otherwise valid profile.
   `AURIX_FLEET_ENROLLMENT_KEY` — optional HTTPS one-time node-enrollment
   callback; enable only together with the worker's
   `AURIX_FLEET_AUTO_REGISTRATION_ENABLED` gate and pinned SSH trust files.
+- `AURIX_PROBE_AGENT_SECRETS_JSON` — server-only JSON map of node IDs to unique
+  probe-agent secrets. Never expose this to Telegram or customer devices.
+- `AURIX_PROBE_TARGETS_JSON` and `AURIX_PROBE_SCHEDULES_JSON` — optional
+  server-side ICMP/TCP/UDP/DNS/HTTPS/download probe definitions. Results are
+  authenticated, persisted, scored and shown in the admin Fleet Probes panel.
+- `AURIX_PROBE_STALE_AFTER_SECONDS` and `AURIX_PROBE_JOB_TTL_SECONDS` — probe
+  freshness and job-expiry bounds.
+- `AURIX_MANIFEST_SIGNING_KEY` — persistent server-only URL-safe base64 Ed25519
+  private key for the managed-device API; keep it outside the Telegram bot and
+  rotate only through a documented client re-enrollment procedure.
+- `AURIX_DEVICE_API_URL` — public HTTPS base URL for the optional managed-device
+  API. When set, users can request a five-minute one-time pairing token with
+  `/pair`; the API must be routed to the separate loopback control listener.
+- `AURIX_REQUIRE_PROBE_EVIDENCE_FOR_ISSUANCE` — optional fail-closed gate for
+  new issuance (`1` requires fresh server-side probe evidence; default `0`
+  preserves the existing health/capacity fallback while the fleet is being
+  enrolled).
 
 Optional DigitalOcean fleet creation belongs to a separate operator worker.
 It is off by default and requires explicit allowlists, node/day/cooldown limits,

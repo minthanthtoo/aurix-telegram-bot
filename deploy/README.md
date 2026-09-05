@@ -17,6 +17,37 @@ The public IP is infrastructure metadata, not an Outline management credential.
 Do not invent an `OUTLINE_API_URL`; the Outline installer emits the secret path
 and certificate fingerprint after installation.
 
+## Fleet probe agents
+
+Fleet probing is server-side. The AuriX control plane schedules jobs and the
+node agent executes bounded ICMP/TCP/UDP/DNS/HTTPS/download checks. The agent
+posts signed results back to the probe API; Telegram reads the persisted health
+projection. It never receives Outline management URLs or customer keys.
+
+On the control-plane host, install `aurix-fleet-probe-api.service` behind a
+TLS-terminating reverse proxy and configure the server-only
+`AURIX_PROBE_AGENT_SECRETS_JSON` map plus a persistent URL-safe base64 Ed25519
+`AURIX_MANIFEST_SIGNING_KEY`. Losing the manifest signing key requires a
+controlled client re-enrollment. On each VPN node, install
+`aurix-fleet-probe-agent.service` and `aurix-fleet-probe-agent.timer` with a
+root-readable `/etc/aurix-bot/aurix-agent.env`:
+
+```dotenv
+AURIX_PROBE_API_URL=https://control.example
+AURIX_PROBE_AGENT_ID=sg-a
+AURIX_PROBE_AGENT_SECRET=replace-with-a-unique-random-secret
+```
+
+Use one secret per node. Rotate it by updating the control-plane map and node
+environment during a controlled maintenance window. The probe API rejects
+unsigned, replayed and expired requests; duplicate result submissions are
+idempotent.
+
+The agent unit reads `AURIX_PROBE_API_URL` and `AURIX_PROBE_AGENT_ID` from the
+environment file itself; it does not rely on shell-variable expansion in
+`ExecStart`. The API unit uses the repository virtual environment at
+`/opt/aurix-current/.venv/bin/python`, matching the bot and worker units.
+
 ## 1. Verify access before making changes
 
 From the operator workstation, use the approved SSH key and a short timeout:
@@ -99,6 +130,15 @@ AURIX_SERVER_HEALTH_MAX_AGE_SECONDS=900
 AURIX_ENDPOINT_FAILURE_THRESHOLD=3
 AURIX_ENDPOINT_RECOVERY_THRESHOLD=2
 AURIX_ACCESS_URL_KEY=replace-with-a-persistent-fernet-key
+AURIX_DEVICE_API_URL=https://control.example
+AURIX_MANIFEST_SIGNING_KEY=replace-with-persistent-url-safe-base64-ed25519-key
+AURIX_PROBE_AGENT_SECRETS_JSON='{"sg-a":"replace-with-unique-agent-secret"}'
+# Optional JSON target/schedule definitions are documented in README.md.
+AURIX_PROBE_TARGETS_JSON=[]
+AURIX_PROBE_SCHEDULES_JSON=[]
+AURIX_PROBE_STALE_AFTER_SECONDS=900
+AURIX_PROBE_JOB_TTL_SECONDS=180
+AURIX_PROBE_API_ENABLED=0
 DATABASE_PATH=/var/lib/aurix-bot/bot.db
 # Optional: set a reachable PostgreSQL URL for hosted commercial state.
 COMMERCE_DATABASE_URL=
