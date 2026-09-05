@@ -29,7 +29,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Order consistency operations | Implemented locally | Derived customer stages, receipt-level rejection/resubmission, untouched-order cancellation/expiry, wallet history, and admin `/reconcile` invariant scan |
 | Persistent commercial DB at production scale | Optional backend implemented | `COMMERCE_DATABASE_URL` selects PostgreSQL; guarded `deploy/migrate_sqlite_to_postgres.py` preserves existing SQLite state; hosted DB provisioning, cutover, and live restore remain gates |
 | Independent worker / web control plane | Worker and callback endpoint implemented; live enrollment pending | The guarded DigitalOcean worker/timer and encrypted one-time `/fleet/register` callback (Render or standalone TLS service) are in source; live endpoint/worker canary remains a gate. Render profiles now run read-only Telegram, Supabase, LLM, database, and pinned-Outline startup canaries. |
-| Live Telegram and Outline smoke test | Degraded for admission: 1/3 nodes currently carries customer keys | From the control-plane host, all three Outline 1.12.3 management APIs respond. Primary (`157.245.63.95`) is healthy with 17 remote keys, 8 metrics keys, and data port 45524 open. Singapore-B and BKK each passed a reversible 1 MB create → data-port-open → delete canary, but currently have zero remote keys and remain at zero saleable slots until the owner opens a tranche. A real customer-account canary and longer observation remain |
+| Live Telegram and Outline smoke test | Degraded for admission: 1/3 nodes currently carries customer keys | From the control-plane host, all three Outline 1.12.3 management APIs respond. Primary (`157.245.63.95`) is healthy with 17 remote keys, 8 metrics keys, and data port 45524 open. Singapore-B and BKK answer management but their configured data port 443 is currently refused; both have zero remote keys and remain at zero saleable slots until the owner repairs and canaries the data plane. The live release is `3dceef6`; the bot and recovery timers are active with no recent bot errors. A real customer-account canary and longer observation remain |
 | Automated payment-provider verification | Deliberately deferred | First paid pilot is staff-assisted per final architecture |
 | Referrals, affiliates, and resellers | Deliberately deferred | Enable only after paid-pilot retention, abuse, unit-economics, and reliability evidence |
 | Multi-node allocation and guarded scale-out | Implemented; only primary currently admits customer keys | Server-scoped allocation, provider inventory, provider-side SSH-key attachment, two-observation provider-orphan audit with separately gated cleanup, non-secret remote-key audit, durable two-observation scale gate, capacity posture, stable provider identity checks, idempotent intents, encrypted single-use enrollment, and worker safety gates are live; free/trial/promo provisioning is restart-safe and counts pending reservations against node admission; untracked remote keys remain a migration blocker, and Singapore-B/BKK remain at zero issuance slots until owner-approved tranches are set |
@@ -49,20 +49,18 @@ engineering estimates, not production traffic or revenue metrics.
   PostgreSQL/node off-site-only recovery and plaintext-hash integrity checks,
   pinned node-bootstrap TLS, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (456 tests passing at the latest verification).
-- Live deployment readiness: **staged, not 100%**. The current sanitized
-  acceptance run passes source, lint, compilation, tests, required secret names,
-  fleet-manifest parsing, backup-key validation, and the recovery entrypoint,
-  but fails database/off-site recovery readiness because the local `.env` does
-  not declare a hosted database or off-site database/fleet destination. The
-  workstation probe cannot reach allowlisted management ports, while the
-  control-plane-host probe reaches all three management APIs. The live
-  topology is still admission-degraded because only the primary currently
-  carries customer keys. Legacy
-  primary allocation is also over-subscribed (70 declared slots against 20
-  saleable keys), archive decryptability has not been run in this environment,
-  provider mutations remain disabled, stable DNS is not configured, and live
-  Render/systemd checks were not requested by the audit. A real Telegram
+  production-acceptance suite (457 tests passing at the latest verification).
+- Live deployment readiness: **staged, not 100%**. The deployed control plane
+  is `3dceef6`, all required systemd services/timers are active, and the
+  control-plane-host canary reports 3/3 management APIs reachable. Running
+  `recovery_readiness.py --verify-archives` now verifies both the SQLite
+  database archive and all three encrypted off-site fleet archives through the
+  private object store. The overall result remains `warn` because the primary
+  allocation is over-subscribed (70 declared slots against 20 saleable keys)
+  with 17 untracked remote keys, provider mutations are intentionally disabled,
+  and stable DNS automation is not configured. Data-plane diagnostics currently
+  show only primary serving traffic; Singapore-B and BKK have port-443 refusal
+  and must remain unsaleable until repaired and canaried. A real Telegram
   account canary, allocation normalization/strict validation, untracked-key
   audit, live enrollment callback/worker canary, and sustained observation
   remain owner-controlled gates.
