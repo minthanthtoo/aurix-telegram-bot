@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import secrets
 from typing import Any
 
 
@@ -291,5 +293,147 @@ class WalletApprovalRepository:
                 text,
                 now_text,
                 now_text,
+            ),
+        )
+
+    @staticmethod
+    def reject_order(
+        connection: Any,
+        *,
+        order_id: str,
+        order: Any,
+        admin_id: int,
+        rejected_at: str,
+        wallet_payment: bool,
+    ) -> None:
+        connection.execute(
+            "UPDATE orders SET status = 'rejected', rejected_at = ? WHERE id = ?",
+            (rejected_at, order_id),
+        )
+        connection.execute(
+            "UPDATE payments SET status = 'rejected' WHERE order_id = ? AND status = 'submitted'",
+            (order_id,),
+        )
+        if wallet_payment:
+            idem = f"release:{order_id}"
+            if connection.execute(
+                "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (idem,)
+            ).fetchone() is None:
+                connection.execute(
+                    "UPDATE wallets SET balance_minor = balance_minor + ?, updated_at = ? WHERE telegram_id = ?",
+                    (order["amount_minor"], rejected_at, order["telegram_id"]),
+                )
+                connection.execute(
+                    """INSERT INTO wallet_ledger
+                       (id, telegram_id, kind, amount_minor, currency, reference_type,
+                        reference_id, idempotency_key, created_at)
+                       VALUES (?, ?, 'release', ?, ?, 'order', ?, ?, ?)""",
+                    (
+                        f"ledger-{secrets.token_hex(16)}",
+                        order["telegram_id"], order["amount_minor"], order["currency"],
+                        order_id, idem, rejected_at,
+                    ),
+                )
+                connection.execute(
+                    "UPDATE wallet_reservations SET status = 'released', updated_at = ? WHERE order_id = ?",
+                    (rejected_at, order_id),
+                )
+        connection.execute(
+            """UPDATE payment_evidence SET reviewer_id = ?, review_notes = 'rejected by admin',
+                   review_status = 'rejected', reviewed_at = ?
+               WHERE order_id = ? AND reviewer_id IS NULL""",
+            (admin_id, rejected_at, order_id),
+        )
+        connection.execute(
+            """INSERT INTO notifications
+               (id, dedupe_key, telegram_id, kind, text, status, next_attempt_at, created_at)
+               VALUES (?, ?, ?, 'payment_rejected', ?, 'pending', ?, ?)
+               ON CONFLICT(dedupe_key) DO NOTHING""",
+            (
+                f"notification-{secrets.token_hex(16)}",
+                f"payment-rejected:{order_id}", order["telegram_id"],
+                "Your AuriX payment/order was rejected. Contact support if you need a review.",
+                rejected_at, rejected_at,
+            ),
+        )
+
+    @staticmethod
+    def refund_order(
+        connection: Any,
+        *,
+        order_id: str,
+        order: Any,
+        amount: int,
+        reason: str,
+        admin_id: int,
+        refunded_at: str,
+    ) -> None:
+        currency = str(order["currency"]).upper()
+        connection.execute(
+            """INSERT INTO wallets (telegram_id, currency, balance_minor, created_at, updated_at)
+               VALUES (?, ?, 0, ?, ?) ON CONFLICT(telegram_id) DO NOTHING""",
+            (order["telegram_id"], currency, refunded_at, refunded_at),
+        )
+        wallet = connection.execute(
+            "SELECT currency FROM wallets WHERE telegram_id = ?", (order["telegram_id"],)
+        ).fetchone()
+        if wallet is None or str(wallet["currency"]).upper() != currency:
+            raise ValueError("Wallet currency does not match the order")
+        idem = f"reversal:{order_id}"
+        if connection.execute(
+            "SELECT id FROM wallet_ledger WHERE idempotency_key = ?", (idem,)
+        ).fetchone() is None:
+            connection.execute(
+                "UPDATE wallets SET balance_minor = balance_minor + ?, updated_at = ? WHERE telegram_id = ?",
+                (amount, refunded_at, order["telegram_id"]),
+            )
+            connection.execute(
+                """INSERT INTO wallet_ledger
+                   (id, telegram_id, kind, amount_minor, currency, reference_type,
+                    reference_id, idempotency_key, metadata_json, created_at)
+                   VALUES (?, ?, 'reversal', ?, ?, 'order', ?, ?, ?, ?)""",
+                (
+                    f"ledger-{secrets.token_hex(16)}", order["telegram_id"], amount,
+                    currency, order_id, idem,
+                    json.dumps({"reason": reason[:500], "admin_id": admin_id}, sort_keys=True),
+                    refunded_at,
+                ),
+            )
+        connection.execute(
+            "UPDATE payments SET status = 'refunded' WHERE order_id = ? AND status IN ('verified', 'submitted')",
+            (order_id,),
+        )
+        final_status = str(order["status"]) if str(order["status"]) == "approved" else "rejected"
+        connection.execute(
+            "UPDATE orders SET status = ?, refund_status = 'refunded', rejected_at = COALESCE(rejected_at, ?) WHERE id = ?",
+            (final_status, refunded_at, order_id),
+        )
+        subscription = connection.execute(
+            "SELECT id, status FROM subscriptions WHERE order_id = ?", (order_id,)
+        ).fetchone()
+        if subscription is not None:
+            next_status = {"active": "revoked", "pending": "cancelled"}.get(str(subscription["status"]))
+            if next_status:
+                connection.execute(
+                    "UPDATE subscriptions SET status = ? WHERE id = ?",
+                    (next_status, subscription["id"]),
+                )
+            connection.execute(
+                """INSERT INTO provisioning_jobs
+                   (id, subscription_id, operation, status, next_attempt_at, created_at)
+                   VALUES (?, ?, 'revoke', 'pending', ?, ?)
+                   ON CONFLICT(subscription_id, operation) DO NOTHING""",
+                (f"job-{secrets.token_hex(16)}", subscription["id"], refunded_at, refunded_at),
+            )
+        connection.execute(
+            """INSERT INTO notifications
+               (id, dedupe_key, telegram_id, kind, text, status, next_attempt_at, created_at)
+               VALUES (?, ?, ?, 'payment_refunded', ?, 'pending', ?, ?)
+               ON CONFLICT(dedupe_key) DO NOTHING""",
+            (
+                f"notification-{secrets.token_hex(16)}",
+                f"payment-refund-recorded:{order_id}", order["telegram_id"],
+                f"Your AuriX order was refunded with a {amount:,} {currency} wallet credit. Reason: {reason[:300]}",
+                refunded_at, refunded_at,
             ),
         )

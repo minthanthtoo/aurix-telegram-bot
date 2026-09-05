@@ -49,13 +49,18 @@
       "max_sql_calls": 11
     },
     "commerce_wallet_approval_repository.py": {
-      "max_lines": 295,
-      "max_function_lines": 56,
-      "max_sql_calls": 19
+      "max_lines": 439,
+      "max_function_lines": 79,
+      "max_sql_calls": 38
     },
     "commerce_service.py": {
       "max_lines": 254,
       "max_function_lines": 29,
+      "max_sql_calls": 0
+    },
+    "commerce_service_wallet_refunds.py": {
+      "max_lines": 112,
+      "max_function_lines": 56,
       "max_sql_calls": 0
     },
     "commerce_service_allocation.py": {

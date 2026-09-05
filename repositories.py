@@ -254,6 +254,10 @@ class WalletApprovalRepositoryPort(Protocol):
         now_text: str,
     ) -> None: ...
 
+    def reject_order(self, connection: Any, **values: Any) -> None: ...
+
+    def refund_order(self, connection: Any, **values: Any) -> None: ...
+
 
 @runtime_checkable
 class IdentityUsageRepositoryPort(Protocol):
