@@ -172,6 +172,7 @@ def probe_server(
         "key_count": 0,
         "metrics_key_count": 0,
         "data_ports": [],
+        "data_plane_status": "unknown",
         "error": None,
     }
     if parsed is None or parsed.scheme != "https" or not parsed.hostname:
@@ -190,6 +191,12 @@ def probe_server(
         for host, port in _access_targets([], parsed.hostname, config.get("keys_port")):
             result["data_ports"].append(
                 _tcp_probe(host, port, data_timeout, connector=connector)
+            )
+        if result["data_ports"]:
+            result["data_plane_status"] = (
+                "healthy"
+                if all(item["status"] == "open" for item in result["data_ports"])
+                else "degraded"
             )
         return result
     started = time.perf_counter()
@@ -220,12 +227,29 @@ def probe_server(
                 "metrics_key_count": len(by_key),
             }
         )
-        for host, port in _access_targets(keys, parsed.hostname, config.get("keys_port")):
+        # Outline intentionally stops listening on its access port when it has
+        # zero keys. Do not misclassify an empty, healthy node as a broken
+        # data plane; probe the configured fallback port only when at least one
+        # key exists (or when management is already down, above).
+        targets = _access_targets(
+            keys,
+            parsed.hostname,
+            config.get("keys_port") if keys else None,
+        )
+        for host, port in targets:
             port_result = _tcp_probe(host, port, data_timeout, connector=connector)
             # Access-key hosts are public endpoint metadata; do not include
             # usernames, fragments or encoded access credentials.
             result["data_ports"].append(port_result)
-        if any(item["status"] != "open" for item in result["data_ports"]):
+        if not keys:
+            result["data_plane_status"] = "not_serving_no_keys"
+        elif result["data_ports"]:
+            result["data_plane_status"] = (
+                "healthy"
+                if all(item["status"] == "open" for item in result["data_ports"])
+                else "degraded"
+            )
+        if result["data_ports"] and any(item["status"] != "open" for item in result["data_ports"]):
             result["status"] = "degraded"
     except Exception as exc:
         result["latency_ms"] = round((time.perf_counter() - started) * 1000, 3)

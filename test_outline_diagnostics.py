@@ -26,6 +26,14 @@ class _Client:
         return {"bytesTransferredByUserId": {"1": 12}}
 
 
+class _EmptyClient(_Client):
+    def list_keys(self):
+        return {"accessKeys": []}
+
+    def transfer_metrics(self):
+        return {"bytesTransferredByUserId": {}}
+
+
 class OutlineDiagnosticsTest(unittest.TestCase):
     def test_probe_reports_management_and_data_health_without_access_secret(self):
         calls = []
@@ -76,6 +84,32 @@ class OutlineDiagnosticsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "degraded")
         self.assertEqual(result["data_ports"][0]["status"], "timeout")
+
+    def test_empty_outline_node_is_not_degraded_when_no_data_listener_exists(self):
+        calls = []
+
+        def connector(address, timeout):
+            calls.append((address, timeout))
+            return _Socket()
+
+        result = probe_server(
+            {
+                "id": "sg-b",
+                "label": "Singapore B",
+                "api_url": "https://198.51.100.10:61604/private",
+                "cert_sha256": "a" * 64,
+                "keys_port": 443,
+            },
+            request_timeout=2,
+            data_timeout=1,
+            client_factory=_EmptyClient,
+            connector=connector,
+        )
+
+        self.assertEqual(result["status"], "healthy")
+        self.assertEqual(result["data_plane_status"], "not_serving_no_keys")
+        self.assertEqual(result["data_ports"], [])
+        self.assertEqual(len(calls), 1)
 
     def test_probe_still_checks_configured_data_port_when_management_is_down(self):
         calls = []
