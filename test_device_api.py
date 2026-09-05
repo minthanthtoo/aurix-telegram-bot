@@ -4,6 +4,7 @@ import json
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -81,6 +82,13 @@ class DeviceApiTest(unittest.TestCase):
                 serialization.Encoding.Raw, serialization.PublicFormat.Raw
             )
         )
+        invalid_token = self.identity.create_pairing_token(123)
+        status, value = self.request(
+            "POST", "/v1/devices/pair",
+            json.dumps({"token": invalid_token, "public_key": "not-a-key"}).encode(),
+        )
+        self.assertEqual(status, "400 Bad Request")
+        self.assertEqual(value["error"], "public key is invalid")
         token = self.identity.create_pairing_token(123)
         status, paired = self.request(
             "POST", "/v1/devices/pair",
@@ -108,6 +116,41 @@ class DeviceApiTest(unittest.TestCase):
         )
         self.assertEqual(status, "401 Unauthorized")
         self.assertIn("not active", value["error"])
+
+    def test_pair_rejects_malformed_public_key_before_consuming_token(self):
+        token = self.identity.create_pairing_token(123)
+        status, value = self.request(
+            "POST",
+            "/v1/devices/pair",
+            json.dumps({"token": token, "public_key": "not-a-public-key"}).encode(),
+        )
+        self.assertEqual(status, "400 Bad Request")
+        self.assertIn("public key is invalid", value["error"])
+
+        private_key = Ed25519PrivateKey.generate()
+        public_key = _encode_key(
+            private_key.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )
+        )
+        status, paired = self.request(
+            "POST",
+            "/v1/devices/pair",
+            json.dumps({"token": token, "public_key": public_key}).encode(),
+        )
+        self.assertEqual(status, "200 OK")
+        self.assertTrue(paired["device_id"].startswith("device-"))
+
+    def test_manifest_signature_rejects_invalid_issue_window(self):
+        now = datetime(2026, 9, 5, tzinfo=timezone.utc)
+        signed = self.signer.sign(
+            {
+                "version": 1,
+                "issued_at": "2026-09-05T00:00:00+00:00",
+                "expires_at": "2026-09-04T23:59:00+00:00",
+            }
+        )
+        self.assertFalse(ManifestSigner.verify(signed, self.signer.public_key, now=now))
 
     def test_authenticated_config_returns_only_owned_active_route_secret(self):
         access_cipher = Fernet(Fernet.generate_key())

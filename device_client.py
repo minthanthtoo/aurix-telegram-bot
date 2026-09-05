@@ -14,6 +14,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -45,6 +46,9 @@ class DeviceClient:
         *,
         request: Callable[[str, bytes, Mapping[str, str]], Mapping[str, Any]] | None = None,
     ):
+        parsed = urlsplit(str(base_url).rstrip("/"))
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise DeviceClientError("managed device API URL must use HTTPS")
         self.base_url = str(base_url).rstrip("/")
         self.device_id = str(device_id)
         self.private_key = private_key
@@ -61,6 +65,10 @@ class DeviceClient:
         label: str = "",
         request: Callable[[str, bytes, Mapping[str, str]], Mapping[str, Any]] | None = None,
     ) -> "DeviceClient":
+        normalized_url = str(base_url).rstrip("/")
+        parsed = urlsplit(normalized_url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise DeviceClientError("managed device API URL must use HTTPS")
         body = json.dumps(
             {
                 "token": str(pairing_token),
@@ -71,11 +79,11 @@ class DeviceClient:
             sort_keys=True,
         ).encode("utf-8")
         requester = request or cls._urlopen_json
-        result = dict(requester(str(base_url).rstrip("/") + "/v1/devices/pair", body, {}))
+        result = dict(requester(normalized_url + "/v1/devices/pair", body, {}))
         if not result.get("device_id") or not result.get("manifest_signing_public_key"):
             raise DeviceClientError("pair response is incomplete")
         return cls(
-            base_url,
+            normalized_url,
             str(result["device_id"]),
             private_key,
             str(result["manifest_signing_public_key"]),
@@ -134,7 +142,7 @@ class DeviceClient:
         route = str(route_id).strip()
         if not route or len(route) > 128 or any(char in route for char in "?#&"):
             raise DeviceClientError("route_id is invalid")
-        return self._call("GET", "/v1/devices/config?route_id=" + route)
+        return self._call("GET", "/v1/devices/config?route_id=" + quote(route, safe="-_.~"))
 
     def acknowledge(
         self,

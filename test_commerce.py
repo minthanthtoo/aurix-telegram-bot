@@ -89,6 +89,19 @@ class NamedOutlinePool:
         return self._server_ids
 
 
+class SelectionOutlinePool:
+    def __init__(self, *server_ids):
+        self.clients = {server_id: FakePaidOutline() for server_id in server_ids}
+        self._server_ids = tuple(server_ids)
+        self.default_server_id = self._server_ids[0]
+
+    def server_ids(self):
+        return self._server_ids
+
+    def client(self, server_id=None):
+        return self.clients[str(server_id or self.default_server_id)]
+
+
 class CommerceServiceTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1266,6 +1279,51 @@ class CommerceServiceTest(unittest.TestCase):
 
         with self.assertRaisesRegex(CommerceError, "temporarily full"):
             self.service.create_order(101, "One", "basic_50gb", self.now)
+
+    def test_fresh_server_probe_evidence_drives_paid_route_selection(self):
+        pool = SelectionOutlinePool("sg-a", "sg-b")
+        service = CommerceService(
+            self.database,
+            pool,
+            Fernet.generate_key(),
+            allow_legacy_text_approval=True,
+        )
+        service.initialize()
+        service.register_outline_servers(
+            {"sg-a": "Singapore A", "sg-b": "Singapore B"},
+            endpoint_metadata={
+                "sg-a": {"region": "Singapore"},
+                "sg-b": {"region": "Singapore"},
+            },
+        )
+        service.refresh_server_inventory(self.now)
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO route_health_snapshots
+                   (server_id, status, score, sample_count, last_observed_at, reason, updated_at)
+                   VALUES (?, 'healthy', ?, 3, ?, 'fresh_probe_evidence', ?)""",
+                ("sg-a", 95, self.now.isoformat(), self.now.isoformat()),
+            )
+            connection.execute(
+                """INSERT INTO route_health_snapshots
+                   (server_id, status, score, sample_count, last_observed_at, reason, updated_at)
+                   VALUES (?, 'unreachable', 0, 3, ?, 'low_success_ratio', ?)""",
+                ("sg-b", self.now.isoformat(), self.now.isoformat()),
+            )
+
+        order = service.create_order(901, "Probe", "basic_50gb", self.now)
+
+        with self.database.connect() as connection:
+            selected = connection.execute(
+                "SELECT server_id FROM orders WHERE id = ?", (order.order_id,)
+            ).fetchone()
+            decision = connection.execute(
+                """SELECT selected_server_id, evidence_json
+                     FROM route_decisions ORDER BY created_at DESC LIMIT 1"""
+            ).fetchone()
+        self.assertEqual(selected["server_id"], "sg-a")
+        self.assertEqual(decision["selected_server_id"], "sg-a")
+        self.assertIn("fresh_probe", decision["evidence_json"])
 
     def test_endpoint_health_uses_conservative_hysteresis_and_keeps_history(self):
         self.service.register_outline_servers({"default": "Singapore"})

@@ -77,10 +77,16 @@ class ManifestSigner:
                 return False
             key.verify(_unb64(str(signed["signature"])), _canonical(manifest))
             if now is not None:
+                issued = datetime.fromisoformat(str(manifest["issued_at"]).replace("Z", "+00:00"))
                 expiry = datetime.fromisoformat(str(manifest["expires_at"]).replace("Z", "+00:00"))
+                if issued.tzinfo is None:
+                    issued = issued.replace(tzinfo=timezone.utc)
                 if expiry.tzinfo is None:
                     expiry = expiry.replace(tzinfo=timezone.utc)
-                if expiry.astimezone(timezone.utc) <= now.astimezone(timezone.utc):
+                issued = issued.astimezone(timezone.utc)
+                expiry = expiry.astimezone(timezone.utc)
+                current = now.astimezone(timezone.utc)
+                if expiry <= issued or issued > current + timedelta(minutes=5) or expiry <= current:
                     return False
             return True
         except (KeyError, ValueError, TypeError, InvalidSignature, OverflowError, binascii.Error):
@@ -135,6 +141,11 @@ class DeviceAPIService:
 
     def pair(self, token: str, public_key: str, *, label: str = "") -> dict[str, Any]:
         try:
+            # Reject malformed keys before consuming a valid one-time token.
+            Ed25519PublicKey.from_public_bytes(_unb64(str(public_key)))
+        except (ValueError, TypeError, binascii.Error) as exc:
+            raise DeviceAPIError("public key is invalid") from exc
+        try:
             result = self.identity.consume_pairing_token(token, public_key, label=label)
             result["manifest_signing_key_id"] = self.manifest_signer.key_id
             result["manifest_signing_public_key"] = self.manifest_signer.public_key
@@ -147,9 +158,11 @@ class DeviceAPIService:
         if record is None or record.get("status") != "active" or record.get("account_status") != "active":
             raise DeviceAPIError("device is not active", status_code=401)
         routes = self.route_provider(str(record["account_id"]))
-        if not isinstance(routes, list) or len(routes) > 100:
+        if not isinstance(routes, list) or len(routes) > 100 or any(
+            not isinstance(route, Mapping) for route in routes
+        ):
             raise DeviceAPIError("route provider returned invalid data")
-        issued_at = datetime.now(timezone.utc)
+        issued_at = datetime.fromtimestamp(float(self.clock()), timezone.utc)
         timestamp = issued_at.isoformat()
         expires_at = (issued_at + timedelta(minutes=15)).isoformat()
         manifest = {

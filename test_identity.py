@@ -1,10 +1,11 @@
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 from commerce_repositories import CommerceDatabase
 from connectivity_registry import ConnectivityRegistry
-from identity import IdentityError, IdentityService, account_id_for_telegram
+from identity import IdentityError, IdentityService
 
 
 class IdentityServiceTest(unittest.TestCase):
@@ -35,8 +36,10 @@ class IdentityServiceTest(unittest.TestCase):
 
     def test_account_is_opaque_and_pairing_token_is_single_use(self):
         account_id = self.identity.ensure_account(123, now="2026-09-05T00:00:00+00:00")
-        self.assertEqual(account_id, account_id_for_telegram(123))
         self.assertNotEqual(account_id, "123")
+        self.assertEqual(str(uuid.UUID(account_id)), account_id)
+        self.assertNotEqual(account_id, self.identity.ensure_account(456))
+        self.assertEqual(self.identity.ensure_account(123), account_id)
         token = self.identity.create_pairing_token(123, now="2026-09-05T00:00:00+00:00")
         enrolled = self.identity.consume_pairing_token(
             token, "device-public-key-123456", label="Phone",
@@ -90,6 +93,51 @@ class IdentityServiceTest(unittest.TestCase):
         )
         self.assertEqual(self.identity.record_lease_usage(first, 100, now="2026-09-05T00:00:05+00:00")["used_bytes"], 500)
         self.assertEqual(self.identity.record_lease_usage(second, 400, now="2026-09-05T00:00:06+00:00")["status"], "exhausted")
+
+    def test_reissued_credential_gets_a_new_generation_after_revocation(self):
+        entitlement_id = self.identity.ensure_key_entitlement(
+            123,
+            server_id="sg-a",
+            local_key_ref="key-1",
+            kind="free",
+            quota_bytes=1000,
+            expires_at="2026-09-06T00:00:00+00:00",
+            now="2026-09-05T00:00:00+00:00",
+        )
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO connectivity_profiles
+                   (profile_id, telegram_id, profile_kind, status, created_at, updated_at)
+                   VALUES ('profile-test', 123, 'free', 'active', ?, ?)""",
+                ("2026-09-05T00:00:00+00:00", "2026-09-05T00:00:00+00:00"),
+            )
+            connection.execute(
+                """INSERT INTO connectivity_credentials
+                   (credential_id, profile_id, endpoint_id, transport_id, external_id,
+                    status, created_at)
+                   VALUES ('credential-test', 'profile-test', ?, 'outline', 'key-1', 'active', ?)""",
+                (self.endpoint_id, "2026-09-05T00:00:00+00:00"),
+            )
+        first = self.identity.ensure_generation_for_credential(
+            entitlement_id,
+            self.endpoint_id,
+            credential_id="credential-test",
+            now="2026-09-05T00:00:00+00:00",
+        )
+        self.assertTrue(self.identity.revoke_generation(first, now="2026-09-05T00:01:00+00:00"))
+        second = self.identity.ensure_generation_for_credential(
+            entitlement_id,
+            self.endpoint_id,
+            credential_id="credential-test",
+            now="2026-09-05T00:02:00+00:00",
+        )
+        self.assertNotEqual(first, second)
+        with self.database.connect() as connection:
+            generations = connection.execute(
+                "SELECT generation_no, status FROM credential_generations WHERE entitlement_id = ? ORDER BY generation_no",
+                (entitlement_id,),
+            ).fetchall()
+        self.assertEqual([(row["generation_no"], row["status"]) for row in generations], [(1, "revoked"), (2, "active")])
 
 
 if __name__ == "__main__":

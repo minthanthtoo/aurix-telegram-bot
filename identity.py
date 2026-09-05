@@ -25,7 +25,12 @@ def _parse_time(value: str) -> datetime:
 
 
 def account_id_for_telegram(telegram_id: int) -> str:
-    """Create a stable opaque UUID without exposing the Telegram ID."""
+    """Return the legacy deterministic fallback used by old callers.
+
+    New persisted accounts are assigned random UUIDs by :meth:`ensure_account`.
+    The fallback remains for source compatibility only and is not used for new
+    account storage or lookup.
+    """
     digest = hashlib.sha256(f"aurix:telegram:{int(telegram_id)}".encode()).digest()[:16]
     return str(uuid.UUID(bytes=digest))
 
@@ -38,11 +43,49 @@ class IdentityService:
     def __init__(self, database: Any):
         self.database = database
 
+    @staticmethod
+    def _account_id_in_connection(connection: Any, telegram_id: int) -> str | None:
+        row = connection.execute(
+            """SELECT account_id FROM account_identities
+                WHERE identity_type = 'telegram' AND identity_value = ?""",
+            (str(int(telegram_id)),),
+        ).fetchone()
+        return str(row["account_id"]) if row is not None else None
+
     def ensure_account(self, telegram_id: int, *, now: str | None = None) -> str:
-        account_id = account_id_for_telegram(telegram_id)
         timestamp = str(now or _now_text())
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            account_id = self._account_id_in_connection(connection, telegram_id)
+            if account_id is None:
+                candidate = str(uuid.uuid4())
+                connection.execute(
+                    """INSERT INTO accounts (account_id, created_at, updated_at)
+                       VALUES (?, ?, ?)""",
+                    (candidate, timestamp, timestamp),
+                )
+                connection.execute(
+                    """INSERT INTO device_revocation_epochs (account_id, epoch, updated_at)
+                       VALUES (?, 0, ?)""",
+                    (candidate, timestamp),
+                )
+                connection.execute(
+                    """INSERT INTO account_identities
+                       (account_id, identity_type, identity_value, verified_at, created_at)
+                       VALUES (?, 'telegram', ?, ?, ?)
+                       ON CONFLICT(identity_type, identity_value) DO NOTHING""",
+                    (candidate, str(int(telegram_id)), timestamp, timestamp),
+                )
+                account_id = self._account_id_in_connection(connection, telegram_id)
+                if account_id is None:
+                    raise IdentityError("account identity could not be created")
+                if account_id != candidate:
+                    # Another writer won the identity race.  The candidate has
+                    # no dependent state yet and can be safely removed.
+                    connection.execute(
+                        "DELETE FROM device_revocation_epochs WHERE account_id = ?", (candidate,)
+                    )
+                    connection.execute("DELETE FROM accounts WHERE account_id = ?", (candidate,))
             connection.execute(
                 """INSERT INTO accounts (account_id, created_at, updated_at)
                    VALUES (?, ?, ?)
@@ -74,15 +117,17 @@ class IdentityService:
         return len(rows)
 
     def account_snapshot(self, telegram_id: int) -> dict[str, Any] | None:
-        account_id = account_id_for_telegram(telegram_id)
         with self.database.connect() as connection:
             row = connection.execute(
                 """SELECT a.account_id, a.status, a.created_at, a.updated_at,
                           e.epoch AS revocation_epoch
                      FROM accounts a
+                     JOIN account_identities i
+                       ON i.account_id = a.account_id
+                      AND i.identity_type = 'telegram'
                      LEFT JOIN device_revocation_epochs e ON e.account_id = a.account_id
-                    WHERE a.account_id = ?""",
-                (account_id,),
+                    WHERE i.identity_value = ?""",
+                (str(int(telegram_id)),),
             ).fetchone()
         return dict(row) if row is not None else None
 
@@ -149,10 +194,12 @@ class IdentityService:
         return {"device_id": device_id, "account_id": account_id, "status": "active"}
 
     def revoke_device(self, telegram_id: int, device_id: str, *, now: str | None = None) -> bool:
-        account_id = account_id_for_telegram(telegram_id)
         timestamp = str(now or _now_text())
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            account_id = self._account_id_in_connection(connection, telegram_id)
+            if account_id is None:
+                return False
             updated = connection.execute(
                 """UPDATE devices SET status = 'revoked', revoked_at = ?
                     WHERE device_id = ? AND account_id = ? AND status != 'revoked'""",
@@ -499,12 +546,15 @@ class IdentityService:
             if entitlement is None or credential is None:
                 raise IdentityError("generation references an unknown entitlement or credential")
             existing = connection.execute(
-                """SELECT generation_id FROM credential_generations
+                """SELECT generation_id, status FROM credential_generations
                     WHERE entitlement_id = ? AND credential_id = ?
                     ORDER BY generation_no DESC LIMIT 1""",
                 (str(entitlement_id), credential_id),
             ).fetchone()
-            if existing is not None:
+            # A revoked/failed generation is historical state.  Reusing it
+            # would make a reissued credential appear to have uninterrupted
+            # validity and would weaken cutover/audit semantics.
+            if existing is not None and str(existing["status"]) in {"pending", "active"}:
                 connection.execute(
                     """UPDATE credential_generations
                           SET status = ?, revoked_at = CASE WHEN ? = 'revoked' THEN COALESCE(revoked_at, ?) ELSE revoked_at END
@@ -718,14 +768,15 @@ class IdentityService:
         return {"lease_id": str(lease_id), "used_bytes": current, "status": status}
 
     def lease_snapshot(self, telegram_id: int) -> list[dict[str, Any]]:
-        account_id = account_id_for_telegram(telegram_id)
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT q.lease_id, q.entitlement_id, q.endpoint_id, q.lease_bytes,
                           q.used_bytes, q.expires_at, q.status
                      FROM quota_leases q JOIN entitlements e ON e.entitlement_id = q.entitlement_id
-                    WHERE e.account_id = ? ORDER BY q.created_at""",
-                (account_id,),
+                     JOIN account_identities i ON i.account_id = e.account_id
+                    WHERE i.identity_type = 'telegram' AND i.identity_value = ?
+                    ORDER BY q.created_at""",
+                (str(int(telegram_id)),),
             ).fetchall()
         return [dict(row) for row in rows]
 
