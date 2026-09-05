@@ -66,6 +66,7 @@ class TelegramCallbackMixin:
             "n:menu": "/help",
             "n:keytext": "/keysastext",
             "n:alerts": "/alerts",
+            "n:pair": "/pair",
         }
         # Legacy admin navigation buttons may still exist in Telegram message
         # history. Keep them safe and role-gated while no longer generating

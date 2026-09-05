@@ -1199,6 +1199,25 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 ).fetchone()["last_claim_at"]
             )
 
+    def test_pair_command_returns_safe_managed_device_deep_link(self):
+        self.bot.device_api_url = "https://control.example"
+
+        self.bot.handle(self.message(123, "/pair"))
+
+        text = self.bot.sent[-1][1]
+        self.assertIn("📱 AuriX managed-device pairing", text)
+        self.assertIn("https://control.example", text)
+        self.assertIn("aurix://pair/", text)
+        self.assertIn("<code>", text)
+        with self.db.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM pairing_tokens WHERE requested_by = ? AND status = 'pending'",
+                    (123,),
+                ).fetchone()[0],
+                1,
+            )
+
     def test_custom_topup_amount_resumes_after_bot_restart(self):
         self.bot._expect_customer_input(123, "topup_amount")
         restarted = RecordingTelegramBot(

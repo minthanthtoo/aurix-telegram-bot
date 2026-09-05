@@ -33,6 +33,31 @@ Neither VPN traffic nor server-side auto-discovery requires the managed device
 client. A native client is an enhancement for automatic manifest refresh and
 route selection, not a prerequisite for issuing or using an Outline key.
 
+## Implementation judgment against the master plan
+
+This repository is a strong, tested Outline-first control-plane foundation; it
+is not yet the complete multi-protocol platform described by the expanded
+master plan. The following distinction is intentional and is the acceptance
+boundary for future work:
+
+| Master-plan capability | Current repository judgment |
+|---|---|
+| Multiple physical Outline servers with logical region selection | Implemented in source: named server pool, region metadata, capacity admission, fresh management health, server-side probe evidence, and durable route decisions. One deployed route still maps to one Outline endpoint. |
+| Central command and result orchestration | Implemented in source: the Telegram bot is the commercial command surface; the optional loopback control API schedules/ingests node-agent results against the same durable database and the Telegram Fleet Probes panel reads the projection. |
+| VPN tunneling | Correctly separated: the control API and Telegram bot never carry VPN traffic. Manual or managed clients connect directly to the selected Outline endpoint. |
+| Client dependency | Correctly separated: node-to-target and node-to-node ICMP/TCP/UDP/DNS/HTTPS/throughput probes run on server agents. A VPN client is required only to establish a customer tunnel; the managed client is optional. |
+| Opaque account, pairing, signed manifest/config, and device revocation | Implemented source contract and reference client; Android/iOS tunnel-engine integration is not implemented here. |
+| Independent entitlements and credential generations | Implemented additive tables, backfill, provisioning convergence, route metadata, encrypted config delivery, and generation cutover. |
+| Aggregate quota leases, usage epochs, counter-reset protection, and bounded refill enforcement | Lease schema and bounded grant/usage primitives exist; the live commerce path still uses the proven per-key Outline quota/enforcement model. Full aggregate-ledger shadowing and enforcement remain a gate. |
+| Protocol-neutral adapter contract with Xray/VLESS/WireGuard routes | Provider/region/transport registry and Outline boundary exist; non-Outline adapters and multi-route-per-node capabilities remain future work. |
+| Automatic failover and silent migration | Not enabled. Credential generations and owner-confirmed endpoint migration provide the safe cutover boundary; outage-driven automatic migration still requires canary/SLO evidence. |
+| Autoscaling and disaster recovery | Guarded worker, probe, backup, recovery, and deployment artifacts exist; live provider mutation, multi-writer cutover, and full restore/fencing drills remain operational gates. |
+
+Local verification for this implementation pass: **481 tests passed**, Ruff,
+Python compilation, and whitespace validation passed. Live node serving state,
+canary results, and backup freshness remain operational evidence rather than
+claims inferred from this document.
+
 ## System context
 
 ```mermaid

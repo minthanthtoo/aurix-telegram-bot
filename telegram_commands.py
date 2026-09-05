@@ -7,6 +7,7 @@ import re
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from html import escape as html_escape
 from typing import Any
 
 from commerce import CommerceError
@@ -773,10 +774,11 @@ class TelegramCommandMixin:
                     self.send(
                         chat["id"],
                         "📱 AuriX managed-device pairing\n\n"
-                        f"API: {device_url}\n"
-                        f"One-time token (expires in 5 minutes):\n`{token}`\n\n"
+                        f"API: {html_escape(device_url)}\n"
+                        f"Open in the AuriX app (if installed): <code>aurix://pair/{html_escape(token)}</code>\n"
+                        f"One-time token (expires in 5 minutes):\n<code>{html_escape(token)}</code>\n\n"
                         "Enter this token in the official AuriX client. Do not post it in a group or share it with anyone.",
-                        parse_mode="Markdown",
+                        parse_mode="HTML",
                     )
         elif command == "/alerts":
             self._send_quota_alert_settings(chat["id"], telegram_id)

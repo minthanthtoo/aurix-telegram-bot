@@ -53,6 +53,7 @@ class TelegramBot(
         "💠 Upgrade 100GB": "/buy standard_100gb",
         "💎 Plans & Upgrade": "/plans",
         "🔐 My VPN": "/myvpn",
+        "📱 Open AuriX App": "/pair",
         "🔔 Usage Alerts": "/alerts",
         # Compatibility mappings for reply keyboards already present in old
         # Telegram messages. New menus use the unified My VPN dashboard.
@@ -640,6 +641,8 @@ class TelegramBot(
         except Exception:
             promo_locked = False
         rows = [["🔐 My VPN"]]
+        if self.device_api_url:
+            rows.append(["📱 Open AuriX App"])
         paid_active = self._free_claim_blocked_by_paid(telegram_id)
         if not promo_locked and not paid_active:
             rows.append(["🎁 Daily 300MB", "🚀 Monthly 3GB"])
@@ -2296,6 +2299,8 @@ class TelegramBot(
                 {"text": "🔔 Usage Alerts", "callback_data": "n:alerts"},
             ]
         )
+        if self.device_api_url:
+            action_rows.append([{"text": "📱 Open AuriX App", "callback_data": "n:pair"}])
         if open_order is not None:
             action_rows.append(
                 [
