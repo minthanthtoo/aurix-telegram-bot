@@ -1739,14 +1739,67 @@ class TelegramBot(
         else:
             self.send(chat_id, text, markup)
 
-    def _collect_outline_state(self, *, include_access: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Collect collision-safe state from every configured Outline endpoint."""
+    def _customer_server_ids(self, telegram_id: int) -> tuple[str, ...]:
+        """Return only endpoint ids that can contain this customer's keys.
+
+        A fleet may deliberately contain a draining or temporarily unreachable
+        node.  Customer views must not probe unrelated endpoints and turn that
+        node's outage into a slow/broken response for keys that live elsewhere.
+        The query is best-effort: if the legacy schema cannot be inspected we
+        fall back to the default endpoint, preserving the old behaviour.
+        """
+        server_ids: set[str] = set()
+        databases = [getattr(self.service, "database", None)]
+        if self.commerce is not None:
+            databases.append(getattr(self.commerce, "database", None))
+        for database in databases:
+            if database is None:
+                continue
+            try:
+                with database.connect() as connection:
+                    for table in ("keys", "paid_vpn_keys"):
+                        try:
+                            rows = connection.execute(
+                                f"SELECT DISTINCT server_id FROM {table} "
+                                "WHERE telegram_id = ? AND server_id IS NOT NULL",
+                                (telegram_id,),
+                            ).fetchall()
+                        except Exception:
+                            continue
+                        server_ids.update(
+                            str(row["server_id"] if isinstance(row, dict) else row[0]).strip()
+                            for row in rows
+                            if str(row["server_id"] if isinstance(row, dict) else row[0]).strip()
+                        )
+            except Exception:
+                continue
+        if server_ids:
+            return tuple(sorted(server_ids))
+        default_id = str(getattr(self.service.outline, "default_server_id", "primary"))
+        return (default_id,)
+
+    def _collect_outline_state(
+        self,
+        *,
+        include_access: bool = False,
+        server_ids: tuple[str, ...] | list[str] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Collect collision-safe state from selected Outline endpoints.
+
+        Passing ``server_ids`` is important for customer views: it bounds work
+        to the nodes that own the customer's credentials.  Administrative and
+        fleet-wide callers continue to omit it and inspect every configured
+        endpoint.
+        """
         outline = self.service.outline
-        server_ids = (
+        configured_ids = (
             outline.server_ids()
             if callable(getattr(outline, "server_ids", None))
             else (str(getattr(outline, "default_server_id", "primary")),)
         )
+        allowed = {str(item) for item in configured_ids}
+        requested = tuple(str(item).strip() for item in (server_ids or configured_ids) if str(item).strip())
+        server_ids = tuple(item for item in requested if item in allowed) or tuple(configured_ids)
         metrics_by_server: dict[str, dict[str, Any]] = {}
         access_by_server: dict[str, dict[str, str]] = {}
         for server_id in server_ids:
@@ -1799,7 +1852,10 @@ class TelegramBot(
         used = int(item.get("last_usage_bytes") or 0)
         observed = False
         try:
-            metrics, access_state = self._collect_outline_state(include_access=True)
+            metrics, access_state = self._collect_outline_state(
+                include_access=True,
+                server_ids=(str(item.get("server_id") or ""),),
+            )
             server_id = str(item.get("server_id") or getattr(self.service.outline, "default_server_id", "primary"))
             usage = metrics.get("byServer", {}).get(server_id, {})
             if isinstance(usage, dict) and key_id in usage:
@@ -1880,7 +1936,10 @@ class TelegramBot(
         giveaway = self.service.giveaway_status(telegram_id)
         usage_available = True
         try:
-            usage_by_key, access_by_key = self._collect_outline_state(include_access=True)
+            usage_by_key, access_by_key = self._collect_outline_state(
+                include_access=True,
+                server_ids=self._customer_server_ids(telegram_id),
+            )
         except Exception as exc:
             usage_available = False
             usage_by_key = {}
@@ -2098,7 +2157,9 @@ class TelegramBot(
 
     def _send_usage(self, chat_id: int, telegram_id: int) -> None:
         try:
-            by_key, _ = self._collect_outline_state()
+            by_key, _ = self._collect_outline_state(
+                server_ids=self._customer_server_ids(telegram_id),
+            )
         except Exception as exc:
             self.send(chat_id, "VPN usage is temporarily unavailable. Please try again shortly.")
             print(f"usage metrics error: {type(exc).__name__}", file=sys.stderr)

@@ -574,7 +574,9 @@ trial, and paid keys with Outline-reported bytes used, configured limit,
 remaining bytes, percentage, expiry, and local state. These figures come from
 `GET /metrics/transfer`: they are trailing-30-day transfer accounting, not live
 speed or a calendar-month usage ledger. A customer can never query another
-customer's key statistics.
+customer's key statistics. In a multi-node fleet, these customer views query
+only the endpoint(s) that own the customer's keys; an unrelated node outage is
+therefore shown in admin health without blocking key retrieval.
 
 Telegram displays persisted timestamps in `Asia/Yangon` as `DD Mon YYYY, HH:MM
 MMT` by default, while the database and audit events remain UTC. Set

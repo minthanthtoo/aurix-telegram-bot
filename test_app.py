@@ -2761,6 +2761,45 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(edit["message_id"], 81)
         self.assertIn("Keys • status • usage • next action", edit["text"])
 
+    def test_customer_outline_state_skips_unrelated_unreachable_servers(self):
+        pool = FakeOutlinePool()
+        commerce = CommerceService(
+            CommerceDatabase(self.db.path), pool, Fernet.generate_key(), allow_legacy_text_approval=True
+        )
+        commerce.initialize()
+        commerce.register_outline_servers({"sg-a": "Singapore A", "sg-b": "Singapore B"})
+        now = datetime.now(UTC).isoformat()
+        with self.db.connect() as connection:
+            self.db.begin_write(connection)
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
+                (123, "Min", now),
+            )
+            connection.execute(
+                """INSERT INTO keys
+                   (telegram_id, outline_key_id, key_type, created_at, expires_at,
+                    data_limit_bytes, status, server_id)
+                   VALUES (?, ?, 'daily_free', ?, ?, ?, 'active', ?)""",
+                (123, "1", now, now, 300_000_000, "sg-a"),
+            )
+
+        pool.clients["sg-a"].transfer = {"1": 42}
+        for method_name in ("transfer_metrics", "list_keys"):
+            setattr(
+                pool.clients["sg-b"],
+                method_name,
+                lambda: self.fail("unrelated server was probed"),
+            )
+        bot = RecordingTelegramBot(
+            "test-token", ClaimService(self.db, pool), commerce, {999}, {123}
+        )
+
+        self.assertEqual(bot._customer_server_ids(123), ("sg-a",))
+        metrics, _access = bot._collect_outline_state(
+            include_access=True, server_ids=bot._customer_server_ids(123)
+        )
+        self.assertEqual(metrics, {"byServer": {"sg-a": {"1": 42}}})
+
     def test_myvpn_surfaces_open_order_as_the_next_action(self):
         order = self.commerce.create_order(123, "Min", "basic_50gb")
 
