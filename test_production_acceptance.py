@@ -75,6 +75,54 @@ class ProductionAcceptanceTests(unittest.TestCase):
                 checks = _tool_checks(root, runner)
         self.assertEqual(next(item for item in checks if item["name"] == "ruff")["status"], "skip")
 
+    def test_outline_check_reports_partial_fleet_without_leaking_details(self):
+        from deploy.production_acceptance import _outline_check
+
+        with patch(
+            "deploy.production_acceptance.run_outline_diagnostics",
+            return_value={
+                "status": "degraded",
+                "healthy_servers": 1,
+                "server_count": 3,
+                "servers": [{"server_id": "sg-a", "status": "healthy"}],
+            },
+        ) as diagnostic:
+            check, report = _outline_check(Path("/tmp/aurix.env"))
+        diagnostic.assert_called_once_with(Path("/tmp/aurix.env"))
+        self.assertEqual(check["name"], "outline_endpoints")
+        self.assertEqual(check["status"], "warn")
+        self.assertEqual(report["healthy_servers"], 1)
+
+    def test_acceptance_includes_outline_diagnostic_only_when_requested(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_file = root / "aurix.env"
+            env_file.write_text("TELEGRAM_BOT_TOKEN=test\n", encoding="utf-8")
+
+            def fake_runner(command, **kwargs):
+                del kwargs
+                if command[:4] == ("git", "-C", str(root), "status"):
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch(
+                "deploy.production_acceptance.run_audit",
+                return_value={"status": "pass", "checks": []},
+            ), patch(
+                "deploy.production_acceptance.shutil.which", return_value="/usr/bin/ruff"
+            ), patch(
+                "deploy.production_acceptance.run_outline_diagnostics",
+                return_value={"status": "healthy", "healthy_servers": 1, "server_count": 1},
+            ) as diagnostic:
+                report = run_acceptance(env_file=env_file, root=root, runner=fake_runner, outline=True)
+
+        diagnostic.assert_called_once_with(env_file)
+        self.assertEqual(
+            next(item for item in report["checks"] if item["name"] == "outline_endpoints")["status"],
+            "pass",
+        )
+        self.assertEqual(report["outline_diagnostics"]["status"], "healthy")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -294,6 +294,8 @@ service environment.
 Before declaring a release production-ready, run the source-controlled
 acceptance audit. It is intentionally a gate: warnings for allocation policy,
 DNS, canaries, or sustained observation keep the result non-passing.
+`--live` also runs the sanitized Outline management/data-port diagnostic, so a
+node that is configured but unreachable cannot be mistaken for a healthy fleet.
 When a DigitalOcean token is present, `digitalocean_preflight.py --live` also
 performs a read-only provider inventory canary; it never creates or deletes a
 Droplet.

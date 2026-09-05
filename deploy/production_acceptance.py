@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from deploy.recovery_readiness import run_audit  # noqa: E402
+from deploy.outline_diagnostics import run as run_outline_diagnostics  # noqa: E402
 
 PASS = "pass"
 WARN = "warn"
@@ -140,11 +141,33 @@ def _service_checks(runner: Callable[..., subprocess.CompletedProcess[str]]) -> 
     return checks
 
 
+def _outline_check(env_file: Path) -> tuple[dict[str, str], dict[str, Any]]:
+    """Run the read-only management/data-plane probe as one acceptance check."""
+    try:
+        report = run_outline_diagnostics(env_file)
+    except Exception as exc:
+        return (
+            _check("outline_endpoints", FAIL, f"diagnostic failed: {type(exc).__name__}"),
+            {"status": "invalid", "error": type(exc).__name__},
+        )
+    status = str(report.get("status") or "unreachable")
+    healthy = int(report.get("healthy_servers") or 0)
+    total = int(report.get("server_count") or 0)
+    if status == "healthy":
+        check = _check("outline_endpoints", PASS, f"{healthy}/{total} management and data-plane checks passed")
+    elif healthy:
+        check = _check("outline_endpoints", WARN, f"{healthy}/{total} Outline endpoint(s) healthy; see diagnostic details")
+    else:
+        check = _check("outline_endpoints", FAIL, "no configured Outline endpoint passed management/data-plane checks")
+    return check, report
+
+
 def run_acceptance(
     *,
     env_file: Path,
     verify_archives: bool = False,
     live: bool = False,
+    outline: bool = False,
     root: Path = ROOT,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, Any]:
@@ -156,6 +179,10 @@ def run_acceptance(
         readiness = {"status": FAIL, "checks": [], "error": type(exc).__name__}
     readiness_status = str(readiness.get("status", FAIL))
     checks.append(_check("recovery_readiness", readiness_status, "see readiness_checks"))
+    outline_report: dict[str, Any] | None = None
+    if live or outline:
+        outline_check, outline_report = _outline_check(env_file)
+        checks.append(outline_check)
     if live:
         checks.append(_release_check(runner))
         checks.extend(_service_checks(runner))
@@ -163,19 +190,28 @@ def run_acceptance(
         checks.append(_check("live_release", SKIP, "pass --live to inspect the deployed host"))
         checks.append(_check("live_services", SKIP, "pass --live to inspect systemd services"))
     status = _summarize(checks)
-    return {"status": status, "checks": checks, "readiness_checks": readiness.get("checks", [])}
+    result: dict[str, Any] = {
+        "status": status,
+        "checks": checks,
+        "readiness_checks": readiness.get("checks", []),
+    }
+    if outline_report is not None:
+        result["outline_diagnostics"] = outline_report
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", default=_default_env_file())
     parser.add_argument("--verify-archives", action="store_true")
+    parser.add_argument("--outline", action="store_true", help="run the read-only Outline endpoint/data-port diagnostic")
     parser.add_argument("--live", action="store_true", help="also inspect release and systemd services")
     args = parser.parse_args(argv)
     report = run_acceptance(
         env_file=Path(args.env_file),
         verify_archives=args.verify_archives,
         live=args.live,
+        outline=args.outline,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["status"] == PASS else 1
