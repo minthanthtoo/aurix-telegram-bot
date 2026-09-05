@@ -2795,6 +2795,91 @@ class TelegramBotCommerceTest(unittest.TestCase):
         copy_button = next(button for button in buttons if button["text"].startswith("📋 #1"))
         self.assertEqual(copy_button["copy_text"], {"text": "ss://secret"})
 
+    def test_myvpn_rolls_up_observed_usage_across_endpoint_keys(self):
+        pool = FakeOutlinePool()
+        commerce = CommerceService(
+            CommerceDatabase(self.db.path),
+            pool,
+            Fernet.generate_key(),
+            allow_legacy_text_approval=True,
+        )
+        commerce.initialize()
+        commerce.register_outline_servers({"sg-a": "Singapore A", "sg-b": "Singapore B"})
+        now = datetime.now(UTC)
+        expires = (now + timedelta(days=7)).isoformat()
+        with self.db.connect() as connection:
+            self.db.begin_write(connection)
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
+                (123, "Min", now.isoformat()),
+            )
+            connection.executemany(
+                """INSERT INTO keys
+                   (telegram_id, outline_key_id, key_type, created_at, expires_at,
+                    data_limit_bytes, status, server_id)
+                   VALUES (?, ?, 'daily_free', ?, ?, ?, 'active', ?)""",
+                [
+                    (123, "1", now.isoformat(), expires, 1_000_000_000, "sg-a"),
+                    (123, "1", now.isoformat(), expires, 2_000_000_000, "sg-b"),
+                ],
+            )
+        pool.clients["sg-a"].transfer = {"1": 100_000_000}
+        pool.clients["sg-b"].transfer = {"1": 500_000_000}
+        bot = RecordingTelegramBot(
+            "test-token", ClaimService(self.db, pool), commerce, {999}, {123}
+        )
+
+        bot.handle(self.message(123, "/myvpn"))
+
+        text = bot.sent[-1][1]
+        self.assertIn("🌐 Account total · all servers", text)
+        self.assertIn("Active keys: 2 · Endpoints: 2", text)
+        self.assertIn("Known transfer: ≥600.00 MB · Quota: 3.00 GB", text)
+        self.assertIn("Remaining: 2.40 GB (exact)", text)
+
+    def test_myvpn_rollup_marks_remaining_unknown_when_one_endpoint_is_unobserved(self):
+        pool = FakeOutlinePool()
+        commerce = CommerceService(
+            CommerceDatabase(self.db.path),
+            pool,
+            Fernet.generate_key(),
+            allow_legacy_text_approval=True,
+        )
+        commerce.initialize()
+        commerce.register_outline_servers({"sg-a": "Singapore A", "sg-b": "Singapore B"})
+        now = datetime.now(UTC)
+        expires = (now + timedelta(days=7)).isoformat()
+        with self.db.connect() as connection:
+            self.db.begin_write(connection)
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
+                (123, "Min", now.isoformat()),
+            )
+            connection.executemany(
+                """INSERT INTO keys
+                   (telegram_id, outline_key_id, key_type, created_at, expires_at,
+                    data_limit_bytes, status, server_id)
+                   VALUES (?, ?, 'daily_free', ?, ?, ?, 'active', ?)""",
+                [
+                    (123, "1", now.isoformat(), expires, 1_000_000_000, "sg-a"),
+                    (123, "1", now.isoformat(), expires, 2_000_000_000, "sg-b"),
+                ],
+            )
+        pool.clients["sg-a"].transfer = {"1": 100_000_000}
+        pool.clients["sg-b"].transfer_metrics = lambda: (_ for _ in ()).throw(
+            TimeoutError("simulated endpoint outage")
+        )
+        bot = RecordingTelegramBot(
+            "test-token", ClaimService(self.db, pool), commerce, {999}, {123}
+        )
+
+        bot.handle(self.message(123, "/myvpn"))
+
+        text = bot.sent[-1][1]
+        self.assertIn("Known transfer: ≥100.00 MB · Quota: 3.00 GB", text)
+        self.assertIn("Remaining: waiting for telemetry from 1 key", text)
+        self.assertNotIn("Remaining: 2.90 GB (exact)", text)
+
     def test_new_free_key_delivery_has_native_one_tap_copy(self):
         self.bot.handle(self.message(123, "/claim"))
 

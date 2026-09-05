@@ -17,6 +17,7 @@ import urllib3
 from urllib3.filepost import encode_multipart_formdata
 
 from commerce import CommerceError, CommerceService
+from commerce_models import summarize_entitlement_usage
 from entitlements import ClaimService
 from observability import latency_log as _latency_log
 from ports import ReceiptExtractorGateway
@@ -1552,6 +1553,53 @@ class TelegramBot(
             amount /= 1000
         return f"{int(amount)} B" if unit == "B" else f"{amount:.2f} {unit}"
 
+    def _usage_rollup_block(self, entries: list[dict[str, Any]], telegram_id: int) -> str | None:
+        """Render a conservative total across all active endpoint keys.
+
+        Every Outline counter is endpoint-local.  The customer should still
+        have one clear account view, but an unavailable endpoint must never be
+        rendered as zero usage or as an exact remaining balance.
+        """
+        historical = 0
+        reader = None
+        if self.commerce is not None:
+            reader = getattr(self.commerce, "user_migrated_usage", None)
+        if not callable(reader):
+            reader = getattr(self.service, "user_migrated_usage", None)
+        if callable(reader):
+            try:
+                historical = int(reader(telegram_id) or 0)
+            except (TypeError, ValueError, RuntimeError):
+                historical = 0
+        summary = summarize_entitlement_usage(
+            entries,
+            historical_used_bytes=historical,
+        )
+        if not summary["active_key_count"]:
+            return None
+        key_count = int(summary["active_key_count"])
+        server_count = int(summary["server_count"])
+        known = self._format_bytes(int(summary["known_used_bytes"]))
+        lines = [
+            "🌐 Account total · all servers",
+            f"Active keys: {key_count} · Endpoints: {server_count}",
+        ]
+        if summary["has_fair_use"]:
+            lines.append(f"Known transfer: ≥{known} · Quota: fair-use")
+        else:
+            quota = self._format_bytes(int(summary["total_quota_bytes"]))
+            lines.append(f"Known transfer: ≥{known} · Quota: {quota}")
+            remaining = summary.get("remaining_bytes")
+            if remaining is None:
+                unknown = int(summary["unknown_key_count"])
+                noun = "key" if unknown == 1 else "keys"
+                lines.append(f"Remaining: waiting for telemetry from {unknown} {noun}")
+            else:
+                lines.append(f"Remaining: {self._format_bytes(int(remaining))} (exact)")
+        if int(summary.get("historical_used_bytes") or 0):
+            lines.append("Includes verified usage from completed key turnover.")
+        return "\n".join(lines)
+
     def _send_paid_key_list(
         self,
         chat_id: int,
@@ -2077,6 +2125,9 @@ class TelegramBot(
         entries.sort(key=lambda item: priority.get(str(item.get("status")), 6))
         displayed = entries[:4]
         blocks = ["🔐 My VPN\nKeys • status • usage • next action"]
+        rollup = self._usage_rollup_block(entries, telegram_id)
+        if rollup:
+            blocks.append(rollup)
         copy_rows: list[list[dict[str, Any]]] = []
         for index, entry in enumerate(displayed, start=1):
             status = str(entry.get("status") or "unknown")

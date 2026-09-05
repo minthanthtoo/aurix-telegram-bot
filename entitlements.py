@@ -1956,6 +1956,46 @@ class ClaimService:
             )
         return result
 
+    def user_migrated_usage(self, telegram_id: int) -> int:
+        """Return measured traffic consumed by this account before turnover.
+
+        A migrated credential is replaced in ``keys``; the source usage is
+        retained in the shared migration ledger so an account-wide dashboard
+        does not make a rotated key look like a fresh quota. Missing legacy
+        tables are treated as zero for standalone/free-only databases.
+        """
+        with self.database.connect() as connection:
+            try:
+                if connection.__class__.__name__ == "_PostgresConnection":
+                    exists = connection.execute(
+                        "SELECT to_regclass('public.connectivity_migration_jobs') AS table_name"
+                    ).fetchone()
+                    if not (exists and exists["table_name"]):
+                        return 0
+                else:
+                    exists = connection.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                        ("connectivity_migration_jobs",),
+                    ).fetchone()
+                    if exists is None:
+                        return 0
+                row = connection.execute(
+                    """SELECT COALESCE(SUM(source_used_bytes), 0) AS used
+                         FROM connectivity_migration_jobs
+                        WHERE telegram_id = ?
+                          AND status IN ('source_delete_pending', 'completed')
+                          AND source_used_bytes IS NOT NULL""",
+                    (int(telegram_id),),
+                ).fetchone()
+            except Exception:
+                # This is a read-only enhancement. A migration-table outage
+                # must not hide the user's current keys or block the bot.
+                return 0
+        try:
+            return max(0, int(row["used"] if row is not None else 0))
+        except (KeyError, TypeError, ValueError):
+            return 0
+
     def revoke_expired(self, now: datetime | None = None) -> int:
         current = (now or datetime.now(UTC)).astimezone(UTC)
         now_text = current.isoformat()

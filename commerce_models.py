@@ -97,3 +97,76 @@ def _new_id() -> str:
 def _normalize_reference(value: str) -> str:
     """Normalize a payment reference for comparison without changing display data."""
     return "".join(str(value or "").split()).casefold()
+
+
+def summarize_entitlement_usage(
+    entries: list[dict[str, Any]],
+    *,
+    historical_used_bytes: int = 0,
+) -> dict[str, Any]:
+    """Build a conservative account-wide usage roll-up.
+
+    Outline transfer counters are scoped to one endpoint/key.  Customers may
+    therefore have several simultaneous keys, or a replacement key after an
+    endpoint migration.  This helper deliberately reports a *known* total
+    when any endpoint has not supplied a fresh counter and never invents a
+    remaining balance from an unavailable metric.  Per-key hard limits remain
+    authoritative; the roll-up is a transparent cross-server view.
+    """
+
+    # Only credentials which can still carry traffic are part of the current
+    # allowance. Expired, revoked, exhausted, and pending revocations are
+    # historical records and must not make the available balance look larger.
+    active_states = {"active", "revoke_failed"}
+    active: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("status") or "").lower() not in active_states:
+            continue
+        try:
+            quota = int(entry.get("quota_bytes") or 0)
+            used = max(0, int(entry.get("used_bytes") or 0))
+        except (TypeError, ValueError):
+            continue
+        if quota <= 0:
+            # A fair-use entitlement has no numeric quota to add. Keep it in
+            # the count so the UI can say that the roll-up is mixed.
+            active.append({**entry, "quota_bytes": 0, "used_bytes": used})
+            continue
+        active.append({**entry, "quota_bytes": quota, "used_bytes": used})
+
+    total_quota = sum(int(item["quota_bytes"]) for item in active)
+    observed = [item for item in active if bool(item.get("usage_observed"))]
+    unknown = len(active) - len(observed)
+    known_used = sum(int(item["used_bytes"]) for item in observed)
+    try:
+        historical = max(0, int(historical_used_bytes or 0))
+    except (TypeError, ValueError):
+        historical = 0
+    known_used += historical
+    # A remaining value is exact only if every bounded active entitlement has
+    # been observed. For fair-use-only users, leave it unset rather than
+    # pretending that an unbounded product has a numeric balance.
+    bounded_count = sum(1 for item in active if int(item["quota_bytes"]) > 0)
+    complete = unknown == 0 and (bounded_count > 0 or not active)
+    remaining = max(0, total_quota - known_used) if complete and bounded_count else None
+    servers = sorted(
+        {
+            str(item.get("server_id") or item.get("server_label") or "unknown")
+            for item in active
+        }
+    )
+    return {
+        "active_key_count": len(active),
+        "observed_key_count": len(observed),
+        "unknown_key_count": unknown,
+        "server_count": len(servers),
+        "servers": servers,
+        "total_quota_bytes": total_quota,
+        "known_used_bytes": known_used,
+        "historical_used_bytes": historical,
+        "remaining_bytes": remaining,
+        "complete": complete,
+        "has_fair_use": any(int(item["quota_bytes"]) <= 0 for item in active),
+    }

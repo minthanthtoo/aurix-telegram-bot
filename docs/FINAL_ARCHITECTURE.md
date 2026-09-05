@@ -169,6 +169,19 @@ unit-economics analytics
 | Referral/affiliate attribution | AuriX attribution records |
 | Reseller balance | Sum/reconciliation of wallet ledger entries |
 
+### Cross-server customer usage
+
+Outline reports transfer per `(server_id, outline_key_id)`. AuriX therefore
+keeps each remote limit and enforcement decision server-scoped, but the
+customer dashboard also renders one conservative account roll-up across all
+currently active keys. It sums fresh counters from every owned endpoint and
+adds measured source usage from completed key-turnover jobs. If any owned
+endpoint has no fresh counter, the dashboard shows known usage and marks the
+remaining balance unknown rather than treating the outage as zero. This is a
+presentation and accounting view; it never relaxes the per-key hard DELETE
+guard or silently converts independent subscriptions into an unlimited global
+key.
+
 Outline does not decide whether a Telegram customer paid, qualifies for a referral, or owns an active subscription. AuriX does not claim a remote key exists until it is observed or reconciled with Outline.
 
 ## Core database

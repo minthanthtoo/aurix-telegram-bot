@@ -20,7 +20,7 @@ engineering estimates, not production traffic or revenue metrics.
 | Durable external-effect state | Implemented for one process | SQLite jobs and notifications with retry, stale-running recovery, dedupe; paid and free/trial/promo issuance commits a server-scoped provisioning intent before any Outline call, then reconciles it through the maintenance worker; deterministic IDs and read-after-ambiguous recovery prevent duplicate keys when the adapter supports it; ten-minute conversational prompts survive restarts |
 | Expiry and revocation | Implemented locally | Expiry job, 404-safe known-key deletion, expiry notification; expired/pending subscriptions cannot disclose or later provision keys |
 | Quota exhaustion enforcement | Implemented locally | Metrics `used >= configured limit` fails closed, records a deduplicated event, and queues hard DELETE; Outline has no documented pause endpoint |
-| Usage/capacity operations | Implemented locally | Admin `/capacity`, stable transfer-metrics adapter, mapped active-key totals, and read-only per-node admission/policy posture (freshness, headroom, over-allocation, orphan audit) |
+| Usage/capacity operations | Implemented locally | Admin `/capacity`, stable transfer-metrics adapter, mapped active-key totals, server-scoped joins, a conservative customer account-total across all active endpoint keys, and read-only per-node admission/policy posture (freshness, headroom, over-allocation, orphan audit); completed key-turnover usage is included from the migration ledger, while an unobserved endpoint leaves remaining balance explicitly unknown |
 | Endpoint health evidence | Implemented locally | Durable management/inventory observations with latency, state transitions, failure/recovery streaks, and conservative hysteresis; degraded/unreachable nodes are blocked from new admission while other nodes continue; customer `/myvpn`, key-detail, and `/usage` views now probe only the nodes that own that customer's keys, so an unrelated outage cannot stall retrieval |
 | Endpoint drain/retirement lifecycle | Implemented locally | Owner-confirmed active/draining/retired state; draining blocks new assignments, and retirement fails closed until local and remotely observed keys, orders, and setup intents are empty |
 | Provider/region/transport registry | Implemented foundation | Migration 14 mirrors Outline endpoints into stable provider, region, transport, profile, assignment, and credential identities; legacy paid/free rows backfill idempotently without storing management URLs or plaintext access URLs; non-Outline adapters and live migration remain gated |
@@ -49,7 +49,7 @@ engineering estimates, not production traffic or revenue metrics.
   PostgreSQL/node off-site-only recovery and plaintext-hash integrity checks,
   pinned node-bootstrap TLS, and
   provider-activation-gate, release-unit, preflight-gate, recovery-audit, and
-  production-acceptance suite (448 tests passing at the latest verification).
+  production-acceptance suite (450 tests passing at the latest verification).
 - Live deployment readiness: **staged, not 100%**. The current sanitized
   acceptance run passes source, lint, compilation, tests, required secret names,
   fleet-manifest parsing, backup-key validation, and the recovery entrypoint,

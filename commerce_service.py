@@ -4945,6 +4945,32 @@ class CommerceService(CommerceWorkerMixin):
             )
         return result
 
+    def user_migrated_usage(self, telegram_id: int) -> int:
+        """Return usage already consumed by this user before key turnover.
+
+        Endpoint migration replaces the local credential row with the target
+        key so the new key can be delivered normally.  The migration ledger is
+        the durable link to the source key's measured traffic; include only
+        migrations that reached cutover/source-delete phase.  A job that failed
+        before cutover still has the original key and must not be counted a
+        second time.
+        """
+        with self.database.connect() as connection:
+            if not self._table_exists(connection, "connectivity_migration_jobs"):
+                return 0
+            row = connection.execute(
+                """SELECT COALESCE(SUM(source_used_bytes), 0) AS used
+                     FROM connectivity_migration_jobs
+                    WHERE telegram_id = ?
+                      AND status IN ('source_delete_pending', 'completed')
+                      AND source_used_bytes IS NOT NULL""",
+                (int(telegram_id),),
+            ).fetchone()
+        try:
+            return max(0, int(row["used"] if row is not None else 0))
+        except (KeyError, TypeError, ValueError):
+            return 0
+
     def user_vpns(self, telegram_id: int, limit: int = 20) -> list[dict[str, Any]]:
         """Return all of a user's paid entitlements without exposing secrets.
 
