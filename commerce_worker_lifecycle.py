@@ -62,65 +62,34 @@ def _revoke_legacy_free_keys(
                 self.outline.delete_key(str(item["id"]))
                 with self.database.connect() as connection:
                     self.database.begin_write(connection)
-                    local = connection.execute(
-                        "SELECT id, telegram_id, server_id, data_limit_bytes, expires_at FROM keys WHERE outline_key_id = ?",
-                        (str(item["id"]),),
-                    ).fetchone()
+                    local = self.lifecycle.key_for_outline_id(connection, str(item["id"]))
                     if local is not None:
-                        connection.execute(
-                            "UPDATE keys SET status = 'revoked' WHERE id = ?", (local["id"],)
-                        )
+                        self.lifecycle.mark_legacy_key_revoked(connection, local["id"])
                         ConnectivityRegistry.revoke_credential(
                             connection,
                             server_id=str(local["server_id"]),
                             external_id=str(item["id"]),
                             now_text=_now_text(),
                         )
-                        connection.execute(
-                            """INSERT INTO key_termination_events
-                               (key_id, telegram_id, outline_key_id, reason, quota_bytes,
-                                expires_at, detected_at, remote_state, delete_attempts,
-                                deletion_verified_at)
-                               VALUES (?, ?, ?, 'paid_upgrade_cleanup', ?, ?, ?, 'delete_accepted', 1, ?)
-                               ON CONFLICT(key_id, reason) DO UPDATE SET
-                                  remote_state = excluded.remote_state,
-                                  delete_attempts = key_termination_events.delete_attempts + 1,
-                                  deletion_verified_at = excluded.deletion_verified_at""",
-                            (
-                                local["id"],
-                                local["telegram_id"],
-                                str(item["id"]),
-                                local["data_limit_bytes"],
-                                local["expires_at"],
-                                _now_text(),
-                                _now_text(),
-                            ),
+                        self.lifecycle.record_legacy_cleanup(
+                            connection,
+                            local=local,
+                            outline_key_id=str(item["id"]),
+                            now_text=_now_text(),
                         )
             except Exception as exc:
                 with self.database.connect() as connection:
                     self.database.begin_write(connection)
-                    local = connection.execute(
-                        "SELECT id, telegram_id, server_id, data_limit_bytes, expires_at FROM keys WHERE outline_key_id = ?",
-                        (str(item.get("id")),),
-                    ).fetchone()
+                    local = self.lifecycle.key_for_outline_id(
+                        connection, str(item.get("id"))
+                    )
                     if local is not None:
-                        connection.execute(
-                            """INSERT INTO key_termination_events
-                               (key_id, telegram_id, outline_key_id, reason, quota_bytes,
-                                expires_at, detected_at, remote_state, delete_attempts, last_error)
-                               VALUES (?, ?, ?, 'paid_upgrade_cleanup', ?, ?, ?, 'retrying', 1, ?)
-                               ON CONFLICT(key_id, reason) DO UPDATE SET
-                                  remote_state = 'retrying', delete_attempts = key_termination_events.delete_attempts + 1,
-                                  last_error = excluded.last_error""",
-                            (
-                                local["id"],
-                                local["telegram_id"],
-                                str(item.get("id")),
-                                local["data_limit_bytes"],
-                                local["expires_at"],
-                                _now_text(),
-                                type(exc).__name__[:128],
-                            ),
+                        self.lifecycle.record_legacy_cleanup_failure(
+                            connection,
+                            local=local,
+                            outline_key_id=str(item.get("id")),
+                            error=type(exc).__name__[:128],
+                            now_text=_now_text(),
                         )
 
 from commerce_worker_provisioning import _provision
@@ -129,16 +98,9 @@ def _expire(self, now: datetime) -> int:
     count = 0
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        rows = connection.execute(
-            """SELECT id FROM subscriptions
-               WHERE status = 'active' AND expires_at <= ?""",
-            (now_text,),
-        ).fetchall()
+        rows = self.lifecycle.expired_subscriptions(connection, now_text)
         for row in rows:
-            connection.execute(
-                "UPDATE subscriptions SET status = 'expired' WHERE id = ?",
-                (row["id"],),
-            )
+            self.lifecycle.mark_subscription_expired(connection, str(row["id"]))
             self._audit(
                 connection,
                 "subscription_expired",
@@ -148,27 +110,15 @@ def _expire(self, now: datetime) -> int:
                 None,
                 {"detected_at": now_text},
             )
-            connection.execute(
-                """INSERT INTO provisioning_jobs
-                   (id, subscription_id, operation, status, next_attempt_at, created_at)
-                   VALUES (?, ?, 'revoke', 'pending', ?, ?)
-                   ON CONFLICT(subscription_id, operation) DO NOTHING""",
-                (_new_id(), row["id"], now_text, now_text),
+            self.lifecycle.insert_revoke_job(
+                connection, _new_id(), str(row["id"]), now_text
             )
             count += 1
     return count
 
 def _revoke(self, job: dict[str, Any], now: datetime) -> None:
     with self.database.connect() as connection:
-        key = connection.execute(
-            """SELECT k.*, s.status AS subscription_status,
-                      o.id AS order_id, o.refund_status
-               FROM paid_vpn_keys k
-               JOIN subscriptions s ON s.id = k.subscription_id
-               JOIN orders o ON o.id = s.order_id
-               WHERE k.subscription_id = ?""",
-            (job["subscription_id"],),
-        ).fetchone()
+        key = self.lifecycle.revoke_context(connection, str(job["subscription_id"]))
     if key is None or key["status"] == "revoked":
         self._job_done(job["id"])
         return
@@ -184,28 +134,18 @@ def _revoke(self, job: dict[str, Any], now: datetime) -> None:
             remote_state = "deleted_verified"
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                """UPDATE paid_vpn_keys SET status = 'revoked', revoked_at = ?
-                   WHERE id = ?""",
-                (_now_text(now), key["id"]),
-            )
+            self.lifecycle.mark_paid_key_revoked(connection, key["id"], _now_text(now))
             ConnectivityRegistry.revoke_credential(
                 connection,
                 server_id=str(server_id),
                 external_id=str(key["outline_key_id"]),
                 now_text=_now_text(now),
             )
-            connection.execute(
-                "UPDATE provisioning_jobs SET status = 'done', locked_at = NULL WHERE id = ?",
-                (job["id"],),
-            )
+            self.lifecycle.mark_job_done(connection, str(job["id"]))
             quota_reason = key["quota_reason"] if "quota_reason" in key.keys() else None
-            quota_event = connection.execute(
-                """SELECT observed_bytes, quota_bytes, observed_at FROM quota_events
-                   WHERE subscription_id = ? AND reason IN ('quota', 'aggregate_quota')
-                   ORDER BY observed_at DESC LIMIT 1""",
-                (job["subscription_id"],),
-            ).fetchone()
+            quota_event = self.lifecycle.quota_event(
+                connection, str(job["subscription_id"])
+            )
             if key["refund_status"] == "refunded":
                 notice = "Your AuriX order was refunded to your wallet and its VPN access was terminated."
                 notice_kind = "payment_refunded"
@@ -227,24 +167,18 @@ def _revoke(self, job: dict[str, Any], now: datetime) -> None:
                 notice_kind = "vpn_expired"
             if remote_state == "deleted_verified":
                 notice += " Outline confirmed the credential is deleted."
-            connection.execute(
-                """INSERT INTO notifications
-                   (id, dedupe_key, telegram_id, kind, text, status, next_attempt_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
-                   ON CONFLICT(dedupe_key) DO NOTHING""",
-                (
-                    _new_id(),
-                    (
-                        f"access-revoked:{key['order_id']}"
-                        if key["refund_status"] == "refunded"
-                        else f"vpn-{notice_kind}:{job['subscription_id']}"
-                    ),
-                    key["telegram_id"],
-                    notice_kind,
-                    notice,
-                    _now_text(now),
-                    _now_text(now),
+            self.lifecycle.notification(
+                connection,
+                id=_new_id(),
+                dedupe_key=(
+                    f"access-revoked:{key['order_id']}"
+                    if key["refund_status"] == "refunded"
+                    else f"vpn-{notice_kind}:{job['subscription_id']}"
                 ),
+                telegram_id=key["telegram_id"],
+                kind=notice_kind,
+                text=notice,
+                now_text=_now_text(now),
             )
             self._audit(
                 connection,

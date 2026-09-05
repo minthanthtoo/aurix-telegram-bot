@@ -19,6 +19,7 @@ import repositories
 from commerce_order_repository import OrderRepository
 from commerce_customer_repository import CustomerRepository
 from commerce_failover_repository import FailoverRepository
+from commerce_lifecycle_repository import LifecycleRepository
 from commerce_payment_repository import PaymentRepository
 from commerce_wallet_read_repository import WalletReadRepository
 from commerce_wallet_approval_repository import WalletApprovalRepository
@@ -47,6 +48,7 @@ class CommerceService:
         self.orders: repositories.OrderRepositoryPort = OrderRepository()
         self.customer_reads = CustomerRepository()
         self.failover_reads = FailoverRepository()
+        self.lifecycle = LifecycleRepository()
         self.payments: repositories.PaymentRepositoryPort = PaymentRepository()
         self.wallet_approvals = WalletApprovalRepository()
         # Kept only for migration tests; deployments require evidence or a reservation.
