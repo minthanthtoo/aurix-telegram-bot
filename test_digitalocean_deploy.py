@@ -5,7 +5,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from deploy import digitalocean_autodeploy
 from deploy.digitalocean_autodeploy import (
     VERSIONED_UNIT_NAMES,
     ci_conclusion,
@@ -35,6 +37,23 @@ class DigitalOceanDeployTest(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_service_ready_queries_journalctl_with_valid_arguments(self):
+        systemctl = subprocess.CompletedProcess(("systemctl",), 0)
+        journalctl = subprocess.CompletedProcess(
+            ("journalctl",),
+            0,
+            stdout="Bot authorized: @aurix\nOutline connected: version 1.12.3\n",
+        )
+        with patch(
+            "deploy.digitalocean_autodeploy.subprocess.run",
+            side_effect=[systemctl, journalctl],
+        ) as run, patch(
+            "deploy.digitalocean_autodeploy.time.monotonic", side_effect=[0.0, 1.0]
+        ):
+            self.assertTrue(digitalocean_autodeploy._service_ready(0))
+
+        self.assertEqual(run.call_args_list[1].args[0][:3], ("journalctl", "-u", "aurix-bot"))
 
     def test_root_built_release_is_traversable_by_service_user(self):
         with tempfile.TemporaryDirectory() as temporary:
