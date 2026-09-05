@@ -74,6 +74,21 @@ cd /opt/aurix-current
 .venv/bin/python deploy/fleet_reconcile.py reconcile --env-file /etc/aurix-bot/aurix.env
 ```
 
+For a fast, read-only incident check, run the sanitized Outline diagnostic:
+
+```bash
+.venv/bin/python deploy/outline_diagnostics.py \
+  --env-file /etc/aurix-bot/aurix.env --allow-partial
+```
+
+It verifies the pinned management API, reports Outline version/key and metrics
+counts, and tests the TCP data port advertised by up to eight keys per node.
+The output contains only node IDs, public host/port metadata, status, latency,
+and exception types; management paths, certificate fingerprints, access URLs,
+and transfer amounts are never printed. `--allow-partial` is useful during a
+node outage because it returns success when at least one endpoint remains
+healthy while still showing every failed node.
+
 Reconciliation takes a global lock and, for each node:
 
 1. connects with an explicit SSH key and strict pinned `known_hosts`;

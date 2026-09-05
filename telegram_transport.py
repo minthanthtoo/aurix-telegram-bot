@@ -1798,8 +1798,18 @@ class TelegramBot(
             else (str(getattr(outline, "default_server_id", "primary")),)
         )
         allowed = {str(item) for item in configured_ids}
-        requested = tuple(str(item).strip() for item in (server_ids or configured_ids) if str(item).strip())
-        server_ids = tuple(item for item in requested if item in allowed) or tuple(configured_ids)
+        if server_ids is None:
+            selected_ids = tuple(str(item) for item in configured_ids)
+        else:
+            requested = tuple(
+                str(item).strip() for item in server_ids if str(item).strip()
+            )
+            # An explicitly requested retired/unknown server must not broaden
+            # into a fleet-wide probe.  The caller can still render the
+            # encrypted/stored key and lifecycle state while reporting usage
+            # unavailable; admin health remains responsible for the endpoint.
+            selected_ids = tuple(item for item in requested if item in allowed)
+        server_ids = selected_ids
         metrics_by_server: dict[str, dict[str, Any]] = {}
         access_by_server: dict[str, dict[str, str]] = {}
         for server_id in server_ids:

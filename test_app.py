@@ -2799,6 +2799,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
             include_access=True, server_ids=bot._customer_server_ids(123)
         )
         self.assertEqual(metrics, {"byServer": {"sg-a": {"1": 42}}})
+        with self.assertRaisesRegex(ValueError, "all Outline endpoints are unavailable"):
+            bot._collect_outline_state(include_access=True, server_ids=("retired-node",))
 
     def test_myvpn_surfaces_open_order_as_the_next_action(self):
         order = self.commerce.create_order(123, "Min", "basic_50gb")

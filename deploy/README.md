@@ -202,6 +202,17 @@ systemctl --no-pager --full status aurix-bot
 journalctl -u aurix-bot -n 100 --no-pager
 ```
 
+When a customer reports a key failure, run the read-only diagnostic before
+changing keys or firewall rules:
+
+```sh
+/opt/aurix-current/.venv/bin/python /opt/aurix-current/deploy/outline_diagnostics.py \
+  --env-file /etc/aurix-bot/aurix.env --allow-partial
+```
+
+It distinguishes a pinned management-API failure from a public access-port
+failure and never prints management paths or `ss://` credentials.
+
 Install the guarded infrastructure worker separately. It has its own root-only
 environment containing the scoped DigitalOcean token and defaults to no
 provider mutations:
