@@ -369,6 +369,10 @@ Restore is deliberately explicit and replaces current remote Outline state. It
 validates every tar path, rejects links/devices/traversal, preserves a remote
 rollback directory, restores, starts Shadowbox, and checks identity:
 
+Before any remote mutation, the archive sidecar is authenticated and its
+recorded `node_id` must match `--node` exactly. A valid backup from another
+endpoint is rejected instead of being restored onto the wrong server.
+
 ```bash
 .venv/bin/python deploy/fleet_backup.py restore \
   --node sg-a --confirm-node sg-a \

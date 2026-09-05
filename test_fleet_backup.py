@@ -79,6 +79,27 @@ class FleetBackupTests(unittest.TestCase):
             with self.assertRaises(FleetError):
                 verify_archive({"AURIX_FLEET_BACKUP_KEY": key}, archive)
 
+    def test_rejects_archive_bound_to_a_different_node(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "20260903T000000Z.tar.gz.fernet"
+            key = Fernet.generate_key().decode()
+            ciphertext = Fernet(key.encode()).encrypt(
+                archive_with(["access.txt", "persisted-state/config.yml"])
+            )
+            write_private(archive, ciphertext)
+            write_private(metadata_path(archive), json.dumps({
+                "node_id": "sg-a",
+                "created_at": "2026-09-03T00:00:00+00:00",
+                "ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
+            }).encode())
+
+            with self.assertRaisesRegex(FleetError, "node mismatch"):
+                verify_archive(
+                    {"AURIX_FLEET_BACKUP_KEY": key},
+                    archive,
+                    expected_node_id="bkk-a",
+                )
+
     def test_mirrors_and_verifies_offsite_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

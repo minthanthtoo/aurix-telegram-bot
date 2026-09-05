@@ -105,7 +105,12 @@ def latest_archive(root: Path) -> Path:
     return archives[0]
 
 
-def verify_archive(env: dict[str, str], archive: Path) -> dict[str, object]:
+def verify_archive(
+    env: dict[str, str],
+    archive: Path,
+    *,
+    expected_node_id: str | None = None,
+) -> dict[str, object]:
     metadata_file = metadata_path(archive)
     if not metadata_file.is_file():
         raise FleetError(f"backup metadata is missing: {metadata_file}")
@@ -115,6 +120,13 @@ def verify_archive(env: dict[str, str], archive: Path) -> dict[str, object]:
         raw = fernet(env).decrypt(ciphertext)
     except (OSError, json.JSONDecodeError, InvalidToken) as exc:
         raise FleetError(f"backup cannot be verified: {archive}") from exc
+    if not isinstance(metadata, dict):
+        raise FleetError(f"backup metadata is invalid: {archive}")
+    if expected_node_id is not None and metadata.get("node_id") != expected_node_id:
+        raise FleetError(
+            f"backup metadata node mismatch: expected {expected_node_id}, "
+            f"{metadata.get('node_id') or 'unknown'}"
+        )
     validate_archive(raw)
     expected_hash = metadata.get("ciphertext_sha256")
     actual_hash = hashlib.sha256(ciphertext).hexdigest()
@@ -129,13 +141,25 @@ def verify_archive(env: dict[str, str], archive: Path) -> dict[str, object]:
 
 
 def verify_archive_bytes(
-    env: dict[str, str], ciphertext: bytes, metadata_raw: bytes, label: str
+    env: dict[str, str],
+    ciphertext: bytes,
+    metadata_raw: bytes,
+    label: str,
+    *,
+    expected_node_id: str | None = None,
 ) -> dict[str, object]:
     try:
         metadata = json.loads(metadata_raw.decode())
         raw = fernet(env).decrypt(ciphertext)
     except (UnicodeDecodeError, json.JSONDecodeError, InvalidToken) as exc:
         raise FleetError(f"backup cannot be verified: {label}") from exc
+    if not isinstance(metadata, dict):
+        raise FleetError(f"backup metadata is invalid: {label}")
+    if expected_node_id is not None and metadata.get("node_id") != expected_node_id:
+        raise FleetError(
+            f"backup metadata node mismatch: expected {expected_node_id}, "
+            f"{metadata.get('node_id') or 'unknown'}"
+        )
     validate_archive(raw)
     expected_hash = metadata.get("ciphertext_sha256")
     actual_hash = hashlib.sha256(ciphertext).hexdigest()
@@ -249,7 +273,9 @@ def verify_node(node: FleetNode, env: dict[str, str]) -> dict[str, object]:
     result: dict[str, object] = {"node": node.node_id}
     local_root = backup_root(env, node)
     if local_root.is_dir() and any(local_root.glob("*.tar.gz.fernet")):
-        result["local"] = verify_archive(env, latest_archive(local_root))
+        result["local"] = verify_archive(
+            env, latest_archive(local_root), expected_node_id=node.node_id
+        )
     if offsite_storage.configured(env):
         object_key = offsite_storage.latest_key(
             env, f"fleet/{node.node_id}/", ".tar.gz.fernet"
@@ -259,9 +285,12 @@ def verify_node(node: FleetNode, env: dict[str, str]) -> dict[str, object]:
             offsite_storage.get(env, object_key),
             offsite_storage.get(env, object_key + ".json"),
             f"object://{object_key}",
+            expected_node_id=node.node_id,
         )
     elif (remote_root := offsite_root(env, node)) is not None:
-        result["offsite"] = verify_archive(env, latest_archive(remote_root))
+        result["offsite"] = verify_archive(
+            env, latest_archive(remote_root), expected_node_id=node.node_id
+        )
     elif truthy(env.get("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE")):
         raise FleetError("offsite backups are required but AURIX_FLEET_BACKUP_OFFSITE_DIR is empty")
     if len(result) == 1:
@@ -272,6 +301,10 @@ def verify_node(node: FleetNode, env: dict[str, str]) -> dict[str, object]:
 
 
 def restore_node(node: FleetNode, env: dict[str, str], archive: Path) -> None:
+    # Authenticate the sidecar and bind it to the requested node before any
+    # remote state is changed. This prevents a valid sg-a archive from being
+    # accidentally restored onto bkk-a (or vice versa).
+    verify_archive(env, archive, expected_node_id=node.node_id)
     try:
         raw = fernet(env).decrypt(archive.read_bytes())
     except (OSError, InvalidToken) as exc:
