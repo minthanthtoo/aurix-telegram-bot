@@ -886,6 +886,26 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(tuple(key), ("1", 50_000_000_000, "active"))
         self.assertEqual(len(self.outline.created), 1)
 
+    def test_recent_durable_snapshot_preserves_quota_when_missing_metrics_race(self):
+        self.service.register_outline_servers({"default": "Singapore"})
+        self.service.refresh_server_inventory(self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.outline.transfer = {"1": 1_000_000}
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=1))
+        self.outline.keys.pop("1")
+        self.outline.transfer = {}
+
+        self.service.refresh_server_inventory(self.now + timedelta(minutes=2))
+        result = self.service.refresh_server_inventory(self.now + timedelta(minutes=3))[0]
+        self.assertEqual(result["repair_jobs_queued"], 1)
+        with self.database.connect() as connection:
+            repair = connection.execute(
+                "SELECT status, used_bytes, quota_bytes FROM managed_key_repair_jobs"
+            ).fetchone()
+        self.assertEqual(tuple(repair), ("pending", 1_000_000, 50_000_000_000))
+
     def test_capacity_snapshot_exposes_read_only_policy_and_admission_posture(self):
         self.service.register_outline_servers({"default": "Singapore"})
         self.service.refresh_server_inventory(self.now)

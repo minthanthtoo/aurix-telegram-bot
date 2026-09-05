@@ -1176,8 +1176,41 @@ class CommerceService(CommerceWorkerMixin):
                 (server_id,),
             ).fetchall()
             rows.extend(dict(row) for row in free_rows)
+        # A missing key cannot be queried for historical transfer usage.  If
+        # the durable telemetry ledger has a newer sample than the live key
+        # row, use that same-key lower bound for repair decisions.  This keeps
+        # a recent observation useful across a restart or an inventory race,
+        # while the bounded freshness check below still escalates old data.
+        snapshot_by_ref: dict[tuple[str, str], dict[str, Any]] = {}
+        if self._table_exists(connection, "usage_snapshots"):
+            snapshot_rows = connection.execute(
+                """SELECT entitlement_kind, local_key_ref, used_bytes, observed_at
+                     FROM usage_snapshots
+                    WHERE server_id = ?
+                    ORDER BY observed_at DESC""",
+                (server_id,),
+            ).fetchall()
+            for snapshot in snapshot_rows:
+                key = (str(snapshot["entitlement_kind"]), str(snapshot["local_key_ref"]))
+                snapshot_by_ref.setdefault(key, dict(snapshot))
         for row in rows:
             row["source_external_id"] = str(row.get("source_external_id") or "").strip()
+            snapshot = snapshot_by_ref.get((str(row["kind"]), str(row["local_key_ref"])))
+            if snapshot:
+                live_observed = row.get("last_usage_observed_at")
+                use_snapshot = not live_observed
+                if not use_snapshot:
+                    try:
+                        use_snapshot = datetime.fromisoformat(
+                            str(snapshot["observed_at"])
+                        ).astimezone(UTC) > datetime.fromisoformat(
+                            str(live_observed)
+                        ).astimezone(UTC)
+                    except (TypeError, ValueError, OverflowError):
+                        use_snapshot = False
+                if use_snapshot:
+                    row["last_usage_bytes"] = snapshot["used_bytes"]
+                    row["last_usage_observed_at"] = snapshot["observed_at"]
             row["key_name"] = self._managed_repair_key_name(row)
         return [row for row in rows if row["source_external_id"]]
 
