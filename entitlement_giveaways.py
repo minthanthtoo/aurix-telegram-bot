@@ -13,7 +13,6 @@ from typing import Any
 
 from cryptography.fernet import Fernet
 from commerce_models import CommerceError
-from connectivity_registry import ConnectivityRegistry
 from identity import IdentityService
 from ports import OutlineGateway
 from quota_alerts import get_quota_alert_preferences, reached_alert, set_quota_alert_preferences
@@ -43,6 +42,7 @@ from entitlement_giveaway_campaign import (
     _campaign_state,
     _campaign_window_start,
     _commerce_tables_exist,
+    _GIVEAWAY,
     _intent_tables_exist,
     configure_giveaway,
     giveaway_status,
@@ -50,33 +50,12 @@ from entitlement_giveaway_campaign import (
 
 
 def _lock_user(connection: Any, telegram_id: int) -> None:
-    if connection.__class__.__name__ == "_PostgresConnection":
-        connection.execute(
-            "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
-            (telegram_id,),
-        ).fetchone()
+    _GIVEAWAY.lock_user(connection, telegram_id)
 
 def _has_active_promo_gift(connection: Any, telegram_id: int, now: datetime) -> bool:
     """Return whether a live campaign and usable gift currently pause other plans."""
     now_text = now.astimezone(UTC).isoformat()
-    return (
-        connection.execute(
-            """SELECT 1
-               FROM giveaway_claims g
-               JOIN giveaway_campaigns c ON c.code = g.campaign_code
-               JOIN keys k ON k.id = g.key_id
-               WHERE g.telegram_id = ?
-                 AND c.active = 1
-                 AND (c.starts_at IS NULL OR c.starts_at <= ?)
-                 AND (c.ends_at IS NULL OR c.ends_at > ?)
-                 AND k.status IN ('active', 'revoke_failed')
-                 AND k.expires_at > ?
-                 AND k.quota_reason IS NULL
-               LIMIT 1""",
-            (telegram_id, now_text, now_text, now_text),
-        ).fetchone()
-        is not None
-    )
+    return _GIVEAWAY.has_active_promo_gift(connection, telegram_id, now_text)
 
 def set_giveaway_active(
     self, code: str, active: bool, now: datetime | None = None
@@ -85,33 +64,16 @@ def set_giveaway_active(
     now_text = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        row = connection.execute(
-            "SELECT code FROM giveaway_campaigns WHERE UPPER(code) = ?", (normalized,)
-        ).fetchone()
+        row = _GIVEAWAY.campaign_by_code(connection, normalized)
         if row is None:
             raise ValueError("Promo campaign not found")
-        if active:
-            connection.execute(
-                "UPDATE giveaway_campaigns SET active = 0, updated_at = ? WHERE code != ?",
-                (now_text, row["code"]),
-            )
-        connection.execute(
-            "UPDATE giveaway_campaigns SET active = ?, updated_at = ? WHERE code = ?",
-            (1 if active else 0, now_text, row["code"]),
-        )
+        _GIVEAWAY.set_active(connection, normalized, active, now_text)
     return self.giveaway_status(0, str(row["code"]), now=now)
 
 def reconcile_giveaway_limits(self) -> int:
     """Converge already-issued remote promo keys to their stored exact quota."""
     with self.database.connect() as connection:
-        rows = connection.execute(
-            """SELECT k.server_id, k.outline_key_id, c.quota_bytes
-               FROM giveaway_claims g
-               JOIN giveaway_campaigns c ON c.code = g.campaign_code
-               JOIN keys k ON k.id = g.key_id
-               WHERE k.status IN ('active', 'revoke_failed')
-                 AND k.quota_reason IS NULL"""
-        ).fetchall()
+        rows = _GIVEAWAY.reconciliation_rows(connection)
     if not rows:
         return 0
     updated = 0
@@ -147,14 +109,7 @@ def track_user(
 ) -> None:
     now_text = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
     with self.database.connect() as connection:
-        connection.execute(
-            """INSERT INTO users (telegram_id, first_name, username, created_at)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(telegram_id) DO UPDATE SET
-                   first_name = excluded.first_name,
-                   username = excluded.username""",
-            (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
-        )
+        _GIVEAWAY.upsert_user(connection, telegram_id, first_name, username, now_text)
     self.identity.ensure_account(telegram_id, now=now_text)
 
 def claim(
@@ -169,18 +124,9 @@ def claim(
     intent_id: str | None = None
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        connection.execute(
-            """INSERT INTO users (telegram_id, first_name, username, created_at)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(telegram_id) DO UPDATE SET
-                   first_name = excluded.first_name,
-                   username = excluded.username""",
-            (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
-        )
+        _GIVEAWAY.upsert_user(connection, telegram_id, first_name, username, now_text)
         self._lock_user(connection, telegram_id)
-        user = connection.execute(
-            "SELECT last_claim_at FROM users WHERE telegram_id = ?", (telegram_id,)
-        ).fetchone()
+        user = _GIVEAWAY.user_claim_marker(connection, telegram_id, "last_claim_at")
         existing_intent = self._latest_free_intent(connection, telegram_id, "daily")
         if existing_intent is not None and existing_intent["status"] in {
             "pending",
@@ -189,18 +135,9 @@ def claim(
         }:
             intent_id = str(existing_intent["id"])
             if existing_intent["status"] == "failed":
-                connection.execute(
-                    """UPDATE free_provisioning_intents
-                       SET status = 'pending', attempts = 0, next_attempt_at = ?,
-                           locked_at = NULL, last_error = NULL
-                     WHERE id = ?""",
-                    (now_text, intent_id),
-                )
+                _GIVEAWAY.reset_intent(connection, intent_id, now_text)
             elif existing_intent["status"] == "pending":
-                connection.execute(
-                    "UPDATE free_provisioning_intents SET next_attempt_at = ? WHERE id = ?",
-                    (now_text, intent_id),
-                )
+                _GIVEAWAY.update_intent_next(connection, intent_id, now_text)
         else:
             if self._has_active_promo_gift(connection, telegram_id, current):
                 return ClaimResult(denied_reason="active_promo")
@@ -235,9 +172,7 @@ def claim(
     if intent_id is None:
         return ClaimResult(denied_reason="unavailable")
     with self.database.connect() as connection:
-        row = connection.execute(
-            "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
-        ).fetchone()
+        row = _GIVEAWAY.intent_by_id(connection, intent_id)
     if row is None:
         return ClaimResult(denied_reason="unavailable")
     intent = dict(row)
@@ -252,9 +187,7 @@ def claim(
         return ClaimResult(pending=True)
     with self.database.connect() as connection:
         completed = dict(
-            connection.execute(
-                "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
-            ).fetchone()
+            _GIVEAWAY.intent_by_id(connection, intent_id)
         )
     result = self._intent_result(completed, current, key)
     return result if isinstance(result, ClaimResult) else ClaimResult(pending=True)
@@ -272,18 +205,9 @@ def claim_trial(
     intent_id: str | None = None
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        connection.execute(
-            """INSERT INTO users (telegram_id, first_name, username, created_at)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(telegram_id) DO UPDATE SET
-                   first_name = excluded.first_name,
-                   username = excluded.username""",
-            (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
-        )
+        _GIVEAWAY.upsert_user(connection, telegram_id, first_name, username, now_text)
         self._lock_user(connection, telegram_id)
-        user = connection.execute(
-            "SELECT trial_claimed_at FROM users WHERE telegram_id = ?", (telegram_id,)
-        ).fetchone()
+        user = _GIVEAWAY.user_claim_marker(connection, telegram_id, "trial_claimed_at")
         existing_intent = self._latest_free_intent(connection, telegram_id, "trial")
         if existing_intent is not None and existing_intent["status"] in {
             "pending",
@@ -292,18 +216,9 @@ def claim_trial(
         }:
             intent_id = str(existing_intent["id"])
             if existing_intent["status"] == "failed":
-                connection.execute(
-                    """UPDATE free_provisioning_intents
-                       SET status = 'pending', attempts = 0, next_attempt_at = ?,
-                           locked_at = NULL, last_error = NULL
-                     WHERE id = ?""",
-                    (now_text, intent_id),
-                )
+                _GIVEAWAY.reset_intent(connection, intent_id, now_text)
             elif existing_intent["status"] == "pending":
-                connection.execute(
-                    "UPDATE free_provisioning_intents SET next_attempt_at = ? WHERE id = ?",
-                    (now_text, intent_id),
-                )
+                _GIVEAWAY.update_intent_next(connection, intent_id, now_text)
         else:
             if self._has_active_promo_gift(connection, telegram_id, current):
                 return ClaimResult(denied_reason="active_promo")
@@ -338,9 +253,7 @@ def claim_trial(
     if intent_id is None:
         return ClaimResult(denied_reason="unavailable")
     with self.database.connect() as connection:
-        row = connection.execute(
-            "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
-        ).fetchone()
+        row = _GIVEAWAY.intent_by_id(connection, intent_id)
     if row is None:
         return ClaimResult(denied_reason="unavailable")
     intent = dict(row)
@@ -355,9 +268,7 @@ def claim_trial(
         return ClaimResult(pending=True)
     with self.database.connect() as connection:
         completed = dict(
-            connection.execute(
-                "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
-            ).fetchone()
+            _GIVEAWAY.intent_by_id(connection, intent_id)
         )
     result = self._intent_result(completed, current, key)
     return result if isinstance(result, ClaimResult) else ClaimResult(pending=True)

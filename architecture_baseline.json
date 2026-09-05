@@ -199,9 +199,9 @@
       "max_sql_calls": 0
     },
     "entitlement_giveaways.py": {
-      "max_lines": 836,
-      "max_function_lines": 226,
-      "max_sql_calls": 49
+      "max_lines": 274,
+      "max_function_lines": 80,
+      "max_sql_calls": 0
     },
     "entitlement_models.py": {
       "max_lines": 35,
@@ -664,14 +664,19 @@
       "max_sql_calls": 0
     },
     "entitlement_giveaway_campaign.py": {
-      "max_lines": 271,
-      "max_function_lines": 109,
-      "max_sql_calls": 16
+      "max_lines": 210,
+      "max_function_lines": 82,
+      "max_sql_calls": 0
     },
     "entitlement_giveaway_claim.py": {
-      "max_lines": 243,
-      "max_function_lines": 226,
-      "max_sql_calls": 14
+      "max_lines": 187,
+      "max_function_lines": 170,
+      "max_sql_calls": 0
+    },
+    "entitlement_giveaway_repository.py": {
+      "max_lines": 295,
+      "max_function_lines": 19,
+      "max_sql_calls": 26
     },
     "entitlement_server_allocation.py": {
       "max_lines": 122,
@@ -722,6 +727,7 @@
         "infrastructure_inventory_repository.py",
         "commerce_customer_repository.py",
         "commerce_failover_repository.py",
+        "entitlement_giveaway_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",

@@ -7,6 +7,10 @@ from datetime import datetime
 from typing import Any
 
 from entitlement_support import GIVEAWAY_CODE, UTC
+from entitlement_giveaway_repository import GiveawayRepository
+
+
+_GIVEAWAY = GiveawayRepository()
 
 
 def _campaign_window_start(campaign: Any, now: datetime) -> str:
@@ -31,26 +35,12 @@ def _campaign_state(campaign: Any, now: datetime) -> str:
 
 
 def _commerce_tables_exist(connection: Any) -> bool:
-    if connection.__class__.__name__ == "_PostgresConnection":
-        row = connection.execute("SELECT to_regclass('public.orders') AS table_name").fetchone()
-        return bool(row and row["table_name"])
-    row = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'orders'"
-    ).fetchone()
-    return row is not None
+    return _GIVEAWAY.commerce_tables_exist(connection)
 
 
 def _intent_tables_exist(connection: Any) -> bool:
     """Return whether the restart-safe free issuance table is available."""
-    if connection.__class__.__name__ == "_PostgresConnection":
-        row = connection.execute(
-            "SELECT to_regclass('public.free_provisioning_intents') AS table_name"
-        ).fetchone()
-        return bool(row and row["table_name"])
-    row = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'free_provisioning_intents'"
-    ).fetchone()
-    return row is not None
+    return _GIVEAWAY.intent_tables_exist(connection)
 
 
 def giveaway_status(
@@ -63,16 +53,11 @@ def giveaway_status(
     current = (now or datetime.now(UTC)).astimezone(UTC)
     normalized = str(code or "").strip().upper()
     with self.database.connect() as connection:
-        if normalized:
-            campaign = connection.execute(
-                "SELECT * FROM giveaway_campaigns WHERE UPPER(code) = ?", (normalized,)
-            ).fetchone()
-        else:
-            campaign = connection.execute(
-                """SELECT * FROM giveaway_campaigns
-                   ORDER BY active DESC, COALESCE(updated_at, created_at) DESC
-                   LIMIT 1"""
-            ).fetchone()
+        campaign = (
+            _GIVEAWAY.campaign_by_code(connection, normalized)
+            if normalized
+            else _GIVEAWAY.active_campaign(connection)
+        )
         if campaign is None:
             return {
                 "exists": False,
@@ -87,36 +72,18 @@ def giveaway_status(
                 "winner_limit": 0,
                 "remaining_slots": 0,
             }
-        claim = connection.execute(
-            """SELECT g.winner_number, g.claimed_at, k.expires_at, k.status,
-                      k.quota_reason, k.data_limit_bytes
-               FROM giveaway_claims g JOIN keys k ON k.id = g.key_id
-               WHERE g.campaign_code = ? AND g.telegram_id = ?""",
-            (campaign["code"], telegram_id),
-        ).fetchone()
-        total_claimed = int(
-            connection.execute(
-                "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
-                (campaign["code"],),
-            ).fetchone()["n"]
-        )
+        claim = _GIVEAWAY.claim_for_user(connection, campaign["code"], telegram_id)
+        total_claimed = _GIVEAWAY.claim_count(connection, campaign["code"])
         window_start = self._campaign_window_start(campaign, current)
-        window = connection.execute(
-            """SELECT claimed_count FROM giveaway_windows
-               WHERE campaign_code = ? AND window_start = ?""",
-            (campaign["code"], window_start),
-        ).fetchone()
+        window = _GIVEAWAY.giveaway_window(connection, campaign["code"], window_start)
         pending_intent = self._latest_free_intent(
             connection, telegram_id, "promo", str(campaign["code"])
         )
-        pending_window = int(
-            connection.execute(
-                """SELECT COUNT(*) AS n FROM free_provisioning_intents
-                   WHERE campaign_code = ? AND window_start = ?
-                     AND status IN ('pending', 'running')""",
-                (campaign["code"], window_start),
-            ).fetchone()["n"]
-        ) if self._intent_tables_exist(connection) else 0
+        pending_window = (
+            _GIVEAWAY.pending_window_count(connection, campaign["code"], window_start)
+            if self._intent_tables_exist(connection)
+            else 0
+        )
     frequency = str(campaign["frequency"] or "campaign")
     window_claimed = (
         int(window["claimed_count"])
@@ -194,41 +161,22 @@ def configure_giveaway(
     now_text = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        existing = connection.execute(
-            "SELECT * FROM giveaway_campaigns WHERE code = ?", (normalized,)
-        ).fetchone()
+        existing = _GIVEAWAY.campaign_by_code(connection, normalized)
         if existing is None:
-            connection.execute(
-                """INSERT INTO giveaway_campaigns
-                   (code, quota_bytes, duration_days, winner_limit, claimed_count,
-                    active, created_at, starts_at, ends_at, frequency, updated_at)
-                   VALUES (?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?)""",
-                (
-                    normalized,
-                    quota_bytes,
-                    duration_days,
-                    winner_limit,
-                    now_text,
-                    starts_at.isoformat(),
-                    ends_at.isoformat(),
-                    frequency,
-                    now_text,
-                ),
+            _GIVEAWAY.insert_campaign(
+                connection,
+                code=normalized,
+                quota_bytes=quota_bytes,
+                duration_days=duration_days,
+                winner_limit=winner_limit,
+                created_at=now_text,
+                starts_at=starts_at.isoformat(),
+                ends_at=ends_at.isoformat(),
+                frequency=frequency,
             )
         else:
-            claim_count = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
-                    (normalized,),
-                ).fetchone()["n"]
-            )
-            max_window = int(
-                connection.execute(
-                    """SELECT COALESCE(MAX(claimed_count), 0) AS n
-                       FROM giveaway_windows WHERE campaign_code = ?""",
-                    (normalized,),
-                ).fetchone()["n"]
-            )
+            claim_count = _GIVEAWAY.claim_count(connection, normalized)
+            max_window = _GIVEAWAY.max_window_claims(connection, normalized)
             if claim_count:
                 immutable_changed = any(
                     (
@@ -247,25 +195,16 @@ def configure_giveaway(
                 raise ValueError(
                     f"Giveaway count cannot be below {max_window} claims already made in a window"
                 )
-            connection.execute(
-                """UPDATE giveaway_campaigns
-                   SET quota_bytes = ?, duration_days = ?, winner_limit = ?, active = 1,
-                       starts_at = ?, ends_at = ?, frequency = ?, updated_at = ?
-                   WHERE code = ?""",
-                (
-                    quota_bytes,
-                    duration_days,
-                    winner_limit,
-                    starts_at.isoformat(),
-                    ends_at.isoformat(),
-                    frequency,
-                    now_text,
-                    normalized,
-                ),
+            _GIVEAWAY.update_campaign(
+                connection,
+                code=normalized,
+                quota_bytes=quota_bytes,
+                duration_days=duration_days,
+                winner_limit=winner_limit,
+                starts_at=starts_at.isoformat(),
+                ends_at=ends_at.isoformat(),
+                frequency=frequency,
+                now_text=now_text,
             )
-        connection.execute(
-            "UPDATE giveaway_campaigns SET active = 0, updated_at = ? WHERE code != ? AND active = 1",
-            (now_text, normalized),
-        )
+        _GIVEAWAY.deactivate_other_campaigns(connection, normalized, now_text)
     return self.giveaway_status(0, normalized, now=now)
-

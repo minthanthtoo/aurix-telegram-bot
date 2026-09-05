@@ -12,6 +12,7 @@ from entitlement_support import (
     UTC,
     outline_key_name as _outline_key_name,
 )
+from entitlement_giveaway_campaign import _GIVEAWAY
 
 
 def claim_giveaway(
@@ -34,37 +35,19 @@ def claim_giveaway(
     intent_id: str | None = None
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        connection.execute(
-            """INSERT INTO users (telegram_id, first_name, username, created_at)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(telegram_id) DO UPDATE SET
-                   first_name = excluded.first_name,
-                   username = excluded.username""",
-            (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
-        )
+        _GIVEAWAY.upsert_user(connection, telegram_id, first_name, username, now_text)
         self._lock_user(connection, telegram_id)
         if normalized == GIVEAWAY_CODE:
-            connection.execute(
-                """INSERT INTO giveaway_campaigns
-                   (code, quota_bytes, duration_days, winner_limit, claimed_count, active,
-                    created_at, frequency, updated_at)
-                   VALUES (?, ?, 30, ?, 0, 1, ?, 'campaign', ?)
-                   ON CONFLICT(code) DO NOTHING""",
-                (GIVEAWAY_CODE, GIVEAWAY_LIMIT_BYTES, GIVEAWAY_WINNER_LIMIT, now_text, now_text),
+            _GIVEAWAY.insert_default_campaign(
+                connection, GIVEAWAY_CODE, GIVEAWAY_LIMIT_BYTES, GIVEAWAY_WINNER_LIMIT, now_text
             )
         suffix = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
-        campaign = connection.execute(
-            "SELECT * FROM giveaway_campaigns WHERE UPPER(code) = ?" + suffix,
-            (normalized,),
-        ).fetchone()
+        campaign = _GIVEAWAY.campaign_by_code(
+            connection, normalized, for_update=bool(suffix)
+        )
         if campaign is None:
             return GiveawayResult("unavailable", reason="Promo code is invalid or unavailable.")
-        existing = connection.execute(
-            """SELECT g.winner_number, k.expires_at
-               FROM giveaway_claims g JOIN keys k ON k.id = g.key_id
-               WHERE g.campaign_code = ? AND g.telegram_id = ?""",
-            (campaign["code"], telegram_id),
-        ).fetchone()
+        existing = _GIVEAWAY.claim_for_user(connection, campaign["code"], telegram_id)
         if existing is not None:
             return GiveawayResult(
                 "already_won",
@@ -82,59 +65,35 @@ def claim_giveaway(
         elif existing_intent is not None and existing_intent["status"] in {"pending", "running"}:
             intent_id = str(existing_intent["id"])
             if existing_intent["status"] == "pending":
-                connection.execute(
-                    "UPDATE free_provisioning_intents SET next_attempt_at = ? WHERE id = ?",
-                    (now_text, intent_id),
-                )
+                _GIVEAWAY.update_intent_next(connection, intent_id, now_text)
         elif existing_intent is not None and existing_intent["status"] == "failed":
             intent_id = str(existing_intent["id"])
-            connection.execute(
-                "UPDATE free_provisioning_intents SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_at = NULL, last_error = NULL WHERE id = ?",
-                (now_text, intent_id),
-            )
+            _GIVEAWAY.reset_intent(connection, intent_id, now_text)
         else:
             window_start = self._campaign_window_start(campaign, current)
-            window = connection.execute(
-                """SELECT claimed_count FROM giveaway_windows
-                   WHERE campaign_code = ? AND window_start = ?""",
-                (campaign["code"], window_start),
-            ).fetchone()
+            window = _GIVEAWAY.giveaway_window(
+                connection, campaign["code"], window_start
+            )
             if window is None:
                 initial_count = (
                     int(campaign["claimed_count"])
                     if str(campaign["frequency"] or "campaign") == "campaign"
                     else 0
                 )
-                connection.execute(
-                    """INSERT INTO giveaway_windows
-                       (campaign_code, window_start, claimed_count) VALUES (?, ?, ?)""",
-                    (campaign["code"], window_start, initial_count),
+                _GIVEAWAY.insert_window(
+                    connection, campaign["code"], window_start, initial_count
                 )
                 window_claimed = initial_count
             else:
                 window_claimed = int(window["claimed_count"])
-            pending_window = int(
-                connection.execute(
-                    """SELECT COUNT(*) AS n FROM free_provisioning_intents
-                       WHERE campaign_code = ? AND window_start = ?
-                         AND status IN ('pending', 'running')""",
-                    (campaign["code"], window_start),
-                ).fetchone()["n"]
+            pending_window = _GIVEAWAY.pending_window_count(
+                connection, campaign["code"], window_start
             )
             window_claimed += pending_window
             remaining = max(0, int(campaign["winner_limit"]) - window_claimed)
-            total_claimed = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
-                    (campaign["code"],),
-                ).fetchone()["n"]
-            )
-            pending_campaign = int(
-                connection.execute(
-                    """SELECT COUNT(*) AS n FROM free_provisioning_intents
-                       WHERE campaign_code = ? AND status IN ('pending', 'running')""",
-                    (campaign["code"],),
-                ).fetchone()["n"]
+            total_claimed = _GIVEAWAY.claim_count(connection, campaign["code"])
+            pending_campaign = _GIVEAWAY.pending_campaign_count(
+                connection, campaign["code"]
             )
             state = self._campaign_state(campaign, current)
             if state != "active":
@@ -154,17 +113,7 @@ def claim_giveaway(
                     remaining_slots=0,
                 )
             if self._commerce_tables_exist(connection):
-                conflict = connection.execute(
-                    """SELECT 1 FROM orders
-                       WHERE telegram_id = ?
-                         AND status IN ('awaiting_payment', 'payment_submitted')
-                         AND COALESCE(refund_status, 'none') != 'refunded'
-                       UNION ALL
-                       SELECT 1 FROM subscriptions
-                       WHERE telegram_id = ? AND status IN ('pending', 'active')
-                       LIMIT 1""",
-                    (telegram_id, telegram_id),
-                ).fetchone()
+                conflict = _GIVEAWAY.paid_order_conflict(connection, telegram_id)
                 if conflict is not None:
                     return GiveawayResult(
                         "ineligible",
@@ -202,9 +151,7 @@ def claim_giveaway(
     if intent_id is None:
         return GiveawayResult("unavailable", reason="Promo reservation could not be created.")
     with self.database.connect() as connection:
-        row = connection.execute(
-            "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
-        ).fetchone()
+        row = _GIVEAWAY.intent_by_id(connection, intent_id)
     if row is None:
         return GiveawayResult("unavailable", reason="Promo reservation is unavailable.")
     intent = dict(row)
@@ -234,10 +181,7 @@ def claim_giveaway(
         )
     with self.database.connect() as connection:
         completed = dict(
-            connection.execute(
-                "SELECT * FROM free_provisioning_intents WHERE id = ?", (intent_id,)
-            ).fetchone()
+            _GIVEAWAY.intent_by_id(connection, intent_id)
         )
     result = self._intent_result(completed, current, key)
     return result if isinstance(result, GiveawayResult) else GiveawayResult("pending", pending=True)
-
