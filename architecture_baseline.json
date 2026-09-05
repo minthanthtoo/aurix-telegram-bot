@@ -148,6 +148,11 @@
       "max_function_lines": 19,
       "max_sql_calls": 0
     },
+    "entitlement_allocation_repository.py": {
+      "max_lines": 106,
+      "max_function_lines": 17,
+      "max_sql_calls": 10
+    },
     "entitlement_dispatch.py": {
       "max_lines": 128,
       "max_function_lines": 0,
@@ -589,9 +594,9 @@
       "max_sql_calls": 14
     },
     "entitlement_server_allocation.py": {
-      "max_lines": 168,
-      "max_function_lines": 154,
-      "max_sql_calls": 10
+      "max_lines": 122,
+      "max_function_lines": 105,
+      "max_sql_calls": 0
     },
     "telegram_transport_customer_vpn_dashboard.py": {
       "max_lines": 285,
@@ -626,6 +631,7 @@
         "commerce_wallet_approval_repository.py",
         "identity_usage_policy.py",
         "identity_usage_repository.py",
+        "entitlement_allocation_repository.py",
         "ports.py",
         "repositories.py",
         "persistence.py"
