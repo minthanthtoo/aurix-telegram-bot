@@ -153,10 +153,18 @@ def _outline_check(env_file: Path) -> tuple[dict[str, str], dict[str, Any]]:
     status = str(report.get("status") or "unreachable")
     healthy = int(report.get("healthy_servers") or 0)
     total = int(report.get("server_count") or 0)
+    serving = int(report.get("serving_servers") or 0)
+    empty = int(report.get("empty_servers") or 0)
     if status == "healthy":
-        check = _check("outline_endpoints", PASS, f"{healthy}/{total} management and data-plane checks passed")
+        detail = f"{healthy}/{total} management checks passed; {serving}/{total} data-plane node(s) serving"
+        if empty:
+            detail += f"; {empty} intentionally empty"
+        check = _check("outline_endpoints", PASS, detail)
     elif healthy:
-        check = _check("outline_endpoints", WARN, f"{healthy}/{total} Outline endpoint(s) healthy; see diagnostic details")
+        detail = f"{healthy}/{total} Outline management endpoint(s) healthy; {serving}/{total} data-plane node(s) serving"
+        if empty:
+            detail += f"; {empty} intentionally empty"
+        check = _check("outline_endpoints", WARN, detail)
     else:
         check = _check("outline_endpoints", FAIL, "no configured Outline endpoint passed management/data-plane checks")
     return check, report

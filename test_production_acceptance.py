@@ -83,6 +83,8 @@ class ProductionAcceptanceTests(unittest.TestCase):
             return_value={
                 "status": "degraded",
                 "healthy_servers": 1,
+                "serving_servers": 1,
+                "empty_servers": 1,
                 "server_count": 3,
                 "servers": [{"server_id": "sg-a", "status": "healthy"}],
             },
@@ -91,6 +93,8 @@ class ProductionAcceptanceTests(unittest.TestCase):
         diagnostic.assert_called_once_with(Path("/tmp/aurix.env"))
         self.assertEqual(check["name"], "outline_endpoints")
         self.assertEqual(check["status"], "warn")
+        self.assertIn("1/3 data-plane node(s) serving", check["detail"])
+        self.assertIn("1 intentionally empty", check["detail"])
         self.assertEqual(report["healthy_servers"], 1)
 
     def test_acceptance_includes_outline_diagnostic_only_when_requested(self):
@@ -112,7 +116,13 @@ class ProductionAcceptanceTests(unittest.TestCase):
                 "deploy.production_acceptance.shutil.which", return_value="/usr/bin/ruff"
             ), patch(
                 "deploy.production_acceptance.run_outline_diagnostics",
-                return_value={"status": "healthy", "healthy_servers": 1, "server_count": 1},
+                return_value={
+                    "status": "healthy",
+                    "healthy_servers": 1,
+                    "serving_servers": 1,
+                    "empty_servers": 0,
+                    "server_count": 1,
+                },
             ) as diagnostic:
                 report = run_acceptance(env_file=env_file, root=root, runner=fake_runner, outline=True)
 
