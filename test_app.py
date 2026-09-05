@@ -2802,6 +2802,23 @@ class TelegramBotCommerceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "all Outline endpoints are unavailable"):
             bot._collect_outline_state(include_access=True, server_ids=("retired-node",))
 
+    def test_customer_outline_state_keeps_healthy_results_when_one_owned_server_is_down(self):
+        pool = FakeOutlinePool()
+        pool.clients["sg-a"].transfer = {"1": 42}
+        pool.clients["sg-b"].transfer_metrics = lambda: (_ for _ in ()).throw(
+            TimeoutError("simulated node outage")
+        )
+        bot = RecordingTelegramBot(
+            "test-token", ClaimService(self.db, pool), None, {999}, {123}
+        )
+
+        metrics, access = bot._collect_outline_state(
+            include_access=True, server_ids=("sg-a", "sg-b")
+        )
+
+        self.assertEqual(metrics, {"byServer": {"sg-a": {"1": 42}}})
+        self.assertEqual(access, {"byServer": {"sg-a": {}}})
+
     def test_myvpn_surfaces_open_order_as_the_next_action(self):
         order = self.commerce.create_order(123, "Min", "basic_50gb")
 

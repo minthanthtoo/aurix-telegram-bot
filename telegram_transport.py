@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -1810,9 +1811,9 @@ class TelegramBot(
             # unavailable; admin health remains responsible for the endpoint.
             selected_ids = tuple(item for item in requested if item in allowed)
         server_ids = selected_ids
-        metrics_by_server: dict[str, dict[str, Any]] = {}
-        access_by_server: dict[str, dict[str, str]] = {}
-        for server_id in server_ids:
+        def collect_server_state(
+            server_id: str,
+        ) -> tuple[str, dict[str, Any], dict[str, str], str | None]:
             client_getter = getattr(outline, "client", None)
             client = client_getter(server_id) if callable(client_getter) else outline
             try:
@@ -1833,12 +1834,27 @@ class TelegramBot(
                         value = str(item["accessUrl"]).replace("\r", "").replace("\n", "").strip()
                         if value:
                             access[str(item["id"])] = value
-                    access_by_server[str(server_id)] = access
+                return str(server_id), dict(usage), access, None
             except Exception as exc:
+                return str(server_id), {}, {}, type(exc).__name__
+
+        metrics_by_server: dict[str, dict[str, Any]] = {}
+        access_by_server: dict[str, dict[str, str]] = {}
+        # A customer may legitimately own keys on multiple nodes.  Keep the
+        # reads bounded and parallel so one unreachable node cannot serialize
+        # every other customer's view behind its network timeout.
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(server_ids)))) as executor:
+            collected = list(executor.map(collect_server_state, server_ids))
+        for server_id, usage, access, error_type in collected:
+            if error_type is not None:
                 print(
-                    f"Outline state unavailable server={server_id}: {type(exc).__name__}",
+                    f"Outline state unavailable server={server_id}: {error_type}",
                     file=sys.stderr,
                 )
+                continue
+            metrics_by_server[server_id] = usage
+            if include_access:
+                access_by_server[server_id] = access
         if not metrics_by_server:
             raise ValueError("all Outline endpoints are unavailable")
         return {"byServer": metrics_by_server}, {"byServer": access_by_server}
