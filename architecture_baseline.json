@@ -24,9 +24,9 @@
       "max_sql_calls": 28
     },
     "commerce_payment_repository.py": {
-      "max_lines": 176,
+      "max_lines": 236,
       "max_function_lines": 17,
-      "max_sql_calls": 18
+      "max_sql_calls": 23
     },
     "commerce_provisioning_repository.py": {
       "max_lines": 130,
@@ -66,6 +66,11 @@
     "commerce_service_wallet_payment.py": {
       "max_lines": 119,
       "max_function_lines": 68,
+      "max_sql_calls": 0
+    },
+    "commerce_service_receipt_review.py": {
+      "max_lines": 127,
+      "max_function_lines": 118,
       "max_sql_calls": 0
     },
     "commerce_service_allocation.py": {

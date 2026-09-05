@@ -35,13 +35,7 @@ def verify_receipt(
     reviewed_at = _now_text(now)
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        evidence = connection.execute(
-            """SELECT e.*, o.amount_minor, o.currency, o.plan_code,
-                      o.status AS order_status
-               FROM payment_evidence e JOIN orders o ON o.id = e.order_id
-               WHERE e.id = ?""",
-            (evidence_id,),
-        ).fetchone()
+        evidence = self.payments.verification_context(connection, evidence_id)
         if evidence is None:
             raise CommerceError("Receipt evidence not found")
         self._lock_order(connection, str(evidence["order_id"]))
@@ -75,12 +69,9 @@ def verify_receipt(
         provider = _normalize_reference(str(evidence["provider"] or "manual"))[:64]
         normalized_provider = _normalize_reference(provider)
         normalized_reference = _normalize_reference(provider_reference)
-        conflicts = connection.execute(
-            """SELECT order_id, provider, normalized_reference FROM payments
-               WHERE status IN ('submitted', 'verified')
-                 AND normalized_reference = ? AND order_id != ?""",
-            (normalized_reference, evidence["order_id"]),
-        ).fetchall()
+        conflicts = self.payments.payment_reference_conflicts(
+            connection, normalized_reference, str(evidence["order_id"])
+        )
         if any(
             _normalize_reference(str(item["provider"])) == normalized_provider
             for item in conflicts
@@ -91,59 +82,39 @@ def verify_receipt(
         try:
             if payment is None:
                 payment_id = _new_id()
-                connection.execute(
-                    """INSERT INTO payments
-                       (id, order_id, provider, provider_reference, normalized_reference,
-                        status, submitted_at, verified_at)
-                       VALUES (?, ?, ?, ?, ?, 'verified', ?, ?)""",
-                    (
-                        payment_id,
-                        evidence["order_id"],
-                        provider,
-                        provider_reference,
-                        normalized_reference,
-                        reviewed_at,
-                        reviewed_at,
-                    ),
+                self.payments.insert_verified_payment(
+                    connection,
+                    payment_id=payment_id,
+                    order_id=str(evidence["order_id"]),
+                    provider=provider,
+                    provider_reference=provider_reference,
+                    normalized_reference=normalized_reference,
+                    reviewed_at=reviewed_at,
                 )
             else:
                 payment_id = payment["id"]
-                connection.execute(
-                    """UPDATE payments
-                       SET provider = ?, provider_reference = ?, normalized_reference = ?,
-                           status = 'verified', verified_at = ?
-                       WHERE id = ?""",
-                    (
-                        provider,
-                        provider_reference,
-                        normalized_reference,
-                        reviewed_at,
-                        payment_id,
-                    ),
+                self.payments.update_verified_payment(
+                    connection,
+                    provider=provider,
+                    provider_reference=provider_reference,
+                    normalized_reference=normalized_reference,
+                    reviewed_at=reviewed_at,
+                    payment_id=str(payment_id),
                 )
         except Exception as exc:
             if self.database.is_integrity_error(exc):
                 raise CommerceError("This transaction ID has already been verified") from exc
             raise
-        connection.execute(
-            """UPDATE payment_evidence
-               SET reviewer_id = ?, review_notes = 'verified against receiving account',
-                   review_status = 'verified', verified_provider_reference = ?,
-                   verified_amount_minor = ?, verified_currency = ?, reviewed_at = ?
-               WHERE id = ?""",
-            (
-                admin_id,
-                provider_reference,
-                verified_amount_minor,
-                currency,
-                reviewed_at,
-                evidence_id,
-            ),
+        self.payments.mark_evidence_verified(
+            connection,
+            admin_id=admin_id,
+            provider_reference=provider_reference,
+            amount=verified_amount_minor,
+            currency=currency,
+            reviewed_at=reviewed_at,
+            evidence_id=evidence_id,
         )
-        connection.execute(
-            "UPDATE orders SET status = 'payment_submitted' WHERE id = ?",
-            (evidence["order_id"],),
-        )
+        self.orders.mark_payment_submitted(connection, str(evidence["order_id"]))
         self._audit(
             connection,
             "receipt_verified",
@@ -154,4 +125,3 @@ def verify_receipt(
             {"amount_minor": verified_amount_minor, "currency": currency},
         )
     return str(evidence["order_id"])
-

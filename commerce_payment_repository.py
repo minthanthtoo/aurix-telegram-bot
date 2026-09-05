@@ -174,3 +174,63 @@ class PaymentRepository:
                WHERE e.id = ?""",
             (evidence_id,),
         ).fetchone()
+
+    @staticmethod
+    def verification_context(connection: Any, evidence_id: str) -> Any:
+        return connection.execute(
+            """SELECT e.*, o.amount_minor, o.currency, o.plan_code, o.status AS order_status
+                 FROM payment_evidence e JOIN orders o ON o.id = e.order_id
+                WHERE e.id = ?""",
+            (evidence_id,),
+        ).fetchone()
+
+    @staticmethod
+    def payment_reference_conflicts(
+        connection: Any, normalized_reference: str, order_id: str
+    ) -> list[Any]:
+        return connection.execute(
+            """SELECT order_id, provider, normalized_reference FROM payments
+               WHERE status IN ('submitted', 'verified')
+                 AND normalized_reference = ? AND order_id != ?""",
+            (normalized_reference, order_id),
+        ).fetchall()
+
+    @staticmethod
+    def insert_verified_payment(connection: Any, **values: Any) -> None:
+        connection.execute(
+            """INSERT INTO payments
+               (id, order_id, provider, provider_reference, normalized_reference,
+                status, submitted_at, verified_at)
+               VALUES (?, ?, ?, ?, ?, 'verified', ?, ?)""",
+            (
+                values["payment_id"], values["order_id"], values["provider"],
+                values["provider_reference"], values["normalized_reference"],
+                values["reviewed_at"], values["reviewed_at"],
+            ),
+        )
+
+    @staticmethod
+    def update_verified_payment(connection: Any, **values: Any) -> None:
+        connection.execute(
+            """UPDATE payments SET provider = ?, provider_reference = ?,
+                   normalized_reference = ?, status = 'verified', verified_at = ?
+                WHERE id = ?""",
+            (
+                values["provider"], values["provider_reference"],
+                values["normalized_reference"], values["reviewed_at"], values["payment_id"],
+            ),
+        )
+
+    @staticmethod
+    def mark_evidence_verified(connection: Any, **values: Any) -> None:
+        connection.execute(
+            """UPDATE payment_evidence
+               SET reviewer_id = ?, review_notes = 'verified against receiving account',
+                   review_status = 'verified', verified_provider_reference = ?,
+                   verified_amount_minor = ?, verified_currency = ?, reviewed_at = ?
+               WHERE id = ?""",
+            (
+                values["admin_id"], values["provider_reference"], values["amount"],
+                values["currency"], values["reviewed_at"], values["evidence_id"],
+            ),
+        )
