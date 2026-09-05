@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timedelta
 from typing import Any
 
+from commerce_provisioning_repository import ProvisioningRepository
 from commerce_models import (
     UTC,
     CommerceError,
@@ -16,20 +17,14 @@ from commerce_models import (
 from connectivity_registry import ConnectivityRegistry
 
 
+_PROVISIONING = ProvisioningRepository()
+
+
 def _provision(self, job: dict[str, Any], now: datetime) -> None:
     with self.database.connect() as connection:
-        subscription = connection.execute(
-            """SELECT s.*, p.quota_bytes AS catalog_quota_bytes,
-                      p.name AS catalog_plan_name, u.username
-               FROM subscriptions s JOIN plans p ON p.code = s.plan_code
-               JOIN users u ON u.telegram_id = s.telegram_id
-               WHERE s.id = ?""",
-            (job["subscription_id"],),
-        ).fetchone()
-        existing = connection.execute(
-            "SELECT * FROM paid_vpn_keys WHERE subscription_id = ?",
-            (job["subscription_id"],),
-        ).fetchone()
+        subscription, existing = _PROVISIONING.context(
+            connection, str(job["subscription_id"])
+        )
     if subscription is None:
         self._job_done(job["id"])
         return
@@ -46,23 +41,19 @@ def _provision(self, job: dict[str, Any], now: datetime) -> None:
     expires_dt = datetime.fromisoformat(subscription["expires_at"])
     if current_dt < starts_dt:
         with self.database.connect() as connection:
-            connection.execute(
-                """UPDATE provisioning_jobs SET status = 'pending', next_attempt_at = ?, locked_at = NULL
-                   WHERE id = ?""",
-                (subscription["starts_at"], job["id"]),
+            _PROVISIONING.defer_job(
+                connection,
+                str(job["id"]),
+                str(subscription["starts_at"]),
             )
         return
     if subscription["status"] not in ("pending", "active"):
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                "UPDATE subscriptions SET status = 'expired' WHERE id = ? AND status = 'pending'",
-                (subscription["id"],),
+            _PROVISIONING.expire_subscription(
+                connection, str(subscription["id"]), "pending"
             )
-            connection.execute(
-                "UPDATE provisioning_jobs SET status = 'done', locked_at = NULL, last_error = 'expired before provision' WHERE id = ?",
-                (job["id"],),
-            )
+            _PROVISIONING.mark_job_expired(connection, str(job["id"]))
         return
     # Pending entitlements have no expiry clock yet.  Their planned
     # boundary is only a scheduling hint; paid time starts at successful
@@ -71,14 +62,10 @@ def _provision(self, job: dict[str, Any], now: datetime) -> None:
     if subscription["status"] == "active" and current_dt >= expires_dt:
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                "UPDATE subscriptions SET status = 'expired' WHERE id = ? AND status = 'active'",
-                (subscription["id"],),
+            _PROVISIONING.expire_subscription(
+                connection, str(subscription["id"]), "active"
             )
-            connection.execute(
-                "UPDATE provisioning_jobs SET status = 'done', locked_at = NULL, last_error = 'expired before provision' WHERE id = ?",
-                (job["id"],),
-            )
+            _PROVISIONING.mark_job_expired(connection, str(job["id"]))
         return
     if existing is not None:
         if str(subscription["status"]) == "active":
@@ -153,43 +140,31 @@ def _provision(self, job: dict[str, Any], now: datetime) -> None:
         encrypted_access_url = self._encrypt_access_url(str(key["accessUrl"]))
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            connection.execute(
-                """INSERT INTO paid_vpn_keys
-                   (id, subscription_id, telegram_id, outline_key_id, access_url,
-                    quota_bytes, status, created_at, server_id)
-                   VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
-                (
-                    _new_id(),
-                    subscription["id"],
-                    subscription["telegram_id"],
-                    str(key["id"]),
-                    encrypted_access_url,
-                    desired_quota,
-                    created_at,
-                    server_id,
-                ),
+            _PROVISIONING.insert_key(
+                connection,
+                key_id=_new_id(),
+                subscription_id=str(subscription["id"]),
+                telegram_id=int(subscription["telegram_id"]),
+                outline_key_id=str(key["id"]),
+                access_url=encrypted_access_url,
+                quota_bytes=desired_quota,
+                created_at=created_at,
+                server_id=server_id,
             )
-            connection.execute(
-                """UPDATE subscriptions
-                   SET status = 'active', activated_at = ?, starts_at = ?, expires_at = ?
-                   WHERE id = ?""",
-                (activated_at, activated_at, activated_expires_at, subscription["id"]),
+            _PROVISIONING.activate_subscription(
+                connection,
+                subscription_id=str(subscription["id"]),
+                activated_at=activated_at,
+                expires_at=activated_expires_at,
             )
-            connection.execute(
-                """INSERT INTO notifications
-                   (id, dedupe_key, telegram_id, kind, text, access_url_ciphertext,
-                    status, next_attempt_at, created_at)
-                   VALUES (?, ?, ?, 'vpn_ready', ?, ?, 'pending', ?, ?)
-                   ON CONFLICT(dedupe_key) DO NOTHING""",
-                (
-                    _new_id(),
-                    f"vpn-ready:{subscription['id']}",
-                    subscription["telegram_id"],
-                    f"Your {desired_plan_name} AuriX VPN is ready.\n\nExpires: {activated_expires_at}",
-                    encrypted_access_url,
-                    created_at,
-                    created_at,
-                ),
+            _PROVISIONING.queue_ready_notification(
+                connection,
+                notification_id=_new_id(),
+                dedupe_key=f"vpn-ready:{subscription['id']}",
+                telegram_id=int(subscription["telegram_id"]),
+                text=f"Your {desired_plan_name} AuriX VPN is ready.\n\nExpires: {activated_expires_at}",
+                access_url_ciphertext=encrypted_access_url,
+                now_text=created_at,
             )
             self._audit(
                 connection,
@@ -214,11 +189,7 @@ def _provision(self, job: dict[str, Any], now: datetime) -> None:
                 profile_kind="paid",
                 subscription_id=str(subscription["id"]),
             )
-            connection.execute(
-                """UPDATE provisioning_jobs SET status = 'done', locked_at = NULL, last_error = NULL
-                   WHERE id = ?""",
-                (job["id"],),
-            )
+            _PROVISIONING.mark_job_done(connection, str(job["id"]))
         # A paid account supersedes any free/trial key.  This is best-effort
         # cleanup; the paid key remains authoritative and the next startup
         # reconciliation can retry removal if the inventory call failed.
@@ -246,4 +217,3 @@ def _provision(self, job: dict[str, Any], now: datetime) -> None:
             except Exception:
                 pass
         raise
-

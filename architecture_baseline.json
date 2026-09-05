@@ -23,6 +23,11 @@
       "max_function_lines": 17,
       "max_sql_calls": 18
     },
+    "commerce_provisioning_repository.py": {
+      "max_lines": 130,
+      "max_function_lines": 28,
+      "max_sql_calls": 9
+    },
     "commerce_inventory_reconciliation_repository.py": {
       "max_lines": 197,
       "max_function_lines": 34,
@@ -594,9 +599,9 @@
       "max_sql_calls": 0
     },
     "commerce_worker_provisioning.py": {
-      "max_lines": 249,
-      "max_function_lines": 230,
-      "max_sql_calls": 11
+      "max_lines": 219,
+      "max_function_lines": 197,
+      "max_sql_calls": 0
     },
     "commerce_schema_bootstrap.py": {
       "max_lines": 670,
@@ -611,6 +616,7 @@
         "commerce_models.py",
         "commerce_capacity_snapshot_repository.py",
         "commerce_inventory_reconciliation_repository.py",
+        "commerce_provisioning_repository.py",
         "commerce_wallet_approval_repository.py",
         "identity_usage_policy.py",
         "identity_usage_repository.py",
