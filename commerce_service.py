@@ -18,6 +18,7 @@ from receipt_rules import load_recipient_profiles
 import repositories
 from commerce_order_repository import OrderRepository
 from commerce_payment_repository import PaymentRepository
+from commerce_wallet_read_repository import WalletReadRepository
 from commerce_wallet_approval_repository import WalletApprovalRepository
 from commerce_inventory_reconciliation_repository import InventoryReconciliationRepository
 from route_failover import RouteFailoverService
@@ -28,6 +29,7 @@ class CommerceService:
     """Stable application-service facade over responsibility-owned use cases."""
 
     inventory_reconciliation = InventoryReconciliationRepository()
+    wallet_reads = WalletReadRepository()
 
     def __init__(
         self,

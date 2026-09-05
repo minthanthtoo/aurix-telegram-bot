@@ -86,6 +86,25 @@ class OrderRepositoryPort(Protocol):
 
 
 @runtime_checkable
+class WalletReadRepositoryPort(Protocol):
+    """Wallet reads and consistency-report persistence boundary."""
+
+    def user_exists(self, connection: Any, telegram_id: int) -> bool: ...
+
+    def wallet_currency(self, connection: Any, telegram_id: int) -> Any: ...
+
+    def ensure_wallet(self, connection: Any, **values: Any) -> None: ...
+
+    def balance(self, connection: Any, telegram_id: int) -> Any: ...
+
+    def history(self, connection: Any, telegram_id: int, currency: str, limit: int) -> list[Any]: ...
+
+    def consistency_report(self, connection: Any, review_cutoff: str) -> dict[str, int]: ...
+
+    def pending_orders(self, connection: Any, limit: int) -> list[Any]: ...
+
+
+@runtime_checkable
 class PaymentRepositoryPort(Protocol):
     """Payment/evidence reads used by order workflows."""
 

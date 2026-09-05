@@ -54,7 +54,7 @@
       "max_sql_calls": 19
     },
     "commerce_service.py": {
-      "max_lines": 252,
+      "max_lines": 254,
       "max_function_lines": 29,
       "max_sql_calls": 0
     },
