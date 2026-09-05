@@ -404,8 +404,13 @@
       "max_sql_calls": 22
     },
     "identity_entitlements.py": {
-      "max_lines": 246,
-      "max_function_lines": 157,
+      "max_lines": 223,
+      "max_function_lines": 134,
+      "max_sql_calls": 0
+    },
+    "identity_entitlements_repository.py": {
+      "max_lines": 84,
+      "max_function_lines": 24,
       "max_sql_calls": 9
     },
     "identity_generations.py": {
@@ -660,6 +665,7 @@
         "identity_usage_repository.py",
         "identity_generations_repository.py",
         "identity_accounts_repository.py",
+        "identity_entitlements_repository.py",
         "entitlement_allocation_repository.py",
         "entitlement_provisioning_repository.py",
         "ports.py",

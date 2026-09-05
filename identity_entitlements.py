@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import secrets
 
+from identity_entitlements_repository import IdentityEntitlementsRepository
 from identity_support import IdentityError, _now_text, _parse_time
 
 
 class IdentityEntitlementsMixin:
+    entitlements_repository = IdentityEntitlementsRepository()
     def ensure_subscription_entitlement(
         self,
         telegram_id: int,
@@ -29,22 +31,21 @@ class IdentityEntitlementsMixin:
         account_id = self.ensure_account(telegram_id, now=timestamp)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            existing = connection.execute(
-                "SELECT entitlement_id, account_id FROM entitlements WHERE subscription_id = ?",
-                (str(subscription_id),),
-            ).fetchone()
+            existing = self.entitlements_repository.subscription(connection, str(subscription_id))
             if existing is not None and str(existing["account_id"]) != account_id:
                 raise IdentityError("subscription is already bound to another account")
             entitlement_id = str(existing["entitlement_id"]) if existing else f"entitlement-{secrets.token_hex(16)}"
-            connection.execute(
-                """INSERT INTO entitlements
-                   (entitlement_id, account_id, subscription_id, source_ref, kind, quota_bytes, expires_at, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(entitlement_id) DO UPDATE SET
-                     account_id = excluded.account_id, kind = excluded.kind,
-                     quota_bytes = excluded.quota_bytes, expires_at = excluded.expires_at,
-                     status = excluded.status, updated_at = excluded.updated_at""",
-                (entitlement_id, account_id, str(subscription_id), f"subscription:{subscription_id}", kind, int(quota_bytes), str(expires_at), status, timestamp, timestamp),
+            self.entitlements_repository.upsert_subscription(
+                connection,
+                entitlement_id=entitlement_id,
+                account_id=account_id,
+                subscription_id=str(subscription_id),
+                source_ref=f"subscription:{subscription_id}",
+                kind=kind,
+                quota_bytes=int(quota_bytes),
+                expires_at=str(expires_at),
+                status=status,
+                timestamp=timestamp,
             )
         return entitlement_id
 
@@ -69,21 +70,20 @@ class IdentityEntitlementsMixin:
         source_ref = f"key:{server_id}:{local_key_ref}"
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            existing = connection.execute(
-                "SELECT entitlement_id, account_id FROM entitlements WHERE source_ref = ?",
-                (source_ref,),
-            ).fetchone()
+            existing = self.entitlements_repository.source(connection, source_ref)
             if existing is not None and str(existing["account_id"]) != account_id:
                 raise IdentityError("key entitlement is already bound to another account")
             entitlement_id = str(existing["entitlement_id"]) if existing else f"entitlement-{secrets.token_hex(16)}"
-            connection.execute(
-                """INSERT INTO entitlements
-                   (entitlement_id, account_id, source_ref, kind, quota_bytes, expires_at, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(entitlement_id) DO UPDATE SET
-                     quota_bytes = excluded.quota_bytes, expires_at = excluded.expires_at,
-                     status = excluded.status, updated_at = excluded.updated_at""",
-                (entitlement_id, account_id, source_ref, kind, int(quota_bytes), str(expires_at), status, timestamp, timestamp),
+            self.entitlements_repository.upsert_key(
+                connection,
+                entitlement_id=entitlement_id,
+                account_id=account_id,
+                source_ref=source_ref,
+                kind=kind,
+                quota_bytes=int(quota_bytes),
+                expires_at=str(expires_at),
+                status=status,
+                timestamp=timestamp,
             )
         return entitlement_id
 
@@ -91,27 +91,11 @@ class IdentityEntitlementsMixin:
         """Backfill the additive model without changing legacy commerce rows."""
         timestamp = str(now or _now_text())
         current_time = _parse_time(timestamp)
-        subscriptions = []
-        paid_keys = []
-        keys = []
         with self.database.connect() as connection:
-            subscriptions = connection.execute(
-                """SELECT telegram_id, id, plan_code, quota_bytes, expires_at, status
-                     FROM subscriptions WHERE quota_bytes IS NOT NULL"""
-            ).fetchall()
-            paid_keys = connection.execute(
-                """SELECT subscription_id, telegram_id, server_id, outline_key_id,
-                          quota_bytes, status, created_at
-                     FROM paid_vpn_keys
-                    WHERE quota_bytes IS NOT NULL"""
-            ).fetchall()
-            keys = connection.execute(
-                """SELECT k.id, k.telegram_id, k.server_id, k.outline_key_id, k.key_type,
-                          k.data_limit_bytes, k.expires_at, k.status,
-                          g.campaign_code
-                     FROM keys k
-                     LEFT JOIN giveaway_claims g ON g.key_id = k.id"""
-            ).fetchall()
+            inputs = self.entitlements_repository.backfill_inputs(connection)
+        subscriptions = inputs["subscriptions"]
+        paid_keys = inputs["paid_keys"]
+        keys = inputs["keys"]
         entitlements_by_subscription: dict[str, str] = {}
         subscription_expiry: dict[str, str] = {}
         subscription_status: dict[str, str] = {}
@@ -154,22 +138,15 @@ class IdentityEntitlementsMixin:
         # Registry rows are already rebuilt during CommerceService startup.
         # This pass only connects those durable credentials to the additive
         # identity model, so restart/backfill is safe and does not issue keys.
-        with self.database.connect() as connection:
-            credential_rows = connection.execute(
-                """SELECT credential_id, endpoint_id, external_id, status
-                     FROM connectivity_credentials
-                    WHERE status = 'active'"""
-            ).fetchall()
-            credentials_by_key = {
-                (str(row["endpoint_id"]), str(row["external_id"])): dict(row)
-                for row in credential_rows
-            }
-            server_endpoints = {
-                str(row["outline_server_id"]): str(row["endpoint_id"])
-                for row in connection.execute(
-                    "SELECT outline_server_id, endpoint_id FROM connectivity_endpoints"
-                ).fetchall()
-            }
+        credential_rows = inputs["credentials"]
+        server_endpoints = {
+            str(row["outline_server_id"]): str(row["endpoint_id"])
+            for row in inputs["endpoints"]
+        }
+        credentials_by_key = {
+            (str(row["endpoint_id"]), str(row["external_id"])): dict(row)
+            for row in credential_rows
+        }
         for row in paid_keys:
             entitlement_id = entitlements_by_subscription.get(str(row["subscription_id"]))
             endpoint_id = server_endpoints.get(str(row["server_id"]))
