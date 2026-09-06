@@ -104,6 +104,7 @@
     "commerce_worker_repairs.py": "worker",
     "connectivity_adapters.py": "integration",
     "connectivity_registry.py": "persistence",
+    "connectivity_registry_sync.py": "persistence",
     "control_api.py": "transport",
     "deploy/database_backup.py": "operations",
     "deploy/digitalocean_autodeploy.py": "operations",

@@ -15,6 +15,11 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from connectivity_registry_sync import (
+    upsert_outline_dimensions,
+    upsert_outline_endpoint,
+    upsert_primary_route,
+)
 from lifecycle_policy import accepts_new_keys, endpoint_status
 
 def _slug(value: str, fallback: str) -> str:
@@ -74,109 +79,38 @@ class ConnectivityRegistry:
         endpoint_id = _stable_id("endpoint", "outline", server_id)
         display_provider = cls.PROVIDER_NAMES.get(provider_id, provider_id.replace("-", " ").title())
         display_region = str(region or "Unknown")[:128]
-        connection.execute(
-            """INSERT INTO connectivity_providers
-               (provider_id, display_name, status, created_at, updated_at)
-               VALUES (?, ?, 'active', ?, ?)
-               ON CONFLICT(provider_id) DO UPDATE SET
-                 display_name = excluded.display_name, updated_at = excluded.updated_at""",
-            (provider_id, display_provider, now_text, now_text),
-        )
-        connection.execute(
-            """INSERT INTO connectivity_regions
-               (region_id, provider_id, display_name, status, created_at, updated_at)
-               VALUES (?, ?, ?, 'active', ?, ?)
-               ON CONFLICT(region_id) DO UPDATE SET
-                 provider_id = excluded.provider_id,
-                 display_name = excluded.display_name,
-                 updated_at = excluded.updated_at""",
-            (region_id, provider_id, display_region, now_text, now_text),
-        )
-        connection.execute(
-            """INSERT INTO connectivity_transports
-               (transport_id, protocol, display_name, status, created_at, updated_at)
-               VALUES (?, 'outline', 'Outline', 'active', ?, ?)
-               ON CONFLICT(transport_id) DO UPDATE SET updated_at = excluded.updated_at""",
-            (transport_id, now_text, now_text),
-        )
         normalized_endpoint_status = endpoint_status(lifecycle_state, health_status)
         accepts = 1 if accepts_new_keys(lifecycle_state, health_status) else 0
-        connection.execute(
-            """INSERT INTO connectivity_endpoints
-               (endpoint_id, outline_server_id, provider_id, region_id, transport_id,
-                status, accepts_new_keys, management_secret_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(endpoint_id) DO UPDATE SET
-                 outline_server_id = excluded.outline_server_id,
-                 provider_id = excluded.provider_id,
-                 region_id = excluded.region_id,
-                 transport_id = excluded.transport_id,
-                 status = excluded.status,
-                 accepts_new_keys = excluded.accepts_new_keys,
-                 management_secret_ref = excluded.management_secret_ref,
-                 updated_at = excluded.updated_at""",
-            (
-                endpoint_id,
-                server_id,
-                provider_id,
-                region_id,
-                transport_id,
-                normalized_endpoint_status,
-                accepts,
-                f"env:OUTLINE_SERVERS_JSON:{server_id}",
-                now_text,
-                now_text,
-            ),
+        upsert_outline_dimensions(
+            connection,
+            provider_id=provider_id,
+            display_provider=display_provider,
+            region_id=region_id,
+            display_region=display_region,
+            transport_id=transport_id,
+            now_text=now_text,
+        )
+        upsert_outline_endpoint(
+            connection,
+            endpoint_id=endpoint_id,
+            server_id=server_id,
+            provider_id=provider_id,
+            region_id=region_id,
+            transport_id=transport_id,
+            status=normalized_endpoint_status,
+            accepts=accepts,
+            now_text=now_text,
         )
         # Migration 26 separates a physical endpoint from its service route.
         # Keep the compatibility route synchronized when a new server is
         # registered after the migration has already run.
-        if cls._table_exists(connection, "connectivity_routes"):
-            route_id = f"route-{endpoint_id}"
-            outline_capabilities = (
-                '{"managed_config":true,"manual_export":true,"quota_cap":true,'
-                '"usage":true,"rotation":true,"terminate_sessions":false,'
-                '"management_probe":true,"data_plane_probe":true,"reconcile":true}'
-            ) if transport_id == "outline" else "{}"
-            supported = transport_id == "outline"
-            connection.execute(
-                """INSERT INTO connectivity_routes
-                   (route_id, endpoint_id, route_name, protocol, status, priority,
-                    supports_managed_config, supports_manual_export, supports_quota_cap,
-                    supports_usage, supports_rotation, supports_terminate_sessions,
-                    supports_management_probe, supports_data_plane_probe, supports_reconcile,
-                    capabilities_json, created_at, updated_at)
-                   VALUES (?, ?, 'primary', ?, ?, 100, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(endpoint_id, route_name) DO UPDATE SET
-                     protocol = excluded.protocol, status = excluded.status,
-                     supports_managed_config = excluded.supports_managed_config,
-                     supports_manual_export = excluded.supports_manual_export,
-                     supports_quota_cap = excluded.supports_quota_cap,
-                     supports_usage = excluded.supports_usage,
-                     supports_rotation = excluded.supports_rotation,
-                     supports_management_probe = excluded.supports_management_probe,
-                     supports_data_plane_probe = excluded.supports_data_plane_probe,
-                     supports_reconcile = excluded.supports_reconcile,
-                     capabilities_json = excluded.capabilities_json,
-                     updated_at = excluded.updated_at""",
-                (
-                    route_id,
-                    endpoint_id,
-                    "outline" if transport_id == "outline" else transport_id,
-                    normalized_endpoint_status,
-                    supported,
-                    supported,
-                    supported,
-                    supported,
-                    supported,
-                    supported,
-                    supported,
-                    supported,
-                    outline_capabilities,
-                    now_text,
-                    now_text,
-                ),
-            )
+        upsert_primary_route(
+            connection,
+            endpoint_id=endpoint_id,
+            status=normalized_endpoint_status,
+            now_text=now_text,
+            table_exists=cls._table_exists,
+        )
         return {
             "endpoint_id": endpoint_id,
             "provider_id": provider_id,
