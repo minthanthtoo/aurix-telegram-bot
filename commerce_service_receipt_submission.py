@@ -1,23 +1,19 @@
-"""Receipt evidence submission and storage workflow."""
+"""Receipt submission orchestration across transactional and storage phases."""
 
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime
 from typing import Any
 
-from commerce_models import CommerceError, _new_id, _normalize_reference, _now_text
+from commerce_models import CommerceError, _normalize_reference, _now_text
 from commerce_receipt_submission_repository import ReceiptSubmissionRepository
 from commerce_receipt_storage_workflow import (
     complete_stored_receipt,
     complete_unstored_receipt,
 )
-from receipt_fingerprint import (
-    NEAR_DUPLICATE_DISTANCE,
-    fingerprint_distance,
-    receipt_perceptual_hash,
-)
+from commerce_receipt_submission_intake import prepare_receipt_submission
+from receipt_fingerprint import receipt_perceptual_hash
 
 
 _RECEIPTS = ReceiptSubmissionRepository()
@@ -37,227 +33,88 @@ def submit_receipt(
     telegram_media_type: str = "photo",
     queue_extraction: bool = False,
 ) -> dict[str, Any]:
-    """Persist receipt metadata and upload the raw image out-of-band.
-
-    The database transaction creates an upload-pending evidence row, then
-    the object is uploaded without holding a database connection open. A
-    second short transaction marks the object stored and moves the order to
-    payment review. This keeps network latency out of the database lock and
-    makes a lost response safely retryable using the same immutable path.
-    """
+    """Persist receipt metadata, upload the image, and finalize review state."""
     if not isinstance(file_id, str) or not file_id.strip():
         raise CommerceError("Receipt file id is missing")
     if not image_bytes or len(image_bytes) > 20 * 1024 * 1024:
         raise CommerceError("Receipt image is empty or too large")
     if telegram_media_type not in ("photo", "document"):
         raise CommerceError("Receipt media type is invalid")
+
     digest = hashlib.sha256(image_bytes).hexdigest()
     phash = receipt_perceptual_hash(image_bytes)
     extraction = extraction if isinstance(extraction, dict) else None
-    tx_id = extraction.get("transaction_id") if extraction else None
-    # The customer-selected method is authoritative workflow state. Model
-    # output may describe a different provider, but must never overwrite it.
     provider_name = _normalize_reference(provider)[:64]
-    tx_candidate = str(tx_id).strip()[:128] if tx_id else ""
-    status = "parsed" if tx_id else "needs_review"
     submitted_at = _now_text(now)
     storage_configured = self._storage_is_configured()
     if self.receipt_storage_required and not storage_configured:
         raise CommerceError("Receipt storage is not configured")
     storage_status = "pending" if storage_configured else "not_configured"
     storage_bucket = self._storage_bucket() if storage_configured else None
-    evidence_id: str
-    storage_path: str | None = None
-    is_new = False
-    near_duplicate = False
-    with self.database.connect() as connection:
-        self.database.begin_write(connection)
-        self._lock_order(connection, order_id)
-        order = self.orders.get_owned(connection, order_id, telegram_id)
-        if order is None or order["telegram_id"] != telegram_id:
-            raise CommerceError("Order not found")
-        if str(order["plan_code"]) != "wallet_topup":
-            self._assert_no_active_promo(connection, telegram_id)
-        if order["status"] == "approved":
-            raise CommerceError("Order is already approved")
-        if order["status"] not in ("awaiting_payment", "payment_submitted"):
-            raise CommerceError("Order is not open for a receipt")
-        duplicate_rows = self.payments.find_exact_duplicate(
-            connection, digest, file_unique_id, exclude_order_id=order_id
-        )
-        if duplicate_rows:
-            raise CommerceError("This receipt was already submitted for another order")
-        if phash:
-            prior_hashes = self.payments.prior_phash_rows(connection, order_id)
-            for prior in prior_hashes:
-                if str(prior["provider"] or "").strip().lower() != provider_name:
-                    continue
-                distance = fingerprint_distance(phash, str(prior["image_phash"] or ""))
-                if distance is not None and distance <= NEAR_DUPLICATE_DISTANCE:
-                    # Do not hard-reject a perceptual match: two receipts
-                    # from the same provider can share a template. Preserve
-                    # the upload, stop automatic extraction, and surface a
-                    # strong manual-review flag instead.
-                    near_duplicate = True
-                    status = "needs_review"
-                    flagged = dict(extraction or {})
-                    flagged["flags"] = sorted(
-                        set(flagged.get("flags") or [])
-                        | {"duplicate_image_candidate"}
-                    )
-                    extraction = flagged
-                    break
-        existing = self.payments.existing_evidence(connection, order_id, digest)
-        if existing is not None:
-            parsed = json.loads(existing["extraction_json"] or "{}")
-            result = parsed if isinstance(parsed, dict) else {}
-            result["evidence_id"] = existing["id"]
-            result["extraction_status"] = existing["extraction_status"]
-            result["review_status"] = existing["review_status"]
-            result["image_sha256"] = digest
-            result["storage_status"] = existing["storage_status"] or "not_configured"
-            result["storage_path"] = existing["storage_path"]
-            storage_ready = (
-                result["storage_status"] == "stored"
-                if storage_configured
-                else result["storage_status"] in ("stored", "not_configured")
-            )
-            if storage_ready:
-                # A prior process may have committed the evidence row but
-                # lost the response before moving the order state. Repair
-                # that narrow inconsistency on an idempotent retry.
-                if order["status"] == "awaiting_payment":
-                    _RECEIPTS.mark_order_submitted(connection, order_id)
-                    self._audit(
-                        connection,
-                        "receipt_state_recovered",
-                        "order",
-                        order_id,
-                        "customer",
-                        str(telegram_id),
-                        {"evidence_id": existing["id"]},
-                    )
-                return result
-            evidence_id = str(existing["id"])
-            storage_path = str(existing["storage_path"] or "") or self._receipt_storage_path(
-                order_id, evidence_id, mime_type
-            )
-            _RECEIPTS.mark_upload_pending(
-                connection,
-                evidence_id=evidence_id,
-                storage_bucket=storage_bucket,
-                storage_path=storage_path,
-            )
-        else:
-            latest = self.payments.latest_evidence_review(connection, order_id)
-            if latest is not None and str(latest["review_status"] or "pending") != "rejected":
-                raise CommerceError(
-                    "A receipt is already awaiting review; wait for staff feedback"
-                )
-            payment_rows = self.payments.payments_for_order(connection, order_id)
-            if any(str(item["provider"] or "").lower() == "wallet" for item in payment_rows):
-                raise CommerceError(
-                    "This order already uses wallet payment; receipt payment cannot be combined"
-                )
-            if any(
-                str(item["status"] or "") in ("submitted", "verified", "refunded")
-                for item in payment_rows
-            ):
-                raise CommerceError("A payment is already attached to this order")
-            # Keep model output as evidence only. Detect a repeated
-            # candidate across screenshots without creating an
-            # authoritative payment row.
-            if tx_candidate:
-                prior_evidence = self.payments.transaction_candidates(connection, order_id)
-                for prior in prior_evidence:
-                    try:
-                        prior_extraction = json.loads(prior["extraction_json"] or "{}")
-                    except json.JSONDecodeError:
-                        prior_extraction = {}
-                    prior_tx = (
-                        prior_extraction.get("transaction_id")
-                        if isinstance(prior_extraction, dict)
-                        else None
-                    )
-                    if _normalize_reference(str(prior["provider"])) == _normalize_reference(
-                        provider_name or "manual"
-                    ) and _normalize_reference(str(prior_tx or "")) == _normalize_reference(
-                        tx_candidate
-                    ):
-                        status = "needs_review"
-                        flagged = dict(extraction or {})
-                        flagged["flags"] = sorted(
-                            set(flagged.get("flags") or [])
-                            | {"duplicate_transaction_candidate"}
-                        )
-                        extraction = flagged
-                        break
-            evidence_id = _new_id()
-            storage_path = (
-                self._receipt_storage_path(order_id, evidence_id, mime_type)
-                if storage_configured
-                else None
-            )
-            _RECEIPTS.insert_evidence(
-                connection,
-                evidence_id=evidence_id,
-                order_id=order_id,
-                telegram_id=telegram_id,
-                provider=provider_name,
-                file_id=file_id[:256],
-                file_unique_id=file_unique_id[:256] if file_unique_id else None,
-                media_type=telegram_media_type,
-                image_sha256=digest,
-                image_phash=phash,
-                mime_type=mime_type[:64],
-                byte_size=len(image_bytes),
-                storage_bucket=storage_bucket,
-                storage_path=storage_path,
-                storage_status=storage_status,
-                extraction_json=json.dumps(extraction or {}, sort_keys=True),
-                extraction_status=status,
-                submitted_at=submitted_at,
-            )
-            is_new = True
 
+    prepared = prepare_receipt_submission(
+        self,
+        _RECEIPTS,
+        telegram_id=telegram_id,
+        order_id=order_id,
+        provider_name=provider_name,
+        file_id=file_id,
+        file_unique_id=file_unique_id,
+        mime_type=mime_type,
+        image_sha256=digest,
+        image_phash=phash,
+        extraction=extraction,
+        submitted_at=submitted_at,
+        storage_bucket=storage_bucket,
+        storage_status=storage_status,
+        storage_configured=storage_configured,
+        telegram_media_type=telegram_media_type,
+        image_bytes=image_bytes,
+    )
+    if prepared.existing_result is not None:
+        return prepared.existing_result
+
+    storage_path = prepared.storage_path
     if storage_configured:
         assert storage_path is not None
         storage_path = complete_stored_receipt(
             self,
             _RECEIPTS,
-            evidence_id=evidence_id,
+            evidence_id=prepared.evidence_id,
             order_id=order_id,
             telegram_id=telegram_id,
-            provider_name=provider_name,
-            status=status,
-            submitted_at=submitted_at,
-            storage_bucket=storage_bucket,
+            provider_name=prepared.provider_name,
+            status=prepared.status,
+            submitted_at=prepared.submitted_at,
+            storage_bucket=prepared.storage_bucket,
             storage_path=storage_path,
             image_bytes=image_bytes,
             mime_type=mime_type,
-            is_new=is_new,
-            extraction=extraction,
+            is_new=prepared.is_new,
+            extraction=prepared.extraction,
             queue_extraction=queue_extraction,
-            near_duplicate=near_duplicate,
+            near_duplicate=prepared.near_duplicate,
         )
     else:
         complete_unstored_receipt(
             self,
             _RECEIPTS,
-            evidence_id=evidence_id,
+            evidence_id=prepared.evidence_id,
             order_id=order_id,
             telegram_id=telegram_id,
-            provider_name=provider_name,
-            status=status,
-            submitted_at=submitted_at,
-            is_new=is_new,
-            extraction=extraction,
+            provider_name=prepared.provider_name,
+            status=prepared.status,
+            submitted_at=prepared.submitted_at,
+            is_new=prepared.is_new,
+            extraction=prepared.extraction,
             queue_extraction=queue_extraction,
         )
-    result = dict(extraction or {})
-    result["evidence_id"] = evidence_id
-    result["image_sha256"] = digest
-    result["extraction_status"] = status
-    result["storage_status"] = "stored" if storage_configured else "not_configured"
-    result["storage_path"] = storage_path
-    return result
+
+    return {
+        **(prepared.extraction or {}),
+        "evidence_id": prepared.evidence_id,
+        "image_sha256": prepared.image_sha256,
+        "extraction_status": prepared.status,
+        "storage_status": "stored" if storage_configured else "not_configured",
+        "storage_path": storage_path,
+    }

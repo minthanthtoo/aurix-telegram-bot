@@ -70,6 +70,7 @@
     "commerce_service_receipt_review.py": "application",
     "commerce_service_receipt_submission.py": "application",
     "commerce_receipt_storage_workflow.py": "application",
+    "commerce_receipt_submission_intake.py": "application",
     "commerce_service_receipts.py": "application",
     "commerce_service_repairs.py": "application",
     "commerce_service_support.py": "application",
