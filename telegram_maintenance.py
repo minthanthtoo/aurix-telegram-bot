@@ -243,25 +243,8 @@ class TelegramMaintenanceMixin:
         finally:
             self._maintenance_lock.release()
 
-    def _run_maintenance_pass(self) -> None:
-        """Run one bounded housekeeping pass outside the Telegram poll loop."""
-        started_at = time.perf_counter()
-        started_text = datetime.now(UTC).isoformat()
-        self._record_maintenance_heartbeat(started_at=started_text, stage="starting")
-        failures: list[tuple[str, Exception]] = []
-
-        def run_stage(name: str, callback: Any) -> Any:
-            self._record_maintenance_heartbeat(stage=name)
-            try:
-                return callback()
-            except Exception as exc:
-                failures.append((name, exc))
-                print(
-                    f"maintenance stage={name} error={type(exc).__name__}: {exc}", file=sys.stderr
-                )
-                self._record_maintenance_heartbeat(stage=name, error=f"{type(exc).__name__}: {exc}")
-                return None
-
+    def _run_maintenance_stages(self, run_stage: Any, started_at: float) -> None:
+        """Run ordered maintenance stages through the shared failure boundary."""
         if getattr(self, "probe_service", None) is not None:
             run_stage("probe_expiry", self.probe_service.expire_jobs)
             run_stage("probe_enqueue", self.probe_service.enqueue_due_probes)
@@ -290,72 +273,90 @@ class TelegramMaintenanceMixin:
             run_stage("free_revocation_retry", reconcile_terminations)
         run_stage("termination_notices", self._send_termination_notices)
         if self.commerce is not None:
-            # Structured fleet snapshots are scoped by server; commerce
-            # collects its own in that mode. Preserve the legacy single-server
-            # snapshot reuse contract for standalone adapters and tests.
-            run_stage(
-                "paid_quota",
-                self.commerce.enforce_quotas
-                if isinstance(metrics.get("byServer"), dict)
-                else lambda: self.commerce.enforce_quotas(metrics=metrics),
-            )
-            run_stage("paid_expiry", self.commerce.expire_and_process)
-            refresh_inventory = getattr(self.commerce, "refresh_server_inventory", None)
-            if callable(refresh_inventory):
-                run_stage("server_inventory", refresh_inventory)
-            identity = getattr(self.service, "identity", None)
-            converge_identity = getattr(identity, "sync_existing_entitlements", None)
-            if callable(converge_identity):
-                run_stage("identity_convergence", converge_identity)
-            prune_usage_snapshots = getattr(self.commerce, "prune_usage_snapshots", None)
-            if callable(prune_usage_snapshots):
-                run_stage("usage_snapshot_cleanup", prune_usage_snapshots)
-            process_managed_key_repairs = getattr(
-                self.commerce, "process_managed_key_repairs", None
-            )
-            if callable(process_managed_key_repairs):
-                run_stage("managed_key_repairs", process_managed_key_repairs)
-            ensure_repair_notifications = getattr(
-                self.commerce, "ensure_managed_key_repair_notifications", None
-            )
-            if callable(ensure_repair_notifications):
-                run_stage("managed_key_repair_alerts", ensure_repair_notifications)
-            process_endpoint_migrations = getattr(self.commerce, "process_endpoint_migrations", None)
-            if callable(process_endpoint_migrations):
-                run_stage("endpoint_migrations", process_endpoint_migrations)
-            process_route_failovers = getattr(self.commerce, "process_route_failovers", None)
-            if callable(process_route_failovers):
-                run_stage("route_failover", process_route_failovers)
-            capacity_snapshot = getattr(self.commerce, "capacity_snapshot", None)
-            capacity_snapshot_result = None
-            if callable(capacity_snapshot):
-                # Inventory has just been refreshed above. Reuse that observed
-                # state while recording durable scale evidence, avoiding a
-                # second round of Outline requests in the same maintenance pass.
-                capacity_snapshot_result = run_stage(
-                    "scale_observation",
-                    lambda: capacity_snapshot(refresh_inventory=False),
-                )
-            auto_queue_scale_out = getattr(self.commerce, "auto_queue_scale_out", None)
-            if callable(auto_queue_scale_out) and isinstance(capacity_snapshot_result, dict):
-                # This is opt-in and only creates a local, idempotent intent;
-                # the provider worker remains separately gated.
-                run_stage(
-                    "scale_queue",
-                    lambda: auto_queue_scale_out(snapshot=capacity_snapshot_result),
-                )
-            run_stage("notifications", self._send_pending_notifications)
-            # Slow model calls run last so quota enforcement and customer/staff
-            # notifications are never held behind optional assisted extraction.
-            run_stage("receipt_extraction", self._process_receipt_extraction)
-            interaction_store = getattr(self.commerce, "database", None)
-            prune_interactions = getattr(interaction_store, "prune_interaction_states", None)
-            if callable(prune_interactions):
-                run_stage("interaction_state_cleanup", prune_interactions)
+            self._run_commerce_maintenance_stages(run_stage, metrics)
         challenge_store = getattr(self.service, "database", None)
         prune = getattr(challenge_store, "prune_admin_challenges", None)
         if callable(prune):
             run_stage("challenge_cleanup", lambda: prune(datetime.now(UTC).isoformat()))
+
+    def _run_commerce_maintenance_stages(self, run_stage: Any, metrics: dict[str, Any]) -> None:
+        """Run paid/fleet stages after the free-plan safety stages."""
+        # Structured fleet snapshots are scoped by server; commerce collects
+        # its own in that mode. Preserve legacy single-server reuse for tests.
+        run_stage(
+            "paid_quota",
+            self.commerce.enforce_quotas
+            if isinstance(metrics.get("byServer"), dict)
+            else lambda: self.commerce.enforce_quotas(metrics=metrics),
+        )
+        run_stage("paid_expiry", self.commerce.expire_and_process)
+        refresh_inventory = getattr(self.commerce, "refresh_server_inventory", None)
+        if callable(refresh_inventory):
+            run_stage("server_inventory", refresh_inventory)
+        identity = getattr(self.service, "identity", None)
+        converge_identity = getattr(identity, "sync_existing_entitlements", None)
+        if callable(converge_identity):
+            run_stage("identity_convergence", converge_identity)
+        prune_usage_snapshots = getattr(self.commerce, "prune_usage_snapshots", None)
+        if callable(prune_usage_snapshots):
+            run_stage("usage_snapshot_cleanup", prune_usage_snapshots)
+        process_managed_key_repairs = getattr(
+            self.commerce, "process_managed_key_repairs", None
+        )
+        if callable(process_managed_key_repairs):
+            run_stage("managed_key_repairs", process_managed_key_repairs)
+        ensure_repair_notifications = getattr(
+            self.commerce, "ensure_managed_key_repair_notifications", None
+        )
+        if callable(ensure_repair_notifications):
+            run_stage("managed_key_repair_alerts", ensure_repair_notifications)
+        process_endpoint_migrations = getattr(self.commerce, "process_endpoint_migrations", None)
+        if callable(process_endpoint_migrations):
+            run_stage("endpoint_migrations", process_endpoint_migrations)
+        process_route_failovers = getattr(self.commerce, "process_route_failovers", None)
+        if callable(process_route_failovers):
+            run_stage("route_failover", process_route_failovers)
+        capacity_snapshot = getattr(self.commerce, "capacity_snapshot", None)
+        capacity_snapshot_result = None
+        if callable(capacity_snapshot):
+            # Inventory was refreshed above; avoid a second Outline request.
+            capacity_snapshot_result = run_stage(
+                "scale_observation", lambda: capacity_snapshot(refresh_inventory=False)
+            )
+        auto_queue_scale_out = getattr(self.commerce, "auto_queue_scale_out", None)
+        if callable(auto_queue_scale_out) and isinstance(capacity_snapshot_result, dict):
+            run_stage(
+                "scale_queue",
+                lambda: auto_queue_scale_out(snapshot=capacity_snapshot_result),
+            )
+        run_stage("notifications", self._send_pending_notifications)
+        # Slow model calls run last so enforcement and notifications stay responsive.
+        run_stage("receipt_extraction", self._process_receipt_extraction)
+        interaction_store = getattr(self.commerce, "database", None)
+        prune_interactions = getattr(interaction_store, "prune_interaction_states", None)
+        if callable(prune_interactions):
+            run_stage("interaction_state_cleanup", prune_interactions)
+
+    def _run_maintenance_pass(self) -> None:
+        """Run one bounded housekeeping pass outside the Telegram poll loop."""
+        started_at = time.perf_counter()
+        started_text = datetime.now(UTC).isoformat()
+        self._record_maintenance_heartbeat(started_at=started_text, stage="starting")
+        failures: list[tuple[str, Exception]] = []
+
+        def run_stage(name: str, callback: Any) -> Any:
+            self._record_maintenance_heartbeat(stage=name)
+            try:
+                return callback()
+            except Exception as exc:
+                failures.append((name, exc))
+                print(
+                    f"maintenance stage={name} error={type(exc).__name__}: {exc}", file=sys.stderr
+                )
+                self._record_maintenance_heartbeat(stage=name, error=f"{type(exc).__name__}: {exc}")
+                return None
+
+        self._run_maintenance_stages(run_stage, started_at)
         completed_text = datetime.now(UTC).isoformat()
         success_text = completed_text if not failures else None
         error_text = "; ".join(f"{name}: {type(exc).__name__}" for name, exc in failures) or None
