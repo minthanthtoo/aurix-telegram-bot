@@ -2322,6 +2322,26 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 )
             )
 
+    def test_admin_callback_routes_revocation_retry_and_promo_actions(self):
+        self.bot.request = lambda _method, _payload: True
+        callback = {
+            "id": "callback-revocation-retry",
+            "from": {"id": 999, "first_name": "Admin"},
+            "message": {"chat": {"id": 999, "type": "private"}},
+            "data": "a:g:order-id",
+        }
+        self.bot.handle_callback(callback)
+        self.assertIn(
+            "Retry the failed revocation job for order order-id?",
+            self.bot.sent[-1][1],
+        )
+
+        callback["id"] = "callback-promo-stop"
+        callback["data"] = "a:g:stop:WELCOME"
+        self.bot.handle_callback(callback)
+        self.assertIn("Promo: WELCOME", self.bot.sent[-1][1])
+        self.assertIn("stop the season", self.bot.sent[-1][1])
+
     def test_confirmation_is_durable_single_use_and_state_bound(self):
         order = self.commerce.create_order(123, "Min", "basic_50gb")
         self.bot.handle(self.message(999, f"/reject {order.order_id}"))

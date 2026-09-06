@@ -9,6 +9,7 @@ from typing import Any
 
 from commerce import CommerceError
 from telegram_callback_admin_fleet import dispatch_fleet_action
+from telegram_callback_admin_orders import dispatch_order_action
 
 UTC = timezone.utc
 
@@ -303,200 +304,17 @@ def handle_admin_staff_callback(self, query: dict[str, Any], chat_id: int, teleg
         )
 
 def handle_admin_order_callback(self, query: dict[str, Any], chat_id: int, telegram_id: int, message_id: Any, can_edit_text: bool, synthetic: dict[str, Any], action: str, entity_id: str, scope: str) -> None:
-    message = query.get("message") or {}
-    if action == "o":
-        self._send_order_detail(
-            chat_id,
-            telegram_id,
-            entity_id,
-            admin_view=True,
-            message_id=message_id if can_edit_text else None,
-        )
-    elif action == "j":
-        if not self._is_owner(telegram_id):
-            self._send_customer_fallback(chat_id, telegram_id)
-            return
-        try:
-            repair_id, approval_mode = entity_id.split(":", 1)
-        except ValueError:
-            self.send(chat_id, "That repair action is no longer valid.")
-            return
-        if approval_mode not in {"safe", "full"} or not repair_id:
-            self.send(chat_id, "That repair action is no longer valid.")
-            return
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/approverepair",
-            [repair_id, *( ["full"] if approval_mode == "full" else [] )],
-            (
-                f"Approve managed-key repair {repair_id[:16]} while preserving observed usage?"
-                if approval_mode == "safe"
-                else f"Approve managed-key repair {repair_id[:16]} with explicit full-quota restoration?"
-            ),
-            "✅ Confirm Repair" if approval_mode == "safe" else "⚠️ Confirm Full Quota",
-            cancel_data="a:n:repairs",
-        )
-    elif action == "p":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/retryjob",
-            [entity_id],
-            f"Retry worker job {entity_id}?",
-            "Confirm Retry",
-        )
-    elif action == "g":
-        try:
-            promo_action, promo_code = entity_id.split(":", 1)
-        except ValueError:
-            self.send(chat_id, "This promo action is no longer valid.")
-            return
-        command = "/stoppromo" if promo_action == "stop" else "/resumepromo"
-        if promo_action not in {"stop", "resume"}:
-            self.send(chat_id, "This promo action is no longer valid.")
-            return
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            command,
-            [promo_code],
-            f"{promo_action.title()} promo {promo_code}?",
-            "Confirm Promo Change",
-            cancel_data="a:n:promo",
-        )
-    elif action == "h":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/retry",
-            [entity_id, "provision"],
-            f"Retry the failed provisioning job for order {entity_id}?",
-            "Confirm Retry",
-        )
-    elif action == "g":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/retry",
-            [entity_id, "revoke"],
-            f"Retry the failed revocation job for order {entity_id}?",
-            "Confirm Retry",
-        )
-    elif action == "l":
-        synthetic["text"] = f"/ledger {entity_id}"
-        self.handle(synthetic)
-    elif action == "f":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/refund",
-            [entity_id],
-            f"Refund order {entity_id}? This credits the customer wallet and revokes paid access.",
-            "Confirm Refund",
-            f"a:o:{entity_id}",
-        )
-    elif action == "z":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/refund",
-            [entity_id],
-            f"Refund order {entity_id} to the customer wallet and revoke paid access?",
-            "Confirm Refund",
-            f"a:o:{entity_id}",
-        )
-    elif action == "r":
-        self._receipt_verify_inputs.pop(telegram_id, None)
-        self._clear_interaction_state(telegram_id, "receipt_verify")
-        synthetic["text"] = f"/receipt {entity_id}"
-        self.handle(synthetic)
-    elif action == "v":
-        receipt = self._admin_call(telegram_id, "get_receipt", entity_id)
-        if receipt is None or receipt.get("review_status") != "pending":
-            self.send(chat_id, "This receipt is no longer awaiting verification.")
-            return
-        extracted = receipt.get("extraction") or {}
-        reference = str(extracted.get("transaction_id") or "").strip()
-        amount_value = extracted.get("amount_minor", extracted.get("amount"))
-        try:
-            amount = int(str(amount_value).replace(",", ""))
-        except (TypeError, ValueError):
-            amount = 0
-        if reference and amount > 0:
-            self._queue_admin_confirmation(
-                chat_id,
-                telegram_id,
-                "/verify",
-                [entity_id, reference, str(amount)],
-                "Confirm that these extracted details match the actual receiving account.",
-                "✅ I Checked · Verify",
-                f"a:r:{entity_id}",
-            )
-        else:
-            self._receipt_verify_inputs[telegram_id] = entity_id
-            self._save_interaction_state(
-                telegram_id, "receipt_verify", {"evidence_id": entity_id}
-            )
-            self.send(
-                chat_id,
-                "🔎 Check the actual receiving account, then reply with only:\n"
-                "transaction-ID amount\n\nExample: 123456789 3000\n"
-                "The receipt/order ID is already selected for you.",
-                self._inline_keyboard([[("Cancel", f"a:r:{entity_id}")]]),
-            )
-    elif action == "a":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/approve",
-            [entity_id],
-            f"Approve order {entity_id} and queue VPN provisioning?",
-            "Confirm Approve",
-            f"a:o:{entity_id}",
-        )
-    elif action == "x":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/reject",
-            [entity_id],
-            f"Reject order {entity_id}? This closes the order and notifies the customer.",
-            "Confirm Reject",
-            f"a:o:{entity_id}",
-        )
-    elif action == "q":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/rejectreceipt",
-            [entity_id],
-            f"Reject receipt {entity_id}? The order stays open for a replacement screenshot.",
-            "Confirm Reject Receipt",
-            f"a:r:{entity_id}",
-        )
-    elif action == "y":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/rejectreceipt",
-            [entity_id],
-            f"Reject receipt {entity_id} and request a replacement screenshot?",
-            "Confirm Reject Receipt",
-            f"a:r:{entity_id}",
-        )
-    elif action == "c":
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/reject",
-            [entity_id],
-            f"Reject order {entity_id} and notify the customer?",
-            "Confirm Reject",
-            f"a:o:{entity_id}",
-        )
-    else:
-        self.send(chat_id, "This admin action is no longer valid.")
+    dispatch_order_action(
+        self,
+        query,
+        chat_id,
+        telegram_id,
+        message_id,
+        can_edit_text,
+        synthetic,
+        action,
+        entity_id,
+    )
 
 def handle_admin_workflow_callback(self, query: dict[str, Any], chat_id: int, telegram_id: int, message_id: Any, can_edit_text: bool, synthetic: dict[str, Any], action: str, entity_id: str, scope: str) -> None:
     if action in {"m", "t"}:
