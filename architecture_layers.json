@@ -142,6 +142,7 @@
     "entitlement_giveaways.py": "application",
     "entitlement_models.py": "domain",
     "entitlement_provisioning.py": "application",
+    "entitlement_provisioning_finalize_steps.py": "application",
     "entitlement_provisioning_repository.py": "persistence",
     "entitlement_quota.py": "application",
     "entitlement_quota_repository.py": "persistence",

@@ -19,6 +19,12 @@ from ports import OutlineGateway
 from quota_alerts import get_quota_alert_preferences, reached_alert, set_quota_alert_preferences
 from repositories import RepositoryDatabase
 from entitlement_provisioning_repository import EntitlementProvisioningRepository
+from entitlement_provisioning_finalize_steps import (
+    bind_and_complete,
+    persist_local_key,
+    record_intent_claim,
+    sync_identity_after_finalize,
+)
 from entitlement_models import ClaimResult, GiveawayResult, OutlineError
 from entitlement_support import (
     CLAIM_PERIOD,
@@ -300,114 +306,38 @@ def _finalize_free_intent(
         raise OutlineError("Outline free entitlement response lacks the expected key")
     now_text = now.astimezone(UTC).isoformat()
     encrypted_access_url = self._encrypt_access_url(str(key["accessUrl"]))
-    local_key_id: int | None = None
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        existing = _PROVISIONING.existing_key(
-            connection, str(intent["server_id"]), remote_id
-        )
-        if existing is not None:
-            if int(existing["telegram_id"]) != int(intent["telegram_id"]):
-                raise CommerceError("Outline key is already mapped to another account")
-            local_key_id = int(existing["id"])
-        else:
-            local_key_id = _PROVISIONING.insert_key(
-                connection,
-                telegram_id=int(intent["telegram_id"]),
-                server_id=str(intent["server_id"]),
-                outline_key_id=remote_id,
-                key_type=(
-                    "monthly_trial"
-                    if intent["kind"] in {"trial", "promo"}
-                    else "daily_free"
-                ),
-                created_at=str(intent["claim_started_at"]),
-                expires_at=(
-                    datetime.fromisoformat(str(intent["claim_started_at"])).astimezone(UTC)
-                    + timedelta(days=int(intent["duration_days"]))
-                ).isoformat(),
-                quota_bytes=int(intent["quota_bytes"]),
-            )
-            self._adjust_remote_key_count(connection, str(intent["server_id"]), 1)
-
-        if intent["kind"] in {"daily", "trial"}:
-            _PROVISIONING.update_user_claim(
-                connection,
-                kind=str(intent["kind"]),
-                telegram_id=int(intent["telegram_id"]),
-                claim_started_at=str(intent["claim_started_at"]),
-            )
-        else:
-            campaign_code = str(intent["campaign_code"])
-            claim = _PROVISIONING.giveaway_claim(
-                connection, campaign_code, int(intent["telegram_id"])
-            )
-            if claim is None:
-                _PROVISIONING.insert_giveaway_claim(
-                    connection,
-                    campaign_code=campaign_code,
-                    telegram_id=int(intent["telegram_id"]),
-                    key_id=local_key_id,
-                    winner_number=int(intent["winner_number"]),
-                    claimed_at=str(intent["claim_started_at"]),
-                )
-                window = _PROVISIONING.giveaway_window(
-                    connection, campaign_code, str(intent["window_start"])
-                )
-                if window is None:
-                    _PROVISIONING.insert_giveaway_window(
-                        connection, campaign_code, str(intent["window_start"])
-                    )
-                else:
-                    _PROVISIONING.increment_giveaway_window(
-                        connection, campaign_code, str(intent["window_start"])
-                    )
-                _PROVISIONING.increment_campaign(
-                    connection,
-                    campaign_code,
-                    now_text,
-                )
-        ConnectivityRegistry.bind_credential(
+        local_key_id = persist_local_key(
+            self,
+            _PROVISIONING,
             connection,
-            telegram_id=int(intent["telegram_id"]),
-            server_id=str(intent["server_id"]),
-            external_id=remote_id,
-            secret_ciphertext=encrypted_access_url,
+            intent=intent,
+            remote_id=remote_id,
+        )
+        record_intent_claim(
+            _PROVISIONING,
+            connection,
+            intent=intent,
+            local_key_id=local_key_id,
             now_text=now_text,
-            profile_kind=(
-                "promo" if intent["kind"] == "promo"
-                else "trial" if intent["kind"] == "trial"
-                else "free"
-            ),
         )
-        _PROVISIONING.mark_done(
+        bind_and_complete(
+            _PROVISIONING,
             connection,
-            intent_id=str(intent["id"]),
-            key_id=local_key_id,
-            completed_at=now_text,
+            intent=intent,
+            local_key_id=local_key_id,
+            remote_id=remote_id,
+            encrypted_access_url=encrypted_access_url,
+            now_text=now_text,
         )
-    try:
-        self._sync_identity_key(
-            telegram_id=int(intent["telegram_id"]),
-            local_key_id=int(local_key_id or 0),
-            kind=(
-                "promo" if intent["kind"] == "promo"
-                else "trial" if intent["kind"] == "trial"
-                else "free"
-            ),
-            quota_bytes=int(intent["quota_bytes"]),
-            expires_at=(
-                datetime.fromisoformat(str(intent["claim_started_at"])).astimezone(UTC)
-                + timedelta(days=int(intent["duration_days"]))
-            ).isoformat(),
-            server_id=str(intent["server_id"]),
-            external_id=remote_id,
-            now=now_text,
-        )
-    except Exception as exc:
-        # The free key is already durably committed. Startup backfill is
-        # able to repair the additive identity view without reissuing it.
-        print(f"identity free-key sync error: {type(exc).__name__}", file=sys.stderr)
+    sync_identity_after_finalize(
+        self,
+        intent=intent,
+        local_key_id=local_key_id,
+        remote_id=remote_id,
+        now_text=now_text,
+    )
     return key
 
 def _execute_free_intent(
