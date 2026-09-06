@@ -197,6 +197,7 @@
     "route_failover_repository.py": "persistence",
     "runtime.py": "bootstrap",
     "runtime_bootstrap.py": "bootstrap",
+    "runtime_bootstrap_steps.py": "bootstrap",
     "runtime_composition.py": "bootstrap",
     "runtime_models.py": "bootstrap",
     "runtime_outline.py": "bootstrap",
