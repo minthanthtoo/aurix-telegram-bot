@@ -34,6 +34,8 @@ import identity_entitlements
 import identity_generations
 import identity_support
 import identity_usage
+import identity_usage_crediting
+import identity_usage_lease_accounting
 import free_repository
 import migrations
 import infrastructure
@@ -206,6 +208,10 @@ class CompatibilityExportTest(unittest.TestCase):
             issubclass(commerce_service.CommerceService, commerce_service_api.CommerceServiceApi)
         )
         self.assertNotIn("bind_service_implementations", inspect.getsource(commerce_service))
+        self.assertNotIn(
+            "bind_service_implementations",
+            inspect.getsource(__import__("commerce_service_contracts")),
+        )
         self.assertNotIn("__getattr__", entitlements.ClaimService.__dict__)
         self.assertTrue(issubclass(commerce_worker_coordinator.CommerceWorker, CommerceWorkerPort))
         self.assertIn("process_jobs", commerce_worker_coordinator.CommerceWorker.__dict__)
@@ -230,6 +236,15 @@ class CompatibilityExportTest(unittest.TestCase):
         )
         self.assertNotIn(
             "getattr(self.service", inspect.getsource(commerce_worker_coordinator)
+        )
+        self.assertNotIn(
+            "bind_worker_implementations",
+            inspect.getsource(__import__("commerce_worker_contracts")),
+        )
+        self.assertEqual(identity_usage_crediting.credit_usage_sample.__module__, "identity_usage_crediting")
+        self.assertEqual(
+            identity_usage_lease_accounting.prepare_usage_leases.__module__,
+            "identity_usage_lease_accounting",
         )
 
     def test_telegram_component_rejects_undeclared_host_forwarding(self):

@@ -57,16 +57,3 @@ class CommerceWorkerDependencies:
 
     def items(self) -> tuple[tuple[str, Any], ...]:
         return tuple((field.name, getattr(self, field.name)) for field in fields(self))
-
-
-def bind_worker_implementations(
-    host: Any, implementations: dict[str, Any], static_names: set[str]
-) -> None:
-    """Bind the declared handler table without a dynamic attribute resolver."""
-    for name, implementation in implementations.items():
-        if name in PUBLIC_WORKER_METHODS:
-            continue
-        if name in static_names:
-            setattr(host, name, implementation)
-        else:
-            setattr(host, name, implementation.__get__(host, type(host)))

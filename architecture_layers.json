@@ -165,6 +165,8 @@
     "identity_generations_repository.py": "persistence",
     "identity_support.py": "domain",
     "identity_usage.py": "application",
+    "identity_usage_crediting.py": "application",
+    "identity_usage_lease_accounting.py": "application",
     "identity_usage_policy.py": "domain",
     "identity_usage_recording.py": "application",
     "identity_usage_recording_workflow.py": "application",
