@@ -201,49 +201,49 @@ def _repair_key_idempotent(
         return validate(existing_by_name), False
     return validate(outline.create_key(name, limit_bytes)), True
 
-def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> bool:
-    """Repair one active entitlement, preserving observed remaining quota."""
-    current = (now or datetime.now(UTC)).astimezone(UTC)
+
+def _load_managed_repair_row(
+    self, job: dict[str, Any], current: datetime
+) -> dict[str, Any] | None:
     kind = str(job["kind"])
     server_id = str(job["server_id"])
-    source_id = str(job["source_external_id"])
     local_ref = str(job["local_key_ref"])
+    source_id = str(job["source_external_id"])
     with self.database.connect() as connection:
         row = _REPAIRS.repair_entitlement(
             connection, kind=kind, local_ref=local_ref, server_id=server_id
         )
     if row is None:
         self._managed_repair_manual(job, "managed entitlement no longer exists", current)
-        return False
+        return None
     row = dict(row)
     if str(row.get("outline_key_id") or "") != source_id:
-        # Another repair or an operator reconciliation already converged it.
         self._managed_repair_manual(job, "managed entitlement changed before repair", current)
-        return False
+        return None
     if str(row.get("status") or "") != "active" or (
         kind == "paid" and str(row.get("subscription_status") or "") != "active"
     ):
         self._managed_repair_manual(job, "managed entitlement is no longer active", current)
-        return False
+        return None
     try:
         expires_at = datetime.fromisoformat(str(row["expires_at"])).astimezone(UTC)
     except (TypeError, ValueError, OverflowError):
         self._managed_repair_manual(job, "managed entitlement expiry is invalid", current)
-        return False
+        return None
     if expires_at <= current:
         self._managed_repair_manual(job, "managed entitlement expired before repair", current)
-        return False
+        return None
+    return row
 
-    outline = self._outline_client(server_id)
-    # Inventory can lag a concurrent manual repair.  Re-read the exact key
-    # before creating anything; existence is convergence, not a reason to
-    # issue a second credential.
-    getter = getattr(outline, "get_key", None)
-    if callable(getter):
-        existing = getter(source_id)
-        if existing is not None:
-            self._mark_managed_repair_converged(job, current, existing)
-            return True
+
+def _observe_managed_repair_usage(
+    self,
+    outline: Any,
+    source_id: str,
+    row: dict[str, Any],
+    job: dict[str, Any],
+    current: datetime,
+) -> int | None:
     usage: int | None = None
     try:
         metrics = outline.transfer_metrics()
@@ -257,8 +257,7 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
             usage = max(0, int(row.get("last_usage_bytes")))
         except (TypeError, ValueError):
             usage = None
-    owner_usage_override = str(job.get("last_error") or "") == "owner_approved_unknown_usage"
-    if usage is None and owner_usage_override:
+    if usage is None and str(job.get("last_error") or "") == "owner_approved_unknown_usage":
         usage = 0
     if usage is None and os.environ.get(
         "AURIX_KEY_REPAIR_ALLOW_STALE_USAGE", "0"
@@ -267,29 +266,27 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
             usage = max(0, int(job.get("used_bytes"))) if job.get("used_bytes") is not None else None
         except (TypeError, ValueError):
             usage = None
-    if usage is None and not self._managed_repair_allow_unknown_usage():
-        self._managed_repair_manual(job, "usage_observation_required", current)
-        return False
-    quota = int(row.get("quota_bytes") or row.get("data_limit_bytes") or job["quota_bytes"])
-    if usage is None:
-        usage = 0
-    if usage >= quota:
-        self._managed_repair_manual(job, "quota_already_exhausted", current)
-        return False
-    remaining = quota - usage
-    name = str(job.get("key_name") or "").strip()[:128]
-    key, _created_remote = self._repair_key_idempotent(
-        outline,
-        key_id=str(job["target_external_id"]),
-        name=name,
-        limit_bytes=remaining,
-    )
-    remote_id = str(key.get("id") or "").strip()
-    access_url = str(key.get("accessUrl") or "")
-    if not remote_id or not access_url:
-        raise CommerceError("Outline repair response lacks id or accessUrl")
-    outline.set_data_limit(remote_id, remaining)
-    encrypted = self._encrypt_access_url(access_url)
+    return usage
+
+
+def _persist_managed_repair(
+    self,
+    job: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    kind: str,
+    server_id: str,
+    source_id: str,
+    local_ref: str,
+    profile_kind: str,
+    subscription_id: str | None,
+    remote_id: str,
+    encrypted: str,
+    name: str,
+    remaining: int,
+    usage: int,
+    current: datetime,
+) -> bool:
     now_text = _now_text(current)
     with self.database.connect() as connection:
         self.database.begin_write(connection)
@@ -303,8 +300,6 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
             )
             if not changed:
                 raise CommerceError("Paid entitlement changed before repair cutover")
-            subscription_id = str(row["subscription_id"])
-            profile_kind = "paid"
         else:
             changed = _REPAIRS.update_free(
                 connection,
@@ -312,16 +307,8 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
             )
             if not changed:
                 raise CommerceError("Free entitlement changed before repair cutover")
-            subscription_id = None
-            profile_kind = (
-                "promo" if row.get("campaign_code")
-                else "trial" if str(row.get("key_type") or "") == "monthly_trial"
-                else "free"
-            )
             if self._table_exists(connection, "free_provisioning_intents"):
-                _REPAIRS.update_free_intent(
-                    connection, remote_id, int(row["id"]), server_id
-                )
+                _REPAIRS.update_free_intent(connection, remote_id, int(row["id"]), server_id)
         ConnectivityRegistry.revoke_credential(
             connection,
             server_id=server_id,
@@ -344,11 +331,10 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
         _REPAIRS.complete_repair(
             connection, str(job["id"]), remote_id, remaining, usage, now_text
         )
-        notification_key = f"managed-key-repaired:{kind}:{local_ref}"
         _REPAIRS.queue_repaired_notification(
             connection,
             notification_id=_new_id(),
-            dedupe_key=notification_key,
+            dedupe_key=f"managed-key-repaired:{kind}:{local_ref}",
             telegram_id=int(row["telegram_id"]),
             text=(
                 "Your AuriX VPN key was safely refreshed after the previous remote credential disappeared.\n"
@@ -370,11 +356,84 @@ def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> boo
                 "old_external_id": source_id,
                 "new_external_id": remote_id,
                 "observed_usage_bytes": usage,
-                "previous_quota_bytes": quota,
+                "previous_quota_bytes": int(row.get("quota_bytes") or row.get("data_limit_bytes") or job["quota_bytes"]),
                 "remaining_quota_bytes": remaining,
                 "expires_at": str(row["expires_at"]),
             },
         )
+    return True
+
+def _process_managed_key_repair(self, job: dict[str, Any], now: datetime) -> bool:
+    """Repair one active entitlement, preserving observed remaining quota."""
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    kind = str(job["kind"])
+    server_id = str(job["server_id"])
+    source_id = str(job["source_external_id"])
+    local_ref = str(job["local_key_ref"])
+    row = _load_managed_repair_row(self, job, current)
+    if row is None:
+        return False
+
+    outline = self._outline_client(server_id)
+    getter = getattr(outline, "get_key", None)
+    if callable(getter):
+        existing = getter(source_id)
+        if existing is not None:
+            self._mark_managed_repair_converged(job, current, existing)
+            return True
+    usage = _observe_managed_repair_usage(
+        self, outline, source_id, row, job, current
+    )
+    if usage is None and not self._managed_repair_allow_unknown_usage():
+        self._managed_repair_manual(job, "usage_observation_required", current)
+        return False
+    quota = int(row.get("quota_bytes") or row.get("data_limit_bytes") or job["quota_bytes"])
+    usage = 0 if usage is None else usage
+    if usage >= quota:
+        self._managed_repair_manual(job, "quota_already_exhausted", current)
+        return False
+    remaining = quota - usage
+    name = str(job.get("key_name") or "").strip()[:128]
+    key, _created_remote = self._repair_key_idempotent(
+        outline,
+        key_id=str(job["target_external_id"]),
+        name=name,
+        limit_bytes=remaining,
+    )
+    remote_id = str(key.get("id") or "").strip()
+    access_url = str(key.get("accessUrl") or "")
+    if not remote_id or not access_url:
+        raise CommerceError("Outline repair response lacks id or accessUrl")
+    outline.set_data_limit(remote_id, remaining)
+    encrypted = self._encrypt_access_url(access_url)
+    if kind == "paid":
+        subscription_id = str(row["subscription_id"])
+        profile_kind = "paid"
+    else:
+        subscription_id = None
+        profile_kind = (
+            "promo" if row.get("campaign_code")
+            else "trial" if str(row.get("key_type") or "") == "monthly_trial"
+            else "free"
+        )
+    if not _persist_managed_repair(
+        self,
+        job,
+        row,
+        kind=kind,
+        server_id=server_id,
+        source_id=source_id,
+        local_ref=local_ref,
+        profile_kind=profile_kind,
+        subscription_id=subscription_id,
+        remote_id=remote_id,
+        encrypted=encrypted,
+        name=name,
+        remaining=remaining,
+        usage=usage,
+        current=current,
+    ):
+        return False
     try:
         self._sync_identity_binding(
             telegram_id=int(row["telegram_id"]),
