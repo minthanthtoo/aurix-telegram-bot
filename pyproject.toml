@@ -28,4 +28,10 @@ exclude_also = [
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
-include = ["domain_time.py", "notification_contracts.py", "notification_worker.py"]
+include = [
+    "domain_time.py",
+    "notification_contracts.py",
+    "notification_worker.py",
+    "commerce_service_api.py",
+    "commerce_worker_api.py",
+]

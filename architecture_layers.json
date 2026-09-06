@@ -62,6 +62,7 @@
     "commerce_service_dispatch.py": "application",
     "commerce_service_fleet.py": "application",
     "commerce_service_fleet_failover.py": "application",
+    "commerce_service_fleet_failover_steps.py": "application",
     "commerce_service_fleet_health.py": "application",
     "commerce_service_inventory.py": "application",
     "commerce_service_inventory_migration.py": "application",
