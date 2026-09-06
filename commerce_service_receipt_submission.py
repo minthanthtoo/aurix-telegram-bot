@@ -8,11 +8,8 @@ from typing import Any
 
 from commerce_models import CommerceError, _normalize_reference, _now_text
 from commerce_receipt_submission_repository import ReceiptSubmissionRepository
-from commerce_receipt_storage_workflow import (
-    complete_stored_receipt,
-    complete_unstored_receipt,
-)
 from commerce_receipt_submission_intake import prepare_receipt_submission
+from commerce_service_receipt_submission_flow import finalize_receipt_submission
 from receipt_fingerprint import receipt_perceptual_hash
 
 
@@ -74,47 +71,14 @@ def submit_receipt(
     if prepared.existing_result is not None:
         return prepared.existing_result
 
-    storage_path = prepared.storage_path
-    if storage_configured:
-        assert storage_path is not None
-        storage_path = complete_stored_receipt(
-            self,
-            _RECEIPTS,
-            evidence_id=prepared.evidence_id,
-            order_id=order_id,
-            telegram_id=telegram_id,
-            provider_name=prepared.provider_name,
-            status=prepared.status,
-            submitted_at=prepared.submitted_at,
-            storage_bucket=prepared.storage_bucket,
-            storage_path=storage_path,
-            image_bytes=image_bytes,
-            mime_type=mime_type,
-            is_new=prepared.is_new,
-            extraction=prepared.extraction,
-            queue_extraction=queue_extraction,
-            near_duplicate=prepared.near_duplicate,
-        )
-    else:
-        complete_unstored_receipt(
-            self,
-            _RECEIPTS,
-            evidence_id=prepared.evidence_id,
-            order_id=order_id,
-            telegram_id=telegram_id,
-            provider_name=prepared.provider_name,
-            status=prepared.status,
-            submitted_at=prepared.submitted_at,
-            is_new=prepared.is_new,
-            extraction=prepared.extraction,
-            queue_extraction=queue_extraction,
-        )
-
-    return {
-        **(prepared.extraction or {}),
-        "evidence_id": prepared.evidence_id,
-        "image_sha256": prepared.image_sha256,
-        "extraction_status": prepared.status,
-        "storage_status": "stored" if storage_configured else "not_configured",
-        "storage_path": storage_path,
-    }
+    return finalize_receipt_submission(
+        self,
+        _RECEIPTS,
+        prepared=prepared,
+        order_id=order_id,
+        telegram_id=telegram_id,
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        queue_extraction=queue_extraction,
+        storage_configured=storage_configured,
+    )
