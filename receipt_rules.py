@@ -14,6 +14,18 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from receipt_rule_steps import (
+    evaluate_amount,
+    evaluate_completion,
+    evaluate_confidence,
+    evaluate_currency,
+    evaluate_provider,
+    evaluate_recipient,
+    evaluate_timestamp,
+    evaluate_transaction_id,
+    verdict,
+)
+
 UTC = timezone.utc
 
 
@@ -169,124 +181,22 @@ def evaluate_receipt_candidate(
 ) -> dict[str, Any]:
     """Return a non-authoritative triage verdict and auditable rule checks."""
     flags = {str(item).strip().lower().replace("-", "_") for item in extraction.get("flags", []) if item}
-    selected = canonical_provider(selected_provider)
-    extracted = canonical_provider(extraction.get("provider"))
     checks: dict[str, str] = {}
-
-    completed = str(extraction.get("completion_status") or "").strip().lower()
-    if flags & NEGATIVE_FLAGS or completed in {"failed", "pending", "cancelled", "not_completed"}:
-        flags.add("not_a_completed_receipt")
-        checks["completed"] = "fail"
-    elif completed == "completed":
-        checks["completed"] = "pass"
-    else:
-        flags.add("completion_status_unconfirmed")
-        checks["completed"] = "unknown"
-
-    if selected is None or extracted is None:
-        flags.add("provider_unconfirmed")
-        checks["provider"] = "unknown"
-    elif selected != extracted:
-        flags.add("provider_mismatch")
-        checks["provider"] = "fail"
-    else:
-        checks["provider"] = "pass"
-
-    try:
-        amount_matches = int(extraction.get("amount_minor")) == int(expected_amount_minor)
-    except (TypeError, ValueError):
-        amount_matches = False
-        flags.add("missing_or_invalid_amount")
-        checks["amount"] = "unknown"
-    else:
-        checks["amount"] = "pass" if amount_matches else "fail"
-        if not amount_matches:
-            flags.add("amount_mismatch")
-
-    currency = str(extraction.get("currency") or "").strip().upper()
-    if not currency:
-        flags.add("missing_currency")
-        checks["currency"] = "unknown"
-    elif currency != str(expected_currency).upper():
-        flags.add("currency_mismatch")
-        checks["currency"] = "fail"
-    else:
-        checks["currency"] = "pass"
-
-    transaction_id = str(extraction.get("transaction_id") or "").strip()
-    label = _normalized(extraction.get("transaction_id_label"))
-    if not transaction_id:
-        flags.add("missing_transaction_id")
-        checks["transaction_id"] = "unknown"
-    elif selected is None or not label:
-        flags.add("transaction_id_label_unconfirmed")
-        checks["transaction_id"] = "unknown"
-    else:
-        rules = PROVIDER_RULES[selected]
-        forbidden = any(_normalized(item) == label for item in rules["forbidden_reference_labels"])
-        allowed = any(_normalized(item) == label for item in rules["reference_labels"])
-        if forbidden:
-            flags.add("ambiguous_transaction_id")
-            checks["transaction_id"] = "fail"
-        elif not allowed:
-            flags.add("transaction_id_label_unconfirmed")
-            checks["transaction_id"] = "unknown"
-        else:
-            checks["transaction_id"] = "pass"
-
-    receipt_time = _timestamp(extraction.get("timestamp"))
-    if receipt_time is None:
-        flags.add("missing_or_invalid_timestamp")
-        checks["timestamp"] = "unknown"
-    else:
-        age = submitted_at.astimezone(UTC) - receipt_time
-        if age > timedelta(hours=1):
-            flags.add("receipt_older_than_1_hour")
-            checks["timestamp"] = "fail"
-        elif age < -timedelta(minutes=5):
-            flags.add("receipt_timestamp_in_future")
-            checks["timestamp"] = "fail"
-        else:
-            checks["timestamp"] = "pass"
-
+    evaluate_completion(extraction, flags, checks, NEGATIVE_FLAGS)
+    selected = evaluate_provider(
+        extraction, selected_provider, flags, checks, canonical_provider
+    )
+    evaluate_amount(extraction, expected_amount_minor, flags, checks)
+    evaluate_currency(extraction, expected_currency, flags, checks)
+    evaluate_transaction_id(
+        extraction, selected, flags, checks, PROVIDER_RULES, _normalized
+    )
+    evaluate_timestamp(extraction, submitted_at, flags, checks, _timestamp)
     profiles = recipient_profiles if recipient_profiles is not None else load_recipient_profiles()
-    profile = profiles.get(selected or "")
-    if not profile or not (profile["names"] or profile["accounts"]):
-        flags.add("merchant_profile_not_configured")
-        checks["recipient"] = "unknown"
-    elif not extraction.get("recipient") and not extraction.get("recipient_account"):
-        flags.add("missing_recipient")
-        checks["recipient"] = "unknown"
-    elif _recipient_matches(extraction, profile):
-        checks["recipient"] = "pass"
-    else:
-        flags.add("recipient_mismatch")
-        checks["recipient"] = "fail"
-
-    try:
-        confidence = float(extraction.get("confidence", 0))
-    except (TypeError, ValueError):
-        confidence = 0
-    if confidence < 0.85:
-        flags.add("low_extraction_confidence")
-        checks["confidence"] = "unknown"
-    else:
-        checks["confidence"] = "pass"
-
-    conclusive_reject = {
-        "not_a_completed_receipt",
-        "provider_mismatch",
-        "amount_mismatch",
-        "currency_mismatch",
-        "recipient_mismatch",
-        "receipt_older_than_1_hour",
-        "receipt_timestamp_in_future",
-        "duplicate_transaction_candidate",
+    evaluate_recipient(extraction, selected, profiles, flags, checks, _recipient_matches)
+    evaluate_confidence(extraction, flags, checks)
+    return {
+        "automation_decision": verdict(flags, checks),
+        "rule_checks": checks,
+        "flags": sorted(flags),
     }
-    if flags & conclusive_reject:
-        verdict = "candidate_reject"
-    elif all(value == "pass" for value in checks.values()) and not flags:
-        verdict = "candidate_pass"
-    else:
-        verdict = "manual_review"
-    return {"automation_decision": verdict, "rule_checks": checks, "flags": sorted(flags)}

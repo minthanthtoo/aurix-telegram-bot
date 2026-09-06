@@ -195,6 +195,7 @@
     "receipt_fingerprint.py": "application",
     "receipt_llm.py": "integration",
     "receipt_rules.py": "application",
+    "receipt_rule_steps.py": "application",
     "repositories.py": "contract",
     "route_failover.py": "application",
     "route_failover_repository.py": "persistence",
