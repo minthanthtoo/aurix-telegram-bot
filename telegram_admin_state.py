@@ -6,8 +6,10 @@ import hashlib
 import json
 from typing import Any
 
+from telegram_admin_state_snapshots import TelegramAdminSnapshotMixin
 
-class TelegramAdminStateMixin:
+
+class TelegramAdminStateMixin(TelegramAdminSnapshotMixin):
     def _admin_state_snapshot(
         self, command: str, args: list[str], telegram_id: int
     ) -> dict[str, Any]:
@@ -18,217 +20,28 @@ class TelegramAdminStateMixin:
         confirmation from silently applying to a changed order or receipt.
         """
         target_id = str(args[0]) if args else ""
-        snapshot: dict[str, Any] = {
-            "command": command,
-            "target_id": target_id,
-            "state": "unavailable",
-        }
-
-        if command == "/receiptmode":
-            try:
-                policy = self._admin_call(telegram_id, "receipt_policy")
-                snapshot.update(
-                    {
-                        "state": "present",
-                        "current_mode": policy.get("mode"),
-                        "version": policy.get("version"),
-                        "requested_mode": args[0] if args else None,
-                    }
-                )
-            except Exception as exc:
-                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
-            return snapshot
-        if command == "/approverepair":
-            try:
-                repairs = self._admin_call(
-                    telegram_id, "managed_key_repair_jobs", status="all", limit=500
-                )
-                repair = next(
-                    (item for item in repairs if str(item.get("id")) == target_id), None
-                )
-                if repair is None:
-                    snapshot.update({"state": "missing"})
-                else:
-                    snapshot.update({"state": "present", "repair": repair})
-            except Exception as exc:
-                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
-            return snapshot
-        if command in {"/setpromo", "/stoppromo", "/resumepromo"}:
-            try:
-                promo = self._admin_service_call(
-                    telegram_id,
-                    "giveaway_status",
-                    telegram_id,
-                    target_id or None,
-                )
-                snapshot.update({"state": "present", "promo": promo})
-            except Exception as exc:
-                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
-            return snapshot
-        if self.commerce is None or not target_id:
-            snapshot["state"] = "missing"
-            return snapshot
+        snapshot = self._empty_admin_snapshot(command, target_id)
         try:
+            if command == "/receiptmode":
+                return self._snapshot_receipt_mode(snapshot, args, telegram_id)
+            if command == "/approverepair":
+                return self._snapshot_repair(snapshot, telegram_id)
+            if command in {"/setpromo", "/stoppromo", "/resumepromo"}:
+                return self._snapshot_promo(snapshot, target_id, telegram_id)
+            if self.commerce is None or not target_id:
+                snapshot["state"] = "missing"
+                return snapshot
             if command == "/migratekey":
-                if len(args) != 3:
-                    snapshot["state"] = "missing"
-                else:
-                    source, external_id, target = (str(value).strip() for value in args)
-                    candidates = self._admin_call(telegram_id, "migratable_credentials", source)
-                    candidate = next(
-                        (item for item in candidates if str(item.get("external_id")) == external_id),
-                        None,
-                    )
-                    endpoints = self._admin_call(telegram_id, "connectivity_snapshot")
-                    endpoint = next(
-                        (item for item in endpoints if str(item.get("outline_server_id")) == target),
-                        None,
-                    )
-                    if candidate is None or endpoint is None:
-                        snapshot["state"] = "missing"
-                    else:
-                        snapshot.update(
-                            {
-                                "state": "present",
-                                "source_server_id": source,
-                                "target_server_id": target,
-                                "external_id": external_id,
-                                "profile_kind": candidate.get("profile_kind"),
-                                "telegram_id": candidate.get("telegram_id"),
-                                "target_status": endpoint.get("status"),
-                                "target_accepts_new_keys": endpoint.get("accepts_new_keys"),
-                            }
-                        )
-            elif command == "/serverstate":
-                if len(args) != 2 or str(args[1]).lower() not in {"active", "draining", "retired"}:
-                    snapshot["state"] = "missing"
-                else:
-                    readiness = self._admin_owner_call(
-                        telegram_id,
-                        "server_drain_readiness",
-                        target_id,
-                    )
-                    snapshot.update(
-                        {
-                            "state": "present",
-                            "server_id": target_id,
-                            "requested_state": str(args[1]).lower(),
-                            "lifecycle_state": readiness.get("lifecycle_state"),
-                            "ready_to_retire": readiness.get("ready_to_retire"),
-                            "blockers": readiness.get("blockers") or [],
-                        }
-                    )
-            elif command == "/retryjob":
-                jobs = self._admin_call(
-                    telegram_id, "failed_jobs", limit=100, include_nonterminal=True
-                )
-                job = next((item for item in jobs if str(item.get("job_id")) == target_id), None)
-                if job is None or job.get("job_status") != "failed":
-                    snapshot["state"] = "missing"
-                else:
-                    snapshot.update(
-                        {
-                            "state": "present",
-                            "job_id": target_id,
-                            "operation": job.get("operation"),
-                            "order_id": job.get("order_id"),
-                            "attempts": job.get("attempts"),
-                            "last_error": job.get("last_error"),
-                        }
-                    )
-            elif command in {"/verify", "/rejectreceipt"}:
-                receipt = self._admin_call(telegram_id, "get_receipt", target_id)
-                if receipt is None:
-                    snapshot["state"] = "missing"
-                else:
-                    snapshot.update(
-                        {
-                            "state": "present",
-                            "evidence_id": receipt.get("id"),
-                            "order_id": receipt.get("order_id"),
-                            "telegram_id": receipt.get("telegram_id"),
-                            "review_status": receipt.get("review_status"),
-                            "storage_status": receipt.get("storage_status"),
-                            "amount_minor": receipt.get("amount_minor"),
-                            "currency": receipt.get("currency"),
-                            "verified_provider_reference": receipt.get(
-                                "verified_provider_reference"
-                            ),
-                            "verified_amount_minor": receipt.get("verified_amount_minor"),
-                            "verified_currency": receipt.get("verified_currency"),
-                        }
-                    )
-                    order_id = receipt.get("order_id")
-                    order = (
-                        self._admin_call(
-                            telegram_id,
-                            "order_detail",
-                            str(order_id),
-                            telegram_id,
-                            is_admin=True,
-                        )
-                        if order_id
-                        else None
-                    )
-                    if order:
-                        snapshot.update(
-                            {
-                                "order_status": order.get("status"),
-                                "payment_status": order.get("payment_status"),
-                                "order_amount_minor": order.get("amount_minor"),
-                            }
-                        )
-            else:
-                order = self._admin_call(
-                    telegram_id,
-                    "order_detail",
-                    target_id,
-                    telegram_id,
-                    is_admin=True,
-                )
-                if order is None:
-                    snapshot["state"] = "missing"
-                else:
-                    snapshot.update(
-                        {
-                            "state": "present",
-                            "order_id": order.get("id"),
-                            "telegram_id": order.get("telegram_id"),
-                            "plan_code": order.get("plan_code"),
-                            "plan_name": order.get("plan_name"),
-                            "amount_minor": order.get("amount_minor"),
-                            "currency": order.get("currency"),
-                            "order_status": order.get("status"),
-                            "refund_status": order.get("refund_status"),
-                            "payment_status": order.get("payment_status"),
-                            "receipt_status": order.get("receipt_status"),
-                            "subscription_status": order.get("subscription_status"),
-                            "provisioning_status": order.get("provisioning_status"),
-                            "wallet_reservation_status": order.get("wallet_reservation_status"),
-                            "evidence_id": order.get("evidence_id"),
-                        }
-                    )
-                if command == "/retry" and snapshot.get("state") == "present":
-                    jobs = self._admin_call(telegram_id, "failed_jobs", limit=100)
-                    matching = [job for job in jobs if str(job.get("order_id")) == target_id]
-                    snapshot["failed_job"] = (
-                        {
-                            "operation": matching[0].get("operation"),
-                            "attempts": matching[0].get("attempts"),
-                            "last_error": matching[0].get("last_error"),
-                        }
-                        if matching
-                        else None
-                    )
+                return self._snapshot_migration(snapshot, args, telegram_id)
+            if command == "/serverstate":
+                return self._snapshot_server_state(snapshot, args, telegram_id)
+            if command == "/retryjob":
+                return self._snapshot_retry_job(snapshot, telegram_id)
+            if command in {"/verify", "/rejectreceipt"}:
+                return self._snapshot_receipt(snapshot, telegram_id)
+            return self._snapshot_order(snapshot, command, telegram_id)
         except Exception as exc:
-            # A preview must fail closed rather than fabricate financial state.
-            snapshot = {
-                "command": command,
-                "target_id": target_id,
-                "state": "unavailable",
-                "error_type": type(exc).__name__,
-            }
-        return snapshot
+            return self._unavailable_admin_snapshot(command, target_id, exc)
 
     def _admin_state_fingerprint(
         self, command: str, args: list[str], telegram_id: int

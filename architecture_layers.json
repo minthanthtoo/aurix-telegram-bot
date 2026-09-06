@@ -204,6 +204,7 @@
     "telegram_admin_orders.py": "transport",
     "telegram_admin_panels.py": "transport",
     "telegram_admin_state.py": "transport",
+    "telegram_admin_state_snapshots.py": "transport",
     "telegram_approval_commands.py": "transport",
     "telegram_callback_admin.py": "transport",
     "telegram_callback_customer.py": "transport",
