@@ -23,6 +23,7 @@ from ports import ReceiptExtractorGateway
 from quota_alerts import MODE_STEPS, alert_level_labels
 from telegram_admin import AdminOperations
 from telegram_formatting import format_user_datetime
+from telegram_transport_receipt_submission import resolve_receipt_order, submit_receipt_payload
 from telegram_transport_support import ADMIN_CONFIRMATION_TTL, INTERACTION_STATE_TTL, TelegramAPIError, UTC
 
 
@@ -358,92 +359,28 @@ class TelegramReceiptTransportMixin:
         if self.commerce is None:
             self.send(chat_id, "Paid plans are not configured in this staging process.")
             return
-        photos = message.get("photo")
-        document = message.get("document")
-        file_id = None
-        unique_id = None
-        mime = "image/jpeg"
-        media_type = "photo"
-        if isinstance(photos, list) and photos:
-            item = photos[-1]
-            if isinstance(item, dict):
-                file_id = item.get("file_id")
-                unique_id = item.get("file_unique_id")
-                mime = "image/jpeg"
-        elif isinstance(document, dict) and str(document.get("mime_type", "")).startswith("image/"):
-            file_id = document.get("file_id")
-            unique_id = document.get("file_unique_id")
-            mime = str(document.get("mime_type"))[:64]
-            media_type = "document"
-        if not isinstance(file_id, str):
+        metadata = self._receipt_file_metadata(message)
+        if metadata is None:
             return
-        order_id = self._pending_order_id(telegram_id, str(message.get("caption") or ""))
+        file_id, unique_id, _message_mime, media_type = metadata
+        order_id = resolve_receipt_order(self, chat_id, telegram_id, message)
         if not order_id:
-            list_open = getattr(self.commerce, "open_order_ids_for_user", None)
-            try:
-                open_count = len(list_open(telegram_id, limit=20)) if callable(list_open) else 0
-            except Exception:
-                open_count = 0
-            if open_count > 1:
-                self.send(
-                    chat_id,
-                    "I found more than one open order. Open My Orders and tap “Upload Receipt” "
-                    "on the exact order, or send the screenshot with /paid <order-id> in its caption.",
-                    self._customer_keyboard(telegram_id),
-                )
-            else:
-                self.send(
-                    chat_id,
-                    "Create an order with Plans, then send its receipt screenshot. "
-                    "Use the order’s Upload Receipt button or caption it with /paid <order-id>.",
-                    self._customer_keyboard(telegram_id),
-                )
             return
         try:
-            order = self.commerce.order_detail(order_id, telegram_id)
-            provider = str((order or {}).get("payment_method") or "manual")
-            image, mime = self._download_telegram_file(file_id)
-            duplicate_status = self.commerce.receipt_duplicate_status(
+            result, queue_extraction = submit_receipt_payload(
+                self,
                 telegram_id,
                 order_id,
-                image,
-                str(unique_id) if unique_id else None,
-                provider=provider,
-            )
-            if duplicate_status == "different_order":
-                raise CommerceError(
-                    "This receipt was already submitted for another order; please send the original "
-                    "receipt for this order"
-                )
-            policy = self.commerce.receipt_policy()
-            extraction_configured = bool(
-                getattr(self.receipt_extractor, "base_url", "")
-                and getattr(self.receipt_extractor, "model", "")
-                and getattr(self.receipt_extractor, "api_key", "")
-            )
-            queue_extraction = (
-                str(policy.get("mode") or "manual") == "assisted" and extraction_configured
-            )
-            result = self.commerce.submit_receipt(
-                telegram_id,
-                order_id,
-                provider=provider,
                 file_id=file_id,
-                file_unique_id=str(unique_id) if unique_id else None,
-                image_bytes=image,
-                mime_type=mime,
-                extraction=None,
-                telegram_media_type=media_type,
-                queue_extraction=queue_extraction,
+                unique_id=unique_id,
+                media_type=media_type,
             )
         except (CommerceError, RuntimeError, urllib.error.URLError) as exc:
             self.send(chat_id, str(exc) or "Receipt could not be recorded. Try again later.")
             return
         self._receipt_order_context.pop(int(telegram_id), None)
         self._clear_interaction_state(telegram_id, "receipt_order")
-        duplicate_image_candidate = "duplicate_image_candidate" in set(
-            result.get("flags") or []
-        )
+        duplicate_image_candidate = "duplicate_image_candidate" in set(result.get("flags") or [])
         if duplicate_image_candidate:
             self.send(
                 chat_id,
