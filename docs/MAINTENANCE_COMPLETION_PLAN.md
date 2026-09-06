@@ -1,7 +1,7 @@
 # Maintenance completion plan
 
 Status: active implementation candidate; final gates remain open.
-Reviewed baseline: `d3dff04` on `codex/monolith-reduction-prep`, 2026-09-06.
+Reviewed baseline: `c51bf16` on `codex/monolith-reduction-prep`, 2026-09-06.
 Working checkout: `/Users/min/projects/tg-AuriX-bot-monolith-prep`.
 
 This plan is the current completion proposal following the architecture review.
@@ -14,24 +14,44 @@ change here is not evidence that either has been updated or deployed.
 
 Measured on the current candidate after the latest extractions:
 
-The measured candidate is committed as the current HEAD (`Reduce monolithic
-workflows and harden maintenance gates`).
+The measured candidate is committed as the current HEAD (`Split identity usage
+accounting stages`).
 
-- 223 recursively inventoried production sources; architecture guard passes with
+- 233 recursively inventoried production sources; architecture guard passes with
   zero violations and zero application/worker SQL calls.
-- 537 tests pass with the disposable PostgreSQL contract environment enabled;
-  the dedicated SQLite/PostgreSQL contract suite passes all 14 tests.
+- 538 tests pass; 7 live-PostgreSQL checks are skipped because no live PostgreSQL
+  service is configured in this checkout. The dedicated contract suite runs 14
+  tests with the same 7 PostgreSQL checks skipped.
 - Coverage runs over every owned production source and reports 69% overall,
   above the configured 60% floor; the coverage-scope guard passes.
-- All 223 production sources compile; Ruff's configured safety rules and the
+- All 233 production sources compile; Ruff's configured safety rules and the
   strict Pyright scope pass.
 - The code graph was refreshed after the extractions.
 
-This is evidence for the completed portions of G01, G02, the endpoint SQL
-extraction in G04, explicit worker/service/entitlement contracts, and several
-G06/G07 workflow slices. It is not a 100% completion claim: package migration,
-full versioned ownership of compatibility/backfill schema changes, removal of
-all compatibility forwarders, and final failure/recovery evidence remain open.
+This is evidence for the completed portions of G01, G02, G04, G05, G06, G07,
+and G08: endpoint persistence calls are behind repositories, service and worker
+facades are explicit, compatibility schema work is versioned, and multiple
+long workflows have bounded coordinators. It is not a 100% completion claim:
+package migration, remaining compatibility forwarders, broader strict typing and
+lint adoption, live PostgreSQL execution, and the final failure/recovery matrix
+remain open.
+
+### Current gate interpretation
+
+| Gate | Current status | Evidence or remaining work |
+|---|---|---|
+| G01 inventory | verified locally | 233 production sources, explicit layer manifest, current SHA recorded |
+| G02 architecture/coverage | verified locally | recursive guard, zero violations, coverage-scope check, 69% full-source coverage |
+| G03 contracts/database verification | in progress | 14 contract tests run; 7 PostgreSQL checks remain skipped without a live service |
+| G04 endpoint persistence | verified locally | service/worker endpoint migration paths report zero direct SQL calls |
+| G05 worker independence | verified locally for current facades | explicit service/worker APIs and no worker-to-service fallback; handler dependency narrowing continues |
+| G06 application workflows | in progress | several high-risk slices reduced; Telegram/admin, repairs, bootstrap, and receipt-intake follow-up remain |
+| G07 Telegram boundaries | in progress | admin snapshots and pure capacity projection reduced; four compatibility forwarders and long transport paths remain |
+| G08 schema authority | verified locally for compatibility slice | legacy compatibility/backfill logic is a versioned migration; full historical upgrade matrix remains |
+| G09 package/compatibility retirement | pending | move stable modules into `aurix/`, then retire or bound remaining compatibility exports |
+| G10 reproducible checks | in progress | Ruff/Pyright/coverage run locally and in CI; broader strict typing and lint adoption remain |
+| G11 reliability acceptance | pending | run the fault-injection, concurrency, recovery, and maintenance-exercise matrix |
+| G12 final handoff | pending | rerun every mandatory gate on one final SHA and publish rollback/deployment evidence |
 
 ## 1. What 100% means
 
@@ -64,21 +84,19 @@ the candidate-level measurement after implementation work.
 
 | Observation | Current evidence | Consequence |
 |---|---|---|
-| Service facade is smaller | `commerce_service.py` has 264 lines | Useful navigation improvement; facade size does not measure total coupling |
-| Service dependencies remain implicit | `CommerceService.__getattr__` binds implementation functions to the service | Replace active-path dependency lookup with explicit collaborators |
-| Worker still sees the whole service | `CommerceWorker.__getattr__` falls back to `self.service` | Remove worker-to-service back references |
+| Service facade is explicit | `commerce_service.py` has 251 lines; `CommerceServiceApi` declares the public and private handler methods | Keep the facade as a bounded compatibility surface; do not reintroduce runtime method binding |
+| Worker facade is explicit | `CommerceWorkerApi` and the coordinator/mixin use explicit handler calls; no worker `__getattr__` or service fallback remains | Continue migrating handlers to narrow dependency contracts |
 | Telegram components share host state | `TelegramComponent.__getattr__` and `__setattr__` forward to the host | Assign state ownership and inject transport/application interfaces |
-| Other shared-host structures remain | `ClaimService` uses dynamic binding; identity and infrastructure use feature mixins | Include these families in the dependency audit |
-| Earlier SQL audit had a classification bug | It excluded names containing `migration` | Classify by actual layer and explicit path |
-| Endpoint-migration application SQL remains | 5 calls in `commerce_service_inventory_migration.py`; 14 in `commerce_worker_migrations.py` | The earlier zero-application-SQL claim is withdrawn; extract these 19 calls |
-| Schema initialization is still substantial | `commerce_schema_bootstrap.py`: 670 lines, PostgreSQL initializer 376 lines | Move base definitions and compatibility work under versioned migration ownership |
-| Architecture guard is incomplete | Root-only Python discovery, selected file ceilings, limited import resolution | Guard packages recursively and include newly added modules automatically |
-| Some SQL ceilings remain permissive | `commerce_service_orders.py` allows 29 calls although actual count is zero | Ratchet actual application SQL to zero after correcting classification |
-| Coverage gate is not exercised in current CI | CI uses plain unittest; coverage source is an explicit module list | Include all production modules and execute coverage reporting in CI |
-| Coverage source omissions exist | Examples: usage recording, receipt submission, provisioning worker, worker coordinator, VPN dashboard | Correct the measurement denominator before claiming coverage improvement |
+| Remaining compatibility forwarding is explicit debt | Four forwarders remain: PostgreSQL database attribute access, Telegram component get/set forwarding, and Telegram transport forwarding | Replace each with a named adapter/presenter contract or document its bounded external-compatibility consumer |
+| Endpoint migration persistence is extracted | `commerce_service_inventory_migration.py` and `commerce_worker_migrations.py` call repositories; the AST guard reports zero application/worker SQL | Preserve repository contract coverage and complete semantic SQL/data-flow review |
+| Schema compatibility is versioned | `commerce_schema_bootstrap.py` is 63 lines; `commerce_schema_compatibility_migrations.py` owns legacy columns/backfills/indexes | Continue fresh/upgrade/retry coverage on both backends |
+| Architecture guard is recursive and classified | 233 owned sources are inventoried and the guard reports zero violations | Add negative fixtures and ratchet module/complexity policy as package moves proceed |
+| SQL guard is clean by layer | Current AST report finds zero application/worker SQL calls | Keep the semantic audit separate from the AST metric; repository ownership remains the invariant |
+| Coverage gate runs in CI and locally | CI executes coverage plus `check_coverage_scope.py`; current local report is 69% over all 233 sources | Raise changed-workflow coverage and branch targets incrementally rather than hiding untested modules |
+| Coverage denominator includes extracted workflows | Usage recording, receipt intake, provisioning, failover, admin snapshots, and facades are included | Add direct contract tests for remaining low-coverage Telegram/operations paths |
 | Lint policy is deliberately narrow | Ruff selects `E9`, `F63`, `F7`, `F82` | Passing Ruff is limited evidence; expand checks incrementally |
 | PostgreSQL checks include recording fakes | `FakeRawPostgresConnection` records statements in `test_commerce.py` | Add execution and concurrency contracts against a real disposable PostgreSQL instance |
-| Package migration remains open | 178 non-test root Python modules; no `aurix/` directory | Move stable components incrementally after their boundaries are explicit |
+| Package migration remains open | The implementation remains in root modules; no `aurix/` package directory exists | Move stable components incrementally after their boundaries are explicit |
 | Some tests pin transitional structure | `test_refactor_boundaries.py` asserts mixin MRO and dispatch-map identity | Preserve public behavior contracts while retiring assertions for superseded internals |
 
 Direct SQL counts above are AST counts of `execute`, `executemany`, and
@@ -86,7 +104,7 @@ Direct SQL counts above are AST counts of `execute`, `executemany`, and
 they contain query text and worker orchestration, not schema migrations. An AST
 name count alone is not a complete information-flow or database-access proof.
 
-### Priority workflow inventory
+### Current measured workflow inventory
 
 These are measured source spans, including their bodies and docstrings. They are
 review triggers; the implementation must also reduce hidden dependencies and
@@ -94,17 +112,24 @@ decision density.
 
 | Existing owner | Function | Lines | Proposed responsibility split |
 |---|---|---:|---|
-| `identity_usage_recording.py` | `record_remote_usage` | 351 | resolve binding, calculate epoch delta, allocate leases, persist ledger and enforcement intent |
-| `commerce_service_receipt_submission.py` | `submit_receipt` | 298 | authorize and validate, detect duplicate evidence, record upload intent, upload, finalize review state |
-| `telegram_transport_customer_vpn_dashboard.py` | `_send_my_vpn` | 274 | application query, immutable dashboard model, formatting, sending |
-| `telegram_customer_commerce_commands.py` | `dispatch_customer_commerce_command` | 270 | command parsing, route dispatch, one handler per command |
-| `commerce_service_inventory_reconciliation.py` | `refresh_server_inventory` | 263 | remote observation, reconciliation plan, persistence, repair and health decisions |
-| `commerce_worker_capacity_snapshot.py` | `capacity_snapshot` | 222 | metrics collection, committed reservations, admission policy, snapshot projection |
-| `telegram_admin_state.py` | `_admin_state_snapshot` | 221 | authorized query, immutable state model, presentation |
-| `commerce_service_wallet_approval_flow.py` | `approve_order` | 217 | evidence validation, wallet/subscription decision, atomic writes and outbox |
-| `commerce_worker_provisioning.py` | `_provision` | 197 | preflight, create/recover, atomic finalization, deferred follow-up |
-| `runtime_bootstrap.py` | `compose_application` | 193 | settings validation, adapter factories, explicit wiring, startup and shutdown |
-| `commerce_worker_repairs.py` | `_process_managed_key_repair` | 188 | repair eligibility, conservative quota calculation, remote repair, committed completion |
+| `telegram_callback_admin.py` | `handle_admin_fleet_callback` | 197 | split callback parsing, authorization/state checks, fleet command use cases, and response rendering |
+| `runtime_bootstrap.py` | `compose_application` | 193 | separate settings validation, adapter factories, explicit wiring, startup, and shutdown |
+| `commerce_worker_repairs.py` | `_process_managed_key_repair` | 188 | split repair eligibility, conservative quota calculation, remote repair, and committed completion |
+| `commerce_receipt_submission_intake.py` | `prepare_receipt_submission` | 177 | split lock/order validation, duplicate evidence, and staged evidence persistence while keeping one transaction owner |
+| `telegram_command_context.py` | `prepare_command` | 172 | separate update parsing, actor/context lookup, and immutable command context creation |
+| `telegram_admin_capacity.py` | `_capacity_text` | 149 | move capacity view construction/formatting to a pure view model and presenter boundary |
+| `telegram_operations_commands.py` | `dispatch_operations_command` | 150 | separate operations command routing from each maintenance/fleet handler |
+| `commerce_service_inventory_migration.py` | `queue_endpoint_migration` | 142 | keep repository persistence calls behind the endpoint migration contract; split policy and intent creation if decision density grows |
+| `telegram_transport_customer_vpn_dashboard.py` | `_send_my_vpn` | 104 | separate application query, immutable dashboard model, formatting, and sending |
+| `commerce_worker_capacity_snapshot.py` | `capacity_snapshot` | 90 | preserve the pure projection boundary and split metrics/commitment reads only if new sources are added |
+| `commerce_service_receipt_submission.py` | `submit_receipt` | 99 | preserve the 120-line orchestration boundary; keep storage effects and intake validation separate |
+
+Completed reductions are now separate from the open inventory: identity usage is
+split into epoch, credit, and lease-accounting modules; receipt submission has a
+transactional intake module; provisioning and route failover have explicit step
+modules; giveaway claims reserve before execution; admin snapshots are grouped by
+command family; capacity projection is pure; and legacy schema compatibility is
+owned by a versioned migration component.
 
 ## 3. Target architecture and rules
 
@@ -220,8 +245,8 @@ Work:
 4. Add negative fixtures: a nested violation, a relative-import cycle, a renamed
    application file containing `migration`, a new unlisted module, and a positive
    fixture for legitimate schema migrations. Document static analysis limitations.
-5. Ratchet zero SQL ceilings where extraction is already complete. Keep the known
-   19 calls as explicit temporary debt until G04; do not hide them through exclusions.
+5. Keep application/worker SQL ceilings at zero now that endpoint persistence
+   extraction is complete; add regressions if a direct driver call returns.
 6. Include all production code in coverage, including never-imported modules and
    deployment code. Run coverage in CI. Measure the corrected denominator first;
    retain the existing 60% floor and restore coverage if it is below that floor.
@@ -255,29 +280,33 @@ Exit: both backends execute the shared contracts, and the pilot works without a
 service host or an exposed raw connection. Missing PostgreSQL execution is an open
 gate, not a skipped pass.
 
-### G04 — Finish endpoint-migration persistence extraction
+### G04 — Endpoint-migration persistence extraction (current state)
 
 Primary files: `commerce_service_inventory_migration.py`,
 `commerce_worker_migrations.py`, `connectivity_registry.py`.
 
-Work:
+Completed locally:
 
-1. Add an aggregate repository for migration eligibility/read context, durable
-   request deduplication, claiming, retry state, and cutover writes.
-2. Move the 5 service and 14 worker SQL calls, including lock-clause selection,
-   behind that repository. Keep policy and external calls in the use case/handler.
-3. Preserve quota/expiry checks, source/target identity, deterministic target keys,
-   conditional cutover, notification/audit atomicity, and source-deletion retries.
-4. Cover paid and free credentials; stale source usage; duplicate requests;
-   ambiguous target creation; changed entitlement at cutover; source deletion
-   failure after committed cutover; and a crash during each durable phase.
-5. Prove stale lease ownership cannot overwrite a newer attempt. If a pre-existing
-   defect is reproduced, isolate its regression fix from mechanical extraction.
-6. Rerun the corrected whole-source audit and enforce zero application/worker SQL
-   without filename-based exceptions.
+1. `commerce_endpoint_migration_repository.py` owns eligibility/read context,
+   deduplication, claiming, retry state, and cutover persistence.
+2. The service and worker migration paths use that repository; the architecture
+   report currently finds zero application/worker SQL calls.
+3. Quota/expiry checks, source/target identity, deterministic target keys,
+   conditional cutover, notification/audit writes, and source-deletion retries
+   remain in the tested workflow contracts.
 
-Exit: both files have zero direct SQL, use no concrete database-type branches,
-and preserve tested recovery behavior on both supported database backends.
+Remaining hardening:
+
+4. Add real PostgreSQL execution and concurrency coverage for paid/free credentials,
+   stale source usage, duplicate requests, ambiguous target creation, changed
+   entitlements, and source deletion after committed cutover.
+5. Prove stale lease ownership cannot overwrite a newer attempt and keep that test
+   separate from the mechanical extraction history.
+6. Rerun the whole-source semantic SQL/data-flow audit after package moves; the AST
+   zero-SQL result is a guard, not proof that every query has the correct owner.
+
+Exit evidence for the extraction is present locally; the backend and recovery
+hardening items remain open until they run against the supported database matrix.
 
 ### G05 — Make worker handlers independent
 
@@ -367,9 +396,11 @@ Work:
 3. Introduce a separately versioned base/adoption component where appropriate.
    Fresh databases create the canonical base; supported existing snapshots are
    validated and adopted without recreating or discarding business data.
-4. Move compatibility alterations and backfills into ordered migration ownership.
-   Keep table-specific DDL and data upgrades out of adapters/bootstrap. Keep seeds
-   deterministic with a stated rule for preserving operator-edited configuration.
+4. Compatibility alterations and backfills are now in the versioned
+   `commerce_schema_compatibility_migrations.py` component. Continue moving any
+   newly discovered table-specific upgrades out of adapters/bootstrap, and keep
+   seeds deterministic with a stated rule for preserving operator-edited
+   configuration.
 5. Preserve immutable history. Add registry integrity checking without inventing
    historical checksums that were never recorded; document any adoption policy.
 6. Test both backends for fresh creation, every supported snapshot upgrade, repeat
