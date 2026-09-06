@@ -41,6 +41,17 @@ class ReceiptIntakeState:
     existing_result: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ReceiptSubmissionValidation:
+    """Validated order context and extraction state for one open transaction."""
+
+    order: Any
+    extraction: dict[str, Any] | None
+    tx_candidate: str
+    status: str
+    near_duplicate: bool
+
+
 def _flag_near_duplicate(
     extraction: dict[str, Any] | None,
     provider_name: str,
@@ -116,114 +127,192 @@ def prepare_receipt_submission(
     """Lock the order and prepare one idempotent evidence record."""
     tx_id = extraction.get("transaction_id") if extraction else None
     tx_candidate = str(tx_id).strip()[:128] if tx_id else ""
-    status = "parsed" if tx_id else "needs_review"
-    near_duplicate = False
-    evidence_id: str
-    storage_path: str | None = None
-    is_new = False
-
+    initial_status = "parsed" if tx_id else "needs_review"
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        self._lock_order(connection, order_id)
-        order = self.orders.get_owned(connection, order_id, telegram_id)
-        if order is None or order["telegram_id"] != telegram_id:
-            raise CommerceError("Order not found")
-        if str(order["plan_code"]) != "wallet_topup":
-            self._assert_no_active_promo(connection, telegram_id)
-        if order["status"] == "approved":
-            raise CommerceError("Order is already approved")
-        if order["status"] not in ("awaiting_payment", "payment_submitted"):
-            raise CommerceError("Order is not open for a receipt")
-        duplicate_rows = self.payments.find_exact_duplicate(
-            connection, image_sha256, file_unique_id, exclude_order_id=order_id
+        validation = _validate_receipt_submission(
+            self,
+            connection,
+            telegram_id=telegram_id,
+            order_id=order_id,
+            provider_name=provider_name,
+            file_unique_id=file_unique_id,
+            image_sha256=image_sha256,
+            image_phash=image_phash,
+            extraction=extraction,
+            tx_candidate=tx_candidate,
+            initial_status=initial_status,
         )
-        if duplicate_rows:
-            raise CommerceError("This receipt was already submitted for another order")
-        extraction, near_duplicate = _flag_near_duplicate(
-            extraction,
-            provider_name,
-            image_phash,
-            self.payments.prior_phash_rows(connection, order_id),
-        )
-        if near_duplicate:
-            status = "needs_review"
-
         existing = self.payments.existing_evidence(connection, order_id, image_sha256)
-        if existing is not None:
-            state = _resume_existing_evidence(
-                self,
-                repository,
-                connection,
-                order=order,
-                existing=existing,
-                order_id=order_id,
-                telegram_id=telegram_id,
+        state = _prepare_evidence_state(
+            self,
+            repository,
+            connection,
+            validation=validation,
+            existing=existing,
+            order_id=order_id,
+            telegram_id=telegram_id,
+            provider_name=provider_name,
+            file_id=file_id,
+            file_unique_id=file_unique_id,
+            telegram_media_type=telegram_media_type,
+            image_sha256=image_sha256,
+            image_phash=image_phash,
+            mime_type=mime_type,
+            storage_bucket=storage_bucket,
+            storage_configured=storage_configured,
+            storage_status=storage_status,
+            submitted_at=submitted_at,
+            image_bytes=image_bytes,
+        )
+        if state.existing_result is not None:
+            return _prepared_receipt(
+                state,
                 image_sha256=image_sha256,
-                storage_bucket=storage_bucket,
-                storage_configured=storage_configured,
-                mime_type=mime_type,
-            )
-            if state.existing_result is not None:
-                return PreparedReceipt(
-                    evidence_id=state.evidence_id,
-                    image_sha256=image_sha256,
-                    provider_name=provider_name,
-                    submitted_at=submitted_at,
-                    status=state.status,
-                    extraction=state.extraction,
-                    storage_bucket=storage_bucket,
-                    storage_path=state.storage_path,
-                    storage_configured=storage_configured,
-                    is_new=False,
-                    near_duplicate=False,
-                    existing_result=state.existing_result,
-                )
-            evidence_id = state.evidence_id
-            storage_path = state.storage_path
-            extraction = state.extraction
-            status = state.status
-            is_new = state.is_new
-        else:
-            state = _insert_new_evidence(
-                self,
-                repository,
-                connection,
-                order_id=order_id,
-                telegram_id=telegram_id,
                 provider_name=provider_name,
-                file_id=file_id,
-                file_unique_id=file_unique_id,
-                telegram_media_type=telegram_media_type,
-                image_sha256=image_sha256,
-                image_phash=image_phash,
-                mime_type=mime_type,
+                submitted_at=submitted_at,
                 storage_bucket=storage_bucket,
                 storage_configured=storage_configured,
-                storage_status=storage_status,
-                extraction=extraction,
-                tx_candidate=tx_candidate,
-                submitted_at=submitted_at,
-                image_bytes=image_bytes,
-                status=status,
+                near_duplicate=False,
             )
-            evidence_id = state.evidence_id
-            storage_path = state.storage_path
-            extraction = state.extraction
-            status = state.status
-            is_new = state.is_new
-
-    return PreparedReceipt(
-        evidence_id=evidence_id,
+    return _prepared_receipt(
+        state,
         image_sha256=image_sha256,
         provider_name=provider_name,
         submitted_at=submitted_at,
-        status=status,
-        extraction=extraction,
         storage_bucket=storage_bucket,
-        storage_path=storage_path,
         storage_configured=storage_configured,
-        is_new=is_new,
+        near_duplicate=validation.near_duplicate,
+    )
+
+
+def _validate_receipt_submission(
+    service: Any,
+    connection: Any,
+    *,
+    telegram_id: int,
+    order_id: str,
+    provider_name: str,
+    file_unique_id: str | None,
+    image_sha256: str,
+    image_phash: str | None,
+    extraction: dict[str, Any] | None,
+    tx_candidate: str,
+    initial_status: str,
+) -> ReceiptSubmissionValidation:
+    service._lock_order(connection, order_id)
+    order = service.orders.get_owned(connection, order_id, telegram_id)
+    if order is None or order["telegram_id"] != telegram_id:
+        raise CommerceError("Order not found")
+    if str(order["plan_code"]) != "wallet_topup":
+        service._assert_no_active_promo(connection, telegram_id)
+    if order["status"] == "approved":
+        raise CommerceError("Order is already approved")
+    if order["status"] not in ("awaiting_payment", "payment_submitted"):
+        raise CommerceError("Order is not open for a receipt")
+    duplicate_rows = service.payments.find_exact_duplicate(
+        connection, image_sha256, file_unique_id, exclude_order_id=order_id
+    )
+    if duplicate_rows:
+        raise CommerceError("This receipt was already submitted for another order")
+    flagged_extraction, near_duplicate = _flag_near_duplicate(
+        extraction,
+        provider_name,
+        image_phash,
+        service.payments.prior_phash_rows(connection, order_id),
+    )
+    return ReceiptSubmissionValidation(
+        order=order,
+        extraction=flagged_extraction,
+        tx_candidate=tx_candidate,
+        status="needs_review" if near_duplicate else initial_status,
         near_duplicate=near_duplicate,
+    )
+
+
+def _prepare_evidence_state(
+    service: Any,
+    repository: ReceiptSubmissionRepository,
+    connection: Any,
+    *,
+    validation: ReceiptSubmissionValidation,
+    existing: Any,
+    order_id: str,
+    telegram_id: int,
+    provider_name: str,
+    file_id: str,
+    file_unique_id: str | None,
+    telegram_media_type: str,
+    image_sha256: str,
+    image_phash: str | None,
+    mime_type: str,
+    storage_bucket: str | None,
+    storage_configured: bool,
+    storage_status: str,
+    submitted_at: str,
+    image_bytes: bytes,
+) -> ReceiptIntakeState:
+    if existing is not None:
+        return _resume_existing_evidence(
+            service,
+            repository,
+            connection,
+            order=validation.order,
+            existing=existing,
+            order_id=order_id,
+            telegram_id=telegram_id,
+            image_sha256=image_sha256,
+            storage_bucket=storage_bucket,
+            storage_configured=storage_configured,
+            mime_type=mime_type,
+        )
+    return _insert_new_evidence(
+        service,
+        repository,
+        connection,
+        order_id=order_id,
+        telegram_id=telegram_id,
+        provider_name=provider_name,
+        file_id=file_id,
+        file_unique_id=file_unique_id,
+        telegram_media_type=telegram_media_type,
+        image_sha256=image_sha256,
+        image_phash=image_phash,
+        mime_type=mime_type,
+        storage_bucket=storage_bucket,
+        storage_configured=storage_configured,
+        storage_status=storage_status,
+        extraction=validation.extraction,
+        tx_candidate=validation.tx_candidate,
+        submitted_at=submitted_at,
+        image_bytes=image_bytes,
+        status=validation.status,
+    )
+
+
+def _prepared_receipt(
+    state: ReceiptIntakeState,
+    *,
+    image_sha256: str,
+    provider_name: str,
+    submitted_at: str,
+    storage_bucket: str | None,
+    storage_configured: bool,
+    near_duplicate: bool,
+) -> PreparedReceipt:
+    return PreparedReceipt(
+        evidence_id=state.evidence_id,
+        image_sha256=image_sha256,
+        provider_name=provider_name,
+        submitted_at=submitted_at,
+        status=state.status,
+        extraction=state.extraction,
+        storage_bucket=storage_bucket,
+        storage_path=state.storage_path,
+        storage_configured=storage_configured,
+        is_new=state.is_new,
+        near_duplicate=near_duplicate,
+        existing_result=state.existing_result,
     )
 
 
