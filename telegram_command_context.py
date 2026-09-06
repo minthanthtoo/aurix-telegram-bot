@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from telegram_command_context_steps import handle_media_message, private_actor
+
 
 @dataclass(frozen=True, slots=True)
 class TelegramCommandContext:
@@ -24,48 +26,17 @@ class TelegramCommandContext:
 
 def prepare_command(host: Any, message: dict[str, Any]) -> TelegramCommandContext | None:
     """Validate one private update and consume any pending conversation state."""
-
-    chat = message.get("chat") or {}
-    user = message.get("from") or {}
-    if (
-        not isinstance(chat, dict)
-        or not isinstance(user, dict)
-        or chat.get("type") != "private"
-        or not isinstance(chat.get("id"), int)
-        or not isinstance(user.get("id"), int)
-        or int(chat["id"]) != int(user["id"])
-    ):
+    actor = private_actor(message)
+    if actor is None:
         return None
-
-    chat_id = int(chat["id"])
-    telegram_id = int(user["id"])
-    first_name = user.get("first_name") or ""
-    if not isinstance(first_name, str):
-        first_name = str(first_name)
-    username = user.get("username")
-    if username is not None and not isinstance(username, str):
-        username = str(username)
+    chat_id, telegram_id, first_name, username = actor
 
     host.service.track_user(telegram_id, first_name, username=username)
     if isinstance(message.get("chat_shared"), dict):
         host._handle_control_group_shared(message, chat_id, telegram_id)
         return None
     if message.get("photo") or message.get("document"):
-        persisted_receipt_test = None
-        if host._is_admin(telegram_id) and telegram_id not in host._receipt_test_waiting:
-            persisted_receipt_test = host._load_interaction_state(telegram_id, "receipt_test")
-            if persisted_receipt_test is not None:
-                host._receipt_test_providers[telegram_id] = str(
-                    persisted_receipt_test.get("provider") or ""
-                )
-        if host._is_admin(telegram_id) and (
-            telegram_id in host._receipt_test_waiting or persisted_receipt_test is not None
-        ):
-            host._receipt_test_waiting.discard(telegram_id)
-            host._clear_interaction_state(telegram_id, "receipt_test")
-            host._handle_receipt_diagnostic(message, chat_id, telegram_id)
-            return None
-        host._handle_receipt(message, chat_id, telegram_id)
+        handle_media_message(host, message, chat_id, telegram_id)
         return None
 
     text = message.get("text") or ""

@@ -218,6 +218,7 @@
     "telegram_callback_router.py": "transport",
     "telegram_callbacks.py": "transport",
     "telegram_command_context.py": "transport",
+    "telegram_command_context_steps.py": "transport",
     "telegram_commands.py": "transport",
     "telegram_components.py": "transport",
     "telegram_customer_access_commands.py": "transport",
