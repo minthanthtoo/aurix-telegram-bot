@@ -5,8 +5,8 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timedelta
 from typing import Any
-from commerce_repositories import _PostgresConnection
 from connectivity_registry import ConnectivityRegistry
+from commerce_endpoint_migration_repository import EndpointMigrationRepository
 from commerce_models import (
     UTC,
     CommerceError,
@@ -21,77 +21,71 @@ def _claim_endpoint_migration(self, now: datetime) -> dict[str, Any] | None:
     stale_before = _now_text(now - timedelta(minutes=10))
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        connection.execute(
-            """UPDATE connectivity_migration_jobs
-                  SET status = 'pending', locked_at = NULL,
-                      updated_at = ?
-                WHERE status = 'creating' AND locked_at < ?""",
-            (now_text, stale_before),
+        EndpointMigrationRepository.recover_stale(
+            connection,
+            now_text=now_text,
+            stale_before=stale_before,
         )
-        lock_clause = (
-            " FOR UPDATE SKIP LOCKED" if isinstance(connection, _PostgresConnection) else ""
+        row = EndpointMigrationRepository.next_request(
+            connection,
+            now_text=now_text,
+            limit=1,
         )
-        row = connection.execute(
-            """SELECT * FROM connectivity_migration_jobs
-                WHERE status IN ('pending', 'failed', 'source_delete_pending') AND next_attempt_at <= ?
-                ORDER BY created_at LIMIT ?""" + lock_clause,
-            (now_text, 1),
-        ).fetchone()
         if row is None:
             return None
-        connection.execute(
-            """UPDATE connectivity_migration_jobs
-                  SET status = 'creating', attempts = attempts + 1,
-                      locked_at = ?, updated_at = ?
-                WHERE id = ? AND status IN ('pending', 'failed', 'source_delete_pending')""",
-            (now_text, now_text, str(row["id"])),
+        claimed = EndpointMigrationRepository.mark_claimed(
+            connection,
+            locked_at=now_text,
+            updated_at=now_text,
+            job_id=str(row["id"]),
         )
+        if claimed.rowcount != 1:
+            return None
         result = dict(row)
         result["attempts"] = int(row["attempts"] or 0) + 1
         result["migration_phase"] = str(row["status"])
         result["status"] = "creating"
         return result
 
+
 def _endpoint_migration_failed(
-    self, job_id: str, error: Exception, now: datetime, *, terminal: bool = False
+    self, job_id: str, error: Exception, now: datetime, *, attempt: int, terminal: bool = False
 ) -> None:
     safe_error = f"{type(error).__name__}: {str(error)[:500]}"
     current = (now or datetime.now(UTC)).astimezone(UTC)
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        row = connection.execute(
-            "SELECT attempts FROM connectivity_migration_jobs WHERE id = ?",
-            (str(job_id),),
-        ).fetchone()
+        row = EndpointMigrationRepository.attempts(
+            connection,
+            job_id=str(job_id),
+        )
         attempts = int(row["attempts"] or 0) if row else 0
         done = bool(terminal or attempts >= 8)
-        connection.execute(
-            """UPDATE connectivity_migration_jobs
-                  SET status = ?, next_attempt_at = ?, locked_at = NULL,
-                      last_error = ?, updated_at = ?
-                WHERE id = ?""",
-            (
-                "failed" if done else "pending",
-                "9999-12-31T00:00:00+00:00"
-                if done
-                else _now_text(current + timedelta(minutes=1)),
-                safe_error,
-                _now_text(current),
-                str(job_id),
-            ),
+        EndpointMigrationRepository.mark_failed(
+            connection,
+            status="failed" if done else "pending",
+            next_attempt_at="9999-12-31T00:00:00+00:00"
+            if done
+            else _now_text(current + timedelta(minutes=1)),
+            error=safe_error,
+            now_text=_now_text(current),
+            job_id=str(job_id),
+            attempt=attempt,
         )
 
-def _endpoint_migration_completed(self, job_id: str, now: datetime) -> None:
+
+def _endpoint_migration_completed(self, job_id: str, now: datetime, *, attempt: int) -> None:
     now_text = _now_text(now)
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        connection.execute(
-            """UPDATE connectivity_migration_jobs
-                  SET status = 'completed', locked_at = NULL,
-                      last_error = NULL, completed_at = ?, updated_at = ?
-                WHERE id = ?""",
-            (now_text, now_text, str(job_id)),
+        EndpointMigrationRepository.complete(
+            connection,
+            completed_at=now_text,
+            updated_at=now_text,
+            job_id=str(job_id),
+            attempt=attempt,
         )
+
 
 def _metric_for_key(metrics: Any, key_id: str) -> int | None:
     by_key = metrics.get("bytesTransferredByUserId", {}) if isinstance(metrics, dict) else {}
@@ -101,6 +95,7 @@ def _metric_for_key(metrics: Any, key_id: str) -> int | None:
         return max(0, int(by_key.get(key_id) or 0))
     except (TypeError, ValueError):
         return None
+
 
 def _create_migration_key(
     self, outline: Any, key_id: str, name: str, limit_bytes: int
@@ -143,21 +138,23 @@ def _create_migration_key(
         raise CommerceError("Replacement Outline key response lacks id or accessUrl")
     return created
 
-def _mark_migration_source_delete_retry(self, job_id: str, error: Exception, now: datetime) -> None:
+
+def _mark_migration_source_delete_retry(
+    self, job_id: str, error: Exception, now: datetime, *, attempt: int
+) -> None:
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        connection.execute(
-            """UPDATE connectivity_migration_jobs
-                  SET status = 'source_delete_pending', locked_at = NULL,
-                      next_attempt_at = ?, last_error = ?, updated_at = ?
-                WHERE id = ?""",
-            (
-                _now_text((now or datetime.now(UTC)).astimezone(UTC) + timedelta(minutes=1)),
-                f"{type(error).__name__}: {str(error)[:500]}",
-                _now_text(now),
-                str(job_id),
+        EndpointMigrationRepository.defer_source_delete(
+            connection,
+            next_attempt_at=_now_text(
+                (now or datetime.now(UTC)).astimezone(UTC) + timedelta(minutes=1)
             ),
+            error=f"{type(error).__name__}: {str(error)[:500]}",
+            now_text=_now_text(now),
+            job_id=str(job_id),
+            attempt=attempt,
         )
+
 
 def _delete_migration_source(self, job: dict[str, Any], now: datetime) -> bool:
     source = self._outline_client(str(job["source_server_id"]))
@@ -167,10 +164,11 @@ def _delete_migration_source(self, job: dict[str, Any], now: datetime) -> bool:
         if callable(getter) and getter(str(job["source_external_id"])) is not None:
             raise CommerceError("Source Outline key still exists after migration delete")
     except Exception as exc:
-        self._mark_migration_source_delete_retry(str(job["id"]), exc, now)
+        self._mark_migration_source_delete_retry(str(job["id"]), exc, now, attempt=int(job["attempts"]))
         return False
-    self._endpoint_migration_completed(str(job["id"]), now)
+    self._endpoint_migration_completed(str(job["id"]), now, attempt=int(job["attempts"]))
     return True
+
 
 def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> None:
     if str(job.get("migration_phase") or job.get("status")) == "source_delete_pending":
@@ -208,56 +206,57 @@ def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> Non
     now_text = _now_text(current)
     with self.database.connect() as connection:
         self.database.begin_write(connection)
-        current_job = connection.execute(
-            "SELECT status FROM connectivity_migration_jobs WHERE id = ?",
-            (str(job["id"]),),
-        ).fetchone()
-        if current_job is None or str(current_job["status"]) != "creating":
+        current_job = EndpointMigrationRepository.current_state(
+            connection,
+            job_id=str(job["id"]),
+        )
+        if current_job is None or str(current_job["status"]) != "creating" or int(current_job["attempts"]) != int(job["attempts"]):
             return
         kind = str(job["profile_kind"])
-        profile_row = connection.execute(
-            "SELECT subscription_id FROM connectivity_profiles WHERE profile_id = ?",
-            (str(job["profile_id"]),),
-        ).fetchone()
+        profile_row = EndpointMigrationRepository.profile_subscription(
+            connection,
+            profile_id=str(job["profile_id"]),
+        )
         subscription_id = profile_row["subscription_id"] if profile_row else None
         if kind == "paid":
-            changed = connection.execute(
-                """UPDATE paid_vpn_keys SET server_id = ?, outline_key_id = ?,
-                          access_url = ?, quota_bytes = ?
-                     WHERE subscription_id = ? AND server_id = ?
-                       AND outline_key_id = ? AND status = 'active'""",
-                (
-                    str(job["target_server_id"]), target_id, encrypted, remaining,
-                    subscription_id, str(job["source_server_id"]),
-                    str(job["source_external_id"]),
-                ),
+            changed = EndpointMigrationRepository.move_paid_key(
+                connection,
+                target_server_id=str(job["target_server_id"]),
+                target_id=target_id,
+                encrypted=encrypted,
+                remaining=remaining,
+                subscription_id=subscription_id,
+                source_server_id=str(job["source_server_id"]),
+                source_external_id=str(job["source_external_id"]),
             )
             if int(getattr(changed, "rowcount", 0) or 0) != 1:
                 # Older deployments may not use profile_id as the
                 # subscription id; resolve it through the registry row.
-                changed = connection.execute(
-                    """UPDATE paid_vpn_keys SET server_id = ?, outline_key_id = ?,
-                              access_url = ?, quota_bytes = ?
-                         WHERE subscription_id = ? AND server_id = ?
-                           AND outline_key_id = ? AND status = 'active'""",
-                    (
-                        str(job["target_server_id"]), target_id, encrypted, remaining,
-                        subscription_id, str(job["source_server_id"]),
-                        str(job["source_external_id"]),
-                    ),
+                changed = EndpointMigrationRepository.move_paid_key(
+                    connection,
+                    target_server_id=str(job["target_server_id"]),
+                    target_id=target_id,
+                    encrypted=encrypted,
+                    remaining=remaining,
+                    subscription_id=subscription_id,
+                    source_server_id=str(job["source_server_id"]),
+                    source_external_id=str(job["source_external_id"]),
                 )
             if int(getattr(changed, "rowcount", 0) or 0) != 1:
                 raise CommerceError("Paid entitlement changed before migration cutover")
         else:
-            changed = connection.execute(
-                """UPDATE keys SET server_id = ?, outline_key_id = ?, data_limit_bytes = ?
-                     WHERE server_id = ? AND outline_key_id = ?
-                       AND status IN ('active', 'revoke_failed')""",
-                (
-                    str(job["target_server_id"]), target_id, remaining,
-                    str(job["source_server_id"]), str(job["source_external_id"]),
-                ),
-            ) if self._table_exists(connection, "keys") else None
+            changed = (
+                EndpointMigrationRepository.move_free_key(
+                    connection,
+                    target_server_id=str(job["target_server_id"]),
+                    target_id=target_id,
+                    remaining=remaining,
+                    source_server_id=str(job["source_server_id"]),
+                    source_external_id=str(job["source_external_id"]),
+                )
+                if self._table_exists(connection, "keys")
+                else None
+            )
             if changed is None or int(getattr(changed, "rowcount", 0) or 0) != 1:
                 raise CommerceError("Free entitlement changed before migration cutover")
         ConnectivityRegistry.revoke_credential(
@@ -276,18 +275,16 @@ def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> Non
             profile_kind=kind,
             subscription_id=(str(subscription_id) if kind == "paid" and subscription_id else None),
         )
-        connection.execute(
-            """INSERT INTO notifications
-               (id, dedupe_key, telegram_id, kind, text, access_url_ciphertext,
-                status, next_attempt_at, created_at)
-               VALUES (?, ?, ?, 'vpn_migrated', ?, ?, 'pending', ?, ?)
-               ON CONFLICT(dedupe_key) DO NOTHING""",
-            (
-                _new_id(), f"endpoint-migration:{job['id']}", int(job["telegram_id"]),
-                "Your AuriX VPN access was moved to a healthier endpoint.\n"
-                f"Remaining quota: {remaining} bytes\nExpires: {str(job['expires_at'])}",
-                encrypted, now_text, now_text,
-            ),
+        EndpointMigrationRepository.notify_cutover(
+            connection,
+            notification_id=_new_id(),
+            dedupe_key=f"endpoint-migration:{job['id']}",
+            telegram_id=int(job["telegram_id"]),
+            text="Your AuriX VPN access was moved to a healthier endpoint.\n"
+            f"Remaining quota: {remaining} bytes\nExpires: {str(job['expires_at'])}",
+            encrypted=encrypted,
+            next_attempt_at=now_text,
+            created_at=now_text,
         )
         self._audit(
             connection,
@@ -305,17 +302,16 @@ def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> Non
                 "remaining_quota_bytes": remaining,
             },
         )
-        connection.execute(
-            """UPDATE connectivity_migration_jobs
-                  SET source_used_bytes = ?, target_external_id = ?,
-                      target_access_url_ciphertext = ?, status = 'source_delete_pending',
-                      locked_at = NULL, last_error = NULL, next_attempt_at = ?, updated_at = ?
-                WHERE id = ?""",
-            (used, target_id, encrypted, now_text, now_text, str(job["id"])),
+        EndpointMigrationRepository.mark_cutover(
+            connection,
+            used=used,
+            target_id=target_id,
+            encrypted=encrypted,
+            next_attempt_at=now_text,
+            updated_at=now_text,
+            job_id=str(job["id"]),
         )
-    self._delete_migration_source(
-        {**job, "target_external_id": target_id}, current
-    )
+    self._delete_migration_source({**job, "target_external_id": target_id}, current)
     try:
         self._sync_identity_binding(
             telegram_id=int(job["telegram_id"]),
@@ -328,6 +324,7 @@ def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> Non
         )
     except Exception as exc:
         print(f"identity migration sync error: {type(exc).__name__}", file=sys.stderr)
+
 
 def process_endpoint_migrations(self, now: datetime | None = None, max_jobs: int = 5) -> int:
     """Run bounded replacement-key migrations after durable owner intent."""
@@ -346,7 +343,7 @@ def process_endpoint_migrations(self, now: datetime | None = None, max_jobs: int
         try:
             self._process_endpoint_migration(job, current)
         except Exception as exc:
-            self._endpoint_migration_failed(str(job["id"]), exc, current)
+            self._endpoint_migration_failed(str(job["id"]), exc, current, attempt=int(job["attempts"]))
             print(f"endpoint migration error: {type(exc).__name__}", file=sys.stderr)
         processed += 1
     return processed

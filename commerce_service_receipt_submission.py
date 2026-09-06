@@ -9,6 +9,10 @@ from typing import Any
 
 from commerce_models import CommerceError, _new_id, _normalize_reference, _now_text
 from commerce_receipt_submission_repository import ReceiptSubmissionRepository
+from commerce_receipt_storage_workflow import (
+    complete_stored_receipt,
+    complete_unstored_receipt,
+)
 from receipt_fingerprint import (
     NEAR_DUPLICATE_DISTANCE,
     fingerprint_distance,
@@ -218,98 +222,38 @@ def submit_receipt(
 
     if storage_configured:
         assert storage_path is not None
-        try:
-            uploaded_path = self.receipt_storage.upload(storage_path, image_bytes, mime_type)
-            uploaded_path = str(uploaded_path or "").strip()
-            if not uploaded_path:
-                raise RuntimeError("Receipt storage returned an empty object path")
-        except Exception as exc:
-            # Preserve the row so a retry can reuse the same object path.
-            try:
-                with self.database.connect() as connection:
-                    _RECEIPTS.mark_upload_failed(
-                        connection,
-                        evidence_id,
-                        type(exc).__name__[:128],
-                    )
-            except Exception:
-                pass
-            raise CommerceError("Receipt image could not be saved. Please try again.") from exc
-        try:
-            storage_path = uploaded_path
-            with self.database.connect() as connection:
-                self.database.begin_write(connection)
-                _RECEIPTS.mark_stored(
-                    connection,
-                    evidence_id=evidence_id,
-                    storage_bucket=storage_bucket,
-                    storage_path=str(uploaded_path),
-                    stored_at=submitted_at,
-                )
-                _RECEIPTS.mark_order_submitted(connection, order_id)
-                self._audit(
-                    connection,
-                    "receipt_submitted" if is_new else "receipt_storage_recovered",
-                    "order",
-                    order_id,
-                    "customer",
-                    str(telegram_id),
-                    {"evidence_id": evidence_id, "extraction_status": status},
-                )
-                self._queue_staff_notification(
-                    connection,
-                    "receipt_submitted",
-                    evidence_id,
-                    "🧾 RECEIPT AWAITING REVIEW\n\n"
-                    f"Order: #{order_id[:8]}\n"
-                    f"Evidence: {evidence_id[:10]}\n"
-                    f"Customer: tg:{telegram_id}\n"
-                    f"Method: {provider_name.upper()}\n"
-                    f"AI extraction: {status.replace('_', ' ')}\n\n"
-                    "Action: open the receipt and confirm it against the receiving account.",
-                    submitted_at,
-                )
-                if queue_extraction and extraction is None and not near_duplicate:
-                    self._queue_receipt_extraction(connection, evidence_id, submitted_at)
-        except Exception:
-            # Do not leave a billable orphan if the final metadata commit
-            # fails. Deletion is best-effort and the row remains retryable.
-            try:
-                self.receipt_storage.delete(storage_path)
-            except Exception:
-                pass
-            raise
+        storage_path = complete_stored_receipt(
+            self,
+            _RECEIPTS,
+            evidence_id=evidence_id,
+            order_id=order_id,
+            telegram_id=telegram_id,
+            provider_name=provider_name,
+            status=status,
+            submitted_at=submitted_at,
+            storage_bucket=storage_bucket,
+            storage_path=storage_path,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            is_new=is_new,
+            extraction=extraction,
+            queue_extraction=queue_extraction,
+            near_duplicate=near_duplicate,
+        )
     else:
-        # A receipt is a payment submission even when OCR/LLM extraction
-        # failed. Approval still requires a human verification decision.
-        with self.database.connect() as connection:
-            self.database.begin_write(connection)
-            _RECEIPTS.mark_order_submitted(connection, order_id)
-            if is_new:
-                self._audit(
-                    connection,
-                    "receipt_submitted",
-                    "order",
-                    order_id,
-                    "customer",
-                    str(telegram_id),
-                    {"evidence_id": evidence_id, "extraction_status": status},
-                )
-            self._queue_staff_notification(
-                connection,
-                "receipt_submitted",
-                evidence_id,
-                "🧾 RECEIPT AWAITING REVIEW\n\n"
-                f"Order: #{order_id[:8]}\n"
-                f"Evidence: {evidence_id[:10]}\n"
-                f"Customer: tg:{telegram_id}\n"
-                f"Method: {provider_name.upper()}\n"
-                f"AI extraction: {status.replace('_', ' ')}\n\n"
-                "Action: open the receipt and confirm it against the receiving account.",
-                submitted_at,
-            )
-            if queue_extraction and extraction is None:
-                self._queue_receipt_extraction(connection, evidence_id, submitted_at)
+        complete_unstored_receipt(
+            self,
+            _RECEIPTS,
+            evidence_id=evidence_id,
+            order_id=order_id,
+            telegram_id=telegram_id,
+            provider_name=provider_name,
+            status=status,
+            submitted_at=submitted_at,
+            is_new=is_new,
+            extraction=extraction,
+            queue_extraction=queue_extraction,
+        )
     result = dict(extraction or {})
     result["evidence_id"] = evidence_id
     result["image_sha256"] = digest

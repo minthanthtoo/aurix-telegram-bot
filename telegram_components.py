@@ -13,6 +13,13 @@ from telegram_transport_customer import TelegramCustomerTransportMixin
 from telegram_transport_customer_vpn import TelegramCustomerVpnTransportMixin
 from telegram_transport_receipts import TelegramReceiptTransportMixin
 from telegram_transport_runtime import TelegramRuntimeTransportMixin
+from telegram_host_contract import HOST_ATTRIBUTES
+
+
+# Legacy mixins still run against a component adapter while callers migrate.
+# Keep the compatibility surface explicit so a typo cannot silently reach any
+# arbitrary transport-host attribute.
+
 
 
 class TelegramComponent:
@@ -26,7 +33,10 @@ class TelegramComponent:
         if name in {"host", "implementation"}:
             object.__setattr__(self, name, value)
             return
-        setattr(self.host, name, value)
+        if name in HOST_ATTRIBUTES:
+            setattr(self.host, name, value)
+            return
+        object.__setattr__(self, name, value)
 
     def owns(self, name: str) -> bool:
         return any(name in vars(owner) for owner in self.implementation.__mro__)
@@ -34,10 +44,11 @@ class TelegramComponent:
     def __getattr__(self, name: str) -> Any:
         # Preserve instance and subclass overrides on the transport host.
         missing = object()
-        if name in vars(self.host):
-            return vars(self.host)[name]
-        if getattr(type(self.host), name, missing) is not missing:
-            return getattr(self.host, name)
+        if name in HOST_ATTRIBUTES:
+            if name in vars(self.host):
+                return vars(self.host)[name]
+            if getattr(type(self.host), name, missing) is not missing:
+                return getattr(self.host, name)
         raw = next(
             (vars(owner)[name] for owner in self.implementation.__mro__ if name in vars(owner)),
             None,
@@ -48,7 +59,16 @@ class TelegramComponent:
             if callable(raw):
                 return raw.__get__(self, type(self))
             return raw
-        return getattr(self.host, name)
+        if name in HOST_ATTRIBUTES:
+            try:
+                # A small number of legacy mixins call a method owned by a
+                # sibling component. Keep those cross-component edges named
+                # in HOST_ATTRIBUTES instead of reopening arbitrary host
+                # fallback.
+                return getattr(self.host, name)
+            except AttributeError:
+                pass
+        raise AttributeError(name)
 
 
 class TelegramComponents:

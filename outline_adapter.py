@@ -237,5 +237,40 @@ class OutlineServerPool:
         except KeyError as exc:
             raise OutlineError(f"Outline server {target!r} is not configured") from exc
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.client(), name)
+    def server_info(self) -> dict[str, Any]:
+        return self.client().server_info()
+
+    def transfer_metrics(self) -> dict[str, Any]:
+        return self.client().transfer_metrics()
+
+    def experimental_metrics(self, since: str = "30d") -> dict[str, Any]:
+        return self.client().experimental_metrics(since)
+
+    def set_hostname_for_access_keys(self, hostname: str) -> None:
+        self.client().set_hostname_for_access_keys(hostname)
+
+    def create_key(self, name: str, limit_bytes: int | None) -> dict[str, Any]:
+        return self.client().create_key(name, limit_bytes)
+
+    def list_keys(self) -> dict[str, Any]:
+        return self.client().list_keys()
+
+    def get_key(self, key_id: str) -> dict[str, Any] | None:
+        return self.client().get_key(key_id)
+
+    def set_data_limit(self, key_id: str, limit_bytes: int) -> None:
+        self.client().set_data_limit(key_id, limit_bytes)
+
+    def delete_key(self, key_id: str) -> None:
+        self.client().delete_key(key_id)
+
+    def create_key_with_id(
+        self, key_id: str, name: str, limit_bytes: int | None
+    ) -> dict[str, Any]:
+        return self.client().create_key_with_id(key_id, name, limit_bytes)
+
+    def delete_data_limit(self, key_id: str) -> None:
+        self.client().delete_data_limit(key_id)
+
+    def rename_key(self, key_id: str, name: str) -> None:
+        self.client().rename_key(key_id, name)

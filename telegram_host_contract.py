@@ -1,0 +1,48 @@
+"""Explicit compatibility capabilities for Telegram presentation components."""
+
+from __future__ import annotations
+
+HOST_ATTRIBUTES = frozenset(
+    {
+        "ADMIN_BUTTON_COMMANDS", "CONTROL_GROUP_REQUEST_ID", "CUSTOMER_BUTTON_COMMANDS",
+        "ADMIN_CONFIRMATION_COMMANDS", "ADMIN_ONLY_COMMANDS", "OWNER_ONLY_COMMANDS",
+        "PAYMENT_METHODS", "PAYMENT_METHOD_ORDER", "PAYMENT_QR_DIR", "UNKNOWN_ACTION_TEXT",
+        "_admin_add_waiting", "_admin_call", "_admin_confirmation_lock", "_admin_confirmations",
+        "_admin_keyboard", "_admin_owner_call", "_admin_preview_text", "_admin_probe_call",
+        "_admin_service_call", "_admin_state_fingerprint", "_admin_state_snapshot", "_capacity_text",
+        "_clear_interaction_state", "_collect_outline_state", "_command_menu_configure_attempted",
+        "_command_menu_lock", "_command_menu_ready", "_command_menu_retry_enabled",
+        "_configure_commands_locked", "_consume_admin_confirmation", "_control_group_staff",
+        "_copy_text_button", "_customer_inputs", "_customer_keyboard", "_customer_server_ids",
+        "_download_telegram_file", "_expect_customer_input", "_expect_receipt_order", "_format_bytes",
+        "_format_decimal_bytes",
+        "_free_claim_blocked_by_paid", "_http", "_inline_keyboard", "_inventory_bytes", "_is_admin",
+        "_is_owner", "_key_delivery_keyboard", "_latency_action", "_load_interaction_state",
+        "_maintenance_last_status", "_maintenance_lock", "_maintenance_loop", "_maintenance_stop",
+        "_maintenance_thread", "_mask_technical_value", "_multipart_request", "_new_panel",
+        "_open_admin_panel", "_order_actions", "_order_detail_text", "_order_filter_match",
+        "_order_summary", "_owner_keyboard", "_panel_data", "_panel_item", "_panel_lock", "_panel_markup", "_panels",
+        "_payment_method_keyboard", "_pending_order_id", "_process_receipt_extraction",
+        "_promo_code_buttons", "_promo_frequency_label", "_promo_quota_label", "_queue_admin_confirmation",
+        "_receipt_file_metadata", "_receipt_order_context", "_receipt_review_caption", "_receipt_system_keyboard",
+        "_receipt_test_providers", "_receipt_test_waiting", "_receipt_verify_inputs", "_record_maintenance_heartbeat",
+        "_refresh_staff_scopes", "_render_panel", "_reply_keyboard", "_run_maintenance", "_run_maintenance_pass",
+        "_save_interaction_state", "_send_admin_home", "_send_control_group_picker", "_send_customer_fallback",
+        "_send_my_orders", "_send_my_vpn", "_send_order_detail", "_send_owner_home", "_send_paid_key_detail", "_send_paid_key_list",
+        "_send_payment_method_chooser", "_send_pending_notifications", "_send_quota_alert_settings",
+        "_send_receipt_diagnostic_result", "_send_receipt_system", "_send_staff_notifications", "_send_staff_panel",
+        "_send_termination_notices", "_show_capacity", "_show_managed_repair_detail", "_show_migration_candidates",
+        "_show_migration_detail", "_show_migration_targets", "_show_payment_qr", "_show_probes",
+        "_show_remote_inventory", "_show_server_allocation", "_staff_alert_html", "_usage_rollup_block",
+        "_handle_control_group_shared",
+        "_handle_panel_callback",
+        "_handle_receipt", "_handle_receipt_diagnostic", "_launch_promo_keyboard", "_outline_help_keyboard",
+        "_send_plans", "_send_receipt_review", "_topup_amount_keyboard", "_trial_allowed",
+        "admin_ids", "admin_operations",
+        "api", "command_scope_cleanup_ids", "commerce", "configure_commands", "control_group_id", "device_api_url",
+        "edit_local_photo", "edit_message", "handle", "handle_callback", "maintenance_interval_seconds", "offset",
+        "probe_service", "receipt_extractor", "request", "running", "send", "send_document", "send_local_photo",
+        "send_photo", "send_receipt_bytes", "service", "staff_access", "stop", "trial_ids",
+        "allow_text_payment",
+    }
+)

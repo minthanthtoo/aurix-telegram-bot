@@ -10,6 +10,7 @@ from typing import Any
 
 from entitlements import TRIAL_LIMIT_BYTES, UTC
 from migrations import FREE_ACCESS_MIGRATIONS
+from free_schema_base_migrations import FREE_ACCESS_BASE_MIGRATIONS
 from schema_migrations import apply_migrations
 from persistence import open_sqlite_connection
 
@@ -28,104 +29,11 @@ class Database:
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
-            connection.executescript(
-                """
-                PRAGMA journal_mode = WAL;
-                CREATE TABLE IF NOT EXISTS users (
-                    telegram_id INTEGER PRIMARY KEY,
-                    first_name TEXT NOT NULL DEFAULT '',
-                    username TEXT,
-                    last_claim_at TEXT,
-                    trial_claimed_at TEXT,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS keys (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
-                    outline_key_id TEXT NOT NULL,
-                    key_type TEXT NOT NULL DEFAULT 'daily_free'
-                        CHECK (key_type IN ('daily_free', 'monthly_trial', 'paid')),
-                    created_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    data_limit_bytes INTEGER NOT NULL,
-                    status TEXT NOT NULL
-                        CHECK (status IN ('active', 'revoked', 'revoke_failed')),
-                    last_usage_observed_at TEXT,
-                    quota_warning_percent INTEGER
-                );
-                CREATE INDEX IF NOT EXISTS keys_expiry
-                    ON keys(status, expires_at);
-                CREATE TABLE IF NOT EXISTS maintenance_heartbeat (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    last_started_at TEXT,
-                    last_completed_at TEXT,
-                    last_success_at TEXT,
-                    last_stage TEXT,
-                    last_error TEXT,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS telegram_updates (
-                    update_id INTEGER PRIMARY KEY,
-                    received_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS key_termination_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    key_id INTEGER NOT NULL REFERENCES keys(id),
-                    telegram_id INTEGER NOT NULL,
-                    outline_key_id TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    used_bytes INTEGER,
-                    quota_bytes INTEGER NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    detected_at TEXT NOT NULL,
-                    remote_state TEXT NOT NULL,
-                    delete_attempts INTEGER NOT NULL DEFAULT 0,
-                    last_error TEXT,
-                    deletion_verified_at TEXT,
-                    user_notice_state TEXT,
-                    admin_notice_state TEXT,
-                    UNIQUE(key_id, reason)
-                );
-                CREATE INDEX IF NOT EXISTS key_termination_pending
-                    ON key_termination_events(remote_state, detected_at);
-                CREATE TABLE IF NOT EXISTS notifications (
-                    id TEXT PRIMARY KEY,
-                    dedupe_key TEXT NOT NULL UNIQUE,
-                    telegram_id INTEGER NOT NULL,
-                    kind TEXT NOT NULL,
-                    text TEXT NOT NULL,
-                    access_url_ciphertext TEXT,
-                    status TEXT NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('pending', 'sent', 'failed')),
-                    attempts INTEGER NOT NULL DEFAULT 0,
-                    next_attempt_at TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    sent_at TEXT,
-                    dead_lettered_at TEXT
-                );
-                CREATE INDEX IF NOT EXISTS notifications_due
-                    ON notifications(status, next_attempt_at);
-                CREATE TABLE IF NOT EXISTS telegram_command_scopes (
-                    chat_id INTEGER PRIMARY KEY,
-                    configured_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS admin_action_challenges (
-                    token_hash TEXT PRIMARY KEY,
-                    admin_id INTEGER NOT NULL,
-                    chat_id INTEGER NOT NULL,
-                    command TEXT NOT NULL,
-                    args_json TEXT NOT NULL,
-                    state_fingerprint TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('pending', 'consumed', 'cancelled')),
-                    created_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    consumed_at TEXT,
-                    cancelled_at TEXT
-                );
-                CREATE INDEX IF NOT EXISTS admin_action_challenges_expiry
-                    ON admin_action_challenges(status, expires_at);
-                """
+            apply_migrations(
+                connection,
+                component="free_access_base",
+                dialect="sqlite",
+                migrations=FREE_ACCESS_BASE_MIGRATIONS,
             )
             user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
             if "trial_claimed_at" not in user_columns:

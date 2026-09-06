@@ -10,6 +10,7 @@ from entitlement_dispatch import (
     ENTITLEMENT_IMPLEMENTATIONS,
     STATIC_ENTITLEMENT_IMPLEMENTATIONS,
 )
+from entitlement_contracts import bind_claim_implementations
 from entitlement_models import ClaimResult, GiveawayResult, OutlineError
 from entitlement_support import (
     CLAIM_PERIOD,
@@ -36,6 +37,13 @@ from ports import OutlineGateway
 from repositories import RepositoryDatabase
 
 
+def _access_url_cipher(access_url_key: bytes | str | None) -> Fernet | None:
+    try:
+        return Fernet(access_url_key) if access_url_key else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError("access_url_key must be a Fernet key") from exc
+
+
 class ClaimService:
     """Stable entitlement API over explicit provisioning and policy handlers."""
 
@@ -54,29 +62,11 @@ class ClaimService:
         self.trial_limit_bytes = int(trial_limit_bytes)
         self.identity = IdentityService(database)
         self.probe_service = probe_service
-        try:
-            self.access_url_cipher = Fernet(access_url_key) if access_url_key else None
-        except (TypeError, ValueError) as exc:
-            raise ValueError("access_url_key must be a Fernet key") from exc
+        self.access_url_cipher = _access_url_cipher(access_url_key)
+        bind_claim_implementations(self, ENTITLEMENT_IMPLEMENTATIONS, STATIC_ENTITLEMENT_IMPLEMENTATIONS)
 
     def _encrypt_access_url(self, access_url: str) -> str | None:
         """Encrypt an access URL for generic device delivery when configured."""
         if self.access_url_cipher is None:
             return None
         return self.access_url_cipher.encrypt(str(access_url).encode()).decode()
-
-    @staticmethod
-    def _implementation(name: str) -> Any:
-        try:
-            return ENTITLEMENT_IMPLEMENTATIONS[name]
-        except KeyError as exc:
-            raise AttributeError(name) from exc
-
-    def _call(self, name: str, *args: Any, **kwargs: Any) -> Any:
-        return self._implementation(name)(self, *args, **kwargs)
-
-    def __getattr__(self, name: str) -> Any:
-        implementation = self._implementation(name)
-        if name in STATIC_ENTITLEMENT_IMPLEMENTATIONS:
-            return implementation
-        return implementation.__get__(self, type(self))

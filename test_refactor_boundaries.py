@@ -1,3 +1,4 @@
+import inspect
 import unittest
 
 import app
@@ -192,11 +193,14 @@ class CompatibilityExportTest(unittest.TestCase):
         outline = outline_adapter.OutlineClient("https://outline.invalid/secret", "0" * 64)
         self.assertIs(app.OutlineClient, outline_adapter.OutlineClient)
         self.assertIsInstance(outline, OutlineGateway)
+        self.assertNotIn("__getattr__", outline_adapter.OutlineServerPool.__dict__)
         self.assertIsInstance(NullReceiptStorage(), ReceiptStorageGateway)
         self.assertIsInstance(OpenAICompatibleReceiptExtractor(), ReceiptExtractorGateway)
         self.assertFalse(
             issubclass(commerce_service.CommerceService, commerce_worker.CommerceWorkerMixin)
         )
+        self.assertNotIn("__getattr__", commerce_service.CommerceService.__dict__)
+        self.assertNotIn("__getattr__", entitlements.ClaimService.__dict__)
         self.assertTrue(issubclass(commerce_worker_coordinator.CommerceWorker, CommerceWorkerPort))
         self.assertIn("process_jobs", commerce_worker_coordinator.CommerceWorker.__dict__)
         self.assertIn("worker", commerce_service.CommerceService.__init__.__code__.co_names)
@@ -206,6 +210,21 @@ class CompatibilityExportTest(unittest.TestCase):
             __import__("commerce_worker_lifecycle").process_jobs,
         )
         self.assertNotIn("CommerceWorkerMixin", commerce_worker_coordinator.__dict__)
+        self.assertNotIn("service", commerce_worker_coordinator.CommerceWorker.__dict__)
+        self.assertNotIn("__getattr__", commerce_worker_coordinator.CommerceWorker.__dict__)
+        self.assertIn(
+            "CommerceWorkerDependencies", commerce_worker_coordinator.__dict__
+        )
+        self.assertNotIn(
+            "getattr(self.service", inspect.getsource(commerce_worker_coordinator)
+        )
+
+    def test_telegram_component_rejects_undeclared_host_forwarding(self):
+        host = type("Host", (), {"send": lambda self, *args: args, "secret": "hidden"})()
+        component = telegram_components.TelegramComponent(host, telegram_commands.TelegramCommandMixin)
+        self.assertEqual(component.send("chat", "text"), ("chat", "text"))
+        with self.assertRaises(AttributeError):
+            _ = component.secret
 
     def test_app_keeps_telegram_transport_compatibility_exports(self):
         self.assertIs(app.TelegramBot, telegram_transport.TelegramBot)

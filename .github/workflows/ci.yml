@@ -39,8 +39,15 @@ jobs:
       - name: Enforce architecture reduction ratchet
         run: python tools/check_architecture.py
 
+      - name: Check extracted typed contracts
+        run: pyright
+
       - name: Run unit and integration-contract tests
-        run: python -m unittest discover -s . -p 'test_*.py'
+        run: |
+          coverage run -m unittest discover -s . -p 'test_*.py'
+          coverage report
+          coverage json -o coverage.json
+          python tools/check_coverage_scope.py coverage.json
 
       - name: Check shell deployment scripts
         run: bash -n deploy/recover_control_plane.sh deploy/node_bootstrap.sh
@@ -54,17 +61,44 @@ jobs:
             exit 1
           fi
 
+  postgres-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: aurix-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AURIX_TEST_POSTGRES_DSN: postgresql://postgres:aurix-test-only@127.0.0.1:5432/postgres
+      AURIX_REQUIRE_POSTGRES_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m unittest test_database_contracts -v
+
   # Compatibility check for already-installed deployers. Older releases
   # looked specifically for this name; keep it as a single, visible aggregate
   # over the Python-version matrix while newer deployers accept every check.
   safety-net:
     if: ${{ always() }}
-    needs: [test]
+    needs: [test, postgres-contracts]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Require every matrix test to pass
-        if: ${{ needs.test.result != 'success' }}
+        if: ${{ needs.test.result != 'success' || needs.postgres-contracts.result != 'success' }}
         run: |
           echo "matrix test result: ${{ needs.test.result }}" >&2
           exit 1

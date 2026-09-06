@@ -54,8 +54,8 @@
       "max_sql_calls": 39
     },
     "commerce_service.py": {
-      "max_lines": 264,
-      "max_function_lines": 34,
+      "max_lines": 268,
+      "max_function_lines": 36,
       "max_sql_calls": 0
     },
     "commerce_service_wallet_refunds.py": {
@@ -384,8 +384,8 @@
       "max_sql_calls": 4
     },
     "telegram_components.py": {
-      "max_lines": 83,
-      "max_function_lines": 21,
+      "max_lines": 104,
+      "max_function_lines": 28,
       "max_sql_calls": 0
     },
     "commerce_worker_coordinator.py": {

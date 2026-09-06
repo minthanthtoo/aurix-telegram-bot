@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from domain_time import utc_text
 
 UTC = timezone.utc
 
@@ -87,7 +88,7 @@ class ApprovalResult:
 
 
 def _now_text(value: datetime | None = None) -> str:
-    return (value or datetime.now(UTC)).astimezone(UTC).isoformat()
+    return utc_text(value)
 
 
 def _new_id() -> str:

@@ -1676,7 +1676,9 @@ class PostgresAdapterTest(unittest.TestCase):
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "e281b1cc3c18e751638ba9acf406926875105f8b54e177e20fd82a111b04b043",
+            # Base/adoption history is now initialized through the versioned
+            # schema component before the existing free/commerce ledgers.
+            "a970eae67dfc6e2693aa11fd998fb1b2e25d28251b8d37106203a7b2f99e5457",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

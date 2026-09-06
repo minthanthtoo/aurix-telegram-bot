@@ -20,9 +20,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 try:
-    from deploy.fleet_reconcile import FleetError, FleetNode, environment, parse_manifest
+    from deploy.fleet_manifest import FleetError, FleetNode, environment, parse_manifest
 except ModuleNotFoundError:  # Direct execution from deploy/ sets deploy/ as sys.path[0].
-    from fleet_reconcile import FleetError, FleetNode, environment, parse_manifest
+    from fleet_manifest import FleetError, FleetNode, environment, parse_manifest
 
 
 TRUTHY = {"1", "true", "yes", "on"}

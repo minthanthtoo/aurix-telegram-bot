@@ -6,13 +6,21 @@ from datetime import datetime
 from typing import Any
 
 from commerce_worker_dispatch import STATIC_WORKER_IMPLEMENTATIONS, WORKER_IMPLEMENTATIONS
-
+from commerce_worker_contracts import CommerceWorkerDependencies, bind_worker_implementations
+from notification_worker import NotificationWorker
 
 class CommerceWorker:
-    """Coordinate responsibility-owned worker handlers against a service host."""
+    """Coordinate responsibility-owned handlers with explicit dependencies."""
 
-    def __init__(self, service: Any):
-        self.service = service
+    def __init__(
+        self,
+        dependencies: CommerceWorkerDependencies,
+        notifications: NotificationWorker,
+    ):
+        for name, dependency in dependencies.items():
+            setattr(self, name, dependency)
+        self.notifications = notifications
+        bind_worker_implementations(self, WORKER_IMPLEMENTATIONS, STATIC_WORKER_IMPLEMENTATIONS)
 
     @staticmethod
     def _implementation(name: str) -> Any:
@@ -23,16 +31,6 @@ class CommerceWorker:
 
     def _call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         return self._implementation(name)(self, *args, **kwargs)
-
-    def __getattr__(self, name: str) -> Any:
-        """Resolve remaining implementation helpers against the worker host."""
-        try:
-            implementation = self._implementation(name)
-        except AttributeError:
-            return getattr(self.service, name)
-        if name in STATIC_WORKER_IMPLEMENTATIONS:
-            return implementation
-        return implementation.__get__(self, type(self))
 
     def process_jobs(self, now: datetime | None = None, max_jobs: int = 10) -> int:
         return self._call("process_jobs", now, max_jobs)
@@ -89,7 +87,7 @@ class CommerceWorker:
     def pending_notifications(
         self, now: datetime | None = None, limit: int = 20
     ) -> list[dict[str, Any]]:
-        return self._call("pending_notifications", now, limit)
+        return self.notifications.pending_notifications(now, limit)
 
     def claim_pending_notifications(
         self,
@@ -97,14 +95,14 @@ class CommerceWorker:
         limit: int = 20,
         lease_seconds: int = 120,
     ) -> list[dict[str, Any]]:
-        return self._call("claim_pending_notifications", now, limit, lease_seconds)
+        return self.notifications.claim_pending_notifications(now, limit, lease_seconds)
 
     def mark_notification_sent(
         self, notification_id: str, now: datetime | None = None
     ) -> None:
-        self._call("mark_notification_sent", notification_id, now)
+        self.notifications.mark_notification_sent(notification_id, now)
 
     def mark_notification_failed(
         self, notification_id: str, now: datetime | None = None
     ) -> None:
-        self._call("mark_notification_failed", notification_id, now)
+        self.notifications.mark_notification_failed(notification_id, now)

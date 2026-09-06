@@ -178,6 +178,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 24, "entitlement_source_identity"),
                     ("commerce", 25, "aggregate_entitlement_usage_ledger"),
                     ("commerce", 26, "service_routes_and_failover_control"),
+                    ("commerce_base", 1, "base_schema_adoption"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),
@@ -190,6 +191,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("free_access", 10, "free_intent_server_identity"),
                     ("free_access", 11, "managed_key_repair_jobs"),
                     ("free_access", 12, "staff_key_repair_notifications"),
+                    ("free_access_base", 1, "base_schema_adoption"),
                 ],
             )
 

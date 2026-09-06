@@ -1,6 +1,12 @@
 # Monolith Reduction Plan
 
-Status: MR extraction pass complete; final completion roadmap prepared
+Status: historical extraction record; full completion remains open
+
+Current completion proposal: [Maintenance completion plan](MAINTENANCE_COMPLETION_PLAN.md).
+It supersedes the percentage estimates below and corrects the application-SQL audit:
+19 direct calls remain in endpoint-migration application/worker code, which the earlier
+filename-based audit mistakenly excluded as schema migration code.
+
 Baseline branch: `codex/fleet-cicd`
 Baseline commit: `f16c9e7`
 Architecture style: one deployable modular monolith with an external Outline data plane

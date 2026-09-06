@@ -166,7 +166,7 @@ COMMERCE_MIGRATIONS_ROUTING = (
                       (t.protocol = 'outline'), (t.protocol = 'outline'), FALSE,
                       (t.protocol = 'outline'), (t.protocol = 'outline'), (t.protocol = 'outline'),
                       CASE WHEN t.protocol = 'outline' THEN '{\"managed_config\":true,\"manual_export\":true,\"quota_cap\":true,\"usage\":true,\"rotation\":true,\"terminate_sessions\":false,\"management_probe\":true,\"data_plane_probe\":true,\"reconcile\":true}'::jsonb ELSE '{}'::jsonb END,
-                      e.created_at, e.updated_at
+                      e.created_at::timestamptz, e.updated_at::timestamptz
                  FROM connectivity_endpoints e
                  JOIN connectivity_transports t ON t.transport_id = e.transport_id
                 ON CONFLICT(endpoint_id, route_name) DO NOTHING""",

@@ -9,6 +9,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from tools.source_inventory import module_name, production_sources
+except ModuleNotFoundError:  # Direct execution: python tools/check_architecture.py
+    from source_inventory import module_name, production_sources
+
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE_PATH = ROOT / "architecture_baseline.json"
@@ -18,7 +23,9 @@ def _load_baseline(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
         baseline = json.load(handle)
     if baseline.get("schema_version") != 1:
-        raise ValueError(f"unsupported architecture baseline schema: {baseline.get('schema_version')}")
+        raise ValueError(
+            f"unsupported architecture baseline schema: {baseline.get('schema_version')}"
+        )
     return baseline
 
 
@@ -54,11 +61,77 @@ def _sql_call_count(tree: ast.AST) -> int:
 
 
 def _first_party_graph(trees: dict[str, ast.AST]) -> dict[str, set[str]]:
-    modules = {Path(path).stem for path in trees}
-    return {
-        Path(path).stem: _imports(tree).intersection(modules)
-        for path, tree in trees.items()
-    }
+    modules = {module_name(path) for path in trees}
+    graph: dict[str, set[str]] = {}
+    for path, tree in trees.items():
+        current = module_name(path)
+        package = current if Path(path).name == "__init__.py" else current.rpartition(".")[0]
+        dependencies: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                candidates = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    parts = package.split(".") if package else []
+                    if node.level > len(parts):
+                        continue
+                    prefix = ".".join(parts[: len(parts) - node.level + 1])
+                    base = ".".join(part for part in (prefix, base) if part)
+                candidates = [base]
+                candidates.extend(f"{base}.{alias.name}" for alias in node.names)
+            else:
+                continue
+            dependencies.update(name for name in candidates if name in modules and name != current)
+        graph[current] = dependencies
+    return graph
+
+
+def _layer_violations(root: Path, trees: dict[str, ast.AST]) -> list[str]:
+    """Explicit path classification prevents endpoint migrations escaping the SQL rule."""
+    manifest = root / "architecture_layers.json"
+    if not manifest.exists():
+        return []  # Standalone legacy metric fixtures need no layer manifest.
+    policy = json.loads(manifest.read_text(encoding="utf-8"))
+    layers = policy["modules"]
+    debt = policy.get("sql_debt", {})
+    operational = policy.get("operational_persistence", {})
+    violations = []
+    for path in sorted(set(trees) - set(layers)):
+        violations.append(f"unclassified production module: {path}")
+    for path in sorted(set(layers) - set(trees)):
+        violations.append(f"classified production module is missing: {path}")
+    for path, tree in trees.items():
+        layer = layers.get(path)
+        if layer is None:
+            continue
+        if layer not in policy["allowed_layers"]:
+            violations.append(f"{path}: unknown layer {layer}")
+            continue
+        calls = _sql_call_count(tree)
+        if layer not in {"persistence", "schema"}:
+            exception = operational.get(path, {}) if layer == "operations" else {}
+            ceiling = exception.get("max_calls", debt.get(path, {}).get("max_calls", 0))
+            if calls > ceiling:
+                violations.append(
+                    f"{path}: SQL outside persistence ({calls} calls; ceiling {ceiling})"
+                )
+            for imported in _imports(tree):
+                if not exception and imported in {"sqlite3", "psycopg", "psycopg2", "psycopg_pool"}:
+                    violations.append(
+                        f"{path}: database driver import outside persistence: {imported}"
+                    )
+    by_module = {module_name(path): layer for path, layer in layers.items()}
+    rules = policy.get("forbidden_layer_dependencies", {})
+    for source, imports in _first_party_graph(trees).items():
+        forbidden = rules.get(by_module.get(source), [])
+        for imported in sorted(imports):
+            if by_module.get(imported) in forbidden:
+                violations.append(
+                    f"forbidden layer dependency: {source} ({by_module[source]}) -> "
+                    f"{imported} ({by_module[imported]})"
+                )
+    return violations
 
 
 def _cycles(graph: dict[str, set[str]]) -> list[list[str]]:
@@ -99,11 +172,10 @@ def check_architecture(
     violations: list[str] = []
     trees: dict[str, ast.AST] = {}
 
-    for path in sorted(root.glob("*.py")):
-        if path.name.startswith("test_"):
-            continue
+    for path in production_sources(root):
+        relative = path.relative_to(root).as_posix()
         try:
-            trees[path.name] = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            trees[relative] = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except SyntaxError as error:
             violations.append(f"{path.name}: cannot inspect invalid syntax: {error}")
 
@@ -145,10 +217,9 @@ def check_architecture(
                 continue
             for imported in sorted(_imports(tree)):
                 if _matches_forbidden(imported, forbidden):
-                    violations.append(
-                        f"{rule['name']}: {path_name} must not import {imported}"
-                    )
+                    violations.append(f"{rule['name']}: {path_name} must not import {imported}")
 
+    violations.extend(_layer_violations(root, trees))
     for cycle in _cycles(_first_party_graph(trees)):
         violations.append("first-party import cycle: " + " -> ".join(cycle + [cycle[0]]))
 
