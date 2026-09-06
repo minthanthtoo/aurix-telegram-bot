@@ -233,6 +233,7 @@
     "telegram_callback_admin_navigation.py": "transport",
     "telegram_callback_admin_navigation_steps.py": "transport",
     "telegram_callback_admin_orders.py": "transport",
+    "telegram_promo_admin_steps.py": "transport",
     "telegram_callback_customer.py": "transport",
     "telegram_callback_router.py": "transport",
     "telegram_callbacks.py": "transport",
