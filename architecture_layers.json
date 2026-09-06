@@ -150,6 +150,7 @@
     "entitlement_quota.py": "application",
     "entitlement_quota_repository.py": "persistence",
     "entitlement_server_allocation.py": "application",
+    "entitlement_server_allocation_steps.py": "application",
     "entitlement_support.py": "application",
     "entitlement_contracts.py": "contract",
     "entitlements.py": "application",
