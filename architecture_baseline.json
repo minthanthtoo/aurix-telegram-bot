@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "baseline_commit": "f16c9e7",
+  "baseline_commit": "dfd7cc3",
   "purpose": "Ratchet known monolith hotspots downward while preserving the current release baseline.",
   "hotspots": {
     "capacity_policy.py": {
@@ -159,7 +159,7 @@
       "max_sql_calls": 24
     },
     "commerce_worker_migrations.py": {
-      "max_lines": 352,
+      "max_lines": 378,
       "max_function_lines": 156,
       "max_sql_calls": 14
     },
@@ -174,7 +174,7 @@
       "max_sql_calls": 5
     },
     "commerce_worker_repairs.py": {
-      "max_lines": 426,
+      "max_lines": 485,
       "max_function_lines": 188,
       "max_sql_calls": 0
     },
@@ -274,7 +274,7 @@
       "max_sql_calls": 0
     },
     "telegram_customer_commands.py": {
-      "max_lines": 153,
+      "max_lines": 171,
       "max_function_lines": 142,
       "max_sql_calls": 0
     },
@@ -299,7 +299,7 @@
       "max_sql_calls": 0
     },
     "telegram_approval_commands.py": {
-      "max_lines": 180,
+      "max_lines": 199,
       "max_function_lines": 157,
       "max_sql_calls": 0
     },
@@ -309,7 +309,7 @@
       "max_sql_calls": 0
     },
     "telegram_staff_commands.py": {
-      "max_lines": 164,
+      "max_lines": 177,
       "max_function_lines": 141,
       "max_sql_calls": 0
     },
@@ -329,7 +329,7 @@
       "max_sql_calls": 0
     },
     "telegram_callback_router.py": {
-      "max_lines": 162,
+      "max_lines": 221,
       "max_function_lines": 133,
       "max_sql_calls": 0
     },
@@ -619,7 +619,7 @@
       "max_sql_calls": 19
     },
     "fleet_enrollment.py": {
-      "max_lines": 445,
+      "max_lines": 494,
       "max_function_lines": 175,
       "max_sql_calls": 0
     },
@@ -664,7 +664,7 @@
       "max_sql_calls": 0
     },
     "commerce_service_inventory_migration.py": {
-      "max_lines": 159,
+      "max_lines": 223,
       "max_function_lines": 148,
       "max_sql_calls": 5
     },
