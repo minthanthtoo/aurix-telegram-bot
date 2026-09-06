@@ -6,8 +6,12 @@ from typing import Any
 
 from commerce_fleet_health_repository import FleetHealthRepository
 from commerce_models import CommerceError, _new_id, _now_text
+from commerce_service_fleet_lifecycle_steps import (
+    assert_retirement_ready,
+    persist_lifecycle_change,
+    validate_lifecycle_request,
+)
 from connectivity_registry import ConnectivityRegistry
-from lifecycle_policy import normalize_lifecycle_state
 
 
 _FLEET_HEALTH = FleetHealthRepository()
@@ -29,21 +33,19 @@ def set_server_lifecycle(
     inventory are empty. Provider deletion remains a separate, explicit
     operation outside this method.
     """
-    try:
-        state = normalize_lifecycle_state(lifecycle_state, strict=True)
-    except ValueError as exc:
-        raise CommerceError("Endpoint lifecycle must be active, draining or retired") from exc
-    server = str(server_id or "").strip()
-    if not server:
-        raise CommerceError("Endpoint identity is required")
-    now_text = _now_text()
-    clean_reason = str(reason or "").strip()[:512] or None
+    state, server, now_text, clean_reason = validate_lifecycle_request(
+        lifecycle_state, server_id, reason
+    )
     with self.database.connect() as connection:
         self.database.begin_write(connection)
         row = _FLEET_HEALTH.server(connection, server)
         if row is None:
             raise CommerceError("Outline server is not configured")
-        previous = str(row.get("lifecycle_state") if hasattr(row, "get") else row["lifecycle_state"] or "active")
+        previous = str(
+            row.get("lifecycle_state")
+            if hasattr(row, "get")
+            else row["lifecycle_state"] or "active"
+        )
         if previous == state:
             return {
                 "server_id": server,
@@ -52,68 +54,18 @@ def set_server_lifecycle(
                 "changed": False,
             }
         if state == "retired":
-            blockers: list[str] = []
-            counts = _FLEET_HEALTH.retirement_counts(
-                connection,
-                server,
-                include_free_keys=self._table_exists(connection, "keys"),
-                include_free_intents=self._table_exists(
-                    connection, "free_provisioning_intents"
-                ),
-            )
-            active_free = counts["active_free"]
-            active_paid = counts["active_paid"]
-            pending_orders = counts["pending_orders"]
-            pending_subscriptions = counts["pending_subscriptions"]
-            pending_intents = counts["pending_intents"]
-            if active_free:
-                blockers.append(f"{active_free} active free/promo key(s)")
-            if active_paid:
-                blockers.append(f"{active_paid} active paid key(s)")
-            if pending_orders:
-                blockers.append(f"{pending_orders} open order(s)")
-            if pending_subscriptions:
-                blockers.append(f"{pending_subscriptions} active/pending subscription(s)")
-            if pending_intents:
-                blockers.append(f"{pending_intents} pending provisioning intent(s)")
-            remote_count = row["remote_key_count"]
-            orphan_count = int(row["remote_orphan_key_count"] or 0)
-            if remote_count is None:
-                blockers.append("remote inventory has not been reconciled")
-            elif int(remote_count or 0) != 0:
-                blockers.append(f"remote inventory still has {int(remote_count)} key(s)")
-            if orphan_count:
-                blockers.append(f"{orphan_count} unreviewed remote key(s)")
-            if blockers:
-                raise CommerceError("Endpoint cannot be retired yet: " + "; ".join(blockers))
-        enabled = 1 if state in {"active", "draining"} else 0
-        _FLEET_HEALTH.set_lifecycle(
+            assert_retirement_ready(_FLEET_HEALTH, self, connection, row, server)
+        persist_lifecycle_change(
+            _FLEET_HEALTH,
+            self,
             connection,
-            server_id=server,
-            enabled=bool(enabled),
+            row=row,
+            server=server,
             state=state,
-            reason=clean_reason,
+            previous=previous,
+            actor_id=actor_id,
+            clean_reason=clean_reason,
             now_text=now_text,
-        )
-        ConnectivityRegistry.sync_outline_health(
-            connection,
-            server_id=server,
-            lifecycle_state=state,
-            health_status=str(row["health_status"] or "unknown"),
-            now_text=now_text,
-        )
-        self._audit(
-            connection,
-            "server_lifecycle_changed",
-            "outline_server",
-            server,
-            "owner",
-            str(actor_id),
-            {
-                "previous_state": previous,
-                "lifecycle_state": state,
-                "reason": clean_reason,
-            },
         )
     return {
         "server_id": server,
