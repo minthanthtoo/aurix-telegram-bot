@@ -98,6 +98,7 @@
     "commerce_worker_migrations.py": "worker",
     "commerce_worker_notifications.py": "worker",
     "commerce_worker_provisioning.py": "worker",
+    "commerce_worker_provisioning_steps.py": "worker",
     "commerce_worker_repairs.py": "worker",
     "connectivity_adapters.py": "integration",
     "connectivity_registry.py": "persistence",
