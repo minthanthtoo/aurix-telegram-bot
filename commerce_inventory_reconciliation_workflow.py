@@ -70,66 +70,17 @@ def reconcile_observed_inventory(
     """Persist one successful observation and return its public summary."""
     remote_items = observation["remote_items"]
     by_key = observation["by_key"]
-    managed_rows: list[dict[str, Any]] = []
-    managed_missing_count = 0
-    repair_jobs_queued = 0
-    repair_manual_count = 0
-    usage_snapshots_recorded = 0
-    orphan_count = 0
     with service.database.connect() as connection:
         service.database.begin_write(connection)
-        if service._table_exists(connection, "outline_remote_keys"):
-            managed_rows = service._managed_repair_rows(connection, server_id)
-            for managed_row in managed_rows:
-                managed_row["server_id"] = server_id
-            usage_snapshots_recorded = service._record_usage_snapshots(
-                connection,
-                server_id=server_id,
-                observed_at=observed_at,
-                managed_rows=managed_rows,
-                by_key=by_key,
-            )
-            ledger_rows = repository.remote_key_ledger(connection, server_id)
-            has_free_keys = service._table_exists(connection, "keys")
-            managed_ids = repository.managed_key_ids(
-                connection, server_id, include_free_keys=has_free_keys
-            )
-            repository.mark_present_keys_missing(connection, server_id)
-            _record_present_keys(
-                repository,
-                connection,
-                server_id,
-                observed_at,
-                remote_items,
-                managed_ids,
-                by_key,
-                service._metric_bytes,
-            )
-            _update_managed_usage(
-                service,
-                repository,
-                connection,
-                server_id,
-                observed_at,
-                managed_rows,
-                by_key,
-                has_free_keys,
-            )
-            missing = _record_missing_keys(
-                service,
-                repository,
-                connection,
-                server_id,
-                observed_at,
-                managed_rows,
-                ledger_rows,
-                remote_items,
-                by_key,
-            )
-            managed_missing_count = missing["managed_missing_count"]
-            repair_jobs_queued = missing["repair_jobs_queued"]
-            repair_manual_count = missing["repair_manual_count"]
-            orphan_count = repository.unreviewed_orphan_count(connection, server_id)
+        managed_rows, counts, orphan_count, usage_snapshots_recorded = _persist_key_state(
+            service,
+            repository,
+            connection,
+            server_id=server_id,
+            observed_at=observed_at,
+            remote_items=remote_items,
+            by_key=by_key,
+        )
         latency_ms = round((time.perf_counter() - probe_started) * 1000, 3)
         health = service._record_endpoint_health(
             connection,
@@ -171,14 +122,83 @@ def reconcile_observed_inventory(
         "version": observation["info"].get("version"),
         "remote_key_count": len(remote_items),
         "remote_orphan_key_count": orphan_count,
-        "managed_missing_key_count": managed_missing_count,
-        "repair_jobs_queued": repair_jobs_queued,
-        "repair_manual_count": repair_manual_count,
+        "managed_missing_key_count": counts["managed_missing_count"],
+        "repair_jobs_queued": counts["repair_jobs_queued"],
+        "repair_manual_count": counts["repair_manual_count"],
         "usage_snapshots_recorded": usage_snapshots_recorded,
         "aggregate_usage_recorded": aggregate_usage["recorded"],
         "aggregate_exhausted": aggregate_usage["exhausted"],
         "aggregate_usage_errors": aggregate_usage["errors"],
     }
+
+
+def _persist_key_state(
+    service: Any,
+    repository: Any,
+    connection: Any,
+    *,
+    server_id: str,
+    observed_at: str,
+    remote_items: list[dict[str, Any]],
+    by_key: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, int], int, int]:
+    """Persist remote-key presence, usage, missing episodes, and repair state."""
+    managed_rows: list[dict[str, Any]] = []
+    counts = {"managed_missing_count": 0, "repair_jobs_queued": 0, "repair_manual_count": 0}
+    orphan_count = 0
+    usage_snapshots_recorded = 0
+    if not service._table_exists(connection, "outline_remote_keys"):
+        return managed_rows, counts, orphan_count, usage_snapshots_recorded
+    managed_rows = service._managed_repair_rows(connection, server_id)
+    for managed_row in managed_rows:
+        managed_row["server_id"] = server_id
+    usage_snapshots_recorded = service._record_usage_snapshots(
+        connection,
+        server_id=server_id,
+        observed_at=observed_at,
+        managed_rows=managed_rows,
+        by_key=by_key,
+    )
+    ledger_rows = repository.remote_key_ledger(connection, server_id)
+    has_free_keys = service._table_exists(connection, "keys")
+    managed_ids = repository.managed_key_ids(
+        connection, server_id, include_free_keys=has_free_keys
+    )
+    repository.mark_present_keys_missing(connection, server_id)
+    _record_present_keys(
+        repository,
+        connection,
+        server_id,
+        observed_at,
+        remote_items,
+        managed_ids,
+        by_key,
+        service._metric_bytes,
+    )
+    _update_managed_usage(
+        service,
+        repository,
+        connection,
+        server_id,
+        observed_at,
+        managed_rows,
+        by_key,
+        has_free_keys,
+    )
+    missing = _record_missing_keys(
+        service,
+        repository,
+        connection,
+        server_id,
+        observed_at,
+        managed_rows,
+        ledger_rows,
+        remote_items,
+        by_key,
+    )
+    counts.update(missing)
+    orphan_count = repository.unreviewed_orphan_count(connection, server_id)
+    return managed_rows, counts, orphan_count, usage_snapshots_recorded
 
 
 def _record_present_keys(
