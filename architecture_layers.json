@@ -180,6 +180,7 @@
     "identity_support.py": "domain",
     "identity_usage.py": "application",
     "identity_usage_crediting.py": "application",
+    "identity_usage_crediting_steps.py": "application",
     "identity_usage_lease_accounting.py": "application",
     "identity_usage_policy.py": "domain",
     "identity_usage_recording.py": "application",
