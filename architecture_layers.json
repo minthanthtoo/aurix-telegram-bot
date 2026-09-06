@@ -206,6 +206,7 @@
     "quota_alerts.py": "application",
     "receipt_fingerprint.py": "application",
     "receipt_llm.py": "integration",
+    "receipt_llm_fallback_selection.py": "integration",
     "receipt_rules.py": "application",
     "receipt_rule_steps.py": "application",
     "repositories.py": "contract",

@@ -9,7 +9,6 @@ wallet/account transaction history before approval.
 from __future__ import annotations
 
 import base64
-from dataclasses import replace
 import io
 import json
 import os
@@ -23,6 +22,7 @@ from urllib.parse import urlsplit
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from receipt_rules import provider_prompt_context
+from receipt_llm_fallback_selection import select_fallback_candidate
 
 
 class ReceiptExtractionError(RuntimeError):
@@ -507,45 +507,17 @@ class FallbackReceiptExtractor:
                         "error_type": type(exc).__name__,
                     }
                 )
-        if candidates:
-            acceptable = [item for item in candidates if self._is_acceptable(item[0])]
-            ranked = acceptable or candidates
-            ranked = sorted(
-                enumerate(ranked),
-                key=lambda item: (self._score(item[1][0]), -item[0]),
-                reverse=True,
-            )
-            extraction, diagnostics = ranked[0][1]
-            if selection_mode in {"rank_all", "consensus"}:
-                consensus = {self._consensus_key(item[0]) for item in acceptable}
-                review_flags: set[str] = set()
-                if len(acceptable) < 2 and selection_mode == "consensus":
-                    review_flags.add("consensus_unavailable")
-                elif len(consensus) > 1:
-                    review_flags.add("model_disagreement")
-                if review_flags:
-                    extraction = replace(
-                        extraction,
-                        flags=tuple(sorted(set(extraction.flags) | review_flags)),
-                    )
-            diagnostics = dict(diagnostics)
-            diagnostics["attempts"] = attempts
-            diagnostics["selected_model"] = diagnostics.get("model")
-            diagnostics["normalized_byte_size"] = len(normalized)
-            diagnostics["selection_mode"] = selection_mode
-            diagnostics["candidate_scores"] = [
-                {
-                    "model": item[1].get("model"),
-                    "score": round(self._score(item[0]), 3),
-                    "acceptable": self._is_acceptable(item[0]),
-                }
-                for item in candidates
-            ]
-            if selection_mode == "consensus" and len(acceptable) >= 2:
-                diagnostics["consensus"] = len(
-                    {self._consensus_key(item[0]) for item in acceptable}
-                ) == 1
-            return extraction, diagnostics
+        selected = select_fallback_candidate(
+            candidates=candidates,
+            attempts=attempts,
+            selection_mode=selection_mode,
+            normalized_byte_size=len(normalized),
+            is_acceptable=self._is_acceptable,
+            score=self._score,
+            consensus_key=self._consensus_key,
+        )
+        if selected is not None:
+            return selected
         error = ReceiptLLMUnavailable("All receipt vision routes were unavailable")
         error.diagnostics = {
             "configured": True,
