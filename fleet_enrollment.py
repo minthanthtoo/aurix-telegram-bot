@@ -268,7 +268,7 @@ def expire_pending_enrollments(database: Any, now: datetime | None = None) -> in
         return updated
 
 
-def render_user_data(
+def _validate_user_data_inputs(
     *,
     bootstrap_script: bytes,
     registration_url: str,
@@ -278,12 +278,9 @@ def render_user_data(
     control_plane_source: str,
     api_port: int,
     keys_port: int,
-    ssh_port: int = 22,
-    swap_mb: int = 1024,
-    installer_url: str = "",
-    installer_sha256: str = "",
-) -> str:
-    """Render cloud-init enrollment without long-lived control-plane secrets."""
+    ssh_port: int,
+    swap_mb: int,
+) -> tuple[str, str, str, str, tuple[int, int, int], int, str]:
     url = str(registration_url or "").strip()
     try:
         parsed_registration = urlsplit(url)
@@ -298,7 +295,9 @@ def render_user_data(
         or parsed_registration.password
         or len(url) > 512
     ):
-        raise EnrollmentError("fleet registration URL must be the credential-free HTTPS /fleet/register endpoint")
+        raise EnrollmentError(
+            "fleet registration URL must be the credential-free HTTPS /fleet/register endpoint"
+        )
     normalized_job = str(job_id).strip()
     normalized_node = str(node_id).strip()
     if not JOB_ID_RE.fullmatch(normalized_job) or not NODE_ID_RE.fullmatch(normalized_node):
@@ -316,8 +315,11 @@ def render_user_data(
     bootstrap_b64 = base64.b64encode(bytes(bootstrap_script)).decode("ascii")
     if len(bootstrap_b64) > 128 * 1024:
         raise EnrollmentError("fleet bootstrap script is too large")
+    return url, normalized_job, normalized_node, source, ports, swap, bootstrap_b64
 
-    registration_client = """import base64
+
+def _registration_client_script() -> str:
+    return """import base64
 import json
 import os
 import subprocess
@@ -369,21 +371,16 @@ for path in (
         pass
 subprocess.run(["systemctl", "daemon-reload"], check=False)
     """
-    client_b64 = base64.b64encode(registration_client.encode()).decode("ascii")
-    q = {
-        "url": shlex.quote(url),
-        "token": shlex.quote(str(token).strip()),
-        "job": shlex.quote(normalized_job),
-        "node": shlex.quote(normalized_node),
-        "source": shlex.quote(source),
-        "api": shlex.quote(str(ports[0])),
-        "keys": shlex.quote(str(ports[1])),
-        "ssh": shlex.quote(str(ports[2])),
-        "swap": shlex.quote(str(swap)),
-        "installer_url": shlex.quote(str(installer_url or "").strip()),
-        "installer_sha": shlex.quote(str(installer_sha256 or "").strip()),
-    }
-    lines = [
+
+
+def _user_data_lines(
+    *,
+    bootstrap_b64: str,
+    client_b64: str,
+    values: dict[str, str],
+) -> list[str]:
+    q = {name: shlex.quote(value) for name, value in values.items()}
+    return [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "install -d -m 0750 /etc/aurix-node /usr/local/libexec",
@@ -442,4 +439,56 @@ subprocess.run(["systemctl", "daemon-reload"], check=False)
         "systemctl daemon-reload",
         "systemctl enable --now aurix-node-enrollment.service",
     ]
+
+
+def render_user_data(
+    *,
+    bootstrap_script: bytes,
+    registration_url: str,
+    token: str,
+    job_id: str,
+    node_id: str,
+    control_plane_source: str,
+    api_port: int,
+    keys_port: int,
+    ssh_port: int = 22,
+    swap_mb: int = 1024,
+    installer_url: str = "",
+    installer_sha256: str = "",
+) -> str:
+    """Render cloud-init enrollment without long-lived control-plane secrets."""
+    url, normalized_job, normalized_node, source, ports, swap, bootstrap_b64 = (
+        _validate_user_data_inputs(
+            bootstrap_script=bootstrap_script,
+            registration_url=registration_url,
+            token=token,
+            job_id=job_id,
+            node_id=node_id,
+            control_plane_source=control_plane_source,
+            api_port=api_port,
+            keys_port=keys_port,
+            ssh_port=ssh_port,
+            swap_mb=swap_mb,
+        )
+    )
+    registration_client = _registration_client_script()
+    client_b64 = base64.b64encode(registration_client.encode()).decode("ascii")
+    values = {
+        "url": url,
+        "token": str(token).strip(),
+        "job": normalized_job,
+        "node": normalized_node,
+        "source": source,
+        "api": str(ports[0]),
+        "keys": str(ports[1]),
+        "ssh": str(ports[2]),
+        "swap": str(swap),
+        "installer_url": str(installer_url or "").strip(),
+        "installer_sha": str(installer_sha256 or "").strip(),
+    }
+    lines = _user_data_lines(
+        bootstrap_b64=bootstrap_b64,
+        client_b64=client_b64,
+        values=values,
+    )
     return "\n".join(lines) + "\n"
