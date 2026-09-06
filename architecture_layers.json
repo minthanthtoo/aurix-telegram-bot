@@ -75,6 +75,7 @@
     "commerce_receipt_submission_intake.py": "application",
     "commerce_service_receipts.py": "application",
     "commerce_service_repairs.py": "application",
+    "commerce_service_repair_steps.py": "application",
     "commerce_service_support.py": "application",
     "commerce_service_wallet.py": "application",
     "commerce_service_wallet_approval.py": "application",

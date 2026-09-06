@@ -11,6 +11,7 @@ from commerce_models import UTC
 from commerce_models import _new_id
 from commerce_models import _human_bytes
 from commerce_repairs_repository import ManagedRepairRepository
+from commerce_service_repair_steps import enqueue_managed_key_repair
 
 
 _REPAIRS = ManagedRepairRepository()
@@ -322,124 +323,12 @@ def _enqueue_managed_key_repair(
     usage_bytes: int | None,
 ) -> str:
     """Create/update one durable repair decision without calling Outline."""
-    local_ref = str(row["local_key_ref"])
-    server_id = str(row["server_id"])
-    kind = str(row["kind"])
-    quota = int(row["quota_bytes"] or 0)
-    name = self._managed_repair_key_name(row, previous_name)
-    existing = _REPAIRS.existing_repair(connection, server_id, kind, local_ref)
-    repair_id = str(existing["id"]) if existing is not None else _new_id()
-    allow_unknown = self._managed_repair_allow_unknown_usage()
-    effective_usage = usage_bytes
-    usage_is_fresh = usage_bytes is not None
-    if effective_usage is None:
-        try:
-            effective_usage = int(row.get("last_usage_bytes"))
-        except (TypeError, ValueError):
-            effective_usage = None
-        usage_is_fresh = False
-    if not usage_is_fresh and self._managed_repair_cached_usage_is_recent(row, observed_at):
-        usage_is_fresh = effective_usage is not None
-    if not usage_is_fresh and os.environ.get(
-        "AURIX_KEY_REPAIR_ALLOW_STALE_USAGE", "0"
-    ).strip().lower() in {"1", "true", "yes", "on"}:
-        usage_is_fresh = effective_usage is not None
-    if effective_usage is not None:
-        effective_usage = max(0, effective_usage)
-    if not usage_is_fresh and not allow_unknown:
-        status = "manual"
-        error = "usage_observation_required"
-    elif effective_usage is not None and effective_usage >= quota:
-        status = "manual"
-        error = "quota_already_exhausted"
-    else:
-        status = "pending"
-        error = None
-    if existing is None:
-        _REPAIRS.insert_repair(
-            connection,
-            (
-                repair_id, kind, server_id, int(row["telegram_id"]), local_ref,
-                str(row["source_external_id"]), str(row["source_external_id"]), name,
-                quota, effective_usage, str(row["expires_at"]), status,
-                observed_at, error, observed_at, observed_at,
-            ),
-        )
-        job_state = "created"
-    else:
-        current_status = str(existing["status"] or "")
-        # A completed/cancelled job belongs to an earlier disappearance.
-        # Re-open it only after a new two-observation episode, preserving
-        # the same durable row and audit history without duplicate jobs.
-        reopen = current_status in {"done", "cancelled"} or str(
-            existing["source_external_id"]
-        ) != str(row["source_external_id"])
-        if reopen:
-            _REPAIRS.reopen_repair(
-                connection,
-                (
-                    str(row["source_external_id"]), str(row["source_external_id"]), name,
-                    quota, effective_usage, str(row["expires_at"]), status, observed_at,
-                    error, observed_at, existing["id"],
-                ),
-            )
-            job_state = "reopened"
-        else:
-            job_state = current_status or "existing"
-    alert_needed = job_state in {"created", "reopened"}
-    if not alert_needed:
-        # Backfill the alert for a repair that was opened by an older
-        # release before staff key-repair notifications existed. The
-        # per-staff dedupe key makes this safe across every poll.
-        alert_needed = not _REPAIRS.repair_alert_exists(connection, repair_id)
-    if job_state in {"created", "reopened"}:
-        self._audit(
-            connection,
-            "managed_key_missing",
-            "managed_key",
-            f"{server_id}:{kind}:{local_ref}",
-            "system",
-            None,
-            {
-                "source_external_id": str(row["source_external_id"]),
-                "missing_observation_count": int(missing_observation_count),
-                "repair_status": status,
-                "used_bytes": effective_usage,
-                "quota_bytes": quota,
-                "job_state": job_state,
-            },
-        )
-    if alert_needed:
-        # A missing managed key is an operational incident, not a silent
-        # customer-facing outage. Queue one durable, preference-aware
-        # staff alert for this repair episode; the notification dedupe
-        # key prevents repeated inventory polls from spamming staff.
-        usage_text = "unknown (fresh Outline telemetry unavailable)"
-        if effective_usage is not None:
-            usage_text = f"{_human_bytes(effective_usage)} observed"
-        self._queue_staff_notification(
-            connection,
-            "key_repairs",
-            repair_id,
-            "🧩 MANAGED KEY MISSING\n\n"
-            f"Repair: #{repair_id[:8]}\n"
-            f"Customer: tg:{int(row['telegram_id'])}\n"
-            f"Endpoint: {server_id}\n"
-            f"Old key: {str(row['source_external_id'])[:32]}\n"
-            f"Usage: {usage_text}\n"
-            f"Decision: {status.replace('_', ' ')}\n\n"
-            "Open Key Repairs to review. AuriX will not recreate this key or reset quota without the required owner decision.",
-            observed_at,
-        )
-    self._queue_customer_repair_notification(
+    return enqueue_managed_key_repair(
+        self,
         connection,
-        repair_id,
-        int(row["telegram_id"]),
-        status,
-        server_id,
-        observed_at,
+        row,
+        observed_at=observed_at,
+        missing_observation_count=missing_observation_count,
+        previous_name=previous_name,
+        usage_bytes=usage_bytes,
     )
-    # Let the caller distinguish a newly opened repair episode from a
-    # repeated observation of the same queued/manual decision.  This keeps
-    # operator counters and audit volume stable during frequent refreshes.
-    return status if job_state in {"created", "reopened"} else f"existing_{status}"
