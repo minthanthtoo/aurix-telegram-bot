@@ -8,7 +8,7 @@ from typing import Any
 from identity_usage_lease_accounting import consume_usage_leases, prepare_usage_leases
 
 
-def credit_usage_sample(
+def _record_usage_credit(
     service: Any,
     repository: Any,
     connection: Any,
@@ -17,63 +17,18 @@ def credit_usage_sample(
     endpoint_id: str,
     external_id: str,
     quota: int,
-    consumed_before: int,
     epoch: Any,
     reported: int,
     timestamp: str,
     observed_text: str,
+    credited: int,
+    consumed_after: int,
+    primary_lease_id: str | None,
 ) -> dict[str, Any]:
-    duplicate = repository.duplicate_sample(
-        connection,
-        epoch_id=epoch.epoch_id,
-        observed_at=observed_text,
-        remote_bytes=reported,
-    )
-    if duplicate is not None:
-        return {
-            "accepted": bool(duplicate["accepted"]),
-            "duplicate": True,
-            "reason": str(duplicate["reason"]),
-            "delta_bytes": int(duplicate["delta_bytes"] or 0),
-            "epoch_id": epoch.epoch_id,
-        }
-    credited = min(epoch.delta, max(0, quota - consumed_before))
-    lease_rows = prepare_usage_leases(
-        service,
-        repository,
-        connection,
-        binding=binding,
-        endpoint_id=endpoint_id,
-        quota=quota,
-        consumed_before=consumed_before,
-        epoch_id=epoch.epoch_id,
-        credited=credited,
-        timestamp=timestamp,
-    )
-    if not lease_rows:
-        return _record_missing_lease(
-            service,
-            repository,
-            connection,
-            binding=binding,
-            endpoint_id=endpoint_id,
-            external_id=external_id,
-            epoch=epoch,
-            reported=reported,
-            timestamp=timestamp,
-            observed_text=observed_text,
-        )
-    consumed_after, primary_lease_id = consume_usage_leases(
-        repository,
-        connection,
-        lease_rows,
-        credited=credited,
-        quota=quota,
-        consumed_before=consumed_before,
-        timestamp=timestamp,
-    )
     sample_reason = (
-        epoch.reason if not epoch.delta else "quota_exhausted" if credited < epoch.delta else epoch.reason
+        epoch.reason
+        if not epoch.delta
+        else "quota_exhausted" if credited < epoch.delta else epoch.reason
     )
     sample_id = f"sample-{secrets.token_hex(16)}"
     repository.record_sample(
@@ -149,6 +104,88 @@ def credit_usage_sample(
         "reset": epoch.reset,
         "exhausted": exhausted,
     }
+
+
+def credit_usage_sample(
+    service: Any,
+    repository: Any,
+    connection: Any,
+    *,
+    binding: dict[str, Any],
+    endpoint_id: str,
+    external_id: str,
+    quota: int,
+    consumed_before: int,
+    epoch: Any,
+    reported: int,
+    timestamp: str,
+    observed_text: str,
+) -> dict[str, Any]:
+    duplicate = repository.duplicate_sample(
+        connection,
+        epoch_id=epoch.epoch_id,
+        observed_at=observed_text,
+        remote_bytes=reported,
+    )
+    if duplicate is not None:
+        return {
+            "accepted": bool(duplicate["accepted"]),
+            "duplicate": True,
+            "reason": str(duplicate["reason"]),
+            "delta_bytes": int(duplicate["delta_bytes"] or 0),
+            "epoch_id": epoch.epoch_id,
+        }
+    credited = min(epoch.delta, max(0, quota - consumed_before))
+    lease_rows = prepare_usage_leases(
+        service,
+        repository,
+        connection,
+        binding=binding,
+        endpoint_id=endpoint_id,
+        quota=quota,
+        consumed_before=consumed_before,
+        epoch_id=epoch.epoch_id,
+        credited=credited,
+        timestamp=timestamp,
+    )
+    if not lease_rows:
+        return _record_missing_lease(
+            service,
+            repository,
+            connection,
+            binding=binding,
+            endpoint_id=endpoint_id,
+            external_id=external_id,
+            epoch=epoch,
+            reported=reported,
+            timestamp=timestamp,
+            observed_text=observed_text,
+        )
+    consumed_after, primary_lease_id = consume_usage_leases(
+        repository,
+        connection,
+        lease_rows,
+        credited=credited,
+        quota=quota,
+        consumed_before=consumed_before,
+        timestamp=timestamp,
+    )
+    return _record_usage_credit(
+        service,
+        repository,
+        connection,
+        binding=binding,
+        endpoint_id=endpoint_id,
+        external_id=external_id,
+        quota=quota,
+        epoch=epoch,
+        reported=reported,
+        timestamp=timestamp,
+        observed_text=observed_text,
+        credited=credited,
+        consumed_after=consumed_after,
+        primary_lease_id=primary_lease_id,
+    )
 
 
 def _record_missing_lease(
