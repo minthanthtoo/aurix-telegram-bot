@@ -216,6 +216,7 @@
     "supabase_storage.py": "integration",
     "telegram_admin.py": "transport",
     "telegram_admin_capacity.py": "transport",
+    "telegram_admin_capacity_detail_view.py": "transport",
     "telegram_admin_capacity_view.py": "transport",
     "telegram_admin_confirmation.py": "transport",
     "telegram_admin_confirmations.py": "transport",
