@@ -145,7 +145,7 @@ def _request(
     url = f"{store.endpoint}{path}" + (f"?{query_string}" if query_string else "")
     parsed_endpoint = urllib.parse.urlsplit(store.endpoint)
     host = parsed_endpoint.netloc
-    now = dt.datetime.now(dt.UTC)
+    now = dt.datetime.now(dt.timezone.utc)
     amz_date = now.strftime("%Y%m%dT%H%M%SZ")
     date = now.strftime("%Y%m%d")
     payload_hash = hashlib.sha256(body).hexdigest()

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from commerce_provisioning_repository import ProvisioningRepository
 
 
 _PROVISIONING = ProvisioningRepository()
+UTC = timezone.utc
 
 
 def prepare_provisioning(
