@@ -70,6 +70,7 @@
     "commerce_inventory_reconciliation_workflow.py": "application",
     "commerce_service_orders.py": "application",
     "commerce_service_receipt_review.py": "application",
+    "commerce_service_receipt_review_steps.py": "application",
     "commerce_service_receipt_submission.py": "application",
     "commerce_receipt_storage_workflow.py": "application",
     "commerce_receipt_submission_intake.py": "application",
