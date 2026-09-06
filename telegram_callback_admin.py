@@ -9,165 +9,24 @@ from typing import Any
 
 from commerce import CommerceError
 from telegram_callback_admin_fleet import dispatch_fleet_action
+from telegram_callback_admin_navigation import dispatch_navigation_action
 from telegram_callback_admin_orders import dispatch_order_action
 
 UTC = timezone.utc
 
 
 def handle_admin_navigation_callback(self, query: dict[str, Any], chat_id: int, telegram_id: int, message_id: Any, can_edit_text: bool, synthetic: dict[str, Any], action: str, entity_id: str, scope: str) -> None:
-    message = query.get("message") or {}
-    if action == "p":
-        if entity_id == "enqueue":
-            try:
-                self._admin_probe_call(telegram_id, "enqueue_due_probes", limit=100)
-            except Exception as exc:
-                self.send(chat_id, "Probe jobs could not be queued.", self._admin_keyboard(telegram_id))
-                print(f"probe enqueue error: {type(exc).__name__}", file=sys.stderr)
-            else:
-                self._show_probes(
-                    chat_id,
-                    telegram_id,
-                    message_id=message_id if can_edit_text else None,
-                )
-        else:
-            self.send(chat_id, "This probe action is no longer valid.")
-    elif action == "k":
-        challenge = self._consume_admin_confirmation(chat_id, telegram_id, entity_id)
-        if challenge is None:
-            self.send(
-                chat_id,
-                "This confirmation has expired or was already used. Open the admin panel again.",
-                self._admin_keyboard(telegram_id),
-            )
-        else:
-            synthetic["text"] = " ".join([challenge["command"], *challenge["args"]])
-            synthetic["_admin_confirmed"] = True
-            self.handle(synthetic)
-    elif action == "d":
-        token_hash = hashlib.sha256(entity_id.encode()).hexdigest()
-        store = getattr(self.service, "database", None)
-        cancelled = False
-        if callable(getattr(store, "cancel_admin_challenge", None)):
-            try:
-                cancelled = bool(
-                    store.cancel_admin_challenge(
-                        token_hash,
-                        int(telegram_id),
-                        int(chat_id),
-                        datetime.now(UTC).isoformat(),
-                    )
-                )
-            except Exception as exc:
-                print(
-                    f"admin confirmation cancel error: {type(exc).__name__}",
-                    file=sys.stderr,
-                )
-        else:
-            with self._admin_confirmation_lock:
-                challenge = self._admin_confirmations.get(entity_id)
-                if (
-                    challenge
-                    and challenge["chat_id"] == chat_id
-                    and challenge["telegram_id"] == telegram_id
-                ):
-                    del self._admin_confirmations[entity_id]
-                    cancelled = True
-        self.send(
-            chat_id,
-            "Confirmation cancelled."
-            if cancelled
-            else "This confirmation is no longer valid.",
-            self._admin_keyboard(telegram_id),
-        )
-    elif action == "n":
-        admin_navigation = {
-            "admin": "/admin",
-            "owner": "/owner",
-            "staff": "/staff",
-            "groupsync": "/groupsync",
-            "receiptsystem": "/receiptsystem",
-            "notifications": "/notifications",
-            "orders": "/orders",
-            "receipts": "/receipts",
-            "capacity": "/capacity",
-            "probes": "/probes",
-            "prepare": "/capacity",
-            "reconcile": "/reconcile",
-            "failed": "/failed",
-            "repairs": "/repairs",
-            "migrations": "/migrations",
-            "failover": "/failover",
-            "enforcement": "/enforcement",
-            "promo": "/promo",
-        }
-        target = admin_navigation.get(entity_id)
-        if target is None:
-            self.send(chat_id, "This admin action is no longer valid.")
-        elif entity_id == "receiptsystem":
-            self._send_receipt_system(
-                chat_id,
-                telegram_id,
-                message_id=message_id if can_edit_text else None,
-            )
-        elif entity_id == "admin":
-            self._send_admin_home(
-                chat_id,
-                telegram_id,
-                message_id=message_id if can_edit_text else None,
-            )
-        elif entity_id == "owner":
-            self._send_owner_home(
-                chat_id,
-                telegram_id,
-                message_id=message_id if can_edit_text else None,
-            )
-        elif entity_id == "notifications":
-            self._send_staff_notifications(
-                chat_id,
-                telegram_id,
-                message_id=message_id if can_edit_text else None,
-            )
-        elif entity_id == "staff":
-            self._send_staff_panel(
-                chat_id,
-                telegram_id,
-                message_id=message_id if can_edit_text else None,
-            )
-        elif entity_id in {"orders", "receipts", "failed", "repairs", "migrations", "failover", "enforcement"}:
-            if self.commerce is None and entity_id != "enforcement":
-                self.send(chat_id, "Commerce is not configured.")
-            else:
-                self._open_admin_panel(
-                    chat_id,
-                    telegram_id,
-                    entity_id,
-                    message_id=message.get("message_id"),
-                )
-        elif entity_id == "capacity":
-            self._show_capacity(chat_id, telegram_id, message_id=message.get("message_id"))
-        elif entity_id == "prepare":
-            try:
-                job_id = self._admin_call(
-                    telegram_id,
-                    "queue_infrastructure_provision",
-                    telegram_id,
-                )
-                self.send(
-                    chat_id,
-                    "✅ Provisioning request queued. The infrastructure worker will "
-                    "re-check capacity, budget and provider state before any change.",
-                    self._inline_keyboard([[('📈 Capacity', 'a:n:capacity')]]),
-                )
-                self._show_capacity(
-                    chat_id,
-                    telegram_id,
-                    message_id=message.get("message_id"),
-                )
-            except (CommerceError, ValueError, RuntimeError) as exc:
-                self.send(chat_id, str(exc) or "Provisioning request was not queued.")
-        else:
-            synthetic["text"] = target
-            self.handle(synthetic)
+    dispatch_navigation_action(
+        self,
+        query,
+        chat_id,
+        telegram_id,
+        message_id,
+        can_edit_text,
+        synthetic,
+        action,
+        entity_id,
+    )
 
 def handle_admin_fleet_callback(self, query: dict[str, Any], chat_id: int, telegram_id: int, message_id: Any, can_edit_text: bool, synthetic: dict[str, Any], action: str, entity_id: str, scope: str) -> None:
     dispatch_fleet_action(

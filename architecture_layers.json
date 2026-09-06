@@ -217,6 +217,7 @@
     "telegram_approval_commands.py": "transport",
     "telegram_callback_admin.py": "transport",
     "telegram_callback_admin_fleet.py": "transport",
+    "telegram_callback_admin_navigation.py": "transport",
     "telegram_callback_admin_orders.py": "transport",
     "telegram_callback_customer.py": "transport",
     "telegram_callback_router.py": "transport",
