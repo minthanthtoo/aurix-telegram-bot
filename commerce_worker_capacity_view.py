@@ -19,20 +19,32 @@ def build_server_capacity_view(
     health_max_age_seconds: int,
 ) -> dict[str, Any]:
     item = dict(row)
-    if registry:
-        item["connectivity"] = {
-            "endpoint_id": registry["endpoint_id"],
-            "provider_id": registry["provider_id"],
-            "provider_name": registry["provider_name"],
-            "region_id": registry["region_id"],
-            "region_name": registry["region_name"],
-            "transport_id": registry["transport_id"],
-            "protocol": registry["protocol"],
-            "transport_name": registry["transport_name"],
-            "status": registry["status"],
-            "accepts_new_keys": bool(registry["accepts_new_keys"]),
-            "updated_at": registry["updated_at"],
-        }
+    _attach_registry(item, registry)
+    _calculate_capacity(item, commitments)
+    _set_allocation_policy(item, allocation_views, tier_allocation_views)
+    _set_admission_policy(item, current=current, health_max_age_seconds=health_max_age_seconds)
+    return item
+
+
+def _attach_registry(item: dict[str, Any], registry: dict[str, Any] | None) -> None:
+    if not registry:
+        return
+    item["connectivity"] = {
+        "endpoint_id": registry["endpoint_id"],
+        "provider_id": registry["provider_id"],
+        "provider_name": registry["provider_name"],
+        "region_id": registry["region_id"],
+        "region_name": registry["region_name"],
+        "transport_id": registry["transport_id"],
+        "protocol": registry["protocol"],
+        "transport_name": registry["transport_name"],
+        "status": registry["status"],
+        "accepts_new_keys": bool(registry["accepts_new_keys"]),
+        "updated_at": registry["updated_at"],
+    }
+
+
+def _calculate_capacity(item: dict[str, Any], commitments: dict[str, Any]) -> None:
     max_keys = item.get("max_keys")
     usable = (
         None
@@ -70,6 +82,14 @@ def build_server_capacity_view(
         if usable is None or usable <= 0
         else min(100.0, (item["key_demand"] / usable) * 100.0)
     )
+
+
+def _set_allocation_policy(
+    item: dict[str, Any],
+    allocation_views: dict[str, list[dict[str, Any]]],
+    tier_allocation_views: dict[str, list[dict[str, Any]]],
+) -> None:
+    usable = item.get("saleable_key_capacity")
     item["allocations"] = allocation_views.get(str(item["server_id"]), [])
     item["tier_allocations"] = tier_allocation_views.get(str(item["server_id"]), [])
     allocation_total = sum(
@@ -97,6 +117,11 @@ def build_server_capacity_view(
         else "unconfigured"
     )
     item["allocation_policy_blockers"] = policy_blockers
+
+
+def _set_admission_policy(
+    item: dict[str, Any], *, current: datetime, health_max_age_seconds: int
+) -> None:
     admission_blockers: list[str] = []
     if not int(item.get("enabled") or 0):
         admission_blockers.append("disabled")
@@ -120,4 +145,3 @@ def build_server_capacity_view(
         admission_blockers.append("key_capacity")
     item["admission_status"] = "blocked" if admission_blockers else "eligible"
     item["admission_blockers"] = admission_blockers
-    return item
