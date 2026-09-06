@@ -170,11 +170,9 @@ def _delete_migration_source(self, job: dict[str, Any], now: datetime) -> bool:
     return True
 
 
-def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> None:
-    if str(job.get("migration_phase") or job.get("status")) == "source_delete_pending":
-        self._delete_migration_source(job, now)
-        return
-    current = (now or datetime.now(UTC)).astimezone(UTC)
+def _migration_source_state(
+    self, job: dict[str, Any], current: datetime
+) -> tuple[Any, Any, int, int]:
     try:
         expires_at = datetime.fromisoformat(str(job["expires_at"])).astimezone(UTC)
     except (TypeError, ValueError) as exc:
@@ -183,39 +181,41 @@ def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> Non
         raise CommerceError("Migration entitlement expired before replacement creation")
     source = self._outline_client(str(job["source_server_id"]))
     target = self._outline_client(str(job["target_server_id"]))
-    metrics = source.transfer_metrics()
-    used = self._metric_for_key(metrics, str(job["source_external_id"]))
+    used = self._metric_for_key(
+        source.transfer_metrics(), str(job["source_external_id"])
+    )
     if used is None:
         raise CommerceError("Fresh source usage is unavailable; migration is safely deferred")
     quota = int(job["quota_bytes"] or 0)
     remaining = quota - used
     if remaining <= 0:
         raise CommerceError("Source credential has no remaining quota")
-    target_key = self._create_migration_key(
-        target,
-        str(job["target_external_id"]),
-        str(job["target_name"]),
-        remaining,
-    )
-    target_id = str(target_key.get("id") or "")
-    access_url = str(target_key.get("accessUrl") or "")
-    if not target_id or not access_url:
-        raise CommerceError("Replacement Outline key response lacks id or accessUrl")
-    target.set_data_limit(target_id, remaining)
-    encrypted = self._encrypt_access_url(access_url)
+    return source, target, used, remaining
+
+
+def _persist_migration_cutover(
+    self,
+    job: dict[str, Any],
+    current: datetime,
+    *,
+    target_id: str,
+    encrypted: str,
+    used: int,
+    remaining: int,
+) -> tuple[bool, str | None]:
     now_text = _now_text(current)
     with self.database.connect() as connection:
         self.database.begin_write(connection)
         current_job = EndpointMigrationRepository.current_state(
-            connection,
-            job_id=str(job["id"]),
+            connection, job_id=str(job["id"])
         )
-        if current_job is None or str(current_job["status"]) != "creating" or int(current_job["attempts"]) != int(job["attempts"]):
-            return
+        if current_job is None or str(current_job["status"]) != "creating" or int(
+            current_job["attempts"]
+        ) != int(job["attempts"]):
+            return False, None
         kind = str(job["profile_kind"])
         profile_row = EndpointMigrationRepository.profile_subscription(
-            connection,
-            profile_id=str(job["profile_id"]),
+            connection, profile_id=str(job["profile_id"])
         )
         subscription_id = profile_row["subscription_id"] if profile_row else None
         if kind == "paid":
@@ -230,8 +230,6 @@ def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> Non
                 source_external_id=str(job["source_external_id"]),
             )
             if int(getattr(changed, "rowcount", 0) or 0) != 1:
-                # Older deployments may not use profile_id as the
-                # subscription id; resolve it through the registry row.
                 changed = EndpointMigrationRepository.move_paid_key(
                     connection,
                     target_server_id=str(job["target_server_id"]),
@@ -311,6 +309,38 @@ def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> Non
             updated_at=now_text,
             job_id=str(job["id"]),
         )
+    return True, str(subscription_id) if subscription_id else None
+
+
+def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> None:
+    if str(job.get("migration_phase") or job.get("status")) == "source_delete_pending":
+        self._delete_migration_source(job, now)
+        return
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    source, target, used, remaining = _migration_source_state(self, job, current)
+    target_key = self._create_migration_key(
+        target,
+        str(job["target_external_id"]),
+        str(job["target_name"]),
+        remaining,
+    )
+    target_id = str(target_key.get("id") or "")
+    access_url = str(target_key.get("accessUrl") or "")
+    if not target_id or not access_url:
+        raise CommerceError("Replacement Outline key response lacks id or accessUrl")
+    target.set_data_limit(target_id, remaining)
+    encrypted = self._encrypt_access_url(access_url)
+    persisted, subscription_id = _persist_migration_cutover(
+        self,
+        job,
+        current,
+        target_id=target_id,
+        encrypted=encrypted,
+        used=used,
+        remaining=remaining,
+    )
+    if not persisted:
+        return
     self._delete_migration_source({**job, "target_external_id": target_id}, current)
     try:
         self._sync_identity_binding(
@@ -320,11 +350,10 @@ def _process_endpoint_migration(self, job: dict[str, Any], now: datetime) -> Non
             expires_at=str(job["expires_at"]),
             server_id=str(job["target_server_id"]),
             external_id=target_id,
-            subscription_id=str(subscription_id) if subscription_id else None,
+            subscription_id=subscription_id,
         )
     except Exception as exc:
         print(f"identity migration sync error: {type(exc).__name__}", file=sys.stderr)
-
 
 def process_endpoint_migrations(self, now: datetime | None = None, max_jobs: int = 5) -> int:
     """Run bounded replacement-key migrations after durable owner intent."""
