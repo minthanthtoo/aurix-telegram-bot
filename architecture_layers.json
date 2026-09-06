@@ -83,6 +83,7 @@
     "commerce_service_wallet_approval.py": "application",
     "commerce_service_wallet_approval_flow.py": "application",
     "commerce_service_wallet_approval_stages.py": "application",
+    "commerce_service_wallet_paid_approval.py": "application",
     "commerce_service_wallet_payment.py": "application",
     "commerce_service_wallet_read.py": "application",
     "commerce_service_wallet_refunds.py": "application",
