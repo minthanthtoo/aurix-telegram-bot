@@ -135,6 +135,7 @@
     "entitlement_giveaway_campaign.py": "application",
     "entitlement_giveaway_claim.py": "application",
     "entitlement_giveaway_reservation.py": "application",
+    "entitlement_giveaway_reservation_steps.py": "application",
     "entitlement_giveaway_repository.py": "persistence",
     "entitlement_giveaways.py": "application",
     "entitlement_models.py": "domain",
