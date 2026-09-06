@@ -5,6 +5,13 @@ from __future__ import annotations
 import secrets
 
 from identity_entitlements_repository import IdentityEntitlementsRepository
+from identity_entitlements_sync_steps import (
+    build_credential_indexes,
+    sync_active_free_key_leases,
+    sync_free_keys,
+    sync_paid_key_leases,
+    sync_subscriptions,
+)
 from identity_support import IdentityError, _now_text, _parse_time
 
 
@@ -96,128 +103,37 @@ class IdentityEntitlementsMixin:
         subscriptions = inputs["subscriptions"]
         paid_keys = inputs["paid_keys"]
         keys = inputs["keys"]
-        entitlements_by_subscription: dict[str, str] = {}
-        subscription_expiry: dict[str, str] = {}
-        subscription_status: dict[str, str] = {}
-        for row in subscriptions:
-            status = str(row["status"])
-            try:
-                if status == "active" and _parse_time(str(row["expires_at"])) <= current_time:
-                    status = "expired"
-            except (TypeError, ValueError, OverflowError):
-                status = "expired"
-            entitlement_id = self.ensure_subscription_entitlement(
-                int(row["telegram_id"]), str(row["id"]), kind="paid",
-                quota_bytes=int(row["quota_bytes"]), expires_at=str(row["expires_at"]),
-                status=status, now=timestamp,
+        entitlements_by_subscription, subscription_expiry, subscription_status = (
+            sync_subscriptions(
+                self, subscriptions, current_time=current_time, timestamp=timestamp
             )
-            entitlements_by_subscription[str(row["id"])] = entitlement_id
-            subscription_expiry[str(row["id"])] = str(row["expires_at"])
-            subscription_status[str(row["id"])] = status
-        kind_map = {"daily_free": "free", "monthly_trial": "trial", "paid": "paid"}
-        entitlements_by_key: dict[tuple[str, str], str] = {}
-        for row in keys:
-            kind = "promo" if row["campaign_code"] else kind_map.get(str(row["key_type"]), "free")
-            if kind == "paid":
-                continue
-            entitlement_id = self.ensure_key_entitlement(
-                int(row["telegram_id"]), server_id=str(row["server_id"]),
-                local_key_ref=str(row["id"]), kind=kind,
-                quota_bytes=int(row["data_limit_bytes"]), expires_at=str(row["expires_at"]),
-                status=(
-                    "active"
-                    if str(row["status"]) == "active"
-                    and _parse_time(str(row["expires_at"])) > current_time
-                    else "expired"
-                ),
-                now=timestamp,
-            )
-            entitlements_by_key[(str(row["server_id"]), str(row["outline_key_id"]))] = entitlement_id
-        generations = 0
-        leases = 0
-        # Registry rows are already rebuilt during CommerceService startup.
-        # This pass only connects those durable credentials to the additive
-        # identity model, so restart/backfill is safe and does not issue keys.
-        credential_rows = inputs["credentials"]
-        server_endpoints = {
-            str(row["outline_server_id"]): str(row["endpoint_id"])
-            for row in inputs["endpoints"]
-        }
-        credentials_by_key = {
-            (str(row["endpoint_id"]), str(row["external_id"])): dict(row)
-            for row in credential_rows
-        }
-        for row in paid_keys:
-            entitlement_id = entitlements_by_subscription.get(str(row["subscription_id"]))
-            endpoint_id = server_endpoints.get(str(row["server_id"]))
-            credential = (
-                credentials_by_key.get((endpoint_id, str(row["outline_key_id"])))
-                if endpoint_id
-                else None
-            )
-            if (
-                not entitlement_id
-                or credential is None
-                or str(row["status"]) != "active"
-                or subscription_status.get(str(row["subscription_id"])) != "active"
-            ):
-                continue
-            generation_id = self.ensure_generation_for_credential(
-                entitlement_id,
-                str(credential["endpoint_id"]),
-                credential_id=str(credential["credential_id"]),
-                now=timestamp,
-            )
-            generations += 1
-            if self._active_lease_for_generation(generation_id) is None:
-                self.ensure_generation_lease(
-                    entitlement_id,
-                    generation_id,
-                    str(credential["endpoint_id"]),
-                    int(row["quota_bytes"]),
-                    subscription_expiry[str(row["subscription_id"])],
-                    now=timestamp,
-                )
-                leases += 1
-        for row in keys:
-            if str(row["status"]) != "active":
-                continue
-            try:
-                if _parse_time(str(row["expires_at"])) <= current_time:
-                    continue
-            except (TypeError, ValueError, OverflowError):
-                continue
-            entitlement_id = entitlements_by_key.get(
-                (str(row["server_id"]), str(row["outline_key_id"]))
-            )
-            endpoint_id = server_endpoints.get(str(row["server_id"]))
-            credential = (
-                credentials_by_key.get((endpoint_id, str(row["outline_key_id"])))
-                if endpoint_id
-                else None
-            )
-            if not entitlement_id or credential is None:
-                continue
-            generation_id = self.ensure_generation_for_credential(
-                entitlement_id,
-                str(credential["endpoint_id"]),
-                credential_id=str(credential["credential_id"]),
-                now=timestamp,
-            )
-            generations += 1
-            if self._active_lease_for_generation(generation_id) is None:
-                self.ensure_generation_lease(
-                    entitlement_id,
-                    generation_id,
-                    str(credential["endpoint_id"]),
-                    int(row["data_limit_bytes"]),
-                    str(row["expires_at"]),
-                    now=timestamp,
-                )
-                leases += 1
+        )
+        entitlements_by_key = sync_free_keys(
+            self, keys, current_time=current_time, timestamp=timestamp
+        )
+        server_endpoints, credentials_by_key = build_credential_indexes(inputs)
+        paid_generations, paid_leases = sync_paid_key_leases(
+            self,
+            paid_keys,
+            entitlements_by_subscription=entitlements_by_subscription,
+            subscription_expiry=subscription_expiry,
+            subscription_status=subscription_status,
+            server_endpoints=server_endpoints,
+            credentials_by_key=credentials_by_key,
+            timestamp=timestamp,
+        )
+        free_generations, free_leases = sync_active_free_key_leases(
+            self,
+            keys,
+            entitlements_by_key=entitlements_by_key,
+            server_endpoints=server_endpoints,
+            credentials_by_key=credentials_by_key,
+            current_time=current_time,
+            timestamp=timestamp,
+        )
         return {
             "subscriptions": len(subscriptions),
             "free_keys": len(keys),
-            "generations": generations,
-            "leases": leases,
+            "generations": paid_generations + free_generations,
+            "leases": paid_leases + free_leases,
         }

@@ -161,6 +161,7 @@
     "identity_accounts_repository.py": "persistence",
     "identity_core.py": "application",
     "identity_entitlements.py": "application",
+    "identity_entitlements_sync_steps.py": "application",
     "identity_entitlements_repository.py": "persistence",
     "identity_generations.py": "application",
     "identity_generations_repository.py": "persistence",
