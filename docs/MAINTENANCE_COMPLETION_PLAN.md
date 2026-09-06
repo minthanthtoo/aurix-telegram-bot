@@ -1,7 +1,7 @@
 # Maintenance completion plan
 
 Status: active implementation candidate; final gates remain open.
-Reviewed baseline: `dfd7cc3` on `codex/monolith-reduction-prep`, 2026-09-06.
+Reviewed baseline: `0a4dfa5` on `codex/monolith-reduction-prep`, 2026-09-06.
 Working checkout: `/Users/min/projects/tg-AuriX-bot-monolith-prep`.
 
 This plan is the current completion proposal following the architecture review.
@@ -15,11 +15,11 @@ change here is not evidence that either has been updated or deployed.
 Measured on the current candidate after the latest extractions and the baseline
 ratchet:
 
-- 239 recursively inventoried production sources; architecture guard passes with
+- 264 recursively inventoried production sources; architecture guard passes with
   zero violations and zero application/worker/transport SQL calls.
 - 539 tests pass; 7 live-PostgreSQL checks are skipped because no live PostgreSQL
   service is configured in this checkout.
-- Coverage runs over every owned production source: 20,314 statements, 69%
+- Coverage runs over every owned production source: 20,691 statements, 70%
   branch coverage, above the configured 60% floor; the coverage-scope guard
   passes.
 - The full suite and coverage run use `/Volumes/MacHomeVenvs` for temporary and
@@ -39,8 +39,8 @@ remain open.
 
 | Gate | Current status | Evidence or remaining work |
 |---|---|---|
-| G01 inventory | verified locally | 239 production sources, explicit layer manifest, current SHA recorded |
-| G02 architecture/coverage | verified locally | recursive guard, zero violations, coverage-scope check, 69% full-source coverage |
+| G01 inventory | verified locally | 264 production sources, explicit layer manifest, current SHA recorded |
+| G02 architecture/coverage | verified locally | recursive guard, zero violations, coverage-scope check, 70% full-source coverage |
 | G03 contracts/database verification | in progress | SQLite and adapter contracts pass; 7 PostgreSQL checks remain skipped without a live service |
 | G04 endpoint persistence | verified locally | service/worker endpoint migration paths report zero direct SQL calls |
 | G05 worker independence | verified locally for current facades | explicit service/worker APIs and no worker-to-service fallback; handler dependency narrowing continues |
@@ -89,9 +89,9 @@ the candidate-level measurement after implementation work.
 | Remaining compatibility forwarding is explicit debt | Four forwarders remain: PostgreSQL database attribute access, Telegram component get/set forwarding, and Telegram transport forwarding | Replace each with a named adapter/presenter contract or document its bounded external-compatibility consumer |
 | Endpoint migration persistence is extracted | `commerce_service_inventory_migration.py` and `commerce_worker_migrations.py` call repositories; the AST guard reports zero application/worker SQL | Preserve repository contract coverage and complete semantic SQL/data-flow review |
 | Schema compatibility is versioned | `commerce_schema_bootstrap.py` is 63 lines; `commerce_schema_compatibility_migrations.py` owns legacy columns/backfills/indexes | Continue fresh/upgrade/retry coverage on both backends |
-| Architecture guard is recursive and classified | 239 owned sources are inventoried and the guard reports zero violations | Add negative fixtures and ratchet module/complexity policy as package moves proceed |
+| Architecture guard is recursive and classified | 264 owned sources are inventoried and the guard reports zero violations | Add negative fixtures and ratchet module/complexity policy as package moves proceed |
 | SQL guard is clean by layer | Current AST report finds zero application/worker SQL calls | Keep the semantic audit separate from the AST metric; repository ownership remains the invariant |
-| Coverage gate runs in CI and locally | CI executes coverage plus `check_coverage_scope.py`; current local report is 69% over all 239 sources | Raise changed-workflow coverage and branch targets incrementally rather than hiding untested modules |
+| Coverage gate runs in CI and locally | CI executes coverage plus `check_coverage_scope.py`; current local report is 70% over all 264 sources | Raise changed-workflow coverage and branch targets incrementally rather than hiding untested modules |
 | Coverage denominator includes extracted workflows | Usage recording, receipt intake, provisioning, failover, admin snapshots, and facades are included | Add direct contract tests for remaining low-coverage Telegram/operations paths |
 | Lint policy is deliberately narrow | Ruff selects `E9`, `F63`, `F7`, `F82` | Passing Ruff is limited evidence; expand checks incrementally |
 | PostgreSQL checks include recording fakes | `FakeRawPostgresConnection` records statements in `test_commerce.py` | Add execution and concurrency contracts against a real disposable PostgreSQL instance |
@@ -116,7 +116,7 @@ Completed and materially reduced in this checkpoint:
 | Telegram callback router | 133 | 52 | validation, navigation, and scoped dispatch separated |
 | Telegram command context | 141 | 58 | customer, receipt, admin-add, and menu state steps separated |
 | Approval/operations/staff/onboarding routers | 157/150/141/142 | 17 each | command families use focused handlers |
-| Managed key repair | 188 | 85 | eligibility, usage observation, and persistence separated |
+| Managed key repair | 188 | 55 | request, observation, decision, persistence, and notification phases separated |
 | Endpoint migration worker | 154 | 42 | source state, cutover persistence, and cleanup separated |
 | Endpoint migration request | 142 | 51 | validation, context, idempotency, and intent persistence separated |
 | Fleet enrollment renderer | 175 | 51 | validation, registration client, and shell assembly separated |
@@ -124,8 +124,22 @@ Completed and materially reduced in this checkpoint:
 | Usage crediting | 141 | 80 | lease preparation separated from sample/ledger persistence |
 | Environment settings | 141 | 60 | required, Outline, service, probe, access, and maintenance parsing separated |
 | Admin preview formatter | 142 | 23 | command-specific pure presenters extracted |
-| Receipt intake | 177 | 132 | duplicate/evidence phases extracted; coordinator still needs final reduction |
+| Receipt intake | 177 | 80 | validation, evidence, storage, and finalization phases separated |
 | Capacity text | 149 | facade | pure capacity view extracted; compatibility wrapper retained |
+| Giveaway reservation | 159 | 59 | eligibility, capacity, reservation, and result phases separated |
+| Identity entitlement sync | 134 | 43 | subscription, free-key, index, and lease sync phases separated |
+| Connectivity registry sync | 133 | 76 | provider, endpoint, route, and audit reconciliation separated |
+| Receipt candidate rules | 132 | 30 | completion, provider, amount, identity, time, and verdict rules separated |
+| Maintenance pass | 123 | 58 | staged maintenance and bounded error reporting separated |
+| Usage epoch resolution | 122 | 87 | initial, stale, reset, and monotonic epoch phases separated |
+| Customer VPN dashboard | 104 | 30 | dashboard data assembly separated from transport rendering |
+| Entitlement allocation | 105 | 44 | candidate filtering and route-decision persistence separated |
+| Promo administration | 105 | 17 | status, configure, and state mutation phases separated |
+| Paid provisioning | 102 | 63 | lifecycle gates, idempotent existing handling, and remote commit separated |
+| Paid-order approval | 100 | 53 | subscription terms, funding, capture, and provisioning phases separated |
+| Receipt submission | 99 | 66 | intake and storage finalization separated |
+| Endpoint health | 100 | 58 | health hysteresis and observation persistence separated |
+| Usage crediting | 96 | 80 | lease consumption and sample/ledger persistence separated |
 
 Remaining review triggers from the current architecture report:
 
@@ -133,27 +147,30 @@ Remaining review triggers from the current architecture report:
 |---|---|---:|---|
 | `deploy/digitalocean_preflight.py` | `_validate_configuration` | 315 | split provider validation into typed checks and a compact report |
 | `deploy/render_preflight.py` | `main` | 261 | separate argument parsing, config validation, and render checks |
-| `entitlement_giveaway_reservation.py` | `reserve_giveaway` | 140 | isolate eligibility, reservation, and result mapping |
-| `identity_entitlements.py` | `sync_existing_entitlements` | 134 | split entitlement discovery, reconciliation, and lease sync |
-| `connectivity_registry.py` | `sync_outline_endpoint` | 133 | split endpoint observation, registry reconciliation, and audit |
-| `receipt_rules.py` | `evaluate_receipt_candidate` | 132 | group provider, amount, identity, time, and verdict rules |
-| `commerce_service_repairs.py` | `_enqueue_managed_key_repair` | 132 | isolate request validation, idempotency, and durable enqueue |
-| `commerce_receipt_submission_intake.py` | `prepare_receipt_submission` | 132 | reduce the remaining transaction coordinator without moving ownership |
-| `telegram_maintenance.py` | `_run_maintenance_pass` | 123 | split maintenance stages and bounded error reporting |
-| `identity_usage_recording_workflow.py` | `resolve_usage_epoch` | 122 | separate epoch classification from persistence preparation |
-| `telegram_transport_customer_vpn.py` | `_send_paid_key_detail` | 121 | split query, view model, and delivery |
-| `commerce_inventory_reconciliation_workflow.py` | `reconcile_observed_inventory` | 121 | split observation normalization from reconciliation decisions |
+| `fleet_probe_api.py` | `create_probe_wsgi_app` | 103 | separate request parsing, authentication, and response assembly |
+| `commerce_wallet_read_repository.py` | `consistency_report` | 102 | split wallet read aggregation from consistency classification |
+| `identity_usage_crediting_steps.py` | `persist_usage_credit` | 97 | split sample, ledger, and exhaustion persistence if it grows |
+| `infrastructure_provisioning.py` | `execute_provision` | 97 | separate intent loading, provider execution, and completion persistence |
+| `telegram_vpn_view.py` | `_entry_block` | 94 | split entry normalization from rendering if the view gains more states |
+| `commerce_worker_repairs.py` | `_persist_managed_repair` | 93 | separate repair persistence from notification/audit fan-out |
+| `telegram_admin_confirmation.py` | `intercept_admin_confirmation` | 93 | separate token validation, command reconstruction, and dispatch |
+| `telegram_transport_customer_vpn.py` | `_send_paid_key_list` | 91 | split paid-key query, view model, and delivery |
+| `commerce_service_allocation.py` | `_select_server_for_plan` | 90 | isolate candidate policy from capacity selection |
+| `telegram_transport_admin.py` | `_configure_commands_locked` | 90 | split command registration groups and synchronization |
 
 The two deploy functions are included because they are executable production
 entry points, even though they are outside the application/worker SQL guard.
 Every remaining exception needs an owner, invariant, tests, and a ratchet trigger.
 
 Completed reductions are now separate from the open inventory: identity usage is
-split into epoch, credit, and lease-accounting modules; receipt submission has a
-transactional intake module; provisioning and route failover have explicit step
-modules; giveaway claims reserve before execution; admin snapshots are grouped by
-command family; capacity projection is pure; and legacy schema compatibility is
-owned by a versioned migration component.
+split into epoch, credit, and lease-accounting modules; receipt submission has
+transactional intake and storage-finalization modules; paid provisioning and
+approval have explicit lifecycle/settlement steps; endpoint health and route
+failover have explicit observation phases; giveaway claims reserve before
+execution; admin navigation and promo commands are grouped by action family;
+customer VPN dashboard data is separate from transport rendering; entitlement
+allocation is split into candidate and decision phases; capacity projection is
+pure; and legacy schema compatibility is owned by a versioned migration component.
 
 ## 3. Target architecture and rules
 
