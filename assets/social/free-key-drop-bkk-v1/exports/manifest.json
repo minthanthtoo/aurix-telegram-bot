@@ -1,0 +1,22 @@
+{
+  "campaign": "aurix-bkk-key-drop",
+  "stamp": "20260907-050529",
+  "format": "1080x1350 PNG + TXT + SVG",
+  "recommended_order": [
+    "bkk-key-drop"
+  ],
+  "finals": [
+    {
+      "id": "bkk-key-drop",
+      "role": "reach",
+      "image": "20260907-050529_aurix-bkk-key-drop_r2.png",
+      "caption": "20260907-050529_aurix-bkk-key-drop_r2.txt",
+      "source": "20260907-050529_aurix-bkk-key-drop_r2.svg"
+    }
+  ],
+  "preview": "20260907-050529_aurix-bkk-key-drop_r2_preview.png",
+  "publication_gates": [
+    "Bangkok location user-provided. Verify five keys, unlimited quota and seven-day activation/expiry before publication.",
+    "Post actual keys with expiry information. Public checkmarks cannot prevent reuse."
+  ]
+}
