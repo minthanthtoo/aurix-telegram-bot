@@ -104,6 +104,7 @@
     "commerce_worker_migration_persistence.py": "worker",
     "commerce_worker_notifications.py": "worker",
     "commerce_worker_provisioning.py": "worker",
+    "commerce_worker_provisioning_lifecycle.py": "worker",
     "commerce_worker_provisioning_steps.py": "worker",
     "commerce_worker_repairs.py": "worker",
     "connectivity_adapters.py": "integration",
