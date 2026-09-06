@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from commerce_fleet_health_repository import FleetHealthRepository
-from commerce_models import CommerceError, _new_id, _now_text
+from commerce_models import CommerceError
 from commerce_service_fleet_lifecycle_steps import (
     assert_retirement_ready,
     persist_lifecycle_change,
     validate_lifecycle_request,
 )
-from connectivity_registry import ConnectivityRegistry
+from commerce_service_fleet_health_observation_steps import apply_health_transition
 
 
 _FLEET_HEALTH = FleetHealthRepository()
@@ -112,68 +112,16 @@ def _record_endpoint_health(
                 "failure_streak": int(current["health_failure_streak"] or 0),
                 "duplicate": True,
             }
-    success_streak = int(current["health_success_streak"] or 0)
-    failure_streak = int(current["health_failure_streak"] or 0)
-    recovery_threshold = self._health_threshold(
-        "AURIX_ENDPOINT_RECOVERY_THRESHOLD", 2
-    )
-    failure_threshold = self._health_threshold(
-        "AURIX_ENDPOINT_FAILURE_THRESHOLD", 3
-    )
-    if observed_status == "healthy":
-        success_streak += 1
-        failure_streak = 0
-        state_after = (
-            "healthy"
-            if previous in {"unknown", "healthy"}
-            or success_streak >= recovery_threshold
-            else previous
-        )
-    else:
-        failure_streak += 1
-        success_streak = 0
-        state_after = (
-            "unreachable"
-            if failure_streak >= failure_threshold
-            else "degraded"
-        )
-    changed_at = (
-        observed_at
-        if state_after != previous
-        else current["health_state_changed_at"]
-    )
-    last_error = (
-        None
-        if observed_status == "healthy" and state_after == "healthy"
-        else (str(error_type or current["last_error"] or "")[:128] or None)
-    )
-    _FLEET_HEALTH.update_health(
+    return apply_health_transition(
+        _FLEET_HEALTH,
+        self,
         connection,
         server_id=server_id,
-        state=state_after,
-        success_streak=success_streak,
-        failure_streak=failure_streak,
-        changed_at=changed_at,
-        latency_ms=latency_ms,
-        last_error=last_error,
         observed_at=observed_at,
+        observed_status=observed_status,
+        latency_ms=latency_ms,
+        remote_key_count=remote_key_count,
+        error_type=error_type,
+        current=current,
+        previous=previous,
     )
-    if self._table_exists(connection, "endpoint_health_observations"):
-        _FLEET_HEALTH.record_observation(
-            connection,
-            observation_id=_new_id(),
-            server_id=server_id,
-            observed_at=observed_at,
-            observed_status=observed_status,
-            state_before=previous,
-            state_after=state_after,
-            latency_ms=latency_ms,
-            remote_key_count=remote_key_count,
-            error_type=str(error_type or "")[:128] or None,
-        )
-    return {
-        "state": state_after,
-        "success_streak": success_streak,
-        "failure_streak": failure_streak,
-        "duplicate": False,
-    }
