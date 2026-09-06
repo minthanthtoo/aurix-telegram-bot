@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from commerce import CommerceError
+from telegram_callback_admin_fleet import dispatch_fleet_action
 
 UTC = timezone.utc
 
@@ -168,202 +169,16 @@ def handle_admin_navigation_callback(self, query: dict[str, Any], chat_id: int, 
             self.handle(synthetic)
 
 def handle_admin_fleet_callback(self, query: dict[str, Any], chat_id: int, telegram_id: int, message_id: Any, can_edit_text: bool, synthetic: dict[str, Any], action: str, entity_id: str, scope: str) -> None:
-    message = query.get("message") or {}
-    if action == "S":
-        self._show_server_allocation(
-            chat_id,
-            telegram_id,
-            entity_id,
-            message_id=message.get("message_id"),
-        )
-    elif action == "I":
-        try:
-            server_id, status, raw_page = entity_id.split(":", 2)
-            page = max(0, int(raw_page))
-        except (TypeError, ValueError):
-            self.send(chat_id, "That remote inventory view is no longer valid.")
-            return
-        self._show_remote_inventory(
-            chat_id,
-            telegram_id,
-            server_id,
-            status=status,
-            page=page,
-            message_id=message.get("message_id")
-            if can_edit_text
-            else None,
-        )
-    elif action == "G":
-        try:
-            source_server_id, mode, raw_value = entity_id.split(":", 2)
-            value = max(0, int(raw_value))
-        except (TypeError, ValueError):
-            self.send(chat_id, "That migration view is no longer valid.")
-            return
-        if mode == "p":
-            self._show_migration_candidates(
-                chat_id,
-                telegram_id,
-                source_server_id,
-                page=value,
-                message_id=message_id if can_edit_text else None,
-            )
-        elif mode == "c":
-            self._show_migration_targets(
-                chat_id,
-                telegram_id,
-                source_server_id,
-                candidate_index=value,
-                page=0,
-                message_id=message_id if can_edit_text else None,
-            )
-        else:
-            self.send(chat_id, "That migration view is no longer valid.")
-    elif action == "H":
-        if not self._is_owner(telegram_id):
-            self._send_customer_fallback(chat_id, telegram_id)
-            return
-        try:
-            source_server_id, raw_index, target_server_id, raw_page = entity_id.split("|", 3)
-            candidate_index = max(0, int(raw_index))
-            page = max(0, int(raw_page))
-            candidates = list(
-                self._admin_call(
-                    telegram_id,
-                    "migratable_credentials",
-                    source_server_id,
-                )
-                or []
-            )
-            candidate = candidates[candidate_index]
-            external_id = str(candidate.get("external_id") or "").strip()
-            if not external_id:
-                raise ValueError("credential identity missing")
-        except Exception as exc:
-            self.send(chat_id, str(exc) or "That migration target is no longer valid.")
-            return
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/migratekey",
-            [source_server_id, external_id, target_server_id],
-            "Move this active credential to the selected healthy endpoint?",
-            "🔁 Confirm Key Migration",
-            cancel_data=f"a:G:{source_server_id}:p:{page}",
-        )
-    elif action == "R":
-        if not self._is_owner(telegram_id):
-            self._send_customer_fallback(chat_id, telegram_id)
-            return
-        try:
-            server_id, key_id, next_state, raw_page = entity_id.split("|", 3)
-            page = max(0, int(raw_page))
-            if next_state not in {"unreviewed", "accepted_external"}:
-                raise ValueError
-            self._admin_owner_call(
-                telegram_id,
-                "review_remote_key",
-                server_id,
-                key_id,
-                next_state,
-                telegram_id,
-                note="owner Telegram inventory action",
-            )
-        except (CommerceError, PermissionError, ValueError) as exc:
-            self.send(chat_id, str(exc) or "Remote key review could not be saved.")
-            return
-        self._show_remote_inventory(
-            chat_id,
-            telegram_id,
-            server_id,
-            status="present",
-            page=page,
-            message_id=message_id if can_edit_text else None,
-        )
-    elif action == "C":
-        try:
-            server_id, field, raw_value = entity_id.split("|", 2)
-            value = int(raw_value)
-        except (ValueError, TypeError):
-            self.send(chat_id, "That capacity control is no longer valid.")
-            return
-        snapshot = self._admin_call(telegram_id, "capacity_snapshot")
-        server = next(
-            (
-                item
-                for item in snapshot.get("servers", [])
-                if str(item["server_id"]) == server_id
-            ),
-            None,
-        )
-        if server is None:
-            self.send(chat_id, "That Outline server is unavailable.")
-            return
-        if field in {"keys", "reserve", "traffic"}:
-            self._admin_call(
-                telegram_id,
-                "configure_server_capacity",
-                server_id,
-                telegram_id,
-                max_keys=value if field == "keys" else server.get("max_keys"),
-                reserved_keys=value
-                if field == "reserve"
-                else int(server.get("reserved_keys") or 0),
-                monthly_traffic_bytes=(
-                    value * 1_000_000_000
-                    if field == "traffic"
-                    else server.get("monthly_traffic_bytes")
-                ),
-            )
-        elif field in {"FREE300MB", "FREE3GB", "PROMO"}:
-            self._admin_call(
-                telegram_id,
-                "configure_tier_allocation",
-                server_id,
-                field,
-                value,
-                telegram_id,
-            )
-        else:
-            self._admin_call(
-                telegram_id,
-                "configure_plan_allocation",
-                server_id,
-                field,
-                value,
-                telegram_id,
-            )
-        self._show_server_allocation(
-            chat_id,
-            telegram_id,
-            server_id,
-            message_id=message.get("message_id"),
-        )
-    elif action == "L":
-        if not self._is_owner(telegram_id):
-            self._send_customer_fallback(chat_id, telegram_id)
-            return
-        try:
-            server_id, requested_state = entity_id.split("|", 1)
-            requested_state = requested_state.lower()
-        except ValueError:
-            self.send(chat_id, "That endpoint lifecycle action is no longer valid.")
-            return
-        if requested_state not in {"active", "draining", "retired"} or not server_id:
-            self.send(chat_id, "That endpoint lifecycle action is no longer valid.")
-            return
-        self._queue_admin_confirmation(
-            chat_id,
-            telegram_id,
-            "/serverstate",
-            [server_id, requested_state],
-            (
-                f"Change endpoint {server_id} to {requested_state}? "
-                "This changes AuriX admission only; it never destroys a VM or key."
-            ),
-            "✅ Confirm Endpoint State",
-            cancel_data=f"a:S:{server_id}",
-        )
+    dispatch_fleet_action(
+        self,
+        query,
+        chat_id,
+        telegram_id,
+        message_id,
+        can_edit_text,
+        action,
+        entity_id,
+    )
 
 def handle_admin_receipt_callback(self, query: dict[str, Any], chat_id: int, telegram_id: int, message_id: Any, can_edit_text: bool, synthetic: dict[str, Any], action: str, entity_id: str, scope: str) -> None:
     message = query.get("message") or {}
