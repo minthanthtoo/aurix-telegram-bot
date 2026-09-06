@@ -100,6 +100,7 @@
     "commerce_worker_job_operations.py": "worker",
     "commerce_worker_lifecycle.py": "worker",
     "commerce_worker_migrations.py": "worker",
+    "commerce_worker_migration_persistence.py": "worker",
     "commerce_worker_notifications.py": "worker",
     "commerce_worker_provisioning.py": "worker",
     "commerce_worker_provisioning_steps.py": "worker",
