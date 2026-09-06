@@ -65,18 +65,36 @@ def capacity_snapshot(
     strict_allocations = os.environ.get(
         "AURIX_FLEET_STRICT_ALLOCATION_VALIDATION", ""
     ).strip().lower() in {"1", "true", "yes", "on"}
-    servers = [
-        build_server_capacity_view(
-            self,
-            _CAPACITY_SNAPSHOTS,
-            row,
-            current=current,
-            registry=registry_by_server.get(str(row["server_id"])),
-            allocation_views=allocation_views,
-            tier_allocation_views=tier_allocation_views,
+    try:
+        health_max_age_seconds = max(
+            30,
+            int(os.environ.get("AURIX_SERVER_HEALTH_MAX_AGE_SECONDS", "900")),
         )
-        for row in server_rows
-    ]
+    except (TypeError, ValueError):
+        health_max_age_seconds = 900
+    servers = []
+    for row in server_rows:
+        with self.database.connect() as connection:
+            commitments = _CAPACITY_SNAPSHOTS.server_commitments(
+                connection,
+                server_id=str(row["server_id"]),
+                current_time=_now_text(current),
+                include_free_keys=self._table_exists(connection, "keys"),
+                include_free_intents=self._table_exists(
+                    connection, "free_provisioning_intents"
+                ),
+            )
+        servers.append(
+            build_server_capacity_view(
+                row,
+                commitments,
+                current=current,
+                registry=registry_by_server.get(str(row["server_id"])),
+                allocation_views=allocation_views,
+                tier_allocation_views=tier_allocation_views,
+                health_max_age_seconds=health_max_age_seconds,
+            )
+        )
     outline_version = "multi" if len(servers) > 1 else "unknown"
     if not servers:
         try:

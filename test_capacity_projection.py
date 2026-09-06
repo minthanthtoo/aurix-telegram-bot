@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 
 from commerce_capacity_projection import (
     allocations_by_server,
@@ -6,6 +7,7 @@ from commerce_capacity_projection import (
     tier_allocations_by_server,
     usage_rows,
 )
+from commerce_worker_capacity_view import build_server_capacity_view
 
 
 class CapacityProjectionTest(unittest.TestCase):
@@ -40,6 +42,41 @@ class CapacityProjectionTest(unittest.TestCase):
         )
         self.assertEqual(projected["sg-a"][0]["active_count"], 1)
         self.assertEqual(projected["sg-a"][0]["remaining_slots"], 2)
+
+    def test_server_view_is_pure_over_row_and_commitment_data(self):
+        row = {
+            "server_id": "sg-a",
+            "max_keys": 10,
+            "reserved_keys": 2,
+            "remote_key_count": 3,
+            "remote_orphan_key_count": 0,
+            "enabled": 1,
+            "lifecycle_state": "active",
+            "health_status": "healthy",
+            "last_synced_at": "2026-08-27T03:00:00+00:00",
+            "monthly_traffic_bytes": 1000,
+        }
+        commitments = {
+            "reserved_order_count": 1,
+            "pending_key_count": 1,
+            "committed_traffic_bytes": 100,
+            "active_free_key_count": 0,
+            "active_paid_key_count": 1,
+            "open_order_count": 0,
+            "pending_provisioning_count": 0,
+        }
+        result = build_server_capacity_view(
+            row,
+            commitments,
+            current=datetime(2026, 8, 27, 3, 7, tzinfo=timezone.utc),
+            registry=None,
+            allocation_views={},
+            tier_allocation_views={},
+            health_max_age_seconds=900,
+        )
+        self.assertEqual(result["remaining_key_slots"], 3)
+        self.assertEqual(result["remaining_traffic_bytes"], 900)
+        self.assertEqual(result["admission_status"], "eligible")
 
 
 if __name__ == "__main__":

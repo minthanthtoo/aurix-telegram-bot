@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta
 from typing import Any
 
-from commerce_models import UTC, _now_text
+from commerce_models import UTC
 
 
 def build_server_capacity_view(
-    service: Any,
-    repository: Any,
     row: Any,
+    commitments: dict[str, Any],
     *,
     current: datetime,
     registry: dict[str, Any] | None,
     allocation_views: dict[str, list[dict[str, Any]]],
     tier_allocation_views: dict[str, list[dict[str, Any]]],
+    health_max_age_seconds: int,
 ) -> dict[str, Any]:
     item = dict(row)
     if registry:
@@ -41,16 +40,6 @@ def build_server_capacity_view(
         else max(0, int(max_keys) - int(item.get("reserved_keys") or 0))
     )
     remote = int(item.get("remote_key_count") or 0)
-    with service.database.connect() as connection:
-        commitments = repository.server_commitments(
-            connection,
-            server_id=str(item["server_id"]),
-            current_time=_now_text(current),
-            include_free_keys=service._table_exists(connection, "keys"),
-            include_free_intents=service._table_exists(
-                connection, "free_provisioning_intents"
-            ),
-        )
     item.update(commitments)
     reserved_orders = commitments["reserved_order_count"]
     pending_keys = commitments["pending_key_count"]
@@ -123,11 +112,7 @@ def build_server_capacity_view(
     else:
         try:
             synced_at = datetime.fromisoformat(str(item["last_synced_at"])).astimezone(UTC)
-            age_limit = max(
-                30,
-                int(os.environ.get("AURIX_SERVER_HEALTH_MAX_AGE_SECONDS", "900")),
-            )
-            if current - synced_at > timedelta(seconds=age_limit):
+            if current - synced_at > timedelta(seconds=health_max_age_seconds):
                 admission_blockers.append("stale_inventory")
         except (TypeError, ValueError, OverflowError):
             admission_blockers.append("invalid_inventory_time")

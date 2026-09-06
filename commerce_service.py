@@ -7,8 +7,8 @@ from typing import Any
 
 from cryptography.fernet import Fernet
 
-from commerce_service_dispatch import SERVICE_IMPLEMENTATIONS, STATIC_SERVICE_IMPLEMENTATIONS
-from commerce_service_contracts import bind_service_implementations
+from commerce_service_api import CommerceServiceApi
+from commerce_service_dispatch import SERVICE_IMPLEMENTATIONS
 from commerce_service_support import LOCAL_PAYMENT_METHODS
 from commerce_worker_coordinator import CommerceWorker, CommerceWorkerDependencies
 from connectivity_adapters import ConnectivityAdapterRegistry
@@ -33,7 +33,7 @@ from notification_outbox import NotificationOutbox
 from notification_worker import NotificationWorker
 
 
-class CommerceService:
+class CommerceService(CommerceServiceApi):
     """Stable application-service facade over responsibility-owned use cases."""
 
     inventory_reconciliation = InventoryReconciliationRepository()
@@ -72,21 +72,10 @@ class CommerceService:
             self.access_url_cipher = Fernet(access_url_key)
         except (TypeError, ValueError) as exc:
             raise ValueError("AURIX_ACCESS_URL_KEY must be a Fernet key") from exc
-        bind_service_implementations(self, SERVICE_IMPLEMENTATIONS, STATIC_SERVICE_IMPLEMENTATIONS)
         self.worker: CommerceWorkerPort = CommerceWorker(CommerceWorkerDependencies.from_service(self), NotificationWorker(NotificationOutbox(database), self._decrypt_access_url))
 
-    @staticmethod
-    def _implementation(name: str) -> Any:
-        try:
-            return SERVICE_IMPLEMENTATIONS[name]
-        except KeyError as exc:
-            raise AttributeError(name) from exc
-
-    def _call(self, name: str, *args: Any, **kwargs: Any) -> Any:
-        return self._implementation(name)(self, *args, **kwargs)
-
     def initialize(self) -> None:
-        self._call("initialize")
+        SERVICE_IMPLEMENTATIONS["initialize"](self)
 
     def process_jobs(self, now: datetime | None = None, max_jobs: int = 10) -> int:
         return self.worker.process_jobs(now, max_jobs)

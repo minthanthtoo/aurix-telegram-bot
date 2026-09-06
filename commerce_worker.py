@@ -5,30 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from commerce_worker_dispatch import (
-    STATIC_WORKER_IMPLEMENTATIONS,
-    WORKER_IMPLEMENTATIONS,
-)
+from commerce_worker_api import CommerceWorkerApi
+from commerce_worker_dispatch import WORKER_IMPLEMENTATIONS
 
 
-class CommerceWorkerMixin:
+class CommerceWorkerMixin(CommerceWorkerApi):
     """Preserve the historical mixin API for integrations during migration."""
-
-    @staticmethod
-    def _implementation(name: str) -> Any:
-        try:
-            return WORKER_IMPLEMENTATIONS[name]
-        except KeyError as exc:
-            raise AttributeError(name) from exc
-
-    def _call(self, name: str, *args: Any, **kwargs: Any) -> Any:
-        return self._implementation(name)(self, *args, **kwargs)
-
-    def __getattr__(self, name: str) -> Any:
-        implementation = self._implementation(name)
-        if name in STATIC_WORKER_IMPLEMENTATIONS:
-            return implementation
-        return implementation.__get__(self, type(self))
 
     @staticmethod
     def _managed_repair_max_attempts() -> int:
@@ -51,42 +33,42 @@ class CommerceWorkerMixin:
         return WORKER_IMPLEMENTATIONS["_scale_observation_interval_seconds"]()
 
     def process_jobs(self, now: datetime | None = None, max_jobs: int = 10) -> int:
-        return self._call("process_jobs", now, max_jobs)
+        return WORKER_IMPLEMENTATIONS["process_jobs"](self, now, max_jobs)
 
     def expire_and_process(self, now: datetime | None = None) -> int:
-        return self._call("expire_and_process", now)
+        return WORKER_IMPLEMENTATIONS["expire_and_process"](self, now)
 
     def enforce_quotas(
         self,
         now: datetime | None = None,
         metrics: dict[str, Any] | None = None,
     ) -> int:
-        return self._call("enforce_quotas", now, metrics)
+        return WORKER_IMPLEMENTATIONS["enforce_quotas"](self, now, metrics)
 
     def queue_quota_warnings(
         self,
         now: datetime | None = None,
         metrics: dict[str, Any] | None = None,
     ) -> int:
-        return self._call("queue_quota_warnings", now, metrics)
+        return WORKER_IMPLEMENTATIONS["queue_quota_warnings"](self, now, metrics)
 
     def process_managed_key_repairs(
         self, now: datetime | None = None, max_jobs: int = 5
     ) -> int:
-        return self._call("process_managed_key_repairs", now, max_jobs)
+        return WORKER_IMPLEMENTATIONS["process_managed_key_repairs"](self, now, max_jobs)
 
     def process_endpoint_migrations(
         self, now: datetime | None = None, max_jobs: int = 5
     ) -> int:
-        return self._call("process_endpoint_migrations", now, max_jobs)
+        return WORKER_IMPLEMENTATIONS["process_endpoint_migrations"](self, now, max_jobs)
 
     def failed_jobs(
         self, limit: int = 20, include_nonterminal: bool = False
     ) -> list[dict[str, Any]]:
-        return self._call("failed_jobs", limit, include_nonterminal)
+        return WORKER_IMPLEMENTATIONS["failed_jobs"](self, limit, include_nonterminal)
 
     def retry_job(self, job_id: str, admin_id: int, now: datetime | None = None) -> str:
-        return self._call("retry_job", job_id, admin_id, now)
+        return WORKER_IMPLEMENTATIONS["retry_job"](self, job_id, admin_id, now)
 
     def retry_failed_job(
         self,
@@ -95,17 +77,17 @@ class CommerceWorkerMixin:
         now: datetime | None = None,
         operation: str | None = None,
     ) -> str:
-        return self._call("retry_failed_job", order_id, admin_id, now, operation)
+        return WORKER_IMPLEMENTATIONS["retry_failed_job"](self, order_id, admin_id, now, operation)
 
     def capacity_snapshot(
         self, now: datetime | None = None, *, refresh_inventory: bool = True
     ) -> dict[str, Any]:
-        return self._call("capacity_snapshot", now, refresh_inventory=refresh_inventory)
+        return WORKER_IMPLEMENTATIONS["capacity_snapshot"](self, now, refresh_inventory=refresh_inventory)
 
     def pending_notifications(
         self, now: datetime | None = None, limit: int = 20
     ) -> list[dict[str, Any]]:
-        return self._call("pending_notifications", now, limit)
+        return WORKER_IMPLEMENTATIONS["pending_notifications"](self, now, limit)
 
     def claim_pending_notifications(
         self,
@@ -113,14 +95,14 @@ class CommerceWorkerMixin:
         limit: int = 20,
         lease_seconds: int = 120,
     ) -> list[dict[str, Any]]:
-        return self._call("claim_pending_notifications", now, limit, lease_seconds)
+        return WORKER_IMPLEMENTATIONS["claim_pending_notifications"](self, now, limit, lease_seconds)
 
     def mark_notification_sent(
         self, notification_id: str, now: datetime | None = None
     ) -> None:
-        self._call("mark_notification_sent", notification_id, now)
+        WORKER_IMPLEMENTATIONS["mark_notification_sent"](self, notification_id, now)
 
     def mark_notification_failed(
         self, notification_id: str, now: datetime | None = None
     ) -> None:
-        self._call("mark_notification_failed", notification_id, now)
+        WORKER_IMPLEMENTATIONS["mark_notification_failed"](self, notification_id, now)

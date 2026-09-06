@@ -16,12 +16,14 @@ import commerce_migrations_quota
 import commerce_migrations_receipts
 import commerce_migrations_routing
 import commerce_service
+import commerce_service_api
 import commerce_service_dispatch
 import commerce_service_wallet_approval
 import commerce_service_wallet_payment
 import commerce_service_wallet_read
 import commerce_service_wallet_refunds
 import commerce_worker
+import commerce_worker_api
 import commerce_worker_coordinator
 import commerce_worker_dispatch
 import entitlements
@@ -200,11 +202,22 @@ class CompatibilityExportTest(unittest.TestCase):
             issubclass(commerce_service.CommerceService, commerce_worker.CommerceWorkerMixin)
         )
         self.assertNotIn("__getattr__", commerce_service.CommerceService.__dict__)
+        self.assertTrue(
+            issubclass(commerce_service.CommerceService, commerce_service_api.CommerceServiceApi)
+        )
+        self.assertNotIn("bind_service_implementations", inspect.getsource(commerce_service))
         self.assertNotIn("__getattr__", entitlements.ClaimService.__dict__)
         self.assertTrue(issubclass(commerce_worker_coordinator.CommerceWorker, CommerceWorkerPort))
         self.assertIn("process_jobs", commerce_worker_coordinator.CommerceWorker.__dict__)
         self.assertIn("worker", commerce_service.CommerceService.__init__.__code__.co_names)
         self.assertIn("process_jobs", commerce_worker.CommerceWorkerMixin.__dict__)
+        self.assertTrue(
+            issubclass(
+                commerce_worker_coordinator.CommerceWorker,
+                commerce_worker_api.CommerceWorkerApi,
+            )
+        )
+        self.assertNotIn("__getattr__", commerce_worker.CommerceWorkerMixin.__dict__)
         self.assertIs(
             commerce_worker_dispatch.WORKER_IMPLEMENTATIONS["process_jobs"],
             __import__("commerce_worker_lifecycle").process_jobs,
