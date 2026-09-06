@@ -259,6 +259,7 @@
     "telegram_transport_customer_vpn.py": "transport",
     "telegram_customer_vpn_detail.py": "transport",
     "telegram_transport_customer_vpn_dashboard.py": "transport",
+    "telegram_customer_vpn_dashboard_data.py": "transport",
     "telegram_vpn_view.py": "transport",
     "telegram_transport_receipts.py": "transport",
     "telegram_transport_receipt_submission.py": "transport",
