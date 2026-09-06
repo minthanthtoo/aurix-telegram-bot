@@ -1,0 +1,9 @@
+{
+ "campaign":"aurix-free-key-drop-v4",
+ "stamp":"20260907-042225",
+ "format":"1080x1350 PNG plus UTF-8 TXT and editable SVG",
+ "recommended_order":["aurix-free-key-drop-v4"],
+ "finals":[{"id":"aurix-free-key-drop-v4","role":"reach","image":"20260907-042225_aurix-free-key-drop-v4_r2.png","caption":"20260907-042225_aurix-free-key-drop-v4_r2.txt","source":"20260907-042225_aurix-free-key-drop-v4_r2.svg"}],
+ "preview":"20260907-042225_aurix-free-key-drop-v4_r2_preview.png",
+ "publication_gates":["Publish actual five keys with expiry/activation information; confirm unlimited settings.","Caption contains first-come instructions and Telegram links. Public checkmarks cannot prevent copying."]
+}
