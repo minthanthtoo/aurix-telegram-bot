@@ -1,0 +1,9 @@
+{
+  "campaign":"aurix-unlimited-week-v2",
+  "stamp":"20260907-035711",
+  "format":"1080x1350 PNG plus UTF-8 TXT and editable SVG",
+  "recommended_order":["aurix-unlimited-week-v2"],
+  "finals":[{"id":"aurix-unlimited-week-v2","role":"reach","image":"20260907-035711_aurix-unlimited-week-v2_r2.png","caption":"20260907-035711_aurix-unlimited-week-v2_r2.txt","source":"20260907-035711_aurix-unlimited-week-v2_r2.svg"}],
+  "preview":"20260907-035711_aurix-unlimited-week-v2_r2_preview.png",
+  "publication_gates":["Supply the referenced pinned terms: deadline, draw/claim timing, eligibility and activation/expiry trigger.","Verify five live unlimited-quota seven-day keys and disclose any restrictions before publication."]
+}

@@ -1,0 +1,5 @@
+{
+  "requested_model": "ag/gemini-3.8-flash-tiered(high)",
+  "returned_model": "gemini-3.8-flash-tiered",
+  "review": "Verdict: Pass. Tone natural spoken Burmese. Facts exact: 5 winners, 1 key each, 7-day unlimited VPN, no free ISP data, speed not guaranteed. Meta rules followed.\n\nIssues:\n\n1. Image tone split. Formal `မလိုပါ` clash with casual `နော်`.\nReplace:\n`ဝယ်စရာမလိုပါ • အသေးစိတ် Caption မှာ ဖတ်ပေးနော်`\nWith:\n`ဝယ်စရာမလို • အသေးစိတ် Caption မှာ ဖတ်ပေးနော်`\n\n2. Image text redundant. `၇ ရက် အဝသုံး` and `VPN Quota မကန့်သတ်ပါ` repeat same point. Waste image space.\nReplace:\n```\n၇ ရက် အဝသုံး\nVPN Quota မကန့်သတ်ပါ\n```\nWith:\n`၇ ရက် Data အဝသုံး (Quota မကန့်သတ်)`\n\n3. Caption paragraph 4 opening awkward spoken phrasing.\nReplace:\n`ဒီမှာ အဝသုံးဆိုတာ Key ရဲ့ ၇ ရက်သက်တမ်းအတွင်း VPN Quota မကန့်သတ်တာပါ။`\nWith:\n`“အဝသုံး” ဆိုတာ Key သက်တမ်း ၇ ရက်အတွင်း Quota မကန့်သတ်တာကို ပြောတာပါ။`\n\nScore: 9/10"
+}
