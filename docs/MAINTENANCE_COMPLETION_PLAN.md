@@ -122,6 +122,7 @@ Completed and materially reduced in this checkpoint:
 | Fleet enrollment renderer | 175 | 51 | validation, registration client, and shell assembly separated |
 | Receipt LLM transport | 141 | 60 | request construction and response parsing separated |
 | Usage crediting | 141 | 80 | lease preparation separated from sample/ledger persistence |
+| Environment settings | 141 | 60 | required, Outline, service, probe, access, and maintenance parsing separated |
 | Admin preview formatter | 142 | 23 | command-specific pure presenters extracted |
 | Receipt intake | 177 | 132 | duplicate/evidence phases extracted; coordinator still needs final reduction |
 | Capacity text | 149 | facade | pure capacity view extracted; compatibility wrapper retained |
@@ -132,7 +133,6 @@ Remaining review triggers from the current architecture report:
 |---|---|---:|---|
 | `deploy/digitalocean_preflight.py` | `_validate_configuration` | 315 | split provider validation into typed checks and a compact report |
 | `deploy/render_preflight.py` | `main` | 261 | separate argument parsing, config validation, and render checks |
-| `runtime_settings.py` | `RuntimeSettings.from_environment` | 141 | split environment parsing into named setting groups |
 | `entitlement_giveaway_reservation.py` | `reserve_giveaway` | 140 | isolate eligibility, reservation, and result mapping |
 | `identity_entitlements.py` | `sync_existing_entitlements` | 134 | split entitlement discovery, reconciliation, and lease sync |
 | `connectivity_registry.py` | `sync_outline_endpoint` | 133 | split endpoint observation, registry reconciliation, and audit |

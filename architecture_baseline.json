@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "baseline_commit": "dfd7cc3",
+  "baseline_commit": "023c3a4",
   "purpose": "Ratchet known monolith hotspots downward while preserving the current release baseline.",
   "hotspots": {
     "capacity_policy.py": {
@@ -549,7 +549,7 @@
       "max_sql_calls": 0
     },
     "runtime_settings.py": {
-      "max_lines": 199,
+      "max_lines": 267,
       "max_function_lines": 141,
       "max_sql_calls": 0
     },
