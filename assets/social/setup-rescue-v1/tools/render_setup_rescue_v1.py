@@ -26,8 +26,7 @@ from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[4]
 BASE = ROOT / "assets/social/setup-rescue-v1"
-# Reuse receipt plate until a dedicated plate can be generated
-PLATE = ROOT / "assets/social/receipt-confidence-v1/plates/receipt-confidence-editorial-r0.png"
+PLATE = ROOT / "assets/social/setup-rescue-v1/plates/setup-rescue-editorial-r0.jpg"
 LOGO = ROOT / "brand/v2/aurix-logo-mark-v2.svg"
 OUTLINE = ROOT / "brand/outline/official/outline-client-icon-1024.png"
 BOT = ROOT / "brand/v4/exports/aurix-telegram-bot-avatar-v4-1024.png"
