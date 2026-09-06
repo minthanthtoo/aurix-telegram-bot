@@ -29,6 +29,18 @@ class PreparedReceipt:
     existing_result: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ReceiptIntakeState:
+    """State returned by one evidence branch while the transaction is open."""
+
+    evidence_id: str
+    storage_path: str | None
+    extraction: dict[str, Any] | None
+    status: str
+    is_new: bool
+    existing_result: dict[str, Any] | None = None
+
+
 def _flag_near_duplicate(
     extraction: dict[str, Any] | None,
     provider_name: str,
@@ -138,112 +150,67 @@ def prepare_receipt_submission(
 
         existing = self.payments.existing_evidence(connection, order_id, image_sha256)
         if existing is not None:
-            parsed = json.loads(existing["extraction_json"] or "{}")
-            result = parsed if isinstance(parsed, dict) else {}
-            result.update(
-                {
-                    "evidence_id": existing["id"],
-                    "extraction_status": existing["extraction_status"],
-                    "review_status": existing["review_status"],
-                    "image_sha256": image_sha256,
-                    "storage_status": existing["storage_status"] or "not_configured",
-                    "storage_path": existing["storage_path"],
-                }
+            state = _resume_existing_evidence(
+                self,
+                repository,
+                connection,
+                order=order,
+                existing=existing,
+                order_id=order_id,
+                telegram_id=telegram_id,
+                image_sha256=image_sha256,
+                storage_bucket=storage_bucket,
+                storage_configured=storage_configured,
+                mime_type=mime_type,
             )
-            storage_ready = (
-                result["storage_status"] == "stored"
-                if storage_configured
-                else result["storage_status"] in ("stored", "not_configured")
-            )
-            if storage_ready:
-                if order["status"] == "awaiting_payment":
-                    repository.mark_order_submitted(connection, order_id)
-                    self._audit(
-                        connection,
-                        "receipt_state_recovered",
-                        "order",
-                        order_id,
-                        "customer",
-                        str(telegram_id),
-                        {"evidence_id": existing["id"]},
-                    )
+            if state.existing_result is not None:
                 return PreparedReceipt(
-                    evidence_id=str(existing["id"]),
+                    evidence_id=state.evidence_id,
                     image_sha256=image_sha256,
                     provider_name=provider_name,
                     submitted_at=submitted_at,
-                    status=str(existing["extraction_status"]),
-                    extraction=parsed if isinstance(parsed, dict) else None,
+                    status=state.status,
+                    extraction=state.extraction,
                     storage_bucket=storage_bucket,
-                    storage_path=str(existing["storage_path"] or "") or None,
+                    storage_path=state.storage_path,
                     storage_configured=storage_configured,
                     is_new=False,
                     near_duplicate=False,
-                    existing_result=result,
+                    existing_result=state.existing_result,
                 )
-            evidence_id = str(existing["id"])
-            storage_path = str(existing["storage_path"] or "") or self._receipt_storage_path(
-                order_id, evidence_id, mime_type
-            )
-            repository.mark_upload_pending(
-                connection,
-                evidence_id=evidence_id,
-                storage_bucket=storage_bucket,
-                storage_path=storage_path,
-            )
+            evidence_id = state.evidence_id
+            storage_path = state.storage_path
+            extraction = state.extraction
+            status = state.status
+            is_new = state.is_new
         else:
-            latest = self.payments.latest_evidence_review(connection, order_id)
-            if latest is not None and str(latest["review_status"] or "pending") != "rejected":
-                raise CommerceError(
-                    "A receipt is already awaiting review; wait for staff feedback"
-                )
-            payment_rows = self.payments.payments_for_order(connection, order_id)
-            if any(str(item["provider"] or "").lower() == "wallet" for item in payment_rows):
-                raise CommerceError(
-                    "This order already uses wallet payment; receipt payment cannot be combined"
-                )
-            if any(
-                str(item["status"] or "") in ("submitted", "verified", "refunded")
-                for item in payment_rows
-            ):
-                raise CommerceError("A payment is already attached to this order")
-            extraction = _flag_duplicate_transaction(
-                extraction,
-                provider_name,
-                tx_candidate,
-                self.payments.transaction_candidates(connection, order_id),
-            )
-            if extraction and "duplicate_transaction_candidate" in set(
-                extraction.get("flags") or []
-            ):
-                status = "needs_review"
-            evidence_id = _new_id()
-            storage_path = (
-                self._receipt_storage_path(order_id, evidence_id, mime_type)
-                if storage_configured
-                else None
-            )
-            repository.insert_evidence(
+            state = _insert_new_evidence(
+                self,
+                repository,
                 connection,
-                evidence_id=evidence_id,
                 order_id=order_id,
                 telegram_id=telegram_id,
-                provider=provider_name,
-                file_id=file_id[:256],
-                file_unique_id=file_unique_id[:256] if file_unique_id else None,
-                media_type=telegram_media_type,
+                provider_name=provider_name,
+                file_id=file_id,
+                file_unique_id=file_unique_id,
+                telegram_media_type=telegram_media_type,
                 image_sha256=image_sha256,
                 image_phash=image_phash,
-                mime_type=mime_type[:64],
-                byte_size=len(image_bytes),
+                mime_type=mime_type,
                 storage_bucket=storage_bucket,
-                storage_path=storage_path,
+                storage_configured=storage_configured,
                 storage_status=storage_status,
-                extraction_json=json.dumps(extraction or {}, sort_keys=True),
-                extraction_status=status,
+                extraction=extraction,
+                tx_candidate=tx_candidate,
                 submitted_at=submitted_at,
+                image_bytes=image_bytes,
+                status=status,
             )
-            is_new = True
+            evidence_id = state.evidence_id
+            storage_path = state.storage_path
+            extraction = state.extraction
+            status = state.status
+            is_new = state.is_new
 
     return PreparedReceipt(
         evidence_id=evidence_id,
@@ -257,4 +224,149 @@ def prepare_receipt_submission(
         storage_configured=storage_configured,
         is_new=is_new,
         near_duplicate=near_duplicate,
+    )
+
+
+def _resume_existing_evidence(
+    service: Any,
+    repository: ReceiptSubmissionRepository,
+    connection: Any,
+    *,
+    order: Any,
+    existing: Any,
+    order_id: str,
+    telegram_id: int,
+    image_sha256: str,
+    storage_bucket: str | None,
+    storage_configured: bool,
+    mime_type: str,
+) -> ReceiptIntakeState:
+    parsed = json.loads(existing["extraction_json"] or "{}")
+    result = parsed if isinstance(parsed, dict) else {}
+    result.update(
+        {
+            "evidence_id": existing["id"],
+            "extraction_status": existing["extraction_status"],
+            "review_status": existing["review_status"],
+            "image_sha256": image_sha256,
+            "storage_status": existing["storage_status"] or "not_configured",
+            "storage_path": existing["storage_path"],
+        }
+    )
+    storage_ready = (
+        result["storage_status"] == "stored"
+        if storage_configured
+        else result["storage_status"] in ("stored", "not_configured")
+    )
+    if storage_ready:
+        if order["status"] == "awaiting_payment":
+            repository.mark_order_submitted(connection, order_id)
+            service._audit(
+                connection,
+                "receipt_state_recovered",
+                "order",
+                order_id,
+                "customer",
+                str(telegram_id),
+                {"evidence_id": existing["id"]},
+            )
+        parsed_result = parsed if isinstance(parsed, dict) else None
+        return ReceiptIntakeState(
+            evidence_id=str(existing["id"]),
+            storage_path=str(existing["storage_path"] or "") or None,
+            extraction=parsed_result,
+            status=str(existing["extraction_status"]),
+            is_new=False,
+            existing_result=result,
+        )
+    evidence_id = str(existing["id"])
+    storage_path = str(existing["storage_path"] or "") or service._receipt_storage_path(
+        order_id, evidence_id, mime_type
+    )
+    repository.mark_upload_pending(
+        connection,
+        evidence_id=evidence_id,
+        storage_bucket=storage_bucket,
+        storage_path=storage_path,
+    )
+    return ReceiptIntakeState(
+        evidence_id=evidence_id,
+        storage_path=storage_path,
+        extraction=parsed if isinstance(parsed, dict) else None,
+        status=str(existing["extraction_status"]),
+        is_new=False,
+    )
+
+
+def _insert_new_evidence(
+    service: Any,
+    repository: ReceiptSubmissionRepository,
+    connection: Any,
+    *,
+    order_id: str,
+    telegram_id: int,
+    provider_name: str,
+    file_id: str,
+    file_unique_id: str | None,
+    telegram_media_type: str,
+    image_sha256: str,
+    image_phash: str | None,
+    mime_type: str,
+    storage_bucket: str | None,
+    storage_configured: bool,
+    storage_status: str,
+    extraction: dict[str, Any] | None,
+    tx_candidate: str,
+    submitted_at: str,
+    image_bytes: bytes,
+    status: str,
+) -> ReceiptIntakeState:
+    latest = service.payments.latest_evidence_review(connection, order_id)
+    if latest is not None and str(latest["review_status"] or "pending") != "rejected":
+        raise CommerceError("A receipt is already awaiting review; wait for staff feedback")
+    payment_rows = service.payments.payments_for_order(connection, order_id)
+    if any(str(item["provider"] or "").lower() == "wallet" for item in payment_rows):
+        raise CommerceError("This order already uses wallet payment; receipt payment cannot be combined")
+    if any(str(item["status"] or "") in ("submitted", "verified", "refunded") for item in payment_rows):
+        raise CommerceError("A payment is already attached to this order")
+    extraction = _flag_duplicate_transaction(
+        extraction,
+        provider_name,
+        tx_candidate,
+        service.payments.transaction_candidates(connection, order_id),
+    )
+    if extraction and "duplicate_transaction_candidate" in set(extraction.get("flags") or []):
+        status = "needs_review"
+    evidence_id = _new_id()
+    storage_path = (
+        service._receipt_storage_path(order_id, evidence_id, mime_type)
+        if storage_configured
+        else None
+    )
+    repository.insert_evidence(
+        connection,
+        evidence_id=evidence_id,
+        order_id=order_id,
+        telegram_id=telegram_id,
+        provider=provider_name,
+        file_id=file_id[:256],
+        file_unique_id=file_unique_id[:256] if file_unique_id else None,
+        media_type=telegram_media_type,
+        image_sha256=image_sha256,
+        image_phash=image_phash,
+        mime_type=mime_type[:64],
+        byte_size=len(image_bytes),
+        storage_bucket=storage_bucket,
+        storage_path=storage_path,
+        storage_status=storage_status,
+        extraction_json=json.dumps(extraction or {}, sort_keys=True),
+        extraction_status=status,
+        submitted_at=submitted_at,
+    )
+    return ReceiptIntakeState(
+        evidence_id=evidence_id,
+        storage_path=storage_path,
+        extraction=extraction,
+        status=status,
+        is_new=True,
     )
