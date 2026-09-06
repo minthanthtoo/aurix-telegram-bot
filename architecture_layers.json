@@ -201,6 +201,7 @@
     "receipt_rule_steps.py": "application",
     "repositories.py": "contract",
     "route_failover.py": "application",
+    "route_failover_observation_steps.py": "application",
     "route_failover_repository.py": "persistence",
     "runtime.py": "bootstrap",
     "runtime_bootstrap.py": "bootstrap",

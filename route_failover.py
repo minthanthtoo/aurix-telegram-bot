@@ -14,6 +14,7 @@ from typing import Any
 
 from commerce_models import _new_id, _now_text
 from route_failover_repository import RouteFailoverRepository
+from route_failover_observation_steps import persist_observation, validate_observation
 
 
 UTC = timezone.utc
@@ -95,19 +96,21 @@ class RouteFailoverService:
         reason: str | None = None,
         observed_at: str | None = None,
     ) -> dict[str, Any]:
-        normalized_outcome = str(outcome or "").strip().lower()
-        if normalized_outcome not in {"success", "failure"}:
-            raise FailoverError("route outcome must be success or failure")
-        if latency_ms is not None and not 0 <= int(latency_ms) <= 120_000:
-            raise FailoverError("route latency is outside the allowed range")
-        bucket = str(network_bucket or "default").strip()
-        if not bucket or len(bucket) > 128:
-            raise FailoverError("network bucket is invalid")
-        timestamp = str(observed_at or _now_text())
-        current = _parse_time(timestamp)
-        if current > datetime.now(UTC) + timedelta(minutes=5):
-            raise FailoverError("route observation cannot be far in the future")
-        safe_reason = str(reason or "").strip()[:256] or None
+        try:
+            normalized_outcome, bucket, normalized_latency, safe_reason, timestamp, current = (
+                validate_observation(
+                    outcome,
+                    network_bucket=network_bucket,
+                    latency_ms=latency_ms,
+                    reason=reason,
+                    observed_at=observed_at,
+                    now_text=lambda value: _now_text(value),
+                    parse_time=_parse_time,
+                    now=datetime.now(UTC),
+                )
+            )
+        except ValueError as exc:
+            raise FailoverError(str(exc)) from exc
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             row = self.repository.generation_context(connection, str(generation_id))
@@ -117,93 +120,19 @@ class RouteFailoverService:
                 raise FailoverError("entitlement is not active")
             if not row["route_id"]:
                 raise FailoverError("generation is not attached to a service route")
-            inserted = self.repository.insert_observation(
-                connection,
-                observation_id=_new_id(),
-                generation_id=str(generation_id),
-                entitlement_id=str(row["entitlement_id"]),
-                route_id=str(row["route_id"]),
-                network_bucket=bucket,
-                outcome=normalized_outcome,
-                latency_ms=None if latency_ms is None else int(latency_ms),
-                reason=safe_reason,
-                timestamp=timestamp,
-            )
-            if int(getattr(inserted, "rowcount", 0) or 0) != 1:
-                existing = self.repository.state(connection, str(generation_id))
-                return {
-                    "generation_id": str(generation_id),
-                    "duplicate": True,
-                    "failure_streak": int(existing["failure_streak"] or 0) if existing else 0,
-                    "success_streak": int(existing["success_streak"] or 0) if existing else 0,
-                    "decision_id": None,
-                }
-            state = self.repository.state(connection, str(generation_id))
-            failure_streak = int(state["failure_streak"] or 0) if state else 0
-            success_streak = int(state["success_streak"] or 0) if state else 0
-            cooldown_until = str(state["cooldown_until"] or "") if state else ""
-            if normalized_outcome == "failure":
-                failure_streak += 1
-                success_streak = 0
-            else:
-                success_streak += 1
-                failure_streak = 0
-            self.repository.upsert_state(
+            return persist_observation(
+                self.repository,
                 connection,
                 generation_id=str(generation_id),
-                failure_streak=failure_streak,
-                success_streak=success_streak,
-                outcome=normalized_outcome,
+                row=row,
+                normalized_outcome=normalized_outcome,
+                bucket=bucket,
+                latency_ms=normalized_latency,
+                safe_reason=safe_reason,
                 timestamp=timestamp,
-                cooldown_until=cooldown_until or None,
+                current=current,
+                parse_time=_parse_time,
             )
-            policy = self.repository.policy(connection, str(row["entitlement_id"]))
-            decision_id: str | None = None
-            target: Any = None
-            if (
-                normalized_outcome == "failure"
-                and policy is not None
-                and bool(policy["enabled"])
-                and failure_streak >= int(policy["failure_threshold"])
-                and (not cooldown_until or _parse_time(cooldown_until) <= current)
-            ):
-                target = self.repository.target_route(connection, str(row["route_id"]))
-                if target is not None:
-                    idempotency_key = (
-                        f"failover:{row['entitlement_id']}:{generation_id}:"
-                        f"{target['route_id']}:{bucket}"
-                    )
-                    decision_id = f"failover-{_new_id()}"
-                    inserted_decision = self.repository.insert_decision(
-                        connection,
-                        decision_id=decision_id,
-                        idempotency_key=idempotency_key,
-                        entitlement_id=str(row["entitlement_id"]),
-                        generation_id=str(generation_id),
-                        source_endpoint_id=str(row["endpoint_id"]),
-                        source_route_id=str(row["route_id"]),
-                        target_endpoint_id=str(target["endpoint_id"]),
-                        target_route_id=str(target["route_id"]),
-                        trigger=safe_reason or "route_failure_threshold",
-                        network_bucket=bucket,
-                        timestamp=timestamp,
-                    )
-                    if int(getattr(inserted_decision, "rowcount", 0) or 0) != 1:
-                        existing = self.repository.decision_by_key(connection, idempotency_key)
-                        decision_id = str(existing["decision_id"]) if existing else None
-                    else:
-                        cooldown = current + timedelta(seconds=int(policy["cooldown_seconds"]))
-                        self.repository.set_cooldown(
-                            connection, str(generation_id), cooldown.isoformat(), timestamp
-                        )
-            return {
-                "generation_id": str(generation_id),
-                "duplicate": False,
-                "failure_streak": failure_streak,
-                "success_streak": success_streak,
-                "decision_id": decision_id,
-                "target_route_id": str(target["route_id"]) if target is not None else None,
-            }
 
     def claim(self, *, now: str | None = None) -> dict[str, Any] | None:
         timestamp = str(now or _now_text())
