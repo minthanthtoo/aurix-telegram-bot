@@ -1,0 +1,22 @@
+{
+  "campaign": "aurix-singapore-key-drop-v5",
+  "stamp": "20260907-050319",
+  "format": "1080x1350 PNG + TXT + SVG",
+  "recommended_order": [
+    "singapore-key-drop"
+  ],
+  "finals": [
+    {
+      "id": "singapore-key-drop",
+      "role": "reach",
+      "image": "20260907-050319_aurix-singapore-key-drop-v5_r2.png",
+      "caption": "20260907-050319_aurix-singapore-key-drop-v5_r2.txt",
+      "source": "20260907-050319_aurix-singapore-key-drop-v5_r2.svg"
+    }
+  ],
+  "preview": "20260907-050319_aurix-singapore-key-drop-v5_r2_preview.png",
+  "publication_gates": [
+    "Singapore location is user-provided; verify five keys, unlimited quota and activation/expiry before publishing.",
+    "Public checkmarks cannot prevent reuse. Post keys alongside caption."
+  ]
+}
