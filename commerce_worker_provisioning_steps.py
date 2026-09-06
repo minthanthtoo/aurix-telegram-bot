@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
-from commerce_models import CommerceError, UTC, _new_id, _now_text
+from commerce_models import _new_id, _now_text
 from commerce_provisioning_repository import ProvisioningRepository
 from connectivity_registry import ConnectivityRegistry
 

@@ -196,6 +196,9 @@ class CommerceServiceTest(unittest.TestCase):
         database.initialize()
         with open_sqlite_connection(legacy_path) as connection:
             connection.execute("ALTER TABLE payment_evidence DROP COLUMN telegram_media_type")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE component = 'commerce_compatibility'"
+            )
 
         database.initialize()
 
@@ -1678,7 +1681,7 @@ class PostgresAdapterTest(unittest.TestCase):
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
             # Base/adoption history is now initialized through the versioned
             # schema component before the existing free/commerce ledgers.
-            "a970eae67dfc6e2693aa11fd998fb1b2e25d28251b8d37106203a7b2f99e5457",
+            "dc62fb5fd4b9c090de700731628d81f182c86f2cd4d74df8b009b27c131c0c3b",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

@@ -179,6 +179,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 25, "aggregate_entitlement_usage_ledger"),
                     ("commerce", 26, "service_routes_and_failover_control"),
                     ("commerce_base", 1, "base_schema_adoption"),
+                    ("commerce_compatibility", 1, "legacy_schema_compatibility"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

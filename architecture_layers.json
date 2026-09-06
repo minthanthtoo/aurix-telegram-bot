@@ -52,6 +52,7 @@
     "commerce_repositories.py": "persistence",
     "commerce_schema_bootstrap.py": "schema",
     "commerce_schema_base_migrations.py": "schema",
+    "commerce_schema_compatibility_migrations.py": "schema",
     "commerce_service.py": "application",
     "commerce_service_api.py": "application",
     "commerce_service_contracts.py": "contract",
