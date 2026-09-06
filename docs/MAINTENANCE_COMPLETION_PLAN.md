@@ -1,7 +1,7 @@
 # Maintenance completion plan
 
 Status: active implementation candidate; final gates remain open.
-Reviewed baseline: `c51bf16` on `codex/monolith-reduction-prep`, 2026-09-06.
+Reviewed baseline: `f37395d` on `codex/monolith-reduction-prep`, 2026-09-06.
 Working checkout: `/Users/min/projects/tg-AuriX-bot-monolith-prep`.
 
 This plan is the current completion proposal following the architecture review.
@@ -14,17 +14,17 @@ change here is not evidence that either has been updated or deployed.
 
 Measured on the current candidate after the latest extractions:
 
-The measured candidate is committed as the current HEAD (`Split identity usage
-accounting stages`).
+The measured candidate is committed as the current HEAD (`Split Telegram
+command context steps`).
 
-- 233 recursively inventoried production sources; architecture guard passes with
+- 234 recursively inventoried production sources; architecture guard passes with
   zero violations and zero application/worker SQL calls.
 - 538 tests pass; 7 live-PostgreSQL checks are skipped because no live PostgreSQL
   service is configured in this checkout. The dedicated contract suite runs 14
   tests with the same 7 PostgreSQL checks skipped.
 - Coverage runs over every owned production source and reports 69% overall,
   above the configured 60% floor; the coverage-scope guard passes.
-- All 233 production sources compile; Ruff's configured safety rules and the
+- All 234 production sources compile; Ruff's configured safety rules and the
   strict Pyright scope pass.
 - The code graph was refreshed after the extractions.
 
@@ -40,7 +40,7 @@ remain open.
 
 | Gate | Current status | Evidence or remaining work |
 |---|---|---|
-| G01 inventory | verified locally | 233 production sources, explicit layer manifest, current SHA recorded |
+| G01 inventory | verified locally | 234 production sources, explicit layer manifest, current SHA recorded |
 | G02 architecture/coverage | verified locally | recursive guard, zero violations, coverage-scope check, 69% full-source coverage |
 | G03 contracts/database verification | in progress | 14 contract tests run; 7 PostgreSQL checks remain skipped without a live service |
 | G04 endpoint persistence | verified locally | service/worker endpoint migration paths report zero direct SQL calls |
@@ -90,9 +90,9 @@ the candidate-level measurement after implementation work.
 | Remaining compatibility forwarding is explicit debt | Four forwarders remain: PostgreSQL database attribute access, Telegram component get/set forwarding, and Telegram transport forwarding | Replace each with a named adapter/presenter contract or document its bounded external-compatibility consumer |
 | Endpoint migration persistence is extracted | `commerce_service_inventory_migration.py` and `commerce_worker_migrations.py` call repositories; the AST guard reports zero application/worker SQL | Preserve repository contract coverage and complete semantic SQL/data-flow review |
 | Schema compatibility is versioned | `commerce_schema_bootstrap.py` is 63 lines; `commerce_schema_compatibility_migrations.py` owns legacy columns/backfills/indexes | Continue fresh/upgrade/retry coverage on both backends |
-| Architecture guard is recursive and classified | 233 owned sources are inventoried and the guard reports zero violations | Add negative fixtures and ratchet module/complexity policy as package moves proceed |
+| Architecture guard is recursive and classified | 234 owned sources are inventoried and the guard reports zero violations | Add negative fixtures and ratchet module/complexity policy as package moves proceed |
 | SQL guard is clean by layer | Current AST report finds zero application/worker SQL calls | Keep the semantic audit separate from the AST metric; repository ownership remains the invariant |
-| Coverage gate runs in CI and locally | CI executes coverage plus `check_coverage_scope.py`; current local report is 69% over all 233 sources | Raise changed-workflow coverage and branch targets incrementally rather than hiding untested modules |
+| Coverage gate runs in CI and locally | CI executes coverage plus `check_coverage_scope.py`; current local report is 69% over all 234 sources | Raise changed-workflow coverage and branch targets incrementally rather than hiding untested modules |
 | Coverage denominator includes extracted workflows | Usage recording, receipt intake, provisioning, failover, admin snapshots, and facades are included | Add direct contract tests for remaining low-coverage Telegram/operations paths |
 | Lint policy is deliberately narrow | Ruff selects `E9`, `F63`, `F7`, `F82` | Passing Ruff is limited evidence; expand checks incrementally |
 | PostgreSQL checks include recording fakes | `FakeRawPostgresConnection` records statements in `test_commerce.py` | Add execution and concurrency contracts against a real disposable PostgreSQL instance |
