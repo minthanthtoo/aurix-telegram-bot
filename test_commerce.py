@@ -160,6 +160,18 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(normalized, "tx123")
         self.assertIn("payments_reference_lookup", indexes)
 
+    def test_sqlite_update_dedupe_insert_is_available_to_polling_loop(self):
+        # The hosted SQLite composition initializes the legacy free-access
+        # repository first; that repository owns the shared update ledger.
+        Database(self.database.path).initialize()
+        self.assertTrue(self.database.mark_update_seen(12345))
+        self.assertFalse(self.database.mark_update_seen(12345))
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT update_id FROM telegram_updates WHERE update_id = ?", (12345,)
+            ).fetchone()
+        self.assertEqual(row["update_id"], 12345)
+
     def test_server_registration_rejects_provider_id_relabeling(self):
         legacy = CommerceService(
             self.database,
