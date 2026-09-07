@@ -30,6 +30,27 @@ class CommerceDatabase:
 
     def initialize(self) -> None:
         initialize_sqlite(self)
+
+    def mark_update_seen(self, update_id: int) -> bool:
+        """Durably deduplicate Telegram updates across process restarts.
+
+        Telegram may redeliver an update after a transient failure or deploy.
+        Keeping the insert in the same SQLite database as the commerce state
+        makes the check restart-safe and lets the transport acknowledge a
+        duplicate without running its handler twice.
+        """
+        with self.connect() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO telegram_updates (update_id, received_at) VALUES (?, ?)",
+                    (int(update_id), _now_text()),
+                )
+            except Exception as exc:
+                if self.is_integrity_error(exc):
+                    return False
+                raise
+        return True
+
     @staticmethod
     def _seed_plans(connection: Any) -> None:
         plans = (
