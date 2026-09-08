@@ -4,6 +4,7 @@
 *.db
 *.db-shm
 *.db-wal
+*migration-report.json
 __pycache__/
 .coverage
 .pytest_cache/
@@ -11,6 +12,8 @@ __pycache__/
 htmlcov/
 .DS_Store
 dist/
+android/**/build/
+android/**/.gradle/
 .codex/config.toml
 
 # Social/brand media policy: generated and superseded media stays local.

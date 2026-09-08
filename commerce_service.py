@@ -394,8 +394,14 @@ class CommerceService(CommerceWorkerMixin):
         plan_code: str,
         now: datetime | None = None,
         username: str | None = None,
+        requested_endpoint_id: str | None = None,
     ) -> OrderResult:
         plan = self.get_plan(plan_code)
+        requested_endpoint_id = str(requested_endpoint_id or "").strip() or None
+        if requested_endpoint_id and self.connectivity is not None:
+            validator = getattr(self.connectivity, "validate_customer_endpoint", None)
+            if callable(validator):
+                validator(requested_endpoint_id, plan.code)
         order_id = _new_id()
         created_at = _now_text(now)
         with self.database.connect() as connection:
@@ -416,6 +422,24 @@ class CommerceService(CommerceWorkerMixin):
                 (telegram_id,),
             ).fetchone()
             if existing is not None:
+                existing_endpoint_id = existing["requested_endpoint_id"]
+                if requested_endpoint_id and existing_endpoint_id != requested_endpoint_id:
+                    payment_count = connection.execute(
+                        "SELECT COUNT(*) AS n FROM payments WHERE order_id = ?",
+                        (existing["id"],),
+                    ).fetchone()["n"]
+                    evidence_count = connection.execute(
+                        "SELECT COUNT(*) AS n FROM payment_evidence WHERE order_id = ?",
+                        (existing["id"],),
+                    ).fetchone()["n"]
+                    if payment_count or evidence_count:
+                        raise CommerceError(
+                            "This order already has payment activity; server selection cannot be changed"
+                        )
+                    connection.execute(
+                        "UPDATE orders SET requested_endpoint_id = ? WHERE id = ?",
+                        (requested_endpoint_id, existing["id"]),
+                    )
                 existing_plan = Plan(
                     code=str(existing["plan_code"]),
                     name=str(existing["plan_name"] or plan.name),
@@ -438,8 +462,9 @@ class CommerceService(CommerceWorkerMixin):
             connection.execute(
                 """INSERT INTO orders
                    (id, telegram_id, plan_code, amount_minor, currency, plan_name,
-                    quota_bytes_snapshot, duration_days_snapshot, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?)""",
+                    quota_bytes_snapshot, duration_days_snapshot, status, created_at,
+                    requested_endpoint_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?, ?)""",
                 (
                     order_id,
                     telegram_id,
@@ -450,6 +475,7 @@ class CommerceService(CommerceWorkerMixin):
                     plan.quota_bytes,
                     plan.duration_days,
                     created_at,
+                    requested_endpoint_id,
                 ),
             )
             self._audit(
@@ -459,7 +485,11 @@ class CommerceService(CommerceWorkerMixin):
                 order_id,
                 "customer",
                 str(telegram_id),
-                {"plan_code": plan.code, "amount_minor": plan.price_minor},
+                {
+                    "plan_code": plan.code,
+                    "amount_minor": plan.price_minor,
+                    "requested_endpoint_id": requested_endpoint_id,
+                },
             )
         return OrderResult(order_id, plan, "awaiting_payment")
 
@@ -749,7 +779,7 @@ class CommerceService(CommerceWorkerMixin):
             rows = connection.execute(
                 """SELECT o.id, o.plan_code, o.plan_name, o.amount_minor, o.currency,
                           o.status, o.refund_status, o.created_at, o.order_type,
-                          o.selected_payment_provider,
+                          o.selected_payment_provider, o.requested_endpoint_id,
                           (SELECT p.status FROM payments p WHERE p.order_id = o.id
                            ORDER BY p.submitted_at DESC LIMIT 1) AS payment_status,
                           (SELECT e.review_status FROM payment_evidence e WHERE e.order_id = o.id
@@ -2035,8 +2065,8 @@ class CommerceService(CommerceWorkerMixin):
             connection.execute(
                 """INSERT INTO subscriptions
                    (id, order_id, telegram_id, plan_code, starts_at, expires_at,
-                    plan_name, quota_bytes, duration_days, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                    plan_name, quota_bytes, duration_days, status, preferred_endpoint_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
                 (
                     subscription_id,
                     order_id,
@@ -2047,6 +2077,7 @@ class CommerceService(CommerceWorkerMixin):
                     plan_name,
                     quota_bytes,
                     duration_days,
+                    order["requested_endpoint_id"],
                 ),
             )
             # Record money movement as immutable ledger events. External

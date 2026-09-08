@@ -1,12 +1,15 @@
+# Recommended single-instance MVP: Telegram bot + VPN portal share one durable
+# SQLite database and one Render service. Do not scale numInstances above 1.
 services:
-  - type: worker
-    name: aurix-telegram-bot
+  - type: web
+    name: aurix-vpn
     runtime: python
     region: singapore
     plan: starter
     numInstances: 1
     buildCommand: pip install -r requirements.txt
-    startCommand: python deploy/render_preflight.py && python -u app.py
+    startCommand: python deploy/render_preflight.py && python -u deploy/render_combined.py
+    healthCheckPath: /api/healthz
     maxShutdownDelaySeconds: 30
     disk:
       name: aurix-data
@@ -23,6 +26,8 @@ services:
         sync: false
       - key: ADMIN_TELEGRAM_IDS
         sync: false
+      - key: ADMIN_SCOPE_CLEANUP_IDS
+        value: ""
       - key: TRIAL_TELEGRAM_IDS
         value: ""
       - key: OUTLINE_API_URL
@@ -48,32 +53,33 @@ services:
       - key: RECEIPT_LLM_API_KEY
         value: ""
       - key: PAYMENT_QR_KPAY
-        value: ""
+        sync: false
       - key: PAYMENT_RECIPIENT_KPAY
-        value: ""
+        sync: false
       - key: PAYMENT_QR_WAVEPAY
-        value: ""
+        sync: false
       - key: PAYMENT_RECIPIENT_WAVEPAY
-        value: ""
+        sync: false
       - key: PAYMENT_QR_AYAPAY
-        value: ""
+        sync: false
       - key: PAYMENT_RECIPIENT_AYAPAY
-        value: ""
+        sync: false
       - key: PAYMENT_QR_UABPAY
-        value: ""
+        sync: false
       - key: PAYMENT_RECIPIENT_UABPAY
-        value: ""
+        sync: false
       - key: PAYMENT_QR_CBPAY
-        value: ""
+        sync: false
       - key: PAYMENT_RECIPIENT_CBPAY
-        value: ""
+        sync: false
       - key: ALLOW_TEXT_PAYMENT_REFERENCES
         value: "0"
       - key: AURIX_MAINTENANCE_INTERVAL_SECONDS
         value: "60"
-      - key: AURIX_LATENCY_LOG
-        value: "0"
-      # Set this only after aurix-vpn-web has an HTTPS URL. Telegram rejects
-      # non-HTTPS Web App URLs; leaving it empty keeps the bot Telegram-only.
+      - key: AURIX_WEB_APP_INIT_DATA_MAX_AGE
+        value: "86400"
+      # Configure both only after the custom hostname routes to this service.
       - key: AURIX_WEB_APP_URL
         value: ""
+      - key: AURIX_TELEGRAM_URL
+        sync: false

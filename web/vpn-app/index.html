@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07111f">
+  <meta name="description" content="AuriX VPN customer portal and Telegram Mini App.">
+  <title>AuriX VPN</title>
+  <link rel="icon" href="/aurix-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="identity-block">
+        <span class="avatar" id="avatar">A</span>
+        <div>
+          <a class="brand" href="#home" data-view-link="home">AuriX <span>VPN</span></a>
+          <span class="connection-state" id="connection-state"><i></i>Checking</span>
+        </div>
+      </div>
+      <button class="icon-button" id="settings-button" type="button" aria-label="Open settings">⚙</button>
+    </header>
+
+    <main>
+      <div class="auth-notice" id="auth-notice" role="status"></div>
+
+      <section class="app-view is-active" id="view-home" aria-labelledby="home-title">
+        <div class="page-intro">
+          <p class="eyebrow">Private network</p>
+          <h1 id="home-title">Open in Telegram<br><em>to get started.</em></h1>
+          <p class="lede" id="welcome-copy">Open AuriX VPN inside Telegram to link your account and manage access.</p>
+        </div>
+
+        <article class="current-server card">
+          <div class="card-heading"><div><p class="eyebrow">Current server</p><h2 id="current-server-name">Not connected</h2></div><span class="state-pill" id="current-server-state">Status</span></div>
+          <div class="server-summary"><span class="server-orb" aria-hidden="true">⌁</span><div><strong id="current-server-region">Choose a server</strong><p id="current-server-note">Your selected location appears here.</p></div></div>
+          <button class="button button--quiet button--full" data-view-link="servers" type="button">Manage servers <span>→</span></button>
+        </article>
+
+        <article class="usage-card card">
+          <div class="card-heading"><div><p class="eyebrow">Your access</p><h2 id="usage-title">No active package</h2></div><span class="state-pill state-pill--gold" id="access-badge">Locked</span></div>
+          <label class="key-picker" id="key-picker" hidden>Active key<select id="active-key-select"></select></label>
+          <div class="usage-bar" aria-label="VPN package usage"><span id="usage-bar-fill"></span></div>
+          <div class="usage-meta"><span id="usage-used">— used</span><span id="usage-remaining">— remaining</span></div>
+          <p class="fine-print" id="usage-note">AuriX reports the latest observed Outline transfer total.</p>
+          <div class="key-actions" id="key-actions"></div>
+          <div class="key-secret" id="key-secret" hidden></div>
+        </article>
+
+        <article class="package-summary card">
+          <div class="card-heading"><div><p class="eyebrow">Active packages</p><h2 id="package-count">0 packages</h2></div><button class="text-button" data-view-link="packages" type="button">View all</button></div>
+          <div id="package-summary-list" class="summary-list"><div class="empty-state">Your active packages will appear here.</div></div>
+        </article>
+      </section>
+
+      <section class="app-view" id="view-servers" aria-labelledby="servers-title">
+        <div class="page-heading"><div><p class="eyebrow">Choose a location</p><h1 id="servers-title">Servers</h1></div><button class="text-button" id="servers-refresh" type="button">Refresh</button></div>
+        <p class="section-copy">Choose a location for your next package. AuriX confirms health and capacity again before activation.</p>
+        <div class="server-list" id="server-list"><div class="loading-state">Loading current server availability…</div></div>
+        <p class="fine-print">Latency shown here is the latest Outline management check, not a promise of device-to-server ping time. Existing active keys stay on their assigned server.</p>
+      </section>
+
+      <section class="app-view" id="view-packages" aria-labelledby="packages-title">
+        <div class="page-heading"><div><p class="eyebrow">Simple access</p><h1 id="packages-title">Packages</h1></div></div>
+        <div class="selected-server card"><span>Selected location</span><strong id="selected-server-label">Automatic capacity selection</strong><button class="text-button" data-view-link="servers" type="button">Change</button></div>
+        <article class="claim-card card" id="claim-card">
+          <div class="card-heading"><div><p class="eyebrow">Free access</p><h2>Start with AuriX</h2></div></div>
+          <div class="claim-actions"><button class="button button--quiet claim-button" data-claim="daily" type="button">Daily 300 MiB</button><button class="button button--quiet claim-button" data-claim="trial" type="button">Monthly 3 GiB</button></div>
+          <form class="promo-form" id="promo-form"><input name="code" maxlength="32" autocomplete="off" placeholder="Promo code" required><button class="button button--quiet" type="submit">Redeem</button></form>
+          <p class="fine-print" id="claim-note">Eligibility is checked when you claim. Active paid or promo access may pause regular free claims.</p>
+        </article>
+        <div class="plan-list" id="plan-list"><div class="loading-state">Loading current packages…</div></div>
+        <p class="fine-print">Prices, quotas, and duration are served from the active AuriX catalog. Payment review and provisioning must complete before access is active.</p>
+      </section>
+
+      <section class="app-view" id="view-settings" aria-labelledby="settings-title">
+        <div class="page-heading"><div><p class="eyebrow">Account</p><h1 id="settings-title">Settings</h1></div></div>
+        <article class="profile-card card"><span class="avatar avatar--large" id="settings-avatar">A</span><div><h2 id="settings-name">Telegram account</h2><p id="settings-handle">Verified session required</p></div><span class="state-pill" id="settings-state">Locked</span></article>
+        <article class="settings-panel card"><div class="settings-row"><div><strong>Connection method</strong><p>Use the official Outline app with your AuriX access key.</p></div><span>Outline</span></div><div class="client-links" id="client-links"></div></article>
+        <article class="settings-panel card"><div class="card-heading"><div><p class="eyebrow">Order history</p><h2>Orders</h2></div></div><div class="order-list" id="order-list"><div class="empty-state">Open this app from Telegram to load orders.</div></div></article>
+        <article class="support-card card"><p class="eyebrow">Need help?</p><h2>Talk to AuriX support.</h2><p>Use Telegram for receipt upload, activation review, and account ownership questions.</p><a class="button button--primary" id="telegram-link" href="#">Open Telegram <span>↗</span></a></article>
+        <p class="fine-print">Your Telegram identity is verified server-side. Access keys are never stored in browser local storage.</p>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="VPN app sections">
+      <button class="nav-item is-active" data-view="home" type="button"><span>⌂</span>Home</button>
+      <button class="nav-item" data-view="servers" type="button"><span>⌁</span>Servers</button>
+      <button class="nav-item" data-view="packages" type="button"><span>◈</span>Packages</button>
+      <button class="nav-item" data-view="settings" type="button"><span>⚙</span>Settings</button>
+    </nav>
+    <footer class="app-footer"><span>AuriX VPN</span><span>Telegram-first · capacity-aware</span></footer>
+  </div>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

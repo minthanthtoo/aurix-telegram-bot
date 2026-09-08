@@ -955,6 +955,9 @@ class PostgresCommerceDatabase:
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS selected_payment_provider TEXT"
             )
             connection.execute(
+                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS requested_endpoint_id TEXT"
+            )
+            connection.execute(
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS plan_name TEXT NOT NULL DEFAULT ''"
             )
             connection.execute(
@@ -965,6 +968,9 @@ class PostgresCommerceDatabase:
             )
             connection.execute(
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS activated_at TEXT"
+            )
+            connection.execute(
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS preferred_endpoint_id TEXT"
             )
             connection.execute(
                 "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dead_lettered_at TEXT"

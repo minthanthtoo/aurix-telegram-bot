@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import urllib.error
+from urllib.parse import urlsplit
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,6 +23,7 @@ from telegram_admin_panels import TelegramAdminMixin
 from telegram_callbacks import TelegramCallbackMixin
 from telegram_commands import TelegramCommandMixin
 from telegram_maintenance import TelegramMaintenanceMixin
+from vpn_dashboard import collect_customer_vpn_state
 from receipt_llm import (
     OpenAICompatibleReceiptExtractor,
     ReceiptExtractionError,
@@ -142,6 +144,16 @@ class TelegramBot(
         self.trial_ids = trial_ids or set()
         self.receipt_extractor = receipt_extractor or OpenAICompatibleReceiptExtractor()
         self.allow_text_payment = bool(allow_text_payment)
+        configured_web_app_url = os.environ.get("AURIX_WEB_APP_URL", "").strip()
+        parsed_web_app_url = urlsplit(configured_web_app_url)
+        self.web_app_url = (
+            configured_web_app_url
+            if parsed_web_app_url.scheme == "https"
+            and bool(parsed_web_app_url.netloc)
+            and not parsed_web_app_url.username
+            and not parsed_web_app_url.password
+            else ""
+        )
         self.maintenance_interval_seconds = max(1.0, float(maintenance_interval_seconds))
         self.command_scope_cleanup_ids = command_scope_cleanup_ids or set()
         self.offset = 0
@@ -326,8 +338,7 @@ class TelegramBot(
 
     def _outline_help_keyboard(self) -> dict[str, Any]:
         """Official client downloads plus the shortest path from key to connection."""
-        return {
-            "inline_keyboard": [
+        rows: list[list[dict[str, Any]]] = [
                 [
                     {
                         "text": "📱 iPhone / iPad",
@@ -376,7 +387,12 @@ class TelegramBot(
                     {"text": "ℹ️ About Outline", "url": "https://getoutline.org/"},
                 ],
             ]
-        }
+        if self.web_app_url:
+            rows.insert(
+                4,
+                [{"text": "🌐 Open AuriX VPN Portal", "web_app": {"url": self.web_app_url}}],
+            )
+        return {"inline_keyboard": rows}
 
     def _handle_panel_callback(
         self, query: dict[str, Any], token: str, action: str, arg: str | None
@@ -717,7 +733,12 @@ class TelegramBot(
         else:
             rows.append(["🧾 My Orders"])
         rows.extend([["💰 Wallet", "❓ Help"]])
-        return self._reply_keyboard(rows)
+        markup = self._reply_keyboard(rows)
+        if self.web_app_url:
+            markup["keyboard"].append(
+                [{"text": "🌐 Open AuriX VPN Portal", "web_app": {"url": self.web_app_url}}]
+            )
+        return markup
 
     def configure_commands(self) -> None:
         self._command_menu_configure_attempted = True
@@ -794,6 +815,25 @@ class TelegramBot(
                         errors.append(
                             f"record admin command scope {admin_id}: {type(exc).__name__}"
                         )
+        if self.web_app_url:
+            try:
+                self.request(
+                    "setChatMenuButton",
+                    {
+                        "menu_button": {
+                            "type": "web_app",
+                            "text": "AuriX VPN",
+                            "web_app": {"url": self.web_app_url},
+                        }
+                    },
+                )
+            except Exception as exc:
+                # The inline/reply Web App button remains available if this
+                # optional global menu-button call is unavailable.
+                print(
+                    f"WARNING: Telegram Web App menu button configuration failed: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
         if errors:
             self._command_menu_ready = False
             raise RuntimeError("Telegram command menu degraded: " + "; ".join(errors))
@@ -1269,132 +1309,7 @@ class TelegramBot(
 
     def _collect_customer_vpn_state(self, telegram_id: int) -> dict[str, Any]:
         """Collect one fresh customer snapshot without performing Telegram I/O."""
-        giveaway = self.service.giveaway_status(telegram_id)
-        connectivity = getattr(self.service, "connectivity", None)
-        endpoint_snapshot: dict[str, Any] | None = None
-        if connectivity is not None:
-            try:
-                endpoint_snapshot = connectivity.collect_customer_snapshot()
-            except Exception as exc:
-                print(f"myvpn endpoint snapshot error: {type(exc).__name__}", file=sys.stderr)
-        usage_available = True
-        try:
-            usage_by_key = (
-                endpoint_snapshot["metrics"]
-                if endpoint_snapshot is not None
-                else (
-                    {"byEndpoint": {}, "errors": {"registry": "unavailable"}}
-                    if connectivity is not None
-                    else self.service.outline.transfer_metrics()
-                )
-            )
-            if not isinstance(usage_by_key, dict):
-                raise ValueError("invalid Outline metrics response")
-            usage_available = not bool(usage_by_key.get("errors"))
-        except Exception as exc:
-            usage_available = False
-            usage_by_key = {}
-            print(f"myvpn usage error: {type(exc).__name__}", file=sys.stderr)
-
-        access_available = True
-        access_by_key: dict[str, Any] = {}
-        try:
-            if endpoint_snapshot is not None:
-                access_by_key = endpoint_snapshot["inventory"]
-                access_available = not bool(access_by_key.get("errors"))
-            elif connectivity is not None:
-                access_by_key = {"byEndpoint": {}, "errors": {"registry": "unavailable"}}
-                access_available = False
-            else:
-                remote = self.service.outline.list_keys()
-                remote_keys = remote.get("accessKeys", []) if isinstance(remote, dict) else []
-                if not isinstance(remote_keys, list):
-                    raise ValueError("invalid Outline key response")
-                for item in remote_keys:
-                    if not isinstance(item, dict) or not item.get("id") or not item.get("accessUrl"):
-                        continue
-                    value = str(item["accessUrl"]).replace("\r", "").replace("\n", "").strip()
-                    if value:
-                        access_by_key[str(item["id"])] = value
-        except Exception as exc:
-            access_available = False
-            print(f"myvpn key retrieval error: {type(exc).__name__}", file=sys.stderr)
-
-        entries = self.service.user_usage(telegram_id, usage_by_key, access_by_key)
-        subscriptions: list[dict[str, Any]] = []
-        open_order: dict[str, Any] | None = None
-        if self.commerce is not None:
-            paid_usage = {
-                (str(item.get("endpoint_id")), str(item.get("outline_key_id"))): item
-                for item in self.commerce.user_usage(telegram_id, usage_by_key)
-                if item.get("outline_key_id")
-            }
-            subscriptions = self.commerce.user_vpns(telegram_id)
-            relevant = [
-                item
-                for item in subscriptions
-                if item.get("status") in ("active", "pending")
-                or item.get("key_status") in ("active", "revoke_failed")
-            ]
-            if not relevant and subscriptions:
-                relevant = subscriptions[:1]
-            for item in relevant:
-                key_id = str(item.get("outline_key_id") or "")
-                usage = paid_usage.get((str(item.get("endpoint_id")), key_id), {})
-                status = str(usage.get("status") or item.get("status") or "unknown")
-                if item.get("status") == "pending" and not item.get("key_status"):
-                    status = "activation pending"
-                quota = int(usage.get("quota_bytes") or item.get("quota_bytes") or 0)
-                entries.append(
-                    {
-                        "outline_key_id": key_id,
-                        "endpoint_id": item.get("endpoint_id"),
-                        "key_type": "paid",
-                        "tier": item.get("plan_name") or item.get("plan_code") or "Paid VPN",
-                        "plan_code": item.get("plan_code"),
-                        "used_bytes": int(usage.get("used_bytes") or 0),
-                        "quota_bytes": quota,
-                        "remaining_bytes": int(usage.get("remaining_bytes") or quota),
-                        "usage_observed": bool(usage.get("usage_observed")),
-                        "expires_at": item.get("expires_at"),
-                        "status": status,
-                        "access_url": item.get("access_url"),
-                        "created_at": item.get("created_at") or item.get("starts_at"),
-                    }
-                )
-            orders = self.commerce.list_user_orders(telegram_id, limit=5)
-            open_order = next(
-                (
-                    order
-                    for order in orders
-                    if order.get("stage")
-                    not in ("fulfilled", "rejected", "cancelled", "refunded")
-                ),
-                None,
-            )
-
-        priority = {
-            "active": 0,
-            "activation pending": 1,
-            "revocation pending": 2,
-            "quota exhausted": 3,
-            "expired": 4,
-            "revoked": 5,
-        }
-        entries.sort(
-            key=lambda item: (
-                priority.get(str(item.get("status")), 6),
-                str(item.get("created_at") or ""),
-            )
-        )
-        return {
-            "all_items": entries,
-            "giveaway": giveaway,
-            "usage_available": usage_available,
-            "access_available": access_available,
-            "open_order": open_order,
-            "subscriptions": subscriptions,
-        }
+        return collect_customer_vpn_state(self.service, self.commerce, telegram_id)
 
     @staticmethod
     def _vpn_filter_match(entry: dict[str, Any], selected: str) -> bool:

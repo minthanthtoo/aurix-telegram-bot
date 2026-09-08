@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app import Database
 from commerce import CommerceDatabase, PostgresCommerceDatabase
-from migrations import Migration, MigrationError, apply_migrations
+from migrations import FREE_ACCESS_MIGRATIONS, Migration, MigrationError, apply_migrations
 from persistence import open_sqlite_connection
 from repositories import HostedRepositoryDatabase, RepositoryDatabase
 
@@ -118,12 +118,71 @@ class MigrationRegistryTest(unittest.TestCase):
                 [
                     ("commerce", 1, "legacy_commerce_schema"),
                     ("commerce", 2, "endpoint_assignments_and_infrastructure_jobs"),
+                    ("commerce", 3, "customer_endpoint_preferences"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),
                     ("free_access", 4, "endpoint_identity_and_capacity"),
                 ],
             )
+
+    def test_endpoint_migration_upgrades_populated_legacy_free_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "populated-legacy.db"
+            with open_sqlite_connection(path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE users (
+                        telegram_id INTEGER PRIMARY KEY,
+                        first_name TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL
+                    );
+                    CREATE TABLE keys (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                        outline_key_id TEXT NOT NULL UNIQUE,
+                        key_type TEXT NOT NULL DEFAULT 'daily_free',
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        data_limit_bytes INTEGER NOT NULL,
+                        status TEXT NOT NULL
+                    );
+                    CREATE TABLE schema_migrations (
+                        component TEXT NOT NULL,
+                        version INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL,
+                        PRIMARY KEY (component, version)
+                    );
+                    INSERT INTO users VALUES (123, 'Legacy', '2026-01-01T00:00:00+00:00');
+                    INSERT INTO keys
+                        (telegram_id, outline_key_id, created_at, expires_at,
+                         data_limit_bytes, status)
+                    VALUES
+                        (123, 'legacy-key', '2026-01-01T00:00:00+00:00',
+                         '2026-01-02T00:00:00+00:00', 314572800, 'active');
+                    """
+                )
+                for migration in FREE_ACCESS_MIGRATIONS[:3]:
+                    connection.execute(
+                        "INSERT INTO schema_migrations VALUES (?, ?, ?, ?)",
+                        ("free_access", migration.version, migration.name, "2026-01-01"),
+                    )
+                apply_migrations(
+                    connection,
+                    component="free_access",
+                    dialect="sqlite",
+                    migrations=FREE_ACCESS_MIGRATIONS,
+                )
+                key = connection.execute(
+                    "SELECT endpoint_id FROM keys WHERE outline_key_id = 'legacy-key'"
+                ).fetchone()
+                with self.assertRaisesRegex(Exception, "unknown key endpoint"):
+                    connection.execute(
+                        "UPDATE keys SET endpoint_id = 'missing' WHERE outline_key_id = 'legacy-key'"
+                    )
+
+            self.assertEqual(key["endpoint_id"], "legacy-default")
 
 
 class RepositoryContractTest(unittest.TestCase):

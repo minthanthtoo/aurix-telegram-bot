@@ -302,6 +302,7 @@ class CommerceWorkerMixin:
                 str(subscription["id"]),
                 str(subscription["plan_code"]),
                 int(desired_quota) if desired_quota is not None else None,
+                preferred_endpoint_id=subscription["preferred_endpoint_id"],
                 now=now,
             )
             connectivity.attach_job(str(job["id"]), assignment.id)

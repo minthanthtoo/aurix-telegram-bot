@@ -155,7 +155,18 @@ FREE_ACCESS_MIGRATIONS = (
                VALUES ('legacy-default', 'SGP-01', 'manual', 'sgp1', 'ACTIVE', 1,
                        '2026-09-01T00:00:00+00:00')
                ON CONFLICT(id) DO NOTHING""",
-            "ALTER TABLE keys ADD COLUMN endpoint_id TEXT NOT NULL DEFAULT 'legacy-default' REFERENCES vpn_endpoints(id)",
+            # SQLite cannot add a REFERENCES column with a non-NULL default to
+            # a populated table. Endpoint validity remains enforced by the
+            # registry and assignment repository on every write path.
+            "ALTER TABLE keys ADD COLUMN endpoint_id TEXT NOT NULL DEFAULT 'legacy-default'",
+            """CREATE TRIGGER IF NOT EXISTS keys_endpoint_insert_guard
+               BEFORE INSERT ON keys
+               WHEN NOT EXISTS (SELECT 1 FROM vpn_endpoints WHERE id = NEW.endpoint_id)
+               BEGIN SELECT RAISE(ABORT, 'unknown key endpoint'); END""",
+            """CREATE TRIGGER IF NOT EXISTS keys_endpoint_update_guard
+               BEFORE UPDATE OF endpoint_id ON keys
+               WHEN NOT EXISTS (SELECT 1 FROM vpn_endpoints WHERE id = NEW.endpoint_id)
+               BEGIN SELECT RAISE(ABORT, 'unknown key endpoint'); END""",
             "CREATE UNIQUE INDEX IF NOT EXISTS keys_endpoint_external ON keys(endpoint_id, outline_key_id)",
             """CREATE TABLE IF NOT EXISTS endpoint_capacity_snapshots (
                    id TEXT PRIMARY KEY,
@@ -278,7 +289,18 @@ COMMERCE_MIGRATIONS = (
                    management_latency_ms REAL,
                    last_error TEXT
                )""",
-            "ALTER TABLE paid_vpn_keys ADD COLUMN endpoint_id TEXT NOT NULL DEFAULT 'legacy-default' REFERENCES vpn_endpoints(id)",
+            # See the equivalent free-key migration above. Keeping this ALTER
+            # compatible with populated legacy databases is required for the
+            # one-disk upgrade path.
+            "ALTER TABLE paid_vpn_keys ADD COLUMN endpoint_id TEXT NOT NULL DEFAULT 'legacy-default'",
+            """CREATE TRIGGER IF NOT EXISTS paid_keys_endpoint_insert_guard
+               BEFORE INSERT ON paid_vpn_keys
+               WHEN NOT EXISTS (SELECT 1 FROM vpn_endpoints WHERE id = NEW.endpoint_id)
+               BEGIN SELECT RAISE(ABORT, 'unknown paid key endpoint'); END""",
+            """CREATE TRIGGER IF NOT EXISTS paid_keys_endpoint_update_guard
+               BEFORE UPDATE OF endpoint_id ON paid_vpn_keys
+               WHEN NOT EXISTS (SELECT 1 FROM vpn_endpoints WHERE id = NEW.endpoint_id)
+               BEGIN SELECT RAISE(ABORT, 'unknown paid key endpoint'); END""",
             "CREATE UNIQUE INDEX IF NOT EXISTS paid_keys_endpoint_external ON paid_vpn_keys(endpoint_id, outline_key_id)",
             """CREATE TABLE IF NOT EXISTS endpoint_assignments (
                    id TEXT PRIMARY KEY,
@@ -415,6 +437,18 @@ COMMERCE_MIGRATIONS = (
                    metadata_json TEXT NOT NULL DEFAULT '{}',
                    created_at TEXT NOT NULL
                )""",
+        ),
+    ),
+    Migration(
+        3,
+        "customer_endpoint_preferences",
+        sqlite_statements=(
+            "ALTER TABLE orders ADD COLUMN requested_endpoint_id TEXT",
+            "ALTER TABLE subscriptions ADD COLUMN preferred_endpoint_id TEXT",
+        ),
+        postgres_statements=(
+            "ALTER TABLE orders ADD COLUMN IF NOT EXISTS requested_endpoint_id TEXT",
+            "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS preferred_endpoint_id TEXT",
         ),
     ),
 )

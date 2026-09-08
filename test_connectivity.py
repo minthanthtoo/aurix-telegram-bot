@@ -91,6 +91,34 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(first.id, second.id)
         self.assertEqual(first.endpoint_id, "legacy-default")
 
+    def test_preferred_endpoint_is_honored_inside_capacity_selection(self):
+        now = datetime.now(UTC)
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, region, state, accepts_new_assignments,
+                    created_at, last_healthy_at)
+                   VALUES ('sgp-02', 'SGP-02', 'sgp1', 'ACTIVE', 1, ?, ?)""",
+                (now.isoformat(), now.isoformat()),
+            )
+        assignment = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000,
+            preferred_endpoint_id="sgp-02", now=now,
+        )
+        self.assertEqual(assignment.endpoint_id, "sgp-02")
+
+    def test_bootstrap_without_health_mark_stays_unavailable_to_customers(self):
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE vpn_endpoints SET last_healthy_at = NULL WHERE id = 'legacy-default'"
+            )
+        self.registry.configure_bootstrap(
+            "https://outline.invalid:1234/secret", "0" * 64, mark_healthy=False
+        )
+        endpoint = self.registry.list_customer_endpoints("basic")[0]
+        self.assertFalse(endpoint["healthy"])
+        self.assertFalse(endpoint["eligible"])
+
     def test_full_endpoint_is_not_selected(self):
         with self.database.connect() as connection:
             connection.execute(

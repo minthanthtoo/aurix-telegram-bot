@@ -71,3 +71,6 @@ services:
         value: "60"
       - key: AURIX_LATENCY_LOG
         value: "0"
+      # Set this only after aurix-vpn-web has an HTTPS URL.
+      - key: AURIX_WEB_APP_URL
+        value: ""

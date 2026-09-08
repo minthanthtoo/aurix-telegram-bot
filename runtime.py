@@ -9,6 +9,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,33 @@ from supabase_storage import NullReceiptStorage, SupabaseReceiptStorage
 from telegram_transport import DEFAULT_MAINTENANCE_INTERVAL_SECONDS, TelegramBot
 
 
-def main() -> None:
+@dataclass
+class RuntimeServices:
+    """Shared application services used by bot and authenticated web UI."""
+
+    token: str
+    database: Any
+    commerce_database: Any
+    outline: OutlineClient
+    connectivity: EndpointRegistry
+    claim_service: ClaimService
+    commerce: CommerceService
+    allow_text_payment: bool
+
+
+def build_runtime_services(
+    *,
+    validate_telegram: bool = True,
+    check_outline: bool = True,
+    reconcile: bool = True,
+    configure_bootstrap: bool = True,
+) -> RuntimeServices:
+    """Compose the durable AuriX services without starting a transport.
+
+    The web service uses this same composition but does not run Telegram long
+    polling.  Secrets remain server-side; callers receive service objects, not
+    management URLs or bot credentials.
+    """
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     api_url = os.environ.get("OUTLINE_API_URL", "")
     fingerprint = os.environ.get("OUTLINE_CERT_SHA256", "")
@@ -38,20 +65,26 @@ def main() -> None:
     ]
     if missing:
         raise SystemExit("Missing environment variables: " + ", ".join(missing))
-    # Validate token with getMe before starting
-    request = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/getMe",
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            result = json.load(response)
-        if not result.get("ok"):
-            raise SystemExit("Telegram getMe failed: " + str(result))
-        print(f"Bot authorized: @{result['result'].get('username', 'unknown')}")
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"Telegram getMe failed: {exc}")
+    if validate_telegram:
+        # Validate token with getMe before starting a transport.
+        request = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/getMe",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                result = json.load(response)
+            if not result.get("ok"):
+                raise SystemExit("Telegram getMe failed: " + str(result))
+            print(f"Bot authorized: @{result['result'].get('username', 'unknown')}")
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"Telegram getMe failed: {exc}")
+    storage_mode = os.environ.get("AURIX_STORAGE_MODE", "disk").strip().lower()
+    if storage_mode not in {"disk", "postgres"}:
+        raise SystemExit("AURIX_STORAGE_MODE must be 'disk' or 'postgres'")
     commerce_database_url = os.environ.get("COMMERCE_DATABASE_URL", "").strip()
+    if storage_mode == "postgres" and not commerce_database_url:
+        raise SystemExit("COMMERCE_DATABASE_URL is required when AURIX_STORAGE_MODE=postgres")
     if commerce_database_url:
         # The free Render profile stores both free entitlements and commerce
         # state in one hosted PostgreSQL database.  This avoids losing claim
@@ -110,54 +143,81 @@ def main() -> None:
         connectivity,
     )
     commerce.initialize()
-    backfill_assignments = getattr(connectivity, "backfill_free_assignments", None)
-    backfilled_free_assignments = backfill_assignments() if callable(backfill_assignments) else 0
-    if backfilled_free_assignments:
-        print(f"Endpoint assignments backfilled: {backfilled_free_assignments} free key(s)")
-    order_reconciliation = commerce.reconcile_duplicate_open_orders()
-    if order_reconciliation["cancelled"]:
-        print(f"Reconciled {order_reconciliation['cancelled']} empty duplicate open order(s).")
-    if order_reconciliation["manual_conflicts"]:
-        print(
-            "WARNING: duplicate open orders with payment evidence require manual review.",
-            file=sys.stderr,
+    if reconcile:
+        backfill_assignments = getattr(connectivity, "backfill_free_assignments", None)
+        backfilled_free_assignments = (
+            backfill_assignments() if callable(backfill_assignments) else 0
         )
-    connectivity.configure_bootstrap(
-        api_url,
-        fingerprint,
-        code=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_CODE", "SGP-01"),
-        region=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_REGION", "sgp1"),
-    )
-    claim_service = ClaimService(database, outline, limit_bytes=PUBLIC_LIMIT_BYTES)
-    claim_service.connectivity = connectivity
-    try:
-        outline_info = outline.server_info()
-        print(f"Outline connected: version {outline_info.get('version', 'unknown')}")
+        if backfilled_free_assignments:
+            print(f"Endpoint assignments backfilled: {backfilled_free_assignments} free key(s)")
+        order_reconciliation = commerce.reconcile_duplicate_open_orders()
+        if order_reconciliation["cancelled"]:
+            print(f"Reconciled {order_reconciliation['cancelled']} empty duplicate open order(s).")
+        if order_reconciliation["manual_conflicts"]:
+            print(
+                "WARNING: duplicate open orders with payment evidence require manual review.",
+                file=sys.stderr,
+            )
+    if configure_bootstrap:
         connectivity.configure_bootstrap(
             api_url,
             fingerprint,
             code=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_CODE", "SGP-01"),
             region=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_REGION", "sgp1"),
-            outline_version=str(outline_info.get("version") or "unknown"),
+            mark_healthy=check_outline,
         )
-        promo_limits_reconciled = claim_service.reconcile_giveaway_limits()
-        if promo_limits_reconciled:
-            print(f"Promo quotas reconciled: {promo_limits_reconciled} active key(s)")
-    except OutlineError as exc:
-        # Telegram, wallet, receipt review, and admin inspection remain useful
-        # during a VPN management-plane outage. Provisioning fails closed.
+    claim_service = ClaimService(database, outline, limit_bytes=PUBLIC_LIMIT_BYTES)
+    claim_service.connectivity = connectivity
+    if check_outline:
         try:
-            connectivity.record_capacity(
-                "legacy-default",
-                healthy=False,
-                active_key_count=None,
-                observed_transfer_bytes=None,
-                management_latency_ms=None,
-                last_error=type(exc).__name__,
+            outline_info = outline.server_info()
+            print(f"Outline connected: version {outline_info.get('version', 'unknown')}")
+            connectivity.configure_bootstrap(
+                api_url,
+                fingerprint,
+                code=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_CODE", "SGP-01"),
+                region=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_REGION", "sgp1"),
+                outline_version=str(outline_info.get("version") or "unknown"),
             )
-        except Exception:
-            pass
-        print(f"WARNING: Outline endpoint is degraded at startup: {exc}", file=sys.stderr)
+            promo_limits_reconciled = claim_service.reconcile_giveaway_limits()
+            if promo_limits_reconciled:
+                print(f"Promo quotas reconciled: {promo_limits_reconciled} active key(s)")
+        except OutlineError as exc:
+            # Telegram, wallet, receipt review, and admin inspection remain useful
+            # during a VPN management-plane outage. Provisioning fails closed.
+            try:
+                connectivity.record_capacity(
+                    "legacy-default",
+                    healthy=False,
+                    active_key_count=None,
+                    observed_transfer_bytes=None,
+                    management_latency_ms=None,
+                    last_error=type(exc).__name__,
+                )
+            except Exception:
+                pass
+            print(f"WARNING: Outline endpoint is degraded at startup: {exc}", file=sys.stderr)
+
+    return RuntimeServices(
+        token=token,
+        database=database,
+        commerce_database=commerce_database,
+        outline=outline,
+        connectivity=connectivity,
+        claim_service=claim_service,
+        commerce=commerce,
+        allow_text_payment=allow_text_payment,
+    )
+
+
+def main() -> None:
+    runtime = build_runtime_services()
+    token = runtime.token
+    database = runtime.database
+    commerce_database = runtime.commerce_database
+    claim_service = runtime.claim_service
+    commerce = runtime.commerce
+    allow_text_payment = runtime.allow_text_payment
 
     def parse_ids(name: str) -> set[int]:
         try:

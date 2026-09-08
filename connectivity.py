@@ -68,6 +68,7 @@ class EndpointRegistry:
         code: str = "SGP-01",
         region: str = "sgp1",
         outline_version: str | None = None,
+        mark_healthy: bool = True,
         now: datetime | None = None,
     ) -> None:
         timestamp = (now or datetime.now(UTC)).isoformat()
@@ -82,8 +83,9 @@ class EndpointRegistry:
                             WHEN state IN ('DRAINING', 'RETIRED') THEN accepts_new_assignments ELSE ? END,
                           management_url_ciphertext = ?,
                           certificate_sha256 = ?, outline_version = COALESCE(?, outline_version),
-                          public_address = ?, verified_at = COALESCE(verified_at, ?),
-                          last_healthy_at = COALESCE(last_healthy_at, ?)
+                          public_address = ?,
+                          verified_at = CASE WHEN ? THEN COALESCE(verified_at, ?) ELSE verified_at END,
+                          last_healthy_at = CASE WHEN ? THEN COALESCE(last_healthy_at, ?) ELSE last_healthy_at END
                    WHERE id = ?""",
                 (
                     code[:64],
@@ -93,7 +95,9 @@ class EndpointRegistry:
                     certificate_sha256.lower().replace(":", ""),
                     outline_version,
                     public_address,
+                    bool(mark_healthy),
                     timestamp,
+                    bool(mark_healthy),
                     timestamp,
                     DEFAULT_ENDPOINT_ID,
                 ),
@@ -176,6 +180,92 @@ class EndpointRegistry:
                    ORDER BY e.code"""
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_customer_endpoints(self, plan_code: str | None = None) -> list[dict[str, Any]]:
+        """Return the safe endpoint directory used by the customer portal.
+
+        Management URLs, certificates, provider resource IDs, and public IPs
+        are intentionally excluded. ``management_latency_ms`` is the latest
+        control-plane observation and must not be presented as a user ping.
+        """
+        plan = str(plan_code or "").strip() or None
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT e.id, e.code, e.region, e.state,
+                          e.accepts_new_assignments, e.last_healthy_at,
+                          e.max_active_keys,
+                          COUNT(a.id) AS active_assignments,
+                          l.enabled AS plan_enabled,
+                          l.max_active_assignments AS plan_max,
+                          (SELECT COUNT(*) FROM endpoint_assignments pa
+                           WHERE pa.endpoint_id = e.id
+                             AND pa.plan_code = ? AND pa.status = 'active') AS plan_active,
+                          (SELECT s.management_latency_ms
+                           FROM endpoint_capacity_snapshots s
+                           WHERE s.endpoint_id = e.id
+                           ORDER BY s.observed_at DESC LIMIT 1) AS management_latency_ms,
+                          (SELECT s.observed_at
+                           FROM endpoint_capacity_snapshots s
+                           WHERE s.endpoint_id = e.id
+                           ORDER BY s.observed_at DESC LIMIT 1) AS last_probe_at
+                   FROM vpn_endpoints e
+                   LEFT JOIN endpoint_assignments a
+                     ON a.endpoint_id = e.id AND a.status = 'active'
+                   LEFT JOIN endpoint_plan_limits l
+                     ON l.endpoint_id = e.id AND l.plan_code = ?
+                   WHERE e.state != 'RETIRED'
+                   GROUP BY e.id, e.code, e.region, e.state,
+                            e.accepts_new_assignments, e.last_healthy_at,
+                            e.max_active_keys, l.enabled, l.max_active_assignments
+                   ORDER BY e.code""",
+                (plan, plan),
+            ).fetchall()
+        max_age_seconds = max(
+            30, int(os.environ.get("AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS", "900"))
+        )
+        fresh_after = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                healthy = bool(item.get("last_healthy_at")) and datetime.fromisoformat(
+                    str(item["last_healthy_at"])
+                ).astimezone(UTC) >= fresh_after
+            except (TypeError, ValueError, OverflowError):
+                healthy = False
+            plan_enabled = item.get("plan_enabled") not in (False, 0)
+            at_endpoint_capacity = (
+                item.get("max_active_keys") is not None
+                and int(item["active_assignments"] or 0) >= int(item["max_active_keys"])
+            )
+            at_plan_capacity = (
+                item.get("plan_max") is not None
+                and int(item["plan_active"] or 0) >= int(item["plan_max"])
+            )
+            item["healthy"] = healthy
+            item["eligible"] = (
+                str(item.get("state")) == "ACTIVE"
+                and item.get("accepts_new_assignments") not in (False, 0)
+                and healthy
+                and plan_enabled
+                and not at_endpoint_capacity
+                and not at_plan_capacity
+            )
+            result.append(item)
+        return result
+
+    def validate_customer_endpoint(self, endpoint_id: str, plan_code: str) -> dict[str, Any]:
+        """Validate one customer-selectable endpoint without exposing secrets."""
+        requested = str(endpoint_id or "").strip()
+        if not requested or len(requested) > 128:
+            raise ConnectivityError("Choose a valid VPN server")
+        endpoint = next(
+            (item for item in self.list_customer_endpoints(plan_code) if item["id"] == requested),
+            None,
+        )
+        if endpoint is None or not endpoint.get("eligible"):
+            raise ConnectivityError("That VPN server is not currently available for this plan")
+        return endpoint
 
     def backfill_free_assignments(self) -> int:
         """Idempotently include pre-registry free/promo keys in capacity accounting."""
@@ -340,7 +430,12 @@ class EndpointRegistry:
             "inventory": {"byEndpoint": inventory, "errors": dict(errors)},
         }
 
-    def select_endpoint_for_plan(self, connection: Any, plan_code: str) -> str:
+    def select_endpoint_for_plan(
+        self,
+        connection: Any,
+        plan_code: str,
+        preferred_endpoint_id: str | None = None,
+    ) -> str:
         """Select and lock a capacity-eligible endpoint inside the caller transaction."""
         max_age_seconds = max(
             30, int(os.environ.get("AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS", "900"))
@@ -364,6 +459,7 @@ class EndpointRegistry:
                  ON l.endpoint_id = e.id AND l.plan_code = ?
                WHERE e.state = 'ACTIVE' AND e.accepts_new_assignments = ?
                  AND e.last_healthy_at IS NOT NULL AND e.last_healthy_at >= ?
+                 AND (? IS NULL OR e.id = ?)
                ORDER BY
                  CASE WHEN e.max_active_keys IS NULL THEN 2147483647
                       ELSE e.max_active_keys -
@@ -371,7 +467,14 @@ class EndpointRegistry:
                           WHERE aa.endpoint_id = e.id AND aa.status = 'active') END DESC,
                  e.code"""
             + lock,
-            (plan_code, plan_code, True, fresh_after),
+            (
+                plan_code,
+                plan_code,
+                True,
+                fresh_after,
+                preferred_endpoint_id,
+                preferred_endpoint_id,
+            ),
         ).fetchall()
         for row in rows:
             if row["plan_enabled"] is False or row["plan_enabled"] == 0:
@@ -445,6 +548,7 @@ class EndpointRegistry:
         quota_bytes: int | None,
         *,
         reason: str = "deterministic-allocation",
+        preferred_endpoint_id: str | None = None,
         now: datetime | None = None,
     ) -> EndpointAssignment:
         timestamp = (now or datetime.now(UTC)).isoformat()
@@ -456,7 +560,9 @@ class EndpointRegistry:
             ).fetchone()
             if existing is not None:
                 return self._assignment(existing)
-            endpoint_id = self.select_endpoint_for_plan(connection, plan_code)
+            endpoint_id = self.select_endpoint_for_plan(
+                connection, plan_code, preferred_endpoint_id=preferred_endpoint_id
+            )
             assignment_id = uuid.uuid4().hex
             connection.execute(
                 """INSERT INTO endpoint_assignments

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from cryptography.fernet import Fernet
 
@@ -299,6 +300,31 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertNotEqual(replacement.order_id, first.order_id)
         self.assertEqual(self.service.order_detail(first.order_id, 123)["stage"], "cancelled")
         self.assertEqual(self.service.order_detail(replacement.order_id, 123)["plan_code"], "standard_100gb")
+
+    def test_customer_server_preference_flows_into_subscription(self):
+        self.service.connectivity = SimpleNamespace(
+            validate_customer_endpoint=lambda endpoint_id, plan_code: {
+                "id": endpoint_id,
+                "eligible": True,
+            }
+        )
+        order = self.service.create_order(
+            123, "Min", "basic_50gb", self.now, requested_endpoint_id="sgp-02"
+        )
+        with self.database.connect() as connection:
+            requested = connection.execute(
+                "SELECT requested_endpoint_id FROM orders WHERE id = ?",
+                (order.order_id,),
+            ).fetchone()["requested_endpoint_id"]
+        self.assertEqual(requested, "sgp-02")
+        self.service.submit_payment(123, order.order_id, "manual", "server-pref", self.now)
+        self.service.approve_order(order.order_id, 999, self.now)
+        with self.database.connect() as connection:
+            preferred = connection.execute(
+                "SELECT preferred_endpoint_id FROM subscriptions WHERE order_id = ?",
+                (order.order_id,),
+            ).fetchone()["preferred_endpoint_id"]
+        self.assertEqual(preferred, "sgp-02")
 
     def test_plan_replacement_is_blocked_after_payment_activity(self):
         first = self.service.create_order(124, "Min", "basic_50gb", self.now)
@@ -829,15 +855,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "a4e1829a1d2ac4e0ee2d14aa570c70c52479eb1d40a78248967806082cdac1e9",
+            "0fc7ca6a1dde889f0dfd9e644750de21fd433f2ab69c7838d10653fc45e4140e",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "85588605e7da6993f850a687e75b0606fa6e23b9126a40dcce42d831f0d0300c",
+            "f50d6297d25ea35ac125b667ba1e2b00bb676cfdb2263bc21995849b113e5158",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "1b740815c920d4659afc307708c4d110d54a93fa3e3350a431c2d5bc5f289490",
+            "6a3aae494dd93489399790c93d86d27c7b6600c7bd55296c48e9516bbb6cce5d",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

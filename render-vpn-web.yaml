@@ -1,0 +1,42 @@
+# Separate customer-facing web service for the Telegram Mini App.
+#
+# It must use the same COMMERCE_DATABASE_URL and AURIX_ACCESS_URL_KEY as the
+# bot. A SQLite file cannot be shared between two Render services. Keep the
+# existing durable worker in render.yaml unless you intentionally migrate both
+# services to one PostgreSQL database.
+services:
+  - type: web
+    name: aurix-vpn-web
+    runtime: python
+    region: singapore
+    plan: starter
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -u deploy/render_vpn_web.py
+    healthCheckPath: /api/healthz
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.4
+      - key: AURIX_STORAGE_MODE
+        value: postgres
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: OUTLINE_API_URL
+        sync: false
+      - key: OUTLINE_CERT_SHA256
+        sync: false
+      - key: AURIX_ACCESS_URL_KEY
+        sync: false
+      - key: COMMERCE_DATABASE_URL
+        sync: false
+      - key: TRIAL_TELEGRAM_IDS
+        value: ""
+      - key: ALLOW_TEXT_PAYMENT_REFERENCES
+        value: "0"
+      - key: RECEIPT_STORAGE_REQUIRED
+        value: "0"
+      - key: AURIX_WEB_APP_INIT_DATA_MAX_AGE
+        value: "86400"
+      - key: AURIX_TELEGRAM_URL
+        sync: false

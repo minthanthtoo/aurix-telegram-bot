@@ -30,6 +30,21 @@ and resellers remain gated. See
 For the canonical multi-node design, safety invariants, rollout gates, and
 operator runbook, read
 [`docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md`](docs/AUTOSCALE_ARCHITECTURE_AND_RUNBOOK.md).
+For the latest measured Outline fleet baseline and the reusable future-agent
+report template, read
+[`docs/OUTLINE_CAPACITY_BASELINE_2026-09-07.md`](docs/OUTLINE_CAPACITY_BASELINE_2026-09-07.md)
+and
+[`docs/OUTLINE_CAPACITY_REPORT_TEMPLATE.md`](docs/OUTLINE_CAPACITY_REPORT_TEMPLATE.md).
+The loaded-latency probe used by the baseline is
+[`scripts/outline_loaded_latency_probe.py`](scripts/outline_loaded_latency_probe.py).
+The live bootstrap web deployment is documented in
+[`docs/AURIX_HELLO_WORLD_DEPLOYMENT.md`](docs/AURIX_HELLO_WORLD_DEPLOYMENT.md).
+The multi-product hostname, service-boundary, catalog, and rebrand contract is
+documented in
+[`docs/AURIX_MULTI_PRODUCT_PLATFORM.md`](docs/AURIX_MULTI_PRODUCT_PLATFORM.md).
+The authenticated VPN portal, Telegram Mini App, API contract, and shared
+PostgreSQL deployment boundary are documented in
+[`docs/AURIX_VPN_PORTAL.md`](docs/AURIX_VPN_PORTAL.md).
 
 ## Configure
 
@@ -77,6 +92,12 @@ Optional:
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
 - `AURIX_BOOTSTRAP_ENDPOINT_CODE`, `AURIX_BOOTSTRAP_ENDPOINT_REGION` — identity of the existing Outline server during endpoint backfill.
+- `AURIX_WEB_APP_URL` — optional final HTTPS URL for the authenticated AuriX
+  VPN Telegram Mini App; leave blank until the separate web service is live.
+- `AURIX_TELEGRAM_URL` — optional `https://t.me/...` support/bot deep link used
+  by the VPN portal.
+- `AURIX_WEB_APP_INIT_DATA_MAX_AGE` — maximum age in seconds for Telegram Mini
+  App sessions on the web service (default `86400`).
 - `AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS` — maximum health age accepted by allocation (default `900`).
 - `DIGITALOCEAN_API_TOKEN` — optional infrastructure-worker credential; leave absent on the bot/VPN host where possible.
 - `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED` — defaults to `0`; provider creation stays disabled until the autoscale runbook gates are met.
@@ -94,6 +115,7 @@ AuriX has two Render profiles. Pick one; do not combine their storage settings.
 | --- | --- | --- | --- | --- |
 | Durable MVP (recommended) | [`render.yaml`](render.yaml) | One paid Background Worker (`starter` / `0.5c-512mb`) | SQLite on a 1 GB persistent disk | Real users and payments |
 | Free pilot | [`render-free.yaml`](render-free.yaml) | One Free Web Service | Supabase PostgreSQL; Render filesystem is disposable | Controlled testing only |
+| VPN Mini App | [`render-vpn-web.yaml`](render-vpn-web.yaml) | One paid Web Service (`starter`) | Same PostgreSQL state as the bot | Authenticated VPN portal; deploy only after shared-state parity |
 
 The paid worker does not have a public URL because Telegram long polling only
 needs outbound network access. The free profile wraps the same bot in a small

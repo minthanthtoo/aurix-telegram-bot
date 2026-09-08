@@ -121,6 +121,18 @@ class RuntimeCompositionTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "TELEGRAM_BOT_TOKEN"):
                 runtime.main()
 
+    def test_postgres_storage_mode_cannot_silently_fall_back_to_sqlite(self):
+        environment = {
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "OUTLINE_API_URL": "https://outline.invalid/secret",
+            "OUTLINE_CERT_SHA256": "0" * 64,
+            "AURIX_ACCESS_URL_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+            "AURIX_STORAGE_MODE": "postgres",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(SystemExit, "COMMERCE_DATABASE_URL is required"):
+                runtime.build_runtime_services(validate_telegram=False)
+
     def test_main_composes_adapters_and_cleans_polling_webhook(self):
         environment = {
             "TELEGRAM_BOT_TOKEN": "test-token",
@@ -161,6 +173,32 @@ class RuntimeCompositionTest(unittest.TestCase):
         self.assertIn("Bot authorized: @aurix_test_bot", output.getvalue())
         self.assertIn("Outline connected: version test-outline", output.getvalue())
         self.assertIn("Promo quotas reconciled: 1 active key(s)", output.getvalue())
+
+    def test_web_composition_can_leave_bootstrap_endpoint_unchanged(self):
+        environment = {
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "OUTLINE_API_URL": "https://outline.invalid/secret",
+            "OUTLINE_CERT_SHA256": "0" * 64,
+            "AURIX_ACCESS_URL_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+            "DATABASE_PATH": "/tmp/aurix-runtime-test.db",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("runtime.Database", _Database),
+            patch("runtime.CommerceDatabase", _CommerceDatabase),
+            patch("runtime.OutlineClient", _Outline),
+            patch("runtime.EndpointRegistry", _EndpointRegistry),
+            patch("runtime.CommerceService", _Commerce),
+            patch("runtime.ClaimService", _ClaimService),
+        ):
+            runtime.build_runtime_services(
+                validate_telegram=False,
+                check_outline=False,
+                reconcile=False,
+                configure_bootstrap=False,
+            )
+
+        self.assertIsNone(_EndpointRegistry.instances[0].bootstrap)
 
 
 if __name__ == "__main__":
