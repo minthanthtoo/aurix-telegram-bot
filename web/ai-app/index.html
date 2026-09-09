@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111827">
+    <title>AuriX AI</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <p class="eyebrow">AuriX / AI</p>
+        <h1>Useful answers, in your language.</h1>
+        <p class="lede">Use the existing AuriX AI route for English answers, English ↔ Lisu translation, or a Lisu-first assistant.</p>
+      </header>
+
+      <section class="panel access-panel" aria-labelledby="access-title">
+        <div>
+          <p class="eyebrow">Private access</p>
+          <h2 id="access-title">Sign in with Telegram</h2>
+        </div>
+        <p id="auth-copy" class="hint">Use your Telegram account to create a short-lived secure session.</p>
+        <div id="telegram-login"></div>
+        <p id="auth-user" class="hint" hidden></p>
+        <button id="logout" type="button" hidden>Sign out</button>
+      </section>
+
+      <section class="panel chat-panel" aria-labelledby="chat-title">
+        <div class="toolbar">
+          <div>
+            <p class="eyebrow">Conversation</p>
+            <h2 id="chat-title">AuriX AI</h2>
+          </div>
+          <div class="selectors">
+            <label class="mode-label" for="mode">Mode
+              <select id="mode">
+                <option value="english">English assistant</option>
+                <option value="translate">English ↔ Lisu translator</option>
+                <option value="lisu_assistant">Lisu assistant (experimental)</option>
+              </select>
+            </label>
+            <label class="mode-label" for="model">AI model
+              <select id="model">
+                <option value="gemini-3.7-flash-high">Gemini 3.7 Flash High</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div id="messages" class="messages" aria-live="polite">
+          <div class="message assistant">Choose a mode and send a message to begin.</div>
+        </div>
+        <form id="chat-form" class="composer">
+          <label class="sr-only" for="message">Message</label>
+          <textarea id="message" rows="3" maxlength="12000" placeholder="Write a message..."></textarea>
+          <div class="composer-footer">
+            <span id="status" class="status">Ready</span>
+            <button type="submit">Send</button>
+          </div>
+        </form>
+      </section>
+
+      <footer>
+        <p>Translation quality should be reviewed by a Lisu speaker before being used for official or sensitive communication.</p>
+      </footer>
+    </main>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

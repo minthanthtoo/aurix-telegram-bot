@@ -3,13 +3,13 @@
 
 from datetime import timezone
 
-from commerce import (
+from aurix_vpn.commerce import (
     CommerceDatabase as CommerceDatabase,
     CommerceError as CommerceError,
     CommerceService as CommerceService,
     PostgresCommerceDatabase as PostgresCommerceDatabase,
 )
-from entitlements import (
+from aurix_vpn.entitlements import (
     CLAIM_PERIOD as CLAIM_PERIOD,
     LIMIT_BYTES as LIMIT_BYTES,
     PUBLIC_LIMIT_BYTES as PUBLIC_LIMIT_BYTES,
@@ -23,20 +23,20 @@ from entitlements import (
     _new_id as _new_id,
     _outline_key_name as _outline_key_name,
 )
-from free_repository import Database as Database
-from outline_adapter import OutlineClient as OutlineClient
+from aurix_vpn.free_repository import Database as Database
+from aurix_vpn.outline_adapter import OutlineClient as OutlineClient
 from ports import ReceiptExtractorGateway as ReceiptExtractorGateway
 from receipt_llm import (
     OpenAICompatibleReceiptExtractor as OpenAICompatibleReceiptExtractor,
     ReceiptExtractionError as ReceiptExtractionError,
     ReceiptLLMUnavailable as ReceiptLLMUnavailable,
 )
-from runtime import main as main
+from aurix_vpn.runtime import main as main
 from supabase_storage import (
     NullReceiptStorage as NullReceiptStorage,
     SupabaseReceiptStorage as SupabaseReceiptStorage,
 )
-from telegram_transport import (
+from aurix_vpn.telegram_transport import (
     ADMIN_CONFIRMATION_TTL as ADMIN_CONFIRMATION_TTL,
     DEFAULT_MAINTENANCE_INTERVAL_SECONDS as DEFAULT_MAINTENANCE_INTERVAL_SECONDS,
     AdminOperations as AdminOperations,

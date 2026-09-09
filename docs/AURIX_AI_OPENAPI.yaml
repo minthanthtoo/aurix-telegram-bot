@@ -1,0 +1,749 @@
+openapi: 3.1.0
+info:
+  title: AuriX AI External API
+  version: 1.0.0
+  description: Server-to-server AI gateway backed by the existing 9Router.
+servers:
+  - url: https://ai.aurix-mart.tech
+security:
+  - aurixApiKey: []
+paths:
+  /v1/chat:
+    post:
+      operationId: createChatCompletion
+      summary: Generate an AuriX assistant or translation response
+      security:
+        - aurixApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: Completed response
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamFailure'
+  /v1/chat/completions:
+    post:
+      operationId: createOpenAICompatibleChatCompletion
+      summary: Generate an OpenAI-compatible chat completion
+      description: >-
+        OpenAI-compatible text chat for server-to-server integrations. The
+        consuming site owns conversation history; conversation_id is optional.
+        Supports SSE streaming, tool calls, and image message parts when the
+        selected model advertises those capabilities.
+      security:
+        - aurixApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAIChatRequest'
+      responses:
+        '200':
+          description: Standard chat completion
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIChatResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamFailure'
+  /v1/models:
+    get:
+      operationId: listOpenAIModels
+      summary: List models and exposed capabilities
+      security:
+        - aurixApiKey: []
+      responses:
+        '200':
+          description: Model catalog filtered by the API key policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIModelList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/embeddings:
+    post:
+      operationId: createEmbedding
+      summary: Create text embeddings
+      security:
+        - aurixApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbeddingRequest'
+      responses:
+        '200':
+          description: Embedding vectors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/UpstreamFailure'
+  /v1/audio/speech:
+    post:
+      operationId: createSpeech
+      summary: Convert text to speech
+      security:
+        - aurixApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AudioSpeechRequest'
+      responses:
+        '200':
+          description: Audio bytes from the selected TTS model
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+  /v1/audio/transcriptions:
+    post:
+      operationId: createTranscription
+      summary: Transcribe an audio upload
+      security:
+        - aurixApiKey: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AudioMultipartRequest'
+      responses:
+        '200':
+          description: Transcription response from the selected STT model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioTextResponse'
+            text/plain:
+              schema:
+                type: string
+  /v1/audio/translations:
+    post:
+      operationId: createAudioTranslation
+      summary: Translate an audio upload to English
+      security:
+        - aurixApiKey: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AudioMultipartRequest'
+      responses:
+        '200':
+          description: Audio translation response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioTextResponse'
+  /api/admin/accounts:
+    get:
+      operationId: listAccountUsage
+      summary: List account usage totals for the admin's selected period
+      security:
+        - aurixAdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Account usage summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAccountsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/admin/usage:
+    get:
+      operationId: listUsageEvents
+      summary: List account totals and recent prompt-free usage events
+      security:
+        - aurixAdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/UsageFormat'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: Account summaries and recent usage events
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/AdminUsageResponse'
+                  - $ref: '#/components/schemas/NineRouterUsageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    aurixApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: ak_live
+    aurixAdminToken:
+      type: http
+      scheme: bearer
+      bearerFormat: admin-token
+  parameters:
+    From:
+      name: from
+      in: query
+      schema:
+        type: string
+        format: date-time
+    To:
+      name: to
+      in: query
+      schema:
+        type: string
+        format: date-time
+    AccountId:
+      name: account_id
+      in: query
+      schema:
+        type: string
+    UsageFormat:
+      name: format
+      in: query
+      description: Use 9router for a read-only 9Router-compatible export.
+      schema:
+        type: string
+        enum: [summary, 9router]
+        default: summary
+  headers:
+    RequestId:
+      description: Support correlation identifier.
+      schema:
+        type: string
+  schemas:
+    ChatRequest:
+      type: object
+      required: [message]
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum: [english, translate, lisu_assistant]
+          default: english
+        model_id:
+          type: string
+          description: Server-approved model catalog ID.
+        message:
+          type: string
+          minLength: 1
+          maxLength: 12000
+        history:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [role, content]
+            additionalProperties: false
+            properties:
+              role:
+                type: string
+                enum: [user, assistant]
+              content:
+                type: string
+                maxLength: 12000
+        context_summary:
+          type: string
+          maxLength: 6000
+          description: Site-owned rolling summary treated as untrusted context.
+        user_id:
+          type: string
+          maxLength: 160
+          description: Opaque site-user identifier used only for usage attribution.
+        conversation_id:
+          type: string
+          maxLength: 160
+          description: Opaque site conversation identifier used only for usage attribution.
+    ChatResponse:
+      type: object
+      required: [request_id, text, model_id, mode_result]
+      properties:
+        request_id:
+          type: string
+        text:
+          type: string
+        mode_result:
+          type: string
+          enum: [complete]
+        model_id:
+          type: string
+        model_label:
+          type: string
+        requested_model:
+          type: string
+        returned_model:
+          type: [string, 'null']
+        upstream_request_id:
+          type: [string, 'null']
+        usage:
+          type: [object, 'null']
+          additionalProperties: true
+        token_usage:
+          type: object
+          required: [input_tokens, output_tokens, total_tokens]
+          properties:
+            input_tokens:
+              type: [integer, 'null']
+            output_tokens:
+              type: [integer, 'null']
+            total_tokens:
+              type: [integer, 'null']
+            cached_tokens:
+              type: [integer, 'null']
+        context:
+          type: [object, 'null']
+          additionalProperties: true
+    OpenAIChatRequest:
+      type: object
+      required: [messages]
+      additionalProperties: false
+      properties:
+        model:
+          type: string
+          description: Server-approved model ID or exact approved route.
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 101
+          items:
+            type: object
+            required: [role]
+            additionalProperties: true
+            properties:
+              role:
+                type: string
+                enum: [system, developer, user, assistant, tool]
+              content:
+                oneOf:
+                  - type: string
+                    minLength: 1
+                    maxLength: 12000
+                  - type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        type:
+                          type: string
+                          enum: [text, image_url]
+                        text:
+                          type: string
+                        image_url:
+                          type: object
+                          required: [url]
+                          properties:
+                            url:
+                              type: string
+                            detail:
+                              type: string
+                              enum: [auto, low, high]
+        tools:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            required: [type, function]
+            properties:
+              type:
+                type: string
+                enum: [function]
+              function:
+                type: object
+                required: [name]
+                properties:
+                  name:
+                    type: string
+                  description:
+                    type: string
+                  parameters:
+                    type: object
+                    additionalProperties: true
+        tool_choice:
+          oneOf:
+            - type: string
+              enum: [none, auto, required]
+            - type: object
+              additionalProperties: true
+        parallel_tool_calls:
+          type: boolean
+        stream_options:
+          type: object
+          additionalProperties: true
+        user:
+          type: string
+          maxLength: 160
+          description: Optional opaque site-user identifier for usage attribution.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional attribution metadata; conversation_id is supported.
+        conversation_id:
+          type: string
+          maxLength: 160
+          description: Optional opaque conversation identifier.
+        aurix_mode:
+          type: string
+          enum: [english, translate, lisu_assistant]
+          default: english
+        stream:
+          type: boolean
+          default: false
+        n:
+          type: integer
+          enum: [1]
+          default: 1
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+        max_tokens:
+          type: integer
+          minimum: 1
+        max_completion_tokens:
+          type: integer
+          minimum: 1
+    OpenAIChatResponse:
+      type: object
+      required: [id, object, created, model, choices, usage]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum: [chat.completion]
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: object
+            required: [index, message, finish_reason]
+            properties:
+              index:
+                type: integer
+              message:
+                type: object
+                required: [role, content]
+                properties:
+                  role:
+                    type: string
+                    enum: [assistant]
+                  content:
+                    type: string
+              finish_reason:
+                type: string
+                nullable: true
+        usage:
+          type: [object, 'null']
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+    OpenAIModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            type: object
+            required: [id, object, owned_by, capabilities]
+            properties:
+              id:
+                type: string
+              object:
+                type: string
+                enum: [model]
+              owned_by:
+                type: string
+              capabilities:
+                type: array
+                items:
+                  type: string
+    EmbeddingRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              maxItems: 128
+              items:
+                type: string
+        encoding_format:
+          type: string
+          enum: [float, base64]
+        dimensions:
+          type: integer
+          minimum: 1
+        user:
+          type: string
+    EmbeddingResponse:
+      type: object
+      required: [object, data, model]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        model:
+          type: string
+        data:
+          type: array
+          items:
+            type: object
+            required: [object, index, embedding]
+            properties:
+              object:
+                type: string
+                enum: [embedding]
+              index:
+                type: integer
+              embedding:
+                oneOf:
+                  - type: array
+                    items:
+                      type: number
+                  - type: string
+        usage:
+          type: [object, 'null']
+          additionalProperties: true
+    AudioSpeechRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+        input:
+          type: string
+          maxLength: 12000
+        voice:
+          type: string
+        response_format:
+          type: string
+        speed:
+          type: number
+    AudioMultipartRequest:
+      type: object
+      required: [file, model]
+      properties:
+        model:
+          type: string
+        file:
+          type: string
+          format: binary
+        language:
+          type: string
+        prompt:
+          type: string
+        response_format:
+          type: string
+        temperature:
+          type: number
+    AudioTextResponse:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+    AdminAccountsResponse:
+      type: object
+      required: [period, accounts]
+      properties:
+        period:
+          $ref: '#/components/schemas/Period'
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountUsage'
+    AdminUsageResponse:
+      type: object
+      required: [period, accounts, requests]
+      properties:
+        period:
+          $ref: '#/components/schemas/Period'
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountUsage'
+        requests:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    Period:
+      type: object
+      required: [start_at, end_at]
+      properties:
+        start_at:
+          type: string
+          format: date-time
+        end_at:
+          type: string
+          format: date-time
+    AccountUsage:
+      type: object
+      required: [id, name, requests, input_tokens, output_tokens, total_tokens]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        owner_type:
+          type: string
+        owner_id:
+          type: [string, 'null']
+        requests:
+          type: integer
+        successful_requests:
+          type: integer
+        failed_requests:
+          type: integer
+        usage_reported_requests:
+          type: integer
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        cached_tokens:
+          type: integer
+        cost:
+          type: number
+    NineRouterUsageResponse:
+      type: object
+      required: [source, format, period, events]
+      properties:
+        source:
+          type: string
+          example: aurix
+        format:
+          type: string
+          example: 9router.usageHistory.v1
+        period:
+          $ref: '#/components/schemas/Period'
+        events:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        request_id:
+          type: string
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid AuriX API key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Account policy does not allow the requested mode or model.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: Account request limit exceeded.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UpstreamFailure:
+      description: 9Router or selected model failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

@@ -25,6 +25,8 @@ source = [
     "ports",
     "repositories",
     "receipt_llm",
+    "aurix_ai",
+    "aurix_vpn",
     "runtime",
     "supabase_storage",
     "telegram_transport",

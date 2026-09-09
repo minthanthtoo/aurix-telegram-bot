@@ -20,8 +20,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from runtime import build_runtime_services
-from vpn_web_api import AuriXVpnWebApplication, create_server
+from aurix_vpn.runtime import build_runtime_services
+from aurix_vpn.vpn_web_api import AuriXVpnWebApplication, create_server
 
 
 def _stop_child(child: subprocess.Popen[Any] | None) -> None:

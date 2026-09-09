@@ -98,6 +98,14 @@ Optional:
   by the VPN portal.
 - `AURIX_WEB_APP_INIT_DATA_MAX_AGE` — maximum age in seconds for Telegram Mini
   App sessions on the web service (default `86400`).
+- `AURIX_AI_ROUTER_BASE_URL`, `AURIX_AI_ROUTER_API_KEY`, and `AURIX_AI_MODEL` —
+  server-only connection to the existing 9Router; `AURIX_AI_MODEL` must be the
+  exact route verified in that router and has no guessed default.
+- `TELEGRAM_BOT_TOKEN`, `AURIX_TELEGRAM_BOT_USERNAME`, and
+  `AURIX_AI_SESSION_MAX_AGE_SECONDS` — Telegram-authenticated sessions for the
+  branded AuriX AI interface; the bot token remains server-only.
+- `AURIX_AI_LEGACY_TOKEN_ENABLED` — defaults to `0`; only enable temporarily
+  while migrating old clients that still send `AURIX_AI_ACCESS_TOKEN`.
 - `AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS` — maximum health age accepted by allocation (default `900`).
 - `DIGITALOCEAN_API_TOKEN` — optional infrastructure-worker credential; leave absent on the bot/VPN host where possible.
 - `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED` — defaults to `0`; provider creation stays disabled until the autoscale runbook gates are met.
@@ -106,6 +114,12 @@ Optional:
 - `AURIX_MAX_MONTHLY_INFRA_BUDGET_USD`, `AURIX_DROPLET_MONTHLY_COST_ESTIMATE_USD` — optional fail-closed provider billing guard.
 
 Do not expose `OUTLINE_API_URL`, bot token, DB, or generated access URLs. Firewall Outline Management API so only bot host can reach it.
+
+The AuriX AI gateway is a separate container that joins `9router-net` and is
+published through `ai.aurix-mart.tech`. It supports English, English ↔ Lisu
+translation, and a Lisu-first assistant while keeping the 9Router credential
+server-side. See [`docs/AURIX_AI.md`](docs/AURIX_AI.md) for the build, Caddy
+cutover, API, and model-verification procedure.
 
 ## Deploy on Render
 
@@ -398,7 +412,7 @@ cannot be replayed after a restart.
 
 ```sh
 python3 -m pip install --requirement requirements-dev.txt
-ruff check app.py commerce.py commerce_models.py commerce_repositories.py commerce_service.py commerce_worker.py entitlements.py free_repository.py migrations.py observability.py outline_adapter.py persistence.py ports.py repositories.py receipt_llm.py runtime.py supabase_storage.py telegram_transport.py telegram_admin.py telegram_admin_panels.py telegram_callbacks.py telegram_commands.py telegram_maintenance.py deploy test_*.py
+ruff check app.py aurix_ai aurix_vpn migrations.py observability.py persistence.py ports.py repositories.py receipt_llm.py supabase_storage.py telegram_web_app.py deploy test_*.py
 PYTHONWARNINGS=error::ResourceWarning coverage run -m unittest discover
 coverage report
 ```

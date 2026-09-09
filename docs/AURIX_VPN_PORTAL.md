@@ -13,11 +13,11 @@ Both surfaces use the same `ClaimService`, `CommerceService`, endpoint
 registry, Outline usage collection, and encrypted access-URL storage. No
 Outline management URL is sent to a browser or customer.
 
-The new implementation is:
+The new implementation is organized under the VPN product package:
 
 - `telegram_web_app.py` — server-side Telegram `initData` HMAC verification.
-- `vpn_dashboard.py` — shared customer VPN snapshot assembly.
-- `vpn_web_api.py` — HTTPS-facing API and static portal server.
+- `aurix_vpn/vpn_dashboard.py` — shared customer VPN snapshot assembly.
+- `aurix_vpn/vpn_web_api.py` — HTTPS-facing API and static portal server.
 - `web/vpn-app/` — AuriX-adapted portal UI and Telegram Mini App shell.
 - `deploy/render_vpn_web.py` — Render entrypoint.
 - `render-vpn-web.yaml` — separate web-service deployment template.
@@ -32,12 +32,12 @@ management console.
 
 The implementation is intentionally split at the service boundary:
 
-- `runtime.py` is the single composition root for bot and web services.
-- `vpn_dashboard.py` is the shared customer-state read model; do not duplicate
+- `aurix_vpn/runtime.py` is the single composition root for bot and web services.
+- `aurix_vpn/vpn_dashboard.py` is the shared customer-state read model; do not duplicate
   the old `/myvpn` aggregation in a new transport.
-- `vpn_web_api.py` owns authenticated HTTP routes and only calls existing
+- `aurix_vpn/vpn_web_api.py` owns authenticated HTTP routes and only calls existing
   commerce/entitlement services.
-- `connectivity.py` owns endpoint health, capacity, and preference validation.
+- `aurix_vpn/connectivity.py` owns endpoint health, capacity, and preference validation.
 - Migration `commerce:3` stores `orders.requested_endpoint_id` and
   `subscriptions.preferred_endpoint_id`.
 - `web/vpn-app/` is the Telegram-first Home / Servers / Packages / Settings UI.
@@ -237,7 +237,7 @@ management endpoint from this host.
 Local code checks:
 
 ```bash
-python -m py_compile runtime.py telegram_web_app.py vpn_dashboard.py vpn_web_api.py
+python -m py_compile aurix_vpn/*.py telegram_web_app.py
 python -m unittest test_telegram_web_app.py test_vpn_web_api.py
 python -m unittest test_runtime.py
 python -m unittest test_render_vpn_web.py

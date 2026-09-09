@@ -102,3 +102,53 @@ def verify_init_data(
     if not isinstance(user, dict):
         raise TelegramWebAppAuthError("Telegram user identity is invalid")
     return VerifiedTelegramUser.from_user_payload(user)
+
+
+def verify_login_widget(
+    data: Mapping[str, object],
+    bot_token: str,
+    *,
+    now: float | None = None,
+    max_age_seconds: int = 86_400,
+    future_skew_seconds: int = 60,
+) -> VerifiedTelegramUser:
+    """Verify the Telegram Login Widget callback payload.
+
+    The widget signs a sorted ``key=value`` string with a SHA-256 digest of
+    the bot token as the HMAC key.  This is a separate protocol from Mini App
+    ``initData`` but produces the same verified identity type.
+    """
+    if not isinstance(data, Mapping) or not data:
+        raise TelegramWebAppAuthError("Telegram login is required")
+    if not isinstance(bot_token, str) or not bot_token.strip():
+        raise TelegramWebAppAuthError("Telegram login is unavailable")
+
+    values: dict[str, str] = {}
+    for key, value in data.items():
+        if not isinstance(key, str) or not key or key == "hash":
+            continue
+        if isinstance(value, (dict, list, tuple, set)):
+            raise TelegramWebAppAuthError("Telegram login payload is invalid")
+        values[key] = str(value)
+    received_hash = str(data.get("hash") or "")
+    if len(received_hash) != 64 or any(char not in "0123456789abcdef" for char in received_hash.lower()):
+        raise TelegramWebAppAuthError("Telegram login signature is invalid")
+    data_check_string = "\n".join(f"{key}={values[key]}" for key in sorted(values))
+    secret_key = hashlib.sha256(bot_token.encode("utf-8")).digest()
+    expected_hash = hmac.new(
+        secret_key, data_check_string.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected_hash, received_hash.lower()):
+        raise TelegramWebAppAuthError("Telegram login signature is invalid")
+    try:
+        auth_date = int(values.get("auth_date", ""))
+    except ValueError as exc:
+        raise TelegramWebAppAuthError("Telegram login timestamp is invalid") from exc
+    if auth_date <= 0:
+        raise TelegramWebAppAuthError("Telegram login timestamp is invalid")
+    current = int(time.time() if now is None else now)
+    if auth_date > current + max(0, int(future_skew_seconds)):
+        raise TelegramWebAppAuthError("Telegram login timestamp is invalid")
+    if max_age_seconds <= 0 or current - auth_date > int(max_age_seconds):
+        raise TelegramWebAppAuthError("Telegram login has expired")
+    return VerifiedTelegramUser.from_user_payload(values)

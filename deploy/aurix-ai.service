@@ -1,0 +1,19 @@
+[Unit]
+Description=AuriX AI web gateway through 9Router
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f aurix-ai
+ExecStartPre=/usr/bin/install -d -o 10001 -g 10001 -m 0700 /var/lib/aurix-ai
+ExecStart=/usr/bin/docker run --rm --name aurix-ai --network 9router-net --mount type=bind,src=/var/lib/aurix-ai,dst=/var/lib/aurix-ai --env-file /etc/aurix-ai/aurix-ai.env --env-file /etc/aurix-ai/telegram-auth.env aurix-ai:local
+ExecStop=/usr/bin/docker stop --time 10 aurix-ai
+Restart=always
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

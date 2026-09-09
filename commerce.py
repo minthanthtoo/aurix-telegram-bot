@@ -1,31 +1,7 @@
-#!/usr/bin/env python3
-"""Backward-compatible facade for the modular paid-commerce subsystem."""
+"""Compatibility alias for :mod:`aurix_vpn.commerce`."""
 
-from commerce_models import (
-    JOB_RETRY_DELAY,
-    NOTIFICATION_RETRY_DELAY,
-    QUOTA_WARNING_THRESHOLDS,
-    ApprovalResult as ApprovalResult,
-    CommerceError as CommerceError,
-    OrderResult as OrderResult,
-    Plan as Plan,
-)
-from commerce_repositories import (
-    CommerceDatabase as CommerceDatabase,
-    PostgresCommerceDatabase as PostgresCommerceDatabase,
-    _PostgresConnection as _PostgresConnection,
-)
-from commerce_service import CommerceService as CommerceService
+import sys as _sys
 
-__all__ = [
-    "ApprovalResult",
-    "CommerceDatabase",
-    "CommerceError",
-    "CommerceService",
-    "JOB_RETRY_DELAY",
-    "NOTIFICATION_RETRY_DELAY",
-    "OrderResult",
-    "Plan",
-    "PostgresCommerceDatabase",
-    "QUOTA_WARNING_THRESHOLDS",
-]
+from aurix_vpn import commerce as _module
+
+_sys.modules[__name__] = _module

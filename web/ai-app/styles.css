@@ -1,0 +1,84 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --panel: #121a2d;
+  --panel-light: #1a2540;
+  --line: #2a3858;
+  --text: #f4f7fb;
+  --muted: #9eabc2;
+  --accent: #8ee4c2;
+  --danger: #ff9c9c;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-width: 320px;
+  background: radial-gradient(circle at top right, #1b3150 0, var(--bg) 45%);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.shell { width: min(900px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0 36px; }
+.hero { margin-bottom: 28px; }
+.eyebrow { margin: 0 0 8px; color: var(--accent); font-size: .75rem; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
+h1, h2 { margin: 0; line-height: 1.1; }
+h1 { max-width: 680px; font-size: clamp(2.2rem, 7vw, 4.7rem); letter-spacing: -.05em; }
+h2 { font-size: 1.35rem; }
+.lede { max-width: 650px; margin: 18px 0 0; color: var(--muted); font-size: 1.05rem; }
+.panel { margin-top: 18px; padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: color-mix(in srgb, var(--panel) 91%, transparent); box-shadow: 0 18px 50px #0003; }
+.access-panel { display: grid; gap: 10px; }
+.access-panel > div { margin-bottom: 3px; }
+label { color: var(--muted); font-size: .88rem; }
+input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #0a1122; color: var(--text); font: inherit; padding: 12px 13px; outline: none; }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #8ee4c222; }
+.hint, footer p { margin: 0; color: var(--muted); font-size: .84rem; }
+.toolbar { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.selectors { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 10px; width: min(520px, 60%); }
+.mode-label { width: min(300px, 48%); }
+.selectors .mode-label { width: 100%; }
+.mode-label select { margin-top: 5px; }
+.messages { display: grid; gap: 12px; min-height: 260px; max-height: 52vh; overflow-y: auto; margin: 20px 0; padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: #0a1122aa; }
+.conversation-turn { display: grid; gap: 8px; width: 100%; }
+.turn-response { display: grid; min-height: 1px; }
+.turn-pending { justify-self: start; color: var(--muted); font-size: .8rem; font-style: italic; }
+.message { max-width: 84%; padding: 11px 13px; border-radius: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message.assistant { justify-self: start; background: var(--panel-light); }
+.message.user { justify-self: end; background: #16553f; }
+.message.error { justify-self: start; color: #1b0a0a; background: var(--danger); }
+.mode-event { justify-self: center; font-size: .78rem; letter-spacing: .02em; }
+.mode-selection {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: #8ee4c214;
+  color: var(--accent);
+  font-weight: 750;
+}
+.mode-selection::before {
+  content: "MODE";
+  font-size: .62rem;
+  letter-spacing: .12em;
+  opacity: .72;
+}
+.model-selection {
+  color: var(--muted);
+  font-size: .74rem;
+}
+.composer { display: grid; gap: 10px; }
+.composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.status { min-height: 1.4em; color: var(--muted); font-size: .85rem; }
+button { border: 0; border-radius: 10px; padding: 11px 20px; background: var(--accent); color: #092116; cursor: pointer; font: inherit; font-weight: 750; }
+button:disabled { cursor: wait; opacity: .55; }
+footer { padding: 20px 4px 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+@media (max-width: 620px) {
+  .shell { width: min(100% - 22px, 900px); padding-top: 30px; }
+  .panel { padding: 16px; border-radius: 14px; }
+  .toolbar { align-items: stretch; flex-direction: column; }
+  .selectors { width: 100%; grid-template-columns: 1fr; }
+  .mode-label { width: 100%; }
+  .message { max-width: 94%; }
+}
