@@ -102,6 +102,12 @@ load test, or speed test was changed or performed.
   It preserves unknown provider users/inbounds and never restarts a daemon or
   executes shell commands. The client/server contract is fake-tested but not
   deployed to a live host.
+- Concrete provider backends: `aurix_vpn.provider_backends` now supplies a
+  locally supervised Xray config-writer backend with injected reload/stats
+  hooks, plus a Hysteria2 HTTP-auth user store and bounded Traffic Stats API
+  client. The Hysteria2 store encrypts customer secrets at rest and the Xray
+  backend preserves unknown config users. These are node-local building blocks,
+  not proof of live quota, restart, or client compatibility.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates
@@ -161,10 +167,12 @@ all pass for the continuation files. The relevant continuation commits are
 
 ## Remaining gates and next action
 
-The local backend, node-agent contract, and bounded mixed-protocol test seam are now
-implemented; the next action is to bind the contract to a reviewed canary-only Xray
-agent and validate restart, quota, outage, and session behavior. Repeat the evidence
-gate independently for Hysteria2.
+The local provider backend, node-agent contract, and bounded mixed-protocol test
+seam are now implemented and committed in `151186f`; the next action is to bind
+the contract to a reviewed canary-only Xray agent and validate restart, quota,
+outage, and session behavior. Repeat the evidence gate independently for
+Hysteria2. The concrete Hysteria2 auth/stats implementation does not make the
+current shared-password service commercially eligible.
 Only after those results are accepted should one protocol be registered and integrated
 at a time behind the existing registry. The default production registry remains
 Outline-only, so unmeasured protocols cannot receive customer traffic. Production
