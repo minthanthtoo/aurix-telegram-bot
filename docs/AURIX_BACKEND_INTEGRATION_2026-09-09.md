@@ -161,15 +161,16 @@ round-trip, read-only Control Center failover/audit visibility, and a bounded
 agent-boundary isolation, quota assignment, usage/probe/reconcile wiring, and
 cleanup under eight worker threads; it is not evidence of live protocol behavior.
 
-The current checkout has `300` discovered test entries. `299` application tests
+The current checkout has `301` discovered test entries. `300` application tests
 pass when the pre-existing `test_pay_monitor.py` module is excluded; importing
 that one module still fails because this environment does not provide `cv2`.
 Complete discovery therefore reports one environment-only import error and no
 application test failure. Ruff, Python compilation, JavaScript syntax
-validation, and `git diff --check` pass for the continuation files. The latest
-continuation commits are `151186f`, `46b9b99`, `60a9009`, `5ae3d27`, `8dbd729`,
-and `e9b978d`, following the
-earlier node-agent and control-plane commits.
+validation, and `git diff --check` pass for the continuation files. Notification
+delivery now claims due rows with a bounded lease and token-guarded completion,
+so a second worker cannot duplicate a live claim and a stale worker cannot
+complete a reclaimed row. The resulting commit is recorded in Git history
+after this verification.
 
 ## Remaining gates and next action
 

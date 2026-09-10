@@ -19,9 +19,23 @@ class TelegramMaintenanceMixin:
     def _send_pending_notifications(self) -> None:
         if self.commerce is None:
             return
-        for notification in self.commerce.pending_notifications():
+        owner = getattr(self, "_notification_lease_owner", None)
+        if not owner:
+            owner = f"telegram-maintenance:{os.getpid()}:{id(self)}"
+            self._notification_lease_owner = owner
+        claim = getattr(self.commerce, "claim_notifications", None)
+        notifications = (
+            claim(lease_owner=owner) if callable(claim) else self.commerce.pending_notifications()
+        )
+        for notification in notifications:
+            lease_token = notification.get("lease_token")
             if notification.get("secret_unavailable"):
-                self.commerce.mark_notification_failed(notification["id"])
+                if lease_token:
+                    self.commerce.mark_notification_failed(
+                        notification["id"], lease_token=lease_token
+                    )
+                else:
+                    self.commerce.mark_notification_failed(notification["id"])
                 print("notification secret unavailable", file=sys.stderr)
                 continue
             try:
@@ -32,10 +46,20 @@ class TelegramMaintenanceMixin:
                 )
                 self.send(notification["telegram_id"], notification["text"], markup)
             except Exception as exc:
-                self.commerce.mark_notification_failed(notification["id"])
+                if lease_token:
+                    self.commerce.mark_notification_failed(
+                        notification["id"], lease_token=lease_token
+                    )
+                else:
+                    self.commerce.mark_notification_failed(notification["id"])
                 print(f"notification error: {type(exc).__name__}", file=sys.stderr)
             else:
-                self.commerce.mark_notification_sent(notification["id"])
+                if lease_token:
+                    self.commerce.mark_notification_sent(
+                        notification["id"], lease_token=lease_token
+                    )
+                else:
+                    self.commerce.mark_notification_sent(notification["id"])
 
     def _send_termination_notices(self) -> None:
         for event in self.service.pending_termination_notices("user"):
@@ -187,6 +211,13 @@ class TelegramMaintenanceMixin:
         if self.commerce is not None:
             run_stage("paid_quota", lambda: self.commerce.enforce_quotas(metrics=metrics))
             run_stage("paid_expiry", self.commerce.expire_and_process)
+            identity = getattr(self.commerce, "identity", None)
+            expire_pairing = getattr(identity, "expire_pairing_tokens", None)
+            if callable(expire_pairing):
+                run_stage("device_cleanup", expire_pairing)
+            run_failover = getattr(self.commerce, "run_failover_once", None)
+            if callable(run_failover) and getattr(self.commerce, "connectivity", None) is not None:
+                run_stage("route_failover", run_failover)
             run_stage("notifications", self._send_pending_notifications)
         challenge_store = getattr(self.service, "database", None)
         prune = getattr(challenge_store, "prune_admin_challenges", None)

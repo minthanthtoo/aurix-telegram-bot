@@ -74,6 +74,9 @@ Required variables:
 - `OUTLINE_API_URL` — full secret management URL, such as `https://host:port/SecretPath`
 - `OUTLINE_CERT_SHA256` — pinned server certificate fingerprint
 - `AURIX_ACCESS_URL_KEY` — persistent Fernet key used to encrypt stored access URLs
+- `AURIX_DEVICE_MANIFEST_PRIVATE_KEY` — persistent urlsafe-base64 Ed25519 seed for
+  signed managed-device manifests; keep it stable or enrolled devices will no
+  longer be able to verify future manifests
 
 Optional:
 
@@ -98,6 +101,10 @@ Optional:
   by the VPN portal.
 - `AURIX_WEB_APP_INIT_DATA_MAX_AGE` — maximum age in seconds for Telegram Mini
   App sessions on the web service (default `86400`).
+- `AURIX_DEVICE_API_URL` — HTTPS origin used in Telegram `/pair` instructions;
+  pairing remains disabled when this is absent.
+- `AURIX_DEVICE_MANIFEST_KEY_ID` — public identifier for the manifest signing
+  key (default `aurix-manifest-1`).
 - `AURIX_AI_ROUTER_BASE_URL`, `AURIX_AI_ROUTER_API_KEY`, and `AURIX_AI_MODEL` —
   server-only connection to the existing 9Router; `AURIX_AI_MODEL` must be the
   exact route verified in that router and has no guessed default.
@@ -471,8 +478,9 @@ SQLite fits one-process MVP on persistent local storage. Do not deploy DB onto a
 
 Setting `COMMERCE_DATABASE_URL` stores free/trial claims, Telegram update
 deduplication, commerce, jobs, notifications, and audit state in PostgreSQL. It
-does not make Telegram long polling or notification delivery replica-safe; keep
-one bot process until the independent worker/webhook gate is completed.
+does not make Telegram long polling replica-safe; notification delivery uses
+durable claim leases, but keep one bot process until the independent
+worker/webhook gate is completed.
 
 **Production DB path:** Mount a persistent volume (e.g., `/var/lib/aurix-bot/`) and set `DATABASE_PATH=/var/lib/aurix-bot/bot.db`. Do not use `/tmp`, container layers, or Render free-tier disk — data is lost on restart.
 

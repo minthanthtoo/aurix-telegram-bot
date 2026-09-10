@@ -416,6 +416,36 @@ class CommerceServiceTest(unittest.TestCase):
             1,
         )
 
+    def test_notification_delivery_lease_blocks_duplicate_claim_and_allows_reclaim(self):
+        order = self._paid_order(128)
+        self.service.reject_order(order.order_id, 999, self.now)
+        first = self.service.claim_notifications(
+            lease_owner="worker-a", now=self.now, lease_seconds=60
+        )
+        self.assertEqual(len(first), 1)
+        self.assertEqual(
+            self.service.claim_notifications(lease_owner="worker-b", now=self.now), []
+        )
+        self.assertFalse(self.service.mark_notification_sent(first[0]["id"], self.now, "stale-token"))
+        self.assertTrue(
+            self.service.mark_notification_failed(
+                first[0]["id"], self.now, first[0]["lease_token"]
+            )
+        )
+        self.assertEqual(
+            self.service.claim_notifications(lease_owner="worker-b", now=self.now), []
+        )
+        second = self.service.claim_notifications(
+            lease_owner="worker-b", now=self.now + timedelta(minutes=6)
+        )
+        self.assertEqual(len(second), 1)
+        self.assertNotEqual(first[0]["lease_token"], second[0]["lease_token"])
+        self.assertTrue(
+            self.service.mark_notification_sent(
+                second[0]["id"], self.now, second[0]["lease_token"]
+            )
+        )
+
     def test_user_usage_reports_only_owned_paid_key(self):
         order = self._paid_order(123)
         self.service.approve_order(order.order_id, 999, self.now)
@@ -855,15 +885,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "0fc7ca6a1dde889f0dfd9e644750de21fd433f2ab69c7838d10653fc45e4140e",
+            "e8efad6cc89d262af99bb3f9ceedb88474b3c47a2ec5f3e5e38034432cfe15cd",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "f50d6297d25ea35ac125b667ba1e2b00bb676cfdb2263bc21995849b113e5158",
+            "ac87299d80619d93e66eb6816b8185e516ee38173116a904bead55161a7731e3",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "6a3aae494dd93489399790c93d86d27c7b6600c7bd55296c48e9516bbb6cce5d",
+            "07375b68ae1c4a214d34d8cc585b3e27d5882d8e568fe28e9386edfdc733effe",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

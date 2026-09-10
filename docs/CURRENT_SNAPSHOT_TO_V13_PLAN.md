@@ -89,7 +89,7 @@ Important remaining facts:
 - `ports.OutlineGateway` is an Outline API contract. It is not yet a generic endpoint-scoped `VpnAdapter`.
 - `paid_vpn_keys` and free `keys` still store `outline_key_id` without endpoint, region, provider, assignment, or transport identity.
 - Free/trial creation still performs the remote Outline call inside the entitlement database transaction.
-- Notification outbox rows are selected and sent without an atomic delivery lease, so independent notification workers remain unsafe.
+- Notification outbox delivery now has an atomic claim lease; Telegram long polling and process-local maintenance are still single-process gates.
 - Startup still exits when the one Outline management endpoint is unavailable.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
 - The application/refactor files remain untracked in the current workspace Git repository; the branding-only Git history is not a recoverable application baseline.
@@ -163,18 +163,18 @@ Completed since the earlier roadmap:
 - [x] Entitlement, commerce, worker, adapter, runtime, and Telegram boundaries are extracted.
 - [x] Private receipt storage and stronger admin confirmation controls are implemented.
 - [x] Multiple paid entitlements, quota warnings, maintenance heartbeat, and failure visibility are covered by tests.
+- [x] Notification delivery uses durable claim leases with stale-worker protection.
 
 Still required before or as the first bounded part of V3:
 
 1. Commit the current application, tests, docs, and deployment files as a recoverable baseline.
 2. Add `requires-python = ">=3.13,<3.14"` and a reproducible lock/check strategy; local `uv` currently falls back to Python 3.12 when not explicitly constrained.
 3. Move free/trial provisioning onto the same durable intent/job/reconcile pattern as paid provisioning.
-4. Give notification delivery an atomic claim/lease before running multiple workers.
-5. Permit degraded control-plane startup when Outline management is unavailable.
-6. Convert future schema changes into actual migration version 2+ entries; version 1 currently adopts the legacy bootstrap rather than creating new endpoint structures.
-7. Automate database backups and complete a restore drill, including receipt-object reconciliation.
-8. Run the documented live one-server acceptance test with known users.
-9. Capture real usage, connection success, support, and contribution-margin evidence.
+4. Permit degraded control-plane startup when Outline management is unavailable.
+5. Convert future schema changes into actual migration version 2+ entries; version 1 currently adopts the legacy bootstrap rather than creating new endpoint structures.
+6. Automate database backups and complete a restore drill, including receipt-object reconciliation.
+7. Run the documented live one-server acceptance test with known users.
+8. Capture real usage, connection success, support, and contribution-margin evidence.
 
 Exit gate:
 
@@ -881,13 +881,13 @@ Already durable:
 - paid expiry and quota termination;
 - paid notifications with retry/dead-letter state;
 - remote paid-key reconciliation after ambiguous create.
+- notification delivery claim/lease with stale-worker protection;
 
 Still to unify:
 
 - free key provision;
 - monthly trial provision;
 - free/trial remote reconciliation after ambiguous create;
-- notification delivery lease/claim;
 - replacement/migration;
 - endpoint probe;
 - endpoint lifecycle operations.
@@ -917,7 +917,7 @@ health/usage worker
 
 Do not split into network microservices merely because the code has modules.
 
-The current PostgreSQL job claim supports `FOR UPDATE SKIP LOCKED`, but that does not make the whole deployment replica-safe. Telegram remains long polling, notification delivery has no lease, free/trial provisioning is synchronous, and maintenance is process-local.
+The current PostgreSQL job and notification claims support `FOR UPDATE SKIP LOCKED` and expiring leases, but that does not make the whole deployment replica-safe. Telegram remains long polling, free/trial provisioning is synchronous, and maintenance is process-local.
 
 ## Cross-version invariants
 
