@@ -122,7 +122,7 @@ The reported fleet constraints remain release gates: source-of-truth reconciliat
 capacity isolation from the constrained Singapore node, Myanmar-path measurements,
 bounded concurrency/PostgreSQL validation, and explicit Xray/Hysteria2 lifecycle tests.
 
-## Verification performed
+## Verification performed before the 2026-09-10 continuation
 
 - The focused protocol/accounting/commerce selection passes `78` tests before the
   continuation and the updated identity/adapter focus passes `18` tests.
@@ -142,11 +142,29 @@ including the new schema, portable lease arithmetic, and the full `record_usage`
 `FOR UPDATE` lock path. A live PostgreSQL concurrency run was not verified in this
 workspace.
 
+## Continuation verification — 2026-09-10
+
+The continuation added and committed the authenticated WSGI node-agent boundary,
+the reproducible node-agent client/config writer, a real-localhost HTTP transport
+round-trip, read-only Control Center failover/audit visibility, and a bounded
+16-customer mixed Xray/Hysteria2 contract matrix. The local matrix proves shared
+agent-boundary isolation, quota assignment, usage/probe/reconcile wiring, and
+cleanup under eight worker threads; it is not evidence of live protocol behavior.
+
+The current checkout has `292` discovered tests. `291` application tests pass when
+the pre-existing `test_pay_monitor.py` module is excluded; importing that one module
+still fails because this environment does not provide `cv2`. The complete discovery
+run therefore reports one environment-only import error and no application test
+failure. Ruff, Python compilation, JavaScript syntax validation, and `git diff --check`
+all pass for the continuation files. The relevant continuation commits are
+`db7ae07`, `bb380fe`, `199859e`, `fa45817`, `816d75a`, and `143b7de`.
+
 ## Remaining gates and next action
 
-The local backend and node-agent contract are now implemented; the next action is to
-bind the contract to a reviewed canary-only Xray agent and validate restart, quota,
-outage, and session behavior. Repeat the evidence gate independently for Hysteria2.
+The local backend, node-agent contract, and bounded mixed-protocol test seam are now
+implemented; the next action is to bind the contract to a reviewed canary-only Xray
+agent and validate restart, quota, outage, and session behavior. Repeat the evidence
+gate independently for Hysteria2.
 Only after those results are accepted should one protocol be registered and integrated
 at a time behind the existing registry. The default production registry remains
 Outline-only, so unmeasured protocols cannot receive customer traffic. Production
