@@ -1147,3 +1147,49 @@ This snapshot reinforces the release decision: BKK-A remains an Outline-only,
 memory-constrained region and must not receive a second protocol before a
 separately approved capacity experiment or host upgrade. SG-A remains a
 control-plane/canary host with no permission to absorb customer protocol load.
+
+## 20. Local provider implementation update — 2026-09-10
+
+The local checkout now contains concrete, offline-tested provider backends
+behind the existing node-agent seam. This is an implementation milestone, not
+a production activation decision.
+
+### Xray
+
+- `XrayConfigProvider` manages only the explicitly tagged `aurix-managed`
+  inbound through atomic config writes and an injected supervised reload.
+- `XrayStatsParser` normalizes the documented per-user uplink/downlink counter
+  names for the accounting layer.
+- Unknown inbounds/users are preserved; reload and malformed-stat failures are
+  fail-closed.
+- Hard byte quotas and existing-session termination are deliberately not
+  advertised. The provider must remain unregistered until the canary's
+  controller-enforced quota policy, restart reconciliation, and session policy
+  are accepted.
+
+### Hysteria2
+
+- `Hysteria2UserStore` uses keyed digests for authentication and Fernet
+  encryption for the customer secret needed for delivery.
+- `Hysteria2TrafficStatsClient` is bounded and supports `/traffic`, `/online`,
+  and `/kick` with an explicit API authorization header.
+- `/kick` is recorded as a request only because a Hysteria2 client can
+  reconnect; authentication blocking is the revocation boundary.
+- No hard quota method is exposed. The live shared-password UDP/443 service
+  remains commercially ineligible until an isolated per-customer auth and
+  accounting canary passes.
+
+### Operator visibility and verification
+
+The read-only Control Center now shows Outline as enabled, Xray/Hysteria2 as
+evidence-gated candidates, and WireGuard as unimplemented. It does not register
+candidate protocols or expose secrets. The current local verification is 297
+passing application tests out of 298 discovered entries; the sole discovery
+error is the environment-only `cv2` import failure in `test_pay_monitor.py`.
+
+The implementation commits are `151186f` (provider backends), `46b9b99`
+(readiness record), `60a9009` (operator readiness view), and `890c165`
+(verification refresh). Remaining release gates are unchanged: approved
+canary-only node-agent binding, Hysteria2 isolation, Myanmar client paths,
+PostgreSQL concurrency/restore, staged 2/5/expected-load tests, 24–48 hour
+soak, cost evidence, and explicit approval before any server mutation.
