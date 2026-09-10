@@ -2,6 +2,8 @@ import io
 import json
 import unittest
 
+from connectivity_adapters import XrayConnectivityAdapter
+from node_agent import NodeAgentClient, NodeAgentError
 from node_agent_app import NodeAgentService, create_node_agent_wsgi_app
 
 
@@ -138,6 +140,48 @@ class NodeAgentAppTest(unittest.TestCase):
         status, value = self.request("GET", "/v1/users/a%2Fb")
         self.assertEqual(status, "400 Error")
         self.assertIn("identifier", value["error"])
+
+    def test_http_agent_and_xray_adapter_form_one_lifecycle_contract(self):
+        def requester(method, path, payload):
+            body = b"" if payload is None else json.dumps(payload).encode()
+            environ = {
+                "REQUEST_METHOD": method,
+                "PATH_INFO": path,
+                "CONTENT_LENGTH": str(len(body)),
+                "HTTP_AUTHORIZATION": "Bearer agent-token",
+                "wsgi.input": io.BytesIO(body),
+            }
+            captured = {}
+
+            def start_response(status, _headers):
+                captured["status"] = status
+
+            value = json.loads(b"".join(self.app(environ, start_response)))
+            code = int(str(captured["status"]).split(" ", 1)[0])
+            if code >= 400:
+                raise NodeAgentError(value.get("error") or "agent request failed", status_code=code)
+            return value
+
+        client = NodeAgentClient(requester=requester)
+        adapter = XrayConnectivityAdapter(client)
+        route = {
+            "route_id": "xray:sg-a",
+            "endpoint_id": "sg-a",
+            "public_address": "198.51.100.10",
+            "port": 18443,
+            "public_key": "public-key",
+            "server_name": "example.com",
+            "short_id": "abcd",
+        }
+        grant = adapter.provision(
+            route, {"external_id": "user-http", "name": "HTTP customer", "quota_bytes": 1000}
+        )
+        self.assertTrue(grant["access_url"].startswith("vless://user-http@198.51.100.10:18443"))
+        self.assertEqual(adapter.read_usage(grant)["bytes_transferred"], 42)
+        self.assertEqual(adapter.probe_data_plane(route)["status"], "healthy")
+        self.assertEqual(adapter.reconcile(route)["users"], 1)
+        adapter.revoke_auth(grant)
+        self.assertTrue(adapter.verify_auth_revoked(grant)["verified"])
 
 
 if __name__ == "__main__":
