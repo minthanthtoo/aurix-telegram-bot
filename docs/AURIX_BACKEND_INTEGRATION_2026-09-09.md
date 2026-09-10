@@ -132,13 +132,13 @@ The reported fleet constraints remain release gates: source-of-truth reconciliat
 capacity isolation from the constrained Singapore node, Myanmar-path measurements,
 bounded concurrency/PostgreSQL validation, and explicit Xray/Hysteria2 lifecycle tests.
 
-## Verification performed before the 2026-09-10 continuation
+## Verification recorded before the latest 2026-09-10 continuation
 
 - The focused protocol/accounting/commerce selection passes `78` tests before the
   continuation and the updated identity/adapter focus passes `18` tests.
-- Full discovery passes: `308` tests in the current checkout, including the separate
-  `pay_monitor` suite. The earlier `cv2` import failure is no longer present in this
-  environment.
+- The earlier record reported `308` tests with the separate `pay_monitor` suite
+  available. That environment result is historical and is superseded by the
+  current verification below; this checkout currently lacks `cv2` for that suite.
 - Ruff passes for all changed backend and regression-test files.
 - Python bytecode compilation passes for the changed backend modules.
 - Graphify AST graph was refreshed after the changes. It reports `6,129` nodes,
@@ -161,13 +161,14 @@ round-trip, read-only Control Center failover/audit visibility, and a bounded
 agent-boundary isolation, quota assignment, usage/probe/reconcile wiring, and
 cleanup under eight worker threads; it is not evidence of live protocol behavior.
 
-The current checkout has `292` discovered tests. `291` application tests pass when
-the pre-existing `test_pay_monitor.py` module is excluded; importing that one module
-still fails because this environment does not provide `cv2`. The complete discovery
-run therefore reports one environment-only import error and no application test
-failure. Ruff, Python compilation, JavaScript syntax validation, and `git diff --check`
-all pass for the continuation files. The relevant continuation commits are
-`db7ae07`, `bb380fe`, `199859e`, `fa45817`, `816d75a`, and `143b7de`.
+The current checkout has `298` discovered test entries. `297` application tests
+pass when the pre-existing `test_pay_monitor.py` module is excluded; importing
+that one module still fails because this environment does not provide `cv2`.
+Complete discovery therefore reports one environment-only import error and no
+application test failure. Ruff, Python compilation, JavaScript syntax
+validation, and `git diff --check` pass for the continuation files. The latest
+continuation commits are `151186f`, `46b9b99`, and `60a9009`, following the
+earlier node-agent and control-plane commits.
 
 ## Remaining gates and next action
 
