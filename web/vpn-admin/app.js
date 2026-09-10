@@ -66,13 +66,25 @@
   function renderOperations(data) {
     const jobs = (data.jobs || []).map((j) => `<tr><td><strong>${esc(j.job_id)}</strong><small>${esc(j.operation)}</small></td><td>${esc(j.plan_code)}</td><td>${badge(j.job_status, j.job_status === "failed" ? "warn" : "neutral")}</td><td>${fmt(j.attempts)}</td><td>${esc(j.last_error || "—")}</td></tr>`);
     const orders = (data.pending_orders || []).map((o) => `<tr><td><strong>${esc(o.id)}</strong></td><td>${esc(o.plan_code)}</td><td>${badge(o.status, "neutral")}</td><td>${esc(o.stage || "—")}</td></tr>`);
-    $("view-operations").innerHTML = `<div class="section-intro"><div><p class="eyebrow">DURABLE WORK</p><h2>Operations</h2><p>Queue visibility and invariant checks. Actions remain in the existing Telegram-admin safety boundary.</p></div><span class="read-only">NO MUTATIONS</span></div><div class="grid two"><article class="panel"><div class="panel-head"><h2>Provisioning jobs</h2></div>${table(["Job", "Plan", "State", "Attempts", "Last error"], jobs)}</article><article class="panel"><div class="panel-head"><h2>Pending orders</h2></div>${table(["Order", "Plan", "State", "Stage"], orders)}</article></div>`;
+    const decisions = (data.decisions || []).map((d) => `<tr><td><strong>${esc(d.decision_id)}</strong><small>${esc(d.trigger || "—")}</small></td><td>${esc(d.source_endpoint_id)} → ${esc(d.target_endpoint_id)}</td><td>${badge(d.state, d.state === "committed" ? "good" : d.state === "failed" ? "warn" : "neutral")}</td><td>${fmt(d.attempts)}</td><td>${esc(d.last_error || "—")}</td></tr>`);
+    const events = (data.events || []).map((e) => `<tr><td><strong>${esc(e.action)}</strong><small>${esc(e.created_at)}</small></td><td>${esc(e.actor_type)}:${esc(e.actor_id)}</td><td>${esc(e.target_type)}:${esc(e.target_id)}</td></tr>`);
+    $("view-operations").innerHTML = `<div class="section-intro"><div><p class="eyebrow">DURABLE WORK</p><h2>Operations</h2><p>Queue, failover, audit, and invariant visibility. Actions remain in the existing Telegram-admin safety boundary.</p></div><span class="read-only">NO MUTATIONS</span></div><div class="grid two"><article class="panel"><div class="panel-head"><h2>Provisioning jobs</h2></div>${table(["Job", "Plan", "State", "Attempts", "Last error"], jobs)}</article><article class="panel"><div class="panel-head"><h2>Pending orders</h2></div>${table(["Order", "Plan", "State", "Stage"], orders)}</article><article class="panel"><div class="panel-head"><h2>Failover decisions</h2></div>${table(["Decision", "Route", "State", "Attempts", "Last error"], decisions)}</article><article class="panel"><div class="panel-head"><h2>Recent audit events</h2></div>${table(["Action", "Actor", "Target"], events)}</article></div>`;
   }
 
   async function load(view, suffix) {
     const endpoints = { overview: "/api/admin/summary", fleet: "/api/admin/fleet", accounts: "/api/admin/accounts", credentials: "/api/admin/credentials", devices: "/api/admin/devices", operations: "/api/admin/operations" };
     try {
-      const data = await api(endpoints[view] + (suffix || ""));
+      let data;
+      if (view === "operations") {
+        const [operations, failover, audit] = await Promise.all([
+          api(endpoints[view] + (suffix || "")),
+          api("/api/admin/failover"),
+          api("/api/admin/audit"),
+        ]);
+        data = { ...operations, decisions: failover.decisions || [], events: audit.events || [] };
+      } else {
+        data = await api(endpoints[view] + (suffix || ""));
+      }
       state.loaded[view] = data;
       if (view === "overview") { state.summary = data; renderOverview(); }
       if (view === "fleet") renderFleet(data);

@@ -76,6 +76,19 @@ class ControlCenterTest(unittest.TestCase):
                 payload = json.load(response)
             self.assertEqual(payload["management_mode"], "read-only")
 
+            for endpoint, key in (
+                ("operations", "jobs"),
+                ("failover", "decisions"),
+                ("audit", "events"),
+            ):
+                detail_request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_address[1]}/api/admin/{endpoint}",
+                    headers={"X-Telegram-Init-Data": _init_data("bot-token")},
+                )
+                with urllib.request.urlopen(detail_request, timeout=3) as detail_response:
+                    detail_payload = json.load(detail_response)
+                self.assertIn(key, detail_payload)
+
             with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "999"}, clear=False):
                 denied_app = AuriXVpnWebApplication(self.runtime)
                 denied_server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(denied_app))
