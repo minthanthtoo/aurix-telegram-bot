@@ -246,6 +246,32 @@ class XrayConfigWriter:
             self.write(config)
         return {"changed": changed, "external_id": str(external_id)}
 
+    def list_users(self) -> list[dict[str, Any]]:
+        """Return only users from the explicitly managed inbound(s)."""
+        config = self.load()
+        users: dict[str, dict[str, Any]] = {}
+        for clients in self._managed_client_lists(config):
+            for item in clients:
+                external_id = str(item.get("id") or "").strip()
+                if not external_id:
+                    continue
+                record = {
+                    "external_id": external_id,
+                    "name": str(item.get("email") or "")[:128],
+                    "secret": external_id,
+                }
+                users.setdefault(external_id, record)
+        return list(users.values())
+
+    def get_user(self, external_id: str) -> dict[str, Any] | None:
+        target = str(external_id).strip()
+        if not target:
+            return None
+        return next(
+            (item for item in self.list_users() if item.get("external_id") == target),
+            None,
+        )
+
     def write(self, config: Mapping[str, Any]) -> None:
         value = _object(config, operation="xray config")
         parent = self.path.parent
