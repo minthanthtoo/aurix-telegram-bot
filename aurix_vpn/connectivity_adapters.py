@@ -535,6 +535,11 @@ class _ManagedCredentialAdapter:
             # structured response.
             terminated = result is None
             details = {}
+        details = {
+            key: value
+            for key, value in details.items()
+            if key not in {"supported", "terminated"}
+        }
         return {"supported": True, "terminated": terminated, **details}
 
     def probe_management(self, route: dict[str, Any]) -> dict[str, Any]:
