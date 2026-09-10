@@ -168,12 +168,15 @@ Completed since the earlier roadmap:
 
 Still required before or as the first bounded part of V3:
 
-1. Commit the current application, tests, docs, and deployment files as a recoverable baseline.
-2. Add `requires-python = ">=3.13,<3.14"` and a reproducible lock/check strategy; local `uv` currently falls back to Python 3.12 when not explicitly constrained.
-3. Move promo/giveaway provisioning onto the same durable intent/job/reconcile pattern.
-4. Automate database backups and complete a restore drill, including receipt-object reconciliation.
-5. Run the documented live one-server acceptance test with known users.
-6. Capture real usage, connection success, support, and contribution-margin evidence.
+1. Move promo/giveaway provisioning onto the same durable intent/job/reconcile pattern.
+2. Automate database backups and complete a restore drill, including receipt-object reconciliation.
+3. Run the documented live one-server acceptance test with known users.
+4. Capture real usage, connection success, support, and contribution-margin evidence.
+
+Completed immediately before this remaining-gate list: the recoverable baseline
+was committed in major steps, and the project now declares Python
+`>=3.13,<3.14`, carries a checked-in `uv.lock`, and uses `uv sync --locked` in
+local/CI validation. Complete local discovery passes with 329 tests.
 
 Exit gate:
 

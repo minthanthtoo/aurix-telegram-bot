@@ -138,7 +138,7 @@ bounded concurrency/PostgreSQL validation, and explicit Xray/Hysteria2 lifecycle
   continuation and the updated identity/adapter focus passes `18` tests.
 - The earlier record reported `308` tests with the separate `pay_monitor` suite
   available. That environment result is historical and is superseded by the
-  current verification below; this checkout currently lacks `cv2` for that suite.
+  current complete-discovery verification below.
 - Ruff passes for all changed backend and regression-test files.
 - Python bytecode compilation passes for the changed backend modules.
 - Graphify AST graph was refreshed after the changes. It reports `6,129` nodes,
@@ -161,12 +161,10 @@ round-trip, read-only Control Center failover/audit visibility, and a bounded
 agent-boundary isolation, quota assignment, usage/probe/reconcile wiring, and
 cleanup under eight worker threads; it is not evidence of live protocol behavior.
 
-The current checkout has `303` discovered test entries. `302` application tests
-pass when the pre-existing `test_pay_monitor.py` module is excluded; importing
-that one module still fails because this environment does not provide `cv2`.
-Complete discovery therefore reports one environment-only import error and no
-application test failure. Ruff, Python compilation, JavaScript syntax
-validation, and `git diff --check` pass for the continuation files. Notification
+The current checkout has `329` discovered test entries, and complete discovery
+passes (`Ran 329 tests ... OK`) after the reproducible Python environment added
+the previously missing OpenCV dependency. Ruff, Python compilation, JavaScript
+syntax validation, and `git diff --check` pass for the continuation files. Notification
 delivery now claims due rows with a bounded lease and token-guarded completion,
 so a second worker cannot duplicate a live claim and a stale worker cannot
 complete a reclaimed row. Daily free and monthly trial issuance now use the

@@ -418,11 +418,15 @@ cannot be replayed after a restart.
 ## Test
 
 ```sh
-python3 -m pip install --requirement requirements-dev.txt
-ruff check app.py aurix_ai aurix_vpn migrations.py observability.py persistence.py ports.py repositories.py receipt_llm.py supabase_storage.py telegram_web_app.py deploy test_*.py
-PYTHONWARNINGS=error::ResourceWarning coverage run -m unittest discover
-coverage report
+uv sync --locked --group dev
+uv run ruff check app.py aurix_ai aurix_vpn migrations.py observability.py persistence.py ports.py repositories.py receipt_llm.py supabase_storage.py telegram_web_app.py deploy test_*.py
+PYTHONWARNINGS=error::ResourceWarning uv run coverage run -m unittest discover
+uv run coverage report
 ```
+
+The lockfile requires Python 3.13. `uv sync --locked` is intentional: it fails
+when dependency declarations and `uv.lock` diverge instead of silently
+resolving a different environment.
 
 The CI and refactor invariants, schema fingerprint, staging smoke checks, and
 backup/rollback gate are documented in

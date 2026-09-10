@@ -1183,14 +1183,16 @@ a production activation decision.
 
 The read-only Control Center now shows Outline as enabled, Xray/Hysteria2 as
 evidence-gated candidates, and WireGuard as unimplemented. It does not register
-candidate protocols or expose secrets. The current local verification is 302
-passing application tests out of 303 discovered entries; the sole discovery
-error is the environment-only `cv2` import failure in `test_pay_monitor.py`.
+candidate protocols or expose secrets. The latest local verification passes all
+329 discovered tests after the reproducible Python environment installed OpenCV;
+the earlier 302/303 count is historical.
 
 The implementation commits are `151186f` (provider backends), `46b9b99`
 (readiness record), `60a9009` (operator readiness view), `890c165`
 (verification refresh), and `e9b978d` (authenticated node-agent integration
-coverage). Remaining release gates are unchanged: approved
+coverage). The reproducible Python 3.13 environment now installs the previously
+missing OpenCV dependency, and complete local discovery passes with 329 tests.
+Remaining release gates are unchanged: approved
 canary-only node-agent binding, Hysteria2 isolation, Myanmar client paths,
 PostgreSQL concurrency/restore, staged 2/5/expected-load tests, 24–48 hour
 soak, cost evidence, and explicit approval before any server mutation.
