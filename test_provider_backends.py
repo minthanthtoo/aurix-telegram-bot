@@ -7,7 +7,8 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 from aurix_vpn.connectivity_adapters import Hysteria2ConnectivityAdapter, XrayConnectivityAdapter
-from aurix_vpn.node_agent import XrayConfigWriter
+from aurix_vpn.node_agent import NodeAgentClient, NodeAgentError, XrayConfigWriter
+from aurix_vpn.node_agent_app import NodeAgentService, create_node_agent_wsgi_app
 from aurix_vpn.provider_backends import (
     Hysteria2Provider,
     Hysteria2TrafficStatsClient,
@@ -20,6 +21,30 @@ from aurix_vpn.provider_backends import (
 
 
 class ProviderBackendsTest(unittest.TestCase):
+    @staticmethod
+    def _client_for_app(app):
+        def requester(method, path, payload):
+            body = b"" if payload is None else json.dumps(payload).encode()
+            environ = {
+                "REQUEST_METHOD": method,
+                "PATH_INFO": path,
+                "CONTENT_LENGTH": str(len(body)),
+                "HTTP_AUTHORIZATION": "Bearer concrete-agent-token",
+                "wsgi.input": io.BytesIO(body),
+            }
+            captured = {}
+
+            def start_response(status, _headers):
+                captured["status"] = status
+
+            value = json.loads(b"".join(app(environ, start_response)))
+            code = int(str(captured["status"]).split(" ", 1)[0])
+            if code >= 400:
+                raise NodeAgentError(value.get("error") or "agent request failed", status_code=code)
+            return value
+
+        return NodeAgentClient(requester=requester)
+
     def test_xray_provider_writes_only_managed_users_and_reloads(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "xray.json"
@@ -168,6 +193,85 @@ class ProviderBackendsTest(unittest.TestCase):
             self.assertEqual(calls[-1][3]["Authorization"], "stats-secret")
             adapter.revoke_auth(grant)
             self.assertTrue(adapter.verify_auth_revoked(grant)["verified"])
+
+    def test_concrete_backends_round_trip_through_authenticated_node_agent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            xray_path = Path(directory) / "xray.json"
+            xray_path.write_text(
+                json.dumps(
+                    {"inbounds": [{"tag": "aurix-managed", "settings": {"clients": []}}]}
+                ),
+                encoding="utf-8",
+            )
+            xray = XrayConfigProvider(
+                XrayConfigWriter(xray_path),
+                reload_callback=lambda: None,
+                stats_query=lambda _external_id: {
+                    "stat": [
+                        {"name": "user>>>xray-http>>>traffic>>>uplink", "value": 2},
+                        {"name": "user>>>xray-http>>>traffic>>>downlink", "value": 5},
+                    ]
+                },
+            )
+            xray_client = self._client_for_app(
+                create_node_agent_wsgi_app(
+                    NodeAgentService(xray, bearer_token="concrete-agent-token")
+                )
+            )
+            xray_adapter = XrayConnectivityAdapter(xray_client)
+            xray_grant = xray_adapter.provision(
+                {
+                    "route_id": "xray:sg-a",
+                    "endpoint_id": "sg-a",
+                    "public_address": "198.51.100.10",
+                    "port": 18443,
+                    "public_key": "public-key",
+                    "server_name": "example.com",
+                    "short_id": "abcd",
+                },
+                {"external_id": "xray-http", "name": "HTTP Xray"},
+            )
+            self.assertEqual(xray_adapter.read_usage(xray_grant)["bytes_transferred"], 7)
+            self.assertNotIn("secret", json.dumps(xray_client.list_users()))
+
+            h2_store = Hysteria2UserStore(
+                Path(directory) / "h2-users.json", encryption_key=Fernet.generate_key()
+            )
+
+            def stats_requester(method, path, body, headers):
+                if path == "/online":
+                    return {}
+                if path == "/traffic":
+                    return {"h2-http": {"tx": 3, "rx": 4}}
+                if path == "/kick":
+                    return {"ok": True}
+                raise AssertionError((method, path, body, headers))
+
+            h2 = Hysteria2Provider(
+                h2_store,
+                Hysteria2TrafficStatsClient(
+                    "http://127.0.0.1:19000", "stats-secret", requester=stats_requester
+                ),
+            )
+            h2_client = self._client_for_app(
+                create_node_agent_wsgi_app(
+                    NodeAgentService(h2, bearer_token="concrete-agent-token")
+                )
+            )
+            h2_adapter = Hysteria2ConnectivityAdapter(h2_client)
+            h2_grant = h2_adapter.provision(
+                {
+                    "route_id": "hysteria2:sg-a",
+                    "endpoint_id": "sg-a",
+                    "public_address": "198.51.100.10",
+                    "port": 8444,
+                    "server_name": "example.com",
+                },
+                {"external_id": "h2-http", "name": "HTTP H2", "secret": "h2-secret"},
+            )
+            self.assertEqual(h2_adapter.read_usage(h2_grant)["bytes_transferred"], 7)
+            self.assertFalse(h2_adapter.terminate_sessions(h2_grant)["terminated"])
+            self.assertFalse(h2_adapter.verify_auth_revoked(h2_grant)["verified"])
 
 
 if __name__ == "__main__":
