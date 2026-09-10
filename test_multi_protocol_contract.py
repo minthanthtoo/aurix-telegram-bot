@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from connectivity_adapters import Hysteria2ConnectivityAdapter, XrayConnectivityAdapter
 from node_agent import NodeAgentClient, NodeAgentError
 from node_agent_app import NodeAgentService, create_node_agent_wsgi_app
+from aurix_vpn.protocol_matrix import ProtocolMatrixRunner
 
 
 class ThreadSafeProtocolProvider:
@@ -148,6 +149,23 @@ class MultiProtocolContractTest(unittest.TestCase):
             list(executor.map(lambda item: item[0].revoke_auth(item[2]), grants))
 
         self.assertEqual(self.provider.users, {})
+
+    def test_staged_matrix_runner_covers_canary_and_expected_cohorts(self):
+        for customers_per_protocol, workers in ((2, 2), (5, 5), (16, 8)):
+            with self.subTest(customers_per_protocol=customers_per_protocol):
+                report = ProtocolMatrixRunner(
+                    customers_per_protocol=customers_per_protocol,
+                    workers=workers,
+                ).run()
+                self.assertEqual(report["status"], "passed")
+                self.assertEqual(report["total_customers"], customers_per_protocol * 2)
+                self.assertEqual(report["revoked"], report["total_customers"])
+                self.assertEqual(report["errors"], [])
+                self.assertTrue(all(report["checks"].values()))
+                self.assertEqual(report["protocol_counts"], {
+                    "xray": customers_per_protocol,
+                    "hysteria2": customers_per_protocol,
+                })
 
 
 if __name__ == "__main__":

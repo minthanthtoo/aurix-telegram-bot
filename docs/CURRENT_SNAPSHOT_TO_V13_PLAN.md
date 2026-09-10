@@ -176,7 +176,7 @@ Still required before or as the first bounded part of V3:
 Completed immediately before this remaining-gate list: the recoverable baseline
 was committed in major steps, and the project now declares Python
 `>=3.13,<3.14`, carries a checked-in `uv.lock`, and uses `uv sync --locked` in
-local/CI validation. Complete local discovery passes with 333 tests, including
+local/CI validation. Complete local discovery passes with 334 tests, including
 the backup/restore artifact tests. Executable recovery tooling is documented in
 [`docs/AURIX_BACKUP_RESTORE_RUNBOOK.md`](AURIX_BACKUP_RESTORE_RUNBOOK.md).
 

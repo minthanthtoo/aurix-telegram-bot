@@ -161,8 +161,8 @@ round-trip, read-only Control Center failover/audit visibility, and a bounded
 agent-boundary isolation, quota assignment, usage/probe/reconcile wiring, and
 cleanup under eight worker threads; it is not evidence of live protocol behavior.
 
-The current checkout has `333` discovered test entries, and complete discovery
-passes (`Ran 333 tests ... OK`) after the reproducible Python environment added
+The current checkout has `334` discovered test entries, and complete discovery
+passes (`Ran 334 tests ... OK`) after the reproducible Python environment added
 the previously missing OpenCV dependency. Ruff, Python compilation, JavaScript
 syntax validation, and `git diff --check` pass for the continuation files. Notification
 delivery now claims due rows with a bounded lease and token-guarded completion,
