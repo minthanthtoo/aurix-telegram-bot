@@ -131,6 +131,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("free_access", 4, "endpoint_identity_and_capacity"),
                     ("free_access", 5, "durable_free_provisioning_jobs"),
                     ("free_access", 6, "durable_giveaway_provisioning_jobs"),
+                    ("free_access", 7, "endpoint_protocol_profiles"),
                 ],
             )
 

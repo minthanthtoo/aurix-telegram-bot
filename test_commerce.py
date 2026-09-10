@@ -893,7 +893,7 @@ class PostgresAdapterTest(unittest.TestCase):
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "9018bdd92fd43cba27a14ad41f1674e17cdf1fab0adad8c915d483a0e6f18c07",
+            "66f1c08b14e9a1871fa6f3de580810a765eb3474bc0c4fdd4969da5fd40b11b3",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):
