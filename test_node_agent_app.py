@@ -1,9 +1,11 @@
 import io
 import json
+import threading
 import unittest
+from wsgiref.simple_server import make_server
 
 from connectivity_adapters import XrayConnectivityAdapter
-from node_agent import NodeAgentClient, NodeAgentError
+from node_agent import NodeAgentClient, NodeAgentError, XrayNodeAgentClient
 from node_agent_app import NodeAgentService, create_node_agent_wsgi_app
 
 
@@ -140,6 +142,34 @@ class NodeAgentAppTest(unittest.TestCase):
         status, value = self.request("GET", "/v1/users/a%2Fb")
         self.assertEqual(status, "400 Error")
         self.assertIn("identifier", value["error"])
+
+    def test_builtin_http_transport_round_trips_through_wsgi_server(self):
+        server = make_server("127.0.0.1", 0, self.app)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            client = XrayNodeAgentClient(
+                f"http://127.0.0.1:{server.server_port}", token="agent-token"
+            )
+            adapter = XrayConnectivityAdapter(client)
+            route = {
+                "route_id": "xray:sg-a",
+                "endpoint_id": "sg-a",
+                "public_address": "198.51.100.10",
+                "port": 18443,
+                "public_key": "public-key",
+                "server_name": "example.com",
+                "short_id": "abcd",
+            }
+            grant = adapter.provision(
+                route, {"external_id": "user-network", "name": "HTTP customer"}
+            )
+            self.assertTrue(grant["access_url"].startswith("vless://user-network@"))
+            self.assertEqual(adapter.read_usage(grant)["bytes_transferred"], 42)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
 
     def test_http_agent_and_xray_adapter_form_one_lifecycle_contract(self):
         def requester(method, path, payload):
