@@ -112,6 +112,15 @@ class EndpointRegistryTest(unittest.TestCase):
             [item["protocol"] for item in self.registry.list_protocol_profiles(enabled_only=True)],
             ["outline"],
         )
+        with self.database.connect() as connection:
+            with self.assertRaisesRegex(ConnectivityError, "capacity"):
+                self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray")
+        self.registry.register_protocol_profile("legacy-default", "xray", status="enabled")
+        with self.database.connect() as connection:
+            self.assertEqual(
+                self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray"),
+                "legacy-default",
+            )
 
     def test_transfer_assignment_preserves_identity_and_moves_capacity(self):
         now = datetime.now(UTC)
@@ -156,6 +165,7 @@ class EndpointRegistryTest(unittest.TestCase):
                    VALUES ('sgp-02', 'SGP-02', 'sgp1', 'ACTIVE', 1, ?, ?)""",
                 (now.isoformat(), now.isoformat()),
             )
+        self.registry.register_protocol_profile("sgp-02", "outline", status="enabled")
         assignment = self.registry.ensure_subscription_assignment(
             "sub-1", "basic", 50_000_000_000,
             preferred_endpoint_id="sgp-02", now=now,

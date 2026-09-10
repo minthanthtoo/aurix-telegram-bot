@@ -576,6 +576,7 @@ class EndpointRegistry:
         connection: Any,
         plan_code: str,
         preferred_endpoint_id: str | None = None,
+        protocol: str | None = None,
     ) -> str:
         """Select and lock a capacity-eligible endpoint inside the caller transaction."""
         max_age_seconds = max(
@@ -587,6 +588,20 @@ class EndpointRegistry:
             if connection.__class__.__name__ == "_PostgresConnection"
             else ""
         )
+        protocol_filter = ""
+        normalized_protocol = None
+        if protocol is not None:
+            normalized_protocol = str(protocol or "").strip().lower()
+            if not normalized_protocol or len(normalized_protocol) > 64 or any(
+                char.isspace() for char in normalized_protocol
+            ):
+                raise ConnectivityError("protocol is invalid")
+            protocol_filter = """
+                 AND EXISTS (
+                       SELECT 1 FROM endpoint_protocol_profiles pp
+                        WHERE pp.endpoint_id = e.id
+                          AND pp.protocol = ? AND pp.status = 'enabled'
+                 )"""
         rows = connection.execute(
             """SELECT e.id, e.code, e.max_active_keys,
                       (SELECT COUNT(*) FROM endpoint_assignments a
@@ -599,7 +614,9 @@ class EndpointRegistry:
                LEFT JOIN endpoint_plan_limits l
                  ON l.endpoint_id = e.id AND l.plan_code = ?
                WHERE e.state = 'ACTIVE' AND e.accepts_new_assignments = ?
-                 AND e.last_healthy_at IS NOT NULL AND e.last_healthy_at >= ?
+                 AND e.last_healthy_at IS NOT NULL AND e.last_healthy_at >= ?"""
+            + protocol_filter
+            + """
                  AND (? IS NULL OR e.id = ?)
                ORDER BY
                  CASE WHEN e.max_active_keys IS NULL THEN 2147483647
@@ -608,13 +625,10 @@ class EndpointRegistry:
                           WHERE aa.endpoint_id = e.id AND aa.status = 'active') END DESC,
                  e.code"""
             + lock,
-            (
-                plan_code,
-                plan_code,
-                True,
-                fresh_after,
-                preferred_endpoint_id,
-                preferred_endpoint_id,
+            tuple(
+                [plan_code, plan_code, True, fresh_after]
+                + ([normalized_protocol] if normalized_protocol else [])
+                + [preferred_endpoint_id, preferred_endpoint_id]
             ),
         ).fetchall()
         for row in rows:
@@ -690,6 +704,7 @@ class EndpointRegistry:
         *,
         reason: str = "deterministic-allocation",
         preferred_endpoint_id: str | None = None,
+        protocol: str | None = None,
         now: datetime | None = None,
     ) -> EndpointAssignment:
         timestamp = (now or datetime.now(UTC)).isoformat()
@@ -702,7 +717,10 @@ class EndpointRegistry:
             if existing is not None:
                 return self._assignment(existing)
             endpoint_id = self.select_endpoint_for_plan(
-                connection, plan_code, preferred_endpoint_id=preferred_endpoint_id
+                connection,
+                plan_code,
+                preferred_endpoint_id=preferred_endpoint_id,
+                protocol=protocol,
             )
             assignment_id = uuid.uuid4().hex
             connection.execute(

@@ -115,8 +115,9 @@ load test, or speed test was changed or performed.
 - Durable endpoint protocol profiles: migration 9 binds each endpoint to
   explicit protocol/adapter metadata, backfills enabled Outline for existing
   endpoints, and keeps candidate profiles non-allocatable until evidence and
-  operator promotion exist. The Control Center shows profile state and
-  capability counts without route or credential secrets.
+  operator promotion exist. The protocol-aware selector now requires an
+  explicitly enabled profile when a protocol is requested. The Control Center
+  shows profile state and capability counts without route or credential secrets.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates
