@@ -91,6 +91,28 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(first.id, second.id)
         self.assertEqual(first.endpoint_id, "legacy-default")
 
+    def test_endpoint_protocol_profiles_default_to_outline_and_can_stage_candidates(self):
+        profiles = self.registry.list_protocol_profiles("legacy-default")
+        self.assertEqual([item["protocol"] for item in profiles], ["outline"])
+        self.assertEqual(profiles[0]["status"], "enabled")
+        staged = self.registry.register_protocol_profile(
+            "legacy-default",
+            "xray",
+            status="candidate",
+            capabilities={"usage": True, "quota_cap": False},
+        )
+        self.assertEqual(staged["profile_id"], "xray:legacy-default")
+        self.assertEqual(staged["status"], "candidate")
+        self.assertEqual(staged["capabilities"]["usage"], True)
+        self.assertEqual(
+            [item["protocol"] for item in self.registry.list_protocol_profiles("legacy-default")],
+            ["outline", "xray"],
+        )
+        self.assertEqual(
+            [item["protocol"] for item in self.registry.list_protocol_profiles(enabled_only=True)],
+            ["outline"],
+        )
+
     def test_transfer_assignment_preserves_identity_and_moves_capacity(self):
         now = datetime.now(UTC)
         with self.database.connect() as connection:

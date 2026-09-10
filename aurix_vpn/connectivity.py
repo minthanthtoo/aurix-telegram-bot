@@ -60,6 +60,119 @@ class EndpointRegistry:
         except (InvalidToken, UnicodeDecodeError, ValueError) as exc:
             raise ConnectivityError("Endpoint management secret cannot be decrypted") from exc
 
+    def register_protocol_profile(
+        self,
+        endpoint_id: str,
+        protocol: str,
+        *,
+        adapter_type: str | None = None,
+        status: str = "candidate",
+        capabilities: dict[str, Any] | None = None,
+        verified_at: datetime | None = None,
+        last_healthy_at: datetime | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Persist an endpoint/transport binding without storing secrets.
+
+        A profile is an operational fact about one endpoint and one protocol;
+        it is not an allocation authorization by itself.  Candidate profiles
+        are useful during canary preparation, while only an explicitly enabled
+        profile may be considered by a future protocol-aware selector.
+        """
+        endpoint = str(endpoint_id or "").strip()
+        transport = str(protocol or "").strip().lower()
+        profile_status = str(status or "").strip().lower()
+        if not endpoint or len(endpoint) > 128:
+            raise ConnectivityError("endpoint ID is invalid")
+        if not transport or len(transport) > 64 or any(char.isspace() for char in transport):
+            raise ConnectivityError("protocol is invalid")
+        if profile_status not in {"candidate", "enabled", "degraded", "disabled", "retired"}:
+            raise ConnectivityError("protocol profile status is invalid")
+        adapter = str(adapter_type or transport).strip().lower()
+        if not adapter or len(adapter) > 64 or any(char.isspace() for char in adapter):
+            raise ConnectivityError("adapter type is invalid")
+        capability_map = {
+            str(key): bool(value)
+            for key, value in dict(capabilities or {}).items()
+            if str(key).strip()
+        }
+        timestamp = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+        profile_id = f"{transport}:{endpoint}"
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            exists = connection.execute(
+                "SELECT 1 FROM vpn_endpoints WHERE id = ?", (endpoint,)
+            ).fetchone()
+            if exists is None:
+                raise ConnectivityError("VPN endpoint does not exist")
+            connection.execute(
+                """INSERT INTO endpoint_protocol_profiles
+                   (profile_id, endpoint_id, protocol, adapter_type, status,
+                    capabilities_json, verified_at, last_healthy_at, created_at,
+                    retired_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                   ON CONFLICT(endpoint_id, protocol) DO UPDATE SET
+                     adapter_type = excluded.adapter_type,
+                     status = excluded.status,
+                     capabilities_json = excluded.capabilities_json,
+                     verified_at = COALESCE(excluded.verified_at,
+                                            endpoint_protocol_profiles.verified_at),
+                     last_healthy_at = COALESCE(excluded.last_healthy_at,
+                                                endpoint_protocol_profiles.last_healthy_at),
+                     retired_at = CASE WHEN excluded.status = 'retired'
+                                       THEN COALESCE(endpoint_protocol_profiles.retired_at, excluded.last_healthy_at, excluded.verified_at)
+                                       ELSE NULL END""",
+                (
+                    profile_id,
+                    endpoint,
+                    transport,
+                    adapter,
+                    profile_status,
+                    json.dumps(capability_map, sort_keys=True, separators=(",", ":")),
+                    verified_at.astimezone(UTC).isoformat() if verified_at else None,
+                    last_healthy_at.astimezone(UTC).isoformat() if last_healthy_at else None,
+                    timestamp,
+                ),
+            )
+        return next(
+            item
+            for item in self.list_protocol_profiles(endpoint)
+            if item["protocol"] == transport
+        )
+
+    def list_protocol_profiles(
+        self, endpoint_id: str | None = None, *, enabled_only: bool = False
+    ) -> list[dict[str, Any]]:
+        """Return non-secret endpoint protocol bindings for operator policy."""
+        clauses: list[str] = []
+        values: list[Any] = []
+        if endpoint_id is not None:
+            clauses.append("endpoint_id = ?")
+            values.append(str(endpoint_id))
+        if enabled_only:
+            clauses.append("status = 'enabled'")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT profile_id, endpoint_id, protocol, adapter_type, status,
+                          capabilities_json, verified_at, last_healthy_at,
+                          created_at, retired_at
+                     FROM endpoint_protocol_profiles"""
+                + where
+                + " ORDER BY endpoint_id, protocol",
+                tuple(values),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                capabilities = json.loads(str(item.pop("capabilities_json") or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                capabilities = {}
+            item["capabilities"] = capabilities if isinstance(capabilities, dict) else {}
+            result.append(item)
+        return result
+
     def configure_bootstrap(
         self,
         api_url: str,
@@ -71,7 +184,8 @@ class EndpointRegistry:
         mark_healthy: bool = True,
         now: datetime | None = None,
     ) -> None:
-        timestamp = (now or datetime.now(UTC)).isoformat()
+        observed_at = now or datetime.now(UTC)
+        timestamp = observed_at.astimezone(UTC).isoformat()
         parsed = urllib.parse.urlsplit(api_url)
         public_address = parsed.hostname
         encrypted = self._encrypt(api_url.rstrip("/"))
@@ -102,6 +216,15 @@ class EndpointRegistry:
                     DEFAULT_ENDPOINT_ID,
                 ),
             )
+        self.register_protocol_profile(
+            DEFAULT_ENDPOINT_ID,
+            "outline",
+            adapter_type="outline",
+            status="enabled",
+            verified_at=observed_at if mark_healthy else None,
+            last_healthy_at=observed_at if mark_healthy else None,
+            now=observed_at,
+        )
 
     def register_verified_endpoint(
         self,
@@ -160,6 +283,15 @@ class EndpointRegistry:
                     timestamp,
                 ),
             )
+        self.register_protocol_profile(
+            endpoint_id,
+            "outline",
+            adapter_type="outline",
+            status="enabled",
+            verified_at=now or datetime.now(UTC),
+            last_healthy_at=now or datetime.now(UTC),
+            now=now,
+        )
         return self.endpoint(endpoint_id)
 
     def list_endpoints(self) -> list[dict[str, Any]]:
@@ -179,7 +311,16 @@ class EndpointRegistry:
                             e.last_healthy_at
                    ORDER BY e.code"""
             ).fetchall()
-        return [dict(row) for row in rows]
+        profiles = self.list_protocol_profiles()
+        by_endpoint: dict[str, list[dict[str, Any]]] = {}
+        for profile in profiles:
+            by_endpoint.setdefault(str(profile["endpoint_id"]), []).append(profile)
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["protocols"] = by_endpoint.get(str(item["id"]), [])
+            result.append(item)
+        return result
 
     def list_customer_endpoints(self, plan_code: str | None = None) -> list[dict[str, Any]]:
         """Return the safe endpoint directory used by the customer portal.

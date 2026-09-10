@@ -124,6 +124,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 6, "usage_provenance_and_remote_lease_proof"),
                     ("commerce", 7, "opaque_accounts_and_managed_devices"),
                     ("commerce", 8, "notification_delivery_leases"),
+                    ("commerce", 9, "endpoint_protocol_profiles"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

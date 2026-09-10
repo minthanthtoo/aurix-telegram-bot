@@ -112,6 +112,11 @@ load test, or speed test was changed or performed.
   readiness separately from the allocation registry. Outline is shown as
   enabled, Xray/Hysteria2 as evidence-gated candidates, and WireGuard as not
   implemented; this does not register any new protocol for customer traffic.
+- Durable endpoint protocol profiles: migration 9 binds each endpoint to
+  explicit protocol/adapter metadata, backfills enabled Outline for existing
+  endpoints, and keeps candidate profiles non-allocatable until evidence and
+  operator promotion exist. The Control Center shows profile state and
+  capability counts without route or credential secrets.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates
@@ -165,8 +170,8 @@ queueing pauses new source assignments and preserves order/payment/entitlement
 identity while the verified worker owns target provision, probes, assignment
 transfer, lease transfer, and commit.
 
-The current checkout has `337` discovered test entries, and complete discovery
-passes (`Ran 337 tests ... OK`) after the reproducible Python environment added
+The current checkout has `338` discovered test entries, and complete discovery
+passes (`Ran 338 tests ... OK`) after the reproducible Python environment added
 the previously missing OpenCV dependency. Ruff, Python compilation, JavaScript
 syntax validation, and `git diff --check` pass for the continuation files. Notification
 delivery now claims due rows with a bounded lease and token-guarded completion,

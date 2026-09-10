@@ -95,6 +95,10 @@ Important remaining facts:
   worker moves the endpoint assignment and quota lease only after target provision and
   probes succeed. The live two-node exercise and customer reconnect/support evidence
   remain outstanding.
+- Endpoint protocol profiles are now durable: existing endpoints are backfilled with
+  enabled Outline, while Xray/Hysteria2 can be staged as candidate profiles without
+  becoming allocation candidates. The operator console exposes this state and its
+  capability metadata without secrets.
 - Startup degrades cleanly when the one Outline management endpoint is unavailable; provisioning remains fail-closed until health returns.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
 - The application/refactor baseline is now in the `codex/aurix-vpn-portal` history; unrelated AI/UI and pay-monitor work remains intentionally outside the VPN commits.
@@ -181,7 +185,7 @@ Still required before or as the first bounded part of V3:
 Completed immediately before this remaining-gate list: the recoverable baseline
 was committed in major steps, and the project now declares Python
 `>=3.13,<3.14`, carries a checked-in `uv.lock`, and uses `uv sync --locked` in
-local/CI validation. Complete local discovery passes with 337 tests, including
+local/CI validation. Complete local discovery passes with 338 tests, including
 the backup/restore artifact tests. Executable recovery tooling is documented in
 [`docs/AURIX_BACKUP_RESTORE_RUNBOOK.md`](AURIX_BACKUP_RESTORE_RUNBOOK.md).
 

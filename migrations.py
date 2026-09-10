@@ -1021,6 +1021,57 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS notifications_delivery_lease ON notifications(status, next_attempt_at, lease_expires_at)",
         ),
     ),
+    Migration(
+        9,
+        "endpoint_protocol_profiles",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_protocol_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   protocol TEXT NOT NULL,
+                   adapter_type TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'candidate'
+                       CHECK (status IN ('candidate', 'enabled', 'degraded', 'disabled', 'retired')),
+                   capabilities_json TEXT NOT NULL DEFAULT '{}',
+                   verified_at TEXT,
+                   last_healthy_at TEXT,
+                   created_at TEXT NOT NULL,
+                   retired_at TEXT,
+                   UNIQUE(endpoint_id, protocol)
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_protocol_profiles_lookup ON endpoint_protocol_profiles(endpoint_id, status, protocol)",
+            """INSERT OR IGNORE INTO endpoint_protocol_profiles
+                   (profile_id, endpoint_id, protocol, adapter_type, status,
+                    capabilities_json, verified_at, last_healthy_at, created_at)
+               SELECT 'outline:' || id, id, 'outline', 'outline', 'enabled',
+                      '{}', verified_at, last_healthy_at, created_at
+                 FROM vpn_endpoints""",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_protocol_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   protocol TEXT NOT NULL,
+                   adapter_type TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'candidate'
+                       CHECK (status IN ('candidate', 'enabled', 'degraded', 'disabled', 'retired')),
+                   capabilities_json TEXT NOT NULL DEFAULT '{}',
+                   verified_at TIMESTAMPTZ,
+                   last_healthy_at TIMESTAMPTZ,
+                   created_at TIMESTAMPTZ NOT NULL,
+                   retired_at TIMESTAMPTZ,
+                   UNIQUE(endpoint_id, protocol)
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_protocol_profiles_lookup ON endpoint_protocol_profiles(endpoint_id, status, protocol)",
+            """INSERT INTO endpoint_protocol_profiles
+                   (profile_id, endpoint_id, protocol, adapter_type, status,
+                    capabilities_json, verified_at, last_healthy_at, created_at)
+               SELECT 'outline:' || id, id, 'outline', 'outline', 'enabled',
+                      '{}', verified_at, last_healthy_at, created_at
+                 FROM vpn_endpoints
+                ON CONFLICT(endpoint_id, protocol) DO NOTHING""",
+        ),
+    ),
 )
 
 

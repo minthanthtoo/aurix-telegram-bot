@@ -338,6 +338,7 @@ class AuriXVpnWebApplication:
                     "reserved_transfer_bytes": item.get("reserved_transfer_bytes"),
                     "active_assignments": item.get("active_assignments", 0),
                     "last_healthy_at": item.get("last_healthy_at"),
+                    "protocols": item.get("protocols", []),
                 }
             )
         return safe
@@ -369,6 +370,9 @@ class AuriXVpnWebApplication:
             )
             if key in raw
         }
+        profile_method = getattr(registry, "list_protocol_profiles", None)
+        if callable(profile_method):
+            safe_endpoint["protocols"] = profile_method(str(endpoint_id))
         database = getattr(self.runtime, "commerce_database", None)
         assignments: list[dict[str, Any]] = []
         if database is not None:

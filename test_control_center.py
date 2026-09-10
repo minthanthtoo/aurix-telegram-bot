@@ -53,7 +53,17 @@ class ControlCenterTest(unittest.TestCase):
                 "outline_version": "x", "max_active_keys": 100, "reserved_transfer_bytes": 1,
                 "active_assignments": 2, "last_healthy_at": "2026-09-10T00:00:00+00:00",
                 "public_address": "198.51.100.10", "management_url_ciphertext": "secret",
-            }]
+                "protocols": [{
+                    "protocol": "outline", "adapter_type": "outline", "status": "enabled",
+                    "capabilities": {"usage": True}, "verified_at": "2026-09-10T00:00:00+00:00",
+                    "last_healthy_at": "2026-09-10T00:00:00+00:00",
+                }],
+            }],
+            list_protocol_profiles=lambda endpoint_id=None: [{
+                "protocol": "outline", "adapter_type": "outline", "status": "enabled",
+                "capabilities": {"usage": True}, "verified_at": "2026-09-10T00:00:00+00:00",
+                "last_healthy_at": "2026-09-10T00:00:00+00:00",
+            }],
         )
         self.runtime = SimpleNamespace(
             token="bot-token", commerce=commerce, commerce_database=self.database,
@@ -84,6 +94,7 @@ class ControlCenterTest(unittest.TestCase):
         self.assertNotIn("public_address", json.dumps(detail))
         self.assertNotIn("provider_resource_id", json.dumps(detail))
         self.assertNotIn("management_url_ciphertext", json.dumps(detail))
+        self.assertEqual(detail["endpoint"]["protocols"][0]["protocol"], "outline")
 
     def test_admin_api_requires_signed_allowlisted_telegram_identity(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
