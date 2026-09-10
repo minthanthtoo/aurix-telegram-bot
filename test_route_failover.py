@@ -104,6 +104,40 @@ class RouteFailoverTest(unittest.TestCase):
         self.assertEqual(reclaimed["state"], "creating")
         self.assertEqual(reclaimed["attempts"], 1)
 
+    def test_operator_drain_pauses_source_and_queues_idempotent_cohort(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
+        source = self.identity.create_generation(
+            entitlement, "sg-a", external_id="source-key", usage_baseline_provenance="new"
+        )
+        self.identity.ensure_generation_lease(
+            entitlement,
+            source,
+            "sg-a",
+            1000,
+            (self.now + timedelta(days=30)).isoformat(),
+            now=self.now,
+        )
+        preview = self.failover.endpoint_drain_preview("sg-a", limit=10)
+        self.assertEqual(preview["target_endpoint_id"], "bkk-a")
+        self.assertEqual(preview["active_generations"], 1)
+        result = self.failover.request_endpoint_drain(
+            "sg-a", actor_id=999, limit=10, now=self.now
+        )
+        self.assertEqual(result["queued"], 1)
+        self.assertTrue(result["paused"])
+        repeated = self.failover.request_endpoint_drain(
+            "sg-a", actor_id=999, limit=10, now=self.now
+        )
+        self.assertEqual(repeated["queued"], 0)
+        self.assertEqual(repeated["existing"], 1)
+        with self.database.connect() as connection:
+            endpoint = connection.execute(
+                "SELECT accepts_new_assignments FROM vpn_endpoints WHERE id = 'sg-a'"
+            ).fetchone()
+        self.assertFalse(bool(endpoint["accepts_new_assignments"]))
+        decision = self.failover.claim(now=self.now)
+        self.assertEqual(decision["decision_id"], result["decision_ids"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

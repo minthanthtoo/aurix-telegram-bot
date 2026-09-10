@@ -156,13 +156,17 @@ workspace.
 
 The continuation added and committed the authenticated WSGI node-agent boundary,
 the reproducible node-agent client/config writer, a real-localhost HTTP transport
-round-trip, read-only Control Center failover/audit visibility, and a bounded
-16-customer mixed Xray/Hysteria2 contract matrix. The local matrix proves shared
-agent-boundary isolation, quota assignment, usage/probe/reconcile wiring, and
-cleanup under eight worker threads; it is not evidence of live protocol behavior.
+round-trip, read-only Control Center failover/audit visibility, a bounded staged
+2/5/16-customer mixed Xray/Hysteria2 contract matrix, and confirmed operator
+drain queueing. The local matrix proves shared agent-boundary isolation, quota
+assignment, usage/probe/reconcile wiring, latency sampling, and cleanup under
+bounded worker counts; it is not evidence of live protocol behavior. Drain
+queueing pauses new source assignments and preserves order/payment/entitlement
+identity while the verified worker owns target provision, probes, assignment
+transfer, lease transfer, and commit.
 
-The current checkout has `334` discovered test entries, and complete discovery
-passes (`Ran 334 tests ... OK`) after the reproducible Python environment added
+The current checkout has `337` discovered test entries, and complete discovery
+passes (`Ran 337 tests ... OK`) after the reproducible Python environment added
 the previously missing OpenCV dependency. Ruff, Python compilation, JavaScript
 syntax validation, and `git diff --check` pass for the continuation files. Notification
 delivery now claims due rows with a bounded lease and token-guarded completion,
@@ -177,8 +181,9 @@ Git history after this verification.
 
 ## Remaining gates and next action
 
-The local provider backend, node-agent contract, and bounded mixed-protocol test
-seam are now implemented and committed in `151186f`; the next action is to bind
+The local provider backend, node-agent contract, bounded mixed-protocol test
+seam, and operator drain control are now implemented and committed in the
+current local history; the next action is to bind
 the contract to a reviewed canary-only Xray agent and validate restart, quota,
 outage, and session behavior. Repeat the evidence gate independently for
 Hysteria2. The concrete Hysteria2 auth/stats implementation does not make the

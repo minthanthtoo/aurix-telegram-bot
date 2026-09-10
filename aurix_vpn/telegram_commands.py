@@ -198,6 +198,17 @@ class TelegramCommandMixin:
         if command in self.ADMIN_ONLY_COMMANDS and not self._is_admin(telegram_id):
             self._send_customer_fallback(chat["id"], telegram_id)
             return
+        if command == "/drain":
+            try:
+                valid_limit = len(args) < 3 or 1 <= int(args[2]) <= 200
+            except (TypeError, ValueError):
+                valid_limit = False
+            if len(args) not in {1, 2, 3} or not valid_limit:
+                self.send(
+                    chat["id"],
+                    "Usage: /drain <source-endpoint> [target-endpoint] [limit 1-200]",
+                )
+                return
         if command == "/setpromo" and not confirmed and len(args) == 7:
             try:
                 _promo_gb_to_bytes(args[1])
@@ -239,10 +250,15 @@ class TelegramCommandMixin:
                     "/refund": lambda: f"Refund order {args[0]} to the customer wallet and revoke paid access?",
                     "/verify": lambda: f"Verify receipt {args[0]} for transaction {args[1]} and amount {args[2]}?",
                     "/rejectreceipt": lambda: f"Reject receipt {args[0]} and request a replacement screenshot?",
-                    "/setpromo": lambda: f"Activate promo campaign {args[0]} with these settings?",
-                    "/stoppromo": lambda: f"Stop promo campaign {args[0]}?",
-                    "/resumepromo": lambda: f"Resume promo campaign {args[0]}?",
-                }[command]()
+                "/setpromo": lambda: f"Activate promo campaign {args[0]} with these settings?",
+                "/stoppromo": lambda: f"Stop promo campaign {args[0]}?",
+                "/resumepromo": lambda: f"Resume promo campaign {args[0]}?",
+                "/drain": lambda: (
+                    f"Drain endpoint {args[0]}"
+                    + (f" to {args[1]}" if len(args) >= 2 else " to the best eligible target")
+                    + "?"
+                ),
+            }[command]()
                 self._queue_admin_confirmation(
                     chat["id"],
                     telegram_id,
@@ -259,6 +275,7 @@ class TelegramCommandMixin:
                         "/setpromo": "🎁 Confirm Promo",
                         "/stoppromo": "⏸ Confirm Stop",
                         "/resumepromo": "▶ Confirm Resume",
+                        "/drain": "🚧 Confirm Drain",
                     }[command],
                 )
                 return
@@ -1011,6 +1028,29 @@ class TelegramCommandMixin:
                     )
                 else:
                     self._open_admin_panel(chat["id"], telegram_id, "failed")
+        elif command == "/drain":
+            target = args[1] if len(args) >= 2 else None
+            limit = int(args[2]) if len(args) == 3 else 50
+            try:
+                result = self._admin_call(
+                    telegram_id,
+                    "request_endpoint_drain",
+                    args[0],
+                    telegram_id,
+                    target_endpoint_id=target,
+                    limit=limit,
+                    reason=f"operator-drain:{telegram_id}",
+                )
+            except CommerceError as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                self.send(
+                    chat["id"],
+                    f"Endpoint {result['source_endpoint_id']} is paused. "
+                    f"Queued {result['queued']} migration(s) to {result['target_endpoint_id']}; "
+                    "maintenance will provision and probe each target before commit.",
+                    self._admin_keyboard(telegram_id),
+                )
         elif command == "/retry":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)

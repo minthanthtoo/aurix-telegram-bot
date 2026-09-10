@@ -207,6 +207,26 @@ class TelegramAdminMixin:
             except Exception as exc:
                 snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
             return snapshot
+        if command == "/drain":
+            if not args or len(args) > 3:
+                snapshot["state"] = "missing"
+                return snapshot
+            target = args[1] if len(args) >= 2 else None
+            try:
+                limit = int(args[2]) if len(args) == 3 else 50
+                snapshot.update(
+                    self._admin_call(
+                        telegram_id,
+                        "endpoint_drain_preview",
+                        args[0],
+                        target_endpoint_id=target,
+                        limit=limit,
+                    )
+                )
+                snapshot["state"] = "present"
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
         if self.commerce is None or not target_id:
             snapshot["state"] = "missing"
             return snapshot
@@ -359,6 +379,18 @@ class TelegramAdminMixin:
             else:
                 lines.append("Result: resume the saved season if it is within its dates.")
             return "\n".join(lines)
+        if command == "/drain":
+            return "\n".join(
+                [
+                    f"Source: {snapshot.get('source_code') or args[0]}",
+                    f"Target: {snapshot.get('target_code') or snapshot.get('target_endpoint_id') or '-'}",
+                    f"Active generations in cohort: {snapshot.get('active_generations') or 0}",
+                    f"Already queued: {snapshot.get('queued_decisions') or 0}",
+                    f"Cohort limit: {snapshot.get('limit') or 50}",
+                    "Result: pause new assignments on the source and queue verified migrations.",
+                    "Existing credentials are not revoked until a target is provisioned and probed.",
+                ]
+            )
         if command == "/retryjob":
             return "\n".join(
                 [

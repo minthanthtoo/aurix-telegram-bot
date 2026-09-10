@@ -21,6 +21,7 @@ from .commerce_models import (
 from .commerce_repositories import _PostgresConnection
 from .connectivity_adapters import ConnectivityAdapterRegistry
 from .identity import IdentityError, IdentityService
+from .route_failover import FailoverError
 
 
 class CommerceWorkerMixin:
@@ -220,12 +221,21 @@ class CommerceWorkerMixin:
                 return self._adapter_for_route(route, gateway)
 
             adapter_provider = default_adapter
+        assignment_transfer = getattr(connectivity, "transfer_assignment", None)
+        assignment_transfer_callback = None
+        if callable(assignment_transfer):
+            assignment_transfer_callback = (
+                lambda entitlement_key, target_endpoint_id, reason: assignment_transfer(
+                    entitlement_key, target_endpoint_id, reason=reason
+                )
+            )
         executor = RouteFailoverExecutor(
             self.database,
             identity=identity,
             failover=failover,
             route_provider=route_provider,
             adapter_provider=adapter_provider,
+            assignment_transfer=assignment_transfer_callback,
             access_url_encryptor=self._encrypt_access_url,
             require_data_plane_probe=require_data_plane_probe,
         )
@@ -1420,6 +1430,50 @@ class CommerceWorkerMixin:
                 ),
             )
         return self.connectivity.endpoint(endpoint_id)
+
+    def endpoint_drain_preview(
+        self,
+        source_endpoint_id: str,
+        *,
+        target_endpoint_id: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Return a read-only preview for the operator drain confirmation."""
+        if self.connectivity is None or self.failover is None:
+            raise CommerceError("Endpoint drain management is not configured")
+        try:
+            return self.failover.endpoint_drain_preview(
+                source_endpoint_id,
+                target_endpoint_id=target_endpoint_id,
+                limit=limit,
+            )
+        except FailoverError as exc:
+            raise CommerceError(str(exc)) from exc
+
+    def request_endpoint_drain(
+        self,
+        source_endpoint_id: str,
+        admin_id: int,
+        *,
+        target_endpoint_id: str | None = None,
+        limit: int = 50,
+        reason: str = "operator-drain",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Pause one endpoint and queue a bounded, auditable migration cohort."""
+        if self.connectivity is None or self.failover is None:
+            raise CommerceError("Endpoint drain management is not configured")
+        try:
+            return self.failover.request_endpoint_drain(
+                source_endpoint_id,
+                target_endpoint_id=target_endpoint_id,
+                limit=limit,
+                actor_id=admin_id,
+                reason=reason,
+                now=now,
+            )
+        except FailoverError as exc:
+            raise CommerceError(str(exc)) from exc
 
     def configure_endpoint_plan_limit(
         self,

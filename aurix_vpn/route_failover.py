@@ -8,6 +8,7 @@ drop its accounting generation until remote deletion is verified.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -90,13 +91,224 @@ class RouteFailoverService:
     def _target_endpoint(connection: Any, source_endpoint_id: str) -> dict[str, Any] | None:
         true = "TRUE" if isinstance(connection, _PostgresConnection) else "1"
         row = connection.execute(
-            f"""SELECT id FROM vpn_endpoints
-                   WHERE id <> ? AND UPPER(state) IN ('ACTIVE', 'DEGRADED')
-                     AND accepts_new_assignments = {true}
-                   ORDER BY code, id LIMIT 1""",
+            f"""SELECT e.id, e.code, e.state, e.accepts_new_assignments,
+                             e.max_active_keys, COUNT(a.id) AS active_count FROM vpn_endpoints e
+                    LEFT JOIN endpoint_assignments a
+                      ON a.endpoint_id = e.id AND a.status = 'active'
+                   WHERE e.id <> ? AND UPPER(e.state) IN ('ACTIVE', 'DEGRADED')
+                     AND e.accepts_new_assignments = {true}
+                   GROUP BY e.id, e.code, e.state, e.accepts_new_assignments, e.max_active_keys
+                   HAVING e.max_active_keys IS NULL OR COUNT(a.id) < e.max_active_keys
+                   ORDER BY e.code, e.id LIMIT 1""",
             (str(source_endpoint_id),),
         ).fetchone()
         return dict(row) if row is not None else None
+
+    def endpoint_drain_preview(
+        self,
+        source_endpoint_id: str,
+        *,
+        target_endpoint_id: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Return a read-only preview for an operator-confirmed endpoint drain."""
+        source_id = str(source_endpoint_id or "").strip()
+        target_id = str(target_endpoint_id or "").strip() or None
+        if not source_id or len(source_id) > 128:
+            raise FailoverError("source endpoint is invalid")
+        if target_id and len(target_id) > 128:
+            raise FailoverError("target endpoint is invalid")
+        bounded_limit = max(1, min(200, int(limit)))
+        with self.database.connect() as connection:
+            source = connection.execute(
+                "SELECT id, code, state, accepts_new_assignments FROM vpn_endpoints WHERE id = ?",
+                (source_id,),
+            ).fetchone()
+            if source is None:
+                raise FailoverError("source endpoint does not exist")
+            target = (
+                connection.execute(
+                    "SELECT id, code, state, accepts_new_assignments FROM vpn_endpoints WHERE id = ?",
+                    (target_id,),
+                ).fetchone()
+                if target_id
+                else self._target_endpoint(connection, source_id)
+            )
+            candidates = connection.execute(
+                """SELECT COUNT(*) AS n
+                     FROM credential_generations g
+                     JOIN quota_leases l ON l.generation_id = g.generation_id
+                        AND l.status = 'active'
+                    WHERE g.endpoint_id = ? AND g.status = 'active'""",
+                (source_id,),
+            ).fetchone()
+            queued = connection.execute(
+                """SELECT COUNT(*) AS n FROM failover_decisions
+                    WHERE source_endpoint_id = ? AND state IN ('pending', 'creating', 'verified')""",
+                (source_id,),
+            ).fetchone()
+        return {
+            "source_endpoint_id": source_id,
+            "source_code": str(source["code"] or source_id),
+            "source_state": str(source["state"]),
+            "source_accepts_new_assignments": bool(source["accepts_new_assignments"]),
+            "target_endpoint_id": str(target["id"]) if target else None,
+            "target_code": str(target["code"] or target["id"]) if target else None,
+            "target_available": target is not None
+            and str(target["state"]).upper() in {"ACTIVE", "DEGRADED"}
+            and target["accepts_new_assignments"] not in (False, 0),
+            "active_generations": min(int(candidates["n"] or 0), bounded_limit),
+            "queued_decisions": int(queued["n"] or 0),
+            "limit": bounded_limit,
+        }
+
+    def request_endpoint_drain(
+        self,
+        source_endpoint_id: str,
+        *,
+        target_endpoint_id: str | None = None,
+        limit: int = 50,
+        actor_id: int | None = None,
+        reason: str = "operator-drain",
+        now: str | datetime | None = None,
+    ) -> dict[str, Any]:
+        """Pause new assignments and queue bounded, idempotent migrations.
+
+        This method only records durable decisions. Provider work remains in
+        :class:`RouteFailoverExecutor`, which provisions, probes, transfers
+        the accounting lease, and commits only after verification.
+        """
+        source_id = str(source_endpoint_id or "").strip()
+        requested_target = str(target_endpoint_id or "").strip() or None
+        if not source_id or len(source_id) > 128:
+            raise FailoverError("source endpoint is invalid")
+        if requested_target and len(requested_target) > 128:
+            raise FailoverError("target endpoint is invalid")
+        bounded_limit = max(1, min(200, int(limit)))
+        timestamp = _text(now)
+        normalized_reason = str(reason or "operator-drain").strip()[:256] or "operator-drain"
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            source = connection.execute(
+                "SELECT id, code, state FROM vpn_endpoints WHERE id = ?",
+                (source_id,),
+            ).fetchone()
+            if source is None:
+                raise FailoverError("source endpoint does not exist")
+            target = (
+                connection.execute(
+                    """SELECT e.id, e.code, e.state, e.accepts_new_assignments,
+                              e.max_active_keys, COUNT(a.id) AS active_count
+                           FROM vpn_endpoints e
+                           LEFT JOIN endpoint_assignments a
+                             ON a.endpoint_id = e.id AND a.status = 'active'
+                          WHERE e.id = ?
+                          GROUP BY e.id, e.code, e.state, e.accepts_new_assignments,
+                                   e.max_active_keys""",
+                    (requested_target,),
+                ).fetchone()
+                if requested_target
+                else self._target_endpoint(connection, source_id)
+            )
+            if target is None or str(target["id"]) == source_id:
+                raise FailoverError("no eligible drain target endpoint exists")
+            if str(target["state"]).upper() not in {"ACTIVE", "DEGRADED"} or target[
+                "accepts_new_assignments"
+            ] in (False, 0):
+                raise FailoverError("drain target endpoint is not accepting assignments")
+            if target["max_active_keys"] is not None and int(target["active_count"] or 0) >= int(
+                target["max_active_keys"]
+            ):
+                raise FailoverError("drain target endpoint has no capacity")
+            generations = connection.execute(
+                """SELECT DISTINCT g.generation_id, g.entitlement_key
+                     FROM credential_generations g
+                     JOIN quota_leases l ON l.generation_id = g.generation_id
+                        AND l.status = 'active'
+                    WHERE g.endpoint_id = ? AND g.status = 'active'
+                    ORDER BY g.created_at, g.generation_id LIMIT ?""",
+                (source_id, bounded_limit),
+            ).fetchall()
+            decision_ids: list[str] = []
+            existing_count = 0
+            for generation in generations:
+                entitlement_key = str(generation["entitlement_key"])
+                # Ensure manually queued decisions are claimable even when the
+                # entitlement has no automatic failover policy.
+                connection.execute(
+                    """INSERT INTO route_failover_policies
+                       (entitlement_key, enabled, failure_threshold, recovery_threshold,
+                        cooldown_seconds, standby_lease_bytes, max_attempts, created_at, updated_at)
+                       VALUES (?, FALSE, 3, 2, 300, 104857600, 5, ?, ?)
+                       ON CONFLICT(entitlement_key) DO NOTHING""",
+                    (entitlement_key, timestamp, timestamp),
+                )
+                idempotency = f"operator-drain:{source_id}:{generation['generation_id']}:{target['id']}"
+                candidate = f"failover-{_new_id()}"
+                inserted = connection.execute(
+                    """INSERT INTO failover_decisions
+                       (decision_id, idempotency_key, entitlement_key, source_generation_id,
+                        source_endpoint_id, target_endpoint_id, trigger, network_bucket,
+                        state, next_attempt_at, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'operator', 'pending', ?, ?, ?)
+                       ON CONFLICT(idempotency_key) DO NOTHING""",
+                    (
+                        candidate,
+                        idempotency,
+                        entitlement_key,
+                        str(generation["generation_id"]),
+                        source_id,
+                        str(target["id"]),
+                        normalized_reason,
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                if int(getattr(inserted, "rowcount", 0) or 0) == 1:
+                    decision_ids.append(candidate)
+                else:
+                    existing = connection.execute(
+                        "SELECT decision_id FROM failover_decisions WHERE idempotency_key = ?",
+                        (idempotency,),
+                    ).fetchone()
+                    if existing is not None:
+                        decision_ids.append(str(existing["decision_id"]))
+                        existing_count += 1
+            connection.execute(
+                "UPDATE vpn_endpoints SET accepts_new_assignments = FALSE WHERE id = ?",
+                (source_id,),
+            )
+            connection.execute(
+                """INSERT INTO infrastructure_events
+                   (id, endpoint_id, event_type, metadata_json, created_at)
+                   VALUES (?, ?, 'endpoint_drain_requested', ?, ?)""",
+                (
+                    _new_id(),
+                    source_id,
+                    json.dumps(
+                        {
+                            "actor_id": actor_id,
+                            "target_endpoint_id": str(target["id"]),
+                            "limit": bounded_limit,
+                            "queued": len(decision_ids),
+                            "existing": existing_count,
+                            "reason": normalized_reason,
+                        },
+                        sort_keys=True,
+                    ),
+                    timestamp,
+                ),
+            )
+        return {
+            "source_endpoint_id": source_id,
+            "target_endpoint_id": str(target["id"]),
+            "queued": len(decision_ids) - existing_count,
+            "existing": existing_count,
+            "decision_ids": decision_ids,
+            "paused": True,
+            "limit": bounded_limit,
+        }
 
     def observe(
         self,

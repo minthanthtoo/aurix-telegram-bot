@@ -97,12 +97,16 @@ class FailoverWorkerTest(unittest.TestCase):
 
     def test_provision_probe_transfer_and_commit_are_ordered(self):
         adapter = _Adapter()
+        transfers = []
         executor = RouteFailoverExecutor(
             self.database,
             identity=self.identity,
             failover=self.failover,
             route_provider=lambda endpoint: {"endpoint_id": endpoint, "protocol": "xray", "route_id": f"xray:{endpoint}"},
             adapter_provider=lambda route: adapter,
+            assignment_transfer=lambda entitlement, endpoint, reason: transfers.append(
+                (entitlement, endpoint, reason)
+            ) or {"changed": True},
             access_url_encryptor=lambda value: f"enc:{value}",
             clock=lambda: self.now,
             require_data_plane_probe=True,
@@ -119,6 +123,7 @@ class FailoverWorkerTest(unittest.TestCase):
                 (self.entitlement,),
             ).fetchone()
         self.assertEqual(lease["generation_id"], result["target_generation_id"])
+        self.assertEqual(transfers, [(self.entitlement, "bkk-a", "failover")])
 
     def test_failed_probe_revokes_owned_target_and_rolls_back(self):
         adapter = _Adapter(healthy=False)

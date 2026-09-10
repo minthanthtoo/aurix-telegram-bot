@@ -80,6 +80,7 @@ class TelegramBot(
             "/orders",
             "/receipts",
             "/capacity",
+            "/drain",
             "/reconcile",
             "/enforcement",
             "/promo",
@@ -109,6 +110,7 @@ class TelegramBot(
             "/setpromo",
             "/stoppromo",
             "/resumepromo",
+            "/drain",
         }
     )
     UNKNOWN_ACTION_TEXT = "Use the menu to choose an AuriX action."

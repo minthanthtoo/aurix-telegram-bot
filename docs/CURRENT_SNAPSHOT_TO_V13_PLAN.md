@@ -90,6 +90,11 @@ Important remaining facts:
 - Legacy `paid_vpn_keys` and free `keys` retain `outline_key_id`; endpoint assignments and credential-generation/quota projections now carry the durable transport-neutral identity.
 - Daily free, monthly trial, and promo/giveaway issuance now persist a durable intent before provider I/O; promo reservations release capacity on provider failure and retry through maintenance.
 - Notification outbox delivery now has an atomic claim lease; Telegram long polling and process-local maintenance are still single-process gates.
+- Operator drain is now a durable local control-plane seam: the source allocation gate
+  pauses, a bounded idempotent migration cohort is queued, and the verified failover
+  worker moves the endpoint assignment and quota lease only after target provision and
+  probes succeed. The live two-node exercise and customer reconnect/support evidence
+  remain outstanding.
 - Startup degrades cleanly when the one Outline management endpoint is unavailable; provisioning remains fail-closed until health returns.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
 - The application/refactor baseline is now in the `codex/aurix-vpn-portal` history; unrelated AI/UI and pay-monitor work remains intentionally outside the VPN commits.
@@ -176,7 +181,7 @@ Still required before or as the first bounded part of V3:
 Completed immediately before this remaining-gate list: the recoverable baseline
 was committed in major steps, and the project now declares Python
 `>=3.13,<3.14`, carries a checked-in `uv.lock`, and uses `uv sync --locked` in
-local/CI validation. Complete local discovery passes with 334 tests, including
+local/CI validation. Complete local discovery passes with 337 tests, including
 the backup/restore artifact tests. Executable recovery tooling is documented in
 [`docs/AURIX_BACKUP_RESTORE_RUNBOOK.md`](AURIX_BACKUP_RESTORE_RUNBOOK.md).
 
@@ -305,7 +310,7 @@ The current refactor removes the need for another broad extraction. V3 should be
 | Worker routing | `commerce_worker.py` | Resolve the persisted assignment first, then invoke the selected endpoint adapter; retries stay pinned |
 | Free/trial convergence | `entitlements.py` | Create durable credential intent/job rather than calling one global Outline client inside the DB transaction |
 | Runtime composition | `runtime.py` | Compose endpoint repository, adapter registry/factory, and services; remove mandatory process-global Outline readiness |
-| Operator UI | `telegram_admin_panels.py`, `telegram_callbacks.py`, `telegram_admin.py` | Add endpoint views and confirmed state-changing operations through the existing authorization boundary |
+| Operator UI | `telegram_admin_panels.py`, `telegram_callbacks.py`, `telegram_admin.py` | Endpoint views, capacity controls, and confirmed drain queueing now use the existing authorization boundary; live migration evidence remains |
 | Maintenance | `telegram_maintenance.py` | Iterate endpoint-scoped metrics/probes with stage isolation; do not reuse one global metrics snapshot across unrelated endpoints |
 | Compatibility | `app.py`, `commerce.py` | Preserve current imports while callers migrate; do not put new domain logic in facades |
 
@@ -321,7 +326,7 @@ WP0 recoverable Git baseline + live single-node proof
 → WP6 second Outline endpoint in same region
 → WP7 deterministic allocation and capacity reservation
 → WP8 second region
-→ WP9 drain and assisted migration
+→ WP9 drain and assisted migration (local queue/worker seam implemented; live proof pending)
 → WP10 live failure exercises and V3 promotion
 ```
 

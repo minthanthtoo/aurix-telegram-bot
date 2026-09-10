@@ -91,6 +91,39 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(first.id, second.id)
         self.assertEqual(first.endpoint_id, "legacy-default")
 
+    def test_transfer_assignment_preserves_identity_and_moves_capacity(self):
+        now = datetime.now(UTC)
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, region, state, accepts_new_assignments,
+                    created_at, last_healthy_at)
+                   VALUES ('bkk-a', 'BKK-A', 'bkk1', 'ACTIVE', 1, ?, ?)""",
+                (now.isoformat(), now.isoformat()),
+            )
+        assignment = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000,
+            preferred_endpoint_id="legacy-default", now=now
+        )
+        moved = self.registry.transfer_assignment(
+            "paid:sub-1", "bkk-a", reason="operator-drain", now=now
+        )
+        self.assertTrue(moved["changed"])
+        self.assertEqual(moved["source_endpoint_id"], assignment.endpoint_id)
+        self.assertEqual(moved["target_endpoint_id"], "bkk-a")
+        repeated = self.registry.transfer_assignment("paid:sub-1", "bkk-a", now=now)
+        self.assertFalse(repeated["changed"])
+        self.assertEqual(self.registry.assignment_for_subscription("sub-1").endpoint_id, "bkk-a")
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE vpn_endpoints SET accepts_new_assignments = 0 WHERE id = 'legacy-default'"
+            )
+        restored = self.registry.transfer_assignment(
+            "paid:sub-1", "legacy-default", reason="failover-rollback", now=now
+        )
+        self.assertTrue(restored["changed"])
+        self.assertEqual(self.registry.assignment_for_subscription("sub-1").endpoint_id, "legacy-default")
+
     def test_preferred_endpoint_is_honored_inside_capacity_selection(self):
         now = datetime.now(UTC)
         with self.database.connect() as connection:

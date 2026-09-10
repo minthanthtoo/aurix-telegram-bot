@@ -34,6 +34,8 @@ class AdminOperations:
             "configure_endpoint_capacity",
             "configure_endpoint_plan_limit",
             "endpoint_plan_capacity",
+            "endpoint_drain_preview",
+            "request_endpoint_drain",
             "wallet_balance",
             "wallet_history",
         }

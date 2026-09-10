@@ -32,6 +32,7 @@ class RouteFailoverExecutor:
         failover: RouteFailoverService | None = None,
         route_provider: Callable[[str], Mapping[str, Any]] | None = None,
         adapter_provider: Callable[[Mapping[str, Any]], Any] | None = None,
+        assignment_transfer: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
         access_url_encryptor: Callable[[str], str] | None = None,
         clock: Callable[[], datetime] | None = None,
         require_data_plane_probe: bool = True,
@@ -41,6 +42,7 @@ class RouteFailoverExecutor:
         self.failover = failover or RouteFailoverService(database)
         self.route_provider = route_provider or self._default_route
         self.adapter_provider = adapter_provider
+        self.assignment_transfer = assignment_transfer
         self.access_url_encryptor = access_url_encryptor or (lambda value: value)
         self.clock = clock or (lambda: datetime.now(UTC))
         self.require_data_plane_probe = bool(require_data_plane_probe)
@@ -79,6 +81,7 @@ class RouteFailoverExecutor:
         target_grant: dict[str, Any] | None = None
         lease_transferred = False
         adapter: Any | None = None
+        assignment_transferred = False
         try:
             source = self._generation(source_generation_id)
             entitlement_key = str(source["entitlement_key"])
@@ -131,6 +134,13 @@ class RouteFailoverExecutor:
                 self._probe_ok(data_probe, kind="data-plane")
             elif isinstance(data_probe, Mapping) and str(data_probe.get("status")) == "failed":
                 raise FailoverExecutionError("target data-plane probe failed")
+            if self.assignment_transfer is not None:
+                assignment = self.assignment_transfer(
+                    entitlement_key, target_endpoint, "failover"
+                )
+                assignment_transferred = bool(
+                    isinstance(assignment, Mapping) and assignment.get("changed") is True
+                )
             lease_id = self.identity.transfer_generation_lease(
                 entitlement_key,
                 source_generation_id,
@@ -165,6 +175,13 @@ class RouteFailoverExecutor:
                 except Exception:
                     # Do not hide the original failure; the durable lease is
                     # still inspectable and the next reconciliation can repair it.
+                    pass
+            if assignment_transferred and self.assignment_transfer is not None:
+                try:
+                    self.assignment_transfer(entitlement_key, str(source["endpoint_id"]), "failover-rollback")
+                except Exception:
+                    # The durable endpoint assignment remains inspectable for
+                    # reconciliation if a rollback races another operator.
                     pass
             if target_generation_id is not None and target_grant is not None and adapter is not None:
                 if str(target_grant.get("ownership")) == "owned":

@@ -584,6 +584,113 @@ class EndpointRegistry:
             ).fetchone()
         return self._assignment(row)
 
+    def transfer_assignment(
+        self,
+        entitlement_key: str,
+        target_endpoint_id: str,
+        *,
+        reason: str = "operator-drain",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Move one active entitlement reservation without changing its ID.
+
+        A failover/migration must move the durable endpoint reservation along
+        with the credential generation.  This keeps capacity accounting and
+        customer-facing endpoint state aligned while preserving the
+        subscription/free-key identity.
+        """
+        kind, separator, source_id = str(entitlement_key or "").partition(":")
+        if not separator or kind not in {"paid", "free"} or not source_id:
+            raise ConnectivityError("entitlement key is invalid")
+        target_id = str(target_endpoint_id or "").strip()
+        if not target_id or len(target_id) > 128:
+            raise ConnectivityError("target endpoint is invalid")
+        if kind == "paid":
+            assignment_where = "subscription_id = ?"
+            assignment_value: Any = source_id
+        else:
+            try:
+                assignment_value = int(source_id)
+            except (TypeError, ValueError) as exc:
+                raise ConnectivityError("free entitlement key is invalid") from exc
+            assignment_where = "free_key_id = ?"
+        timestamp = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+        rollback = str(reason or "").strip() == "failover-rollback"
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            lock = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
+            assignment = connection.execute(
+                f"SELECT * FROM endpoint_assignments WHERE {assignment_where} AND status = 'active'{lock}",
+                (assignment_value,),
+            ).fetchone()
+            if assignment is None:
+                return {
+                    "changed": False,
+                    "entitlement_key": entitlement_key,
+                    "target_endpoint_id": target_id,
+                    "reason": "assignment_missing",
+                }
+            source_endpoint_id = str(assignment["endpoint_id"])
+            if source_endpoint_id == target_id:
+                return {
+                    "changed": False,
+                    "entitlement_key": entitlement_key,
+                    "source_endpoint_id": source_endpoint_id,
+                    "target_endpoint_id": target_id,
+                    "assignment_id": str(assignment["id"]),
+                    "reason": "already_on_target",
+                }
+            target = connection.execute(
+                """SELECT e.id, e.state, e.accepts_new_assignments,
+                          e.max_active_keys, COUNT(a.id) AS active_count
+                     FROM vpn_endpoints e
+                     LEFT JOIN endpoint_assignments a
+                       ON a.endpoint_id = e.id AND a.status = 'active'
+                    WHERE e.id = ?
+                    GROUP BY e.id, e.state, e.accepts_new_assignments, e.max_active_keys""",
+                (target_id,),
+            ).fetchone()
+            if target is None or str(target["state"]) not in {"ACTIVE", "DEGRADED", "DRAINING"}:
+                raise ConnectivityError("target endpoint is not available")
+            if not rollback and target["accepts_new_assignments"] in (False, 0):
+                raise ConnectivityError("target endpoint is not accepting assignments")
+            if target["max_active_keys"] is not None and int(target["active_count"] or 0) >= int(
+                target["max_active_keys"]
+            ):
+                raise ConnectivityError("target endpoint has no capacity")
+            plan_limit = connection.execute(
+                """SELECT enabled, max_active_assignments
+                     FROM endpoint_plan_limits
+                    WHERE endpoint_id = ? AND plan_code = ?""",
+                (target_id, str(assignment["plan_code"])),
+            ).fetchone()
+            if plan_limit is not None and not rollback:
+                if plan_limit["enabled"] in (False, 0):
+                    raise ConnectivityError("target endpoint does not accept this plan")
+                if plan_limit["max_active_assignments"] is not None:
+                    plan_active = connection.execute(
+                        """SELECT COUNT(*) AS n FROM endpoint_assignments
+                            WHERE endpoint_id = ? AND plan_code = ? AND status = 'active'""",
+                        (target_id, str(assignment["plan_code"])),
+                    ).fetchone()
+                    if int(plan_active["n"] or 0) >= int(plan_limit["max_active_assignments"]):
+                        raise ConnectivityError("target endpoint has no plan capacity")
+            connection.execute(
+                """UPDATE endpoint_assignments
+                      SET endpoint_id = ?, reason = ?
+                    WHERE id = ? AND status = 'active'""",
+                (target_id, str(reason or "operator-drain")[:128], str(assignment["id"])),
+            )
+        return {
+            "changed": True,
+            "entitlement_key": entitlement_key,
+            "source_endpoint_id": source_endpoint_id,
+            "target_endpoint_id": target_id,
+            "assignment_id": str(assignment["id"]),
+            "reason": str(reason or "operator-drain")[:128],
+            "updated_at": timestamp,
+        }
+
     def attach_job(self, job_id: str, assignment_id: str) -> None:
         with self.database.connect() as connection:
             connection.execute(

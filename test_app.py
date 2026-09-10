@@ -1284,6 +1284,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "/orders",
             "/receipts",
             "/capacity",
+            "/drain sg-a bkk-a 2",
             "/reconcile",
             "/enforcement",
             "/failed",
@@ -1325,6 +1326,58 @@ class TelegramBotCommerceTest(unittest.TestCase):
             )
             self.assertEqual(self.bot.sent[-1][1], self.bot.UNKNOWN_ACTION_TEXT)
         self.assertEqual(calls, [])
+
+    def test_admin_drain_is_confirmation_bound_and_allowlisted(self):
+        preview_calls = []
+        request_calls = []
+        self.commerce.endpoint_drain_preview = lambda source, **kwargs: preview_calls.append(
+            (source, kwargs)
+        ) or {
+            "state": "present",
+            "source_endpoint_id": source,
+            "source_code": "SG-A",
+            "source_state": "ACTIVE",
+            "source_accepts_new_assignments": True,
+            "target_endpoint_id": "bkk-a",
+            "target_code": "BKK-A",
+            "target_available": True,
+            "active_generations": 2,
+            "queued_decisions": 0,
+            "limit": kwargs.get("limit", 50),
+        }
+        self.commerce.request_endpoint_drain = lambda source, admin_id, **kwargs: request_calls.append(
+            (source, admin_id, kwargs)
+        ) or {
+            "source_endpoint_id": source,
+            "target_endpoint_id": kwargs.get("target_endpoint_id") or "bkk-a",
+            "queued": 2,
+        }
+        self.bot.handle(self.message(999, "/drain sg-a bkk-a 2"))
+        self.assertEqual(preview_calls[0][0], "sg-a")
+        self.assertEqual(preview_calls[0][1]["limit"], 2)
+        self.assertIn("🚧 Confirm Drain", {
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        })
+        confirm = next(
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["callback_data"].startswith("a:k:")
+        )
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "callback-drain-confirm",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": confirm["callback_data"],
+            }
+        )
+        self.assertEqual(request_calls[0][0:2], ("sg-a", 999))
+        self.assertEqual(request_calls[0][2]["target_endpoint_id"], "bkk-a")
+        self.assertEqual(request_calls[0][2]["limit"], 2)
 
     def test_admin_button_labels_are_separate_and_customer_menu_is_side_effect_free(self):
         self.bot.handle(self.message(123, "📥 Pending Orders"))
@@ -1373,6 +1426,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "/refund order-id",
             "/verify evidence-id tx-id 3000",
             "/rejectreceipt evidence-id",
+            "/drain sg-a bkk-a 2",
         ):
             self.bot.handle(self.message(999, command))
             self.assertIn("expires in 5 minutes", self.bot.sent[-1][1])
