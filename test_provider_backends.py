@@ -66,10 +66,30 @@ class ProviderBackendsTest(unittest.TestCase):
     def test_xray_stats_parser_rejects_unsafe_shapes(self):
         with self.assertRaises(ProviderBackendError):
             XrayStatsParser.parse({"stat": "not-a-list"}, "user")
+        with self.assertRaises(ProviderBackendError):
+            XrayStatsParser.parse({"stat": [{"name": "user>>>u>>>traffic>>>uplink", "value": True}]}, "u")
         parsed = XrayStatsParser.parse(
             json.dumps({"stat": [{"name": "user>>>u>>>traffic>>>uplink", "value": "3"}]}), "u"
         )
         self.assertEqual(parsed["bytes_transferred"], 3)
+
+    def test_provider_backends_reject_path_like_or_empty_customer_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "xray.json"
+            path.write_text(
+                json.dumps({"inbounds": [{"tag": "aurix-managed", "settings": {"clients": []}}]}),
+                encoding="utf-8",
+            )
+            provider = XrayConfigProvider(
+                XrayConfigWriter(path), reload_callback=lambda: None
+            )
+            with self.assertRaises(ProviderBackendError):
+                provider.create_user("../escape", "name", {}, {})
+            store = Hysteria2UserStore(
+                Path(directory) / "users.json", encryption_key=Fernet.generate_key()
+            )
+            with self.assertRaises(ProviderBackendError):
+                store.create_user("", "name", "secret")
 
     def test_hysteria2_store_encrypts_secrets_and_auth_callback_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:

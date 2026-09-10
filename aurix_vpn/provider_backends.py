@@ -30,10 +30,19 @@ class ProviderBackendError(NodeAgentError):
 
 
 def _int_value(value: Any, *, field: str) -> int:
+    if isinstance(value, bool):
+        raise ProviderBackendError(f"{field} is not an integer")
     try:
         return max(0, int(value or 0))
     except (TypeError, ValueError) as exc:
-        raise ProviderBackendError(f"{field} is not an integer") from exc
+            raise ProviderBackendError(f"{field} is not an integer") from exc
+
+
+def _identifier(value: Any, *, field: str = "external_id") -> str:
+    result = str(value or "").strip()
+    if not result or len(result) > 256 or "/" in result or "\\" in result:
+        raise ProviderBackendError(f"{field} is invalid")
+    return result
 
 
 class XrayStatsParser:
@@ -126,6 +135,7 @@ class XrayConfigProvider:
         route: Mapping[str, Any],
         intent: Mapping[str, Any],
     ) -> dict[str, Any]:
+        external_id = _identifier(external_id)
         requested_tag = str(route.get("inbound_tag") or self.writer.inbound_tag)
         if requested_tag != self.writer.inbound_tag:
             raise ProviderBackendError("Xray route targets a different managed inbound")
@@ -136,20 +146,21 @@ class XrayConfigProvider:
         )
         self._reload_if_changed(result)
         return {
-            "external_id": str(external_id),
+            "external_id": external_id,
             "name": str(name)[:128],
             "secret": str(external_id),
             "changed": bool(result.get("changed")),
         }
 
     def delete_user(self, external_id: str) -> None:
-        result = self.writer.remove_user(external_id)
+        result = self.writer.remove_user(_identifier(external_id))
         self._reload_if_changed(result)
 
     def get_user_usage(self, external_id: str) -> dict[str, Any]:
         if not callable(self.stats_query):
             raise ProviderBackendError("Xray StatsService query is not configured")
-        return XrayStatsParser.parse(self.stats_query(str(external_id)), str(external_id))
+        external_id = _identifier(external_id)
+        return XrayStatsParser.parse(self.stats_query(external_id), external_id)
 
     def terminate_user_sessions(self, _external_id: str) -> dict[str, Any]:
         return {
@@ -302,7 +313,7 @@ class Hysteria2UserStore:
         metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         value = self._load()
-        key = str(external_id)
+        key = _identifier(external_id)
         existing = value["users"].get(key)
         if isinstance(existing, Mapping):
             if not hmac.compare_digest(str(existing.get("auth_digest") or ""), self._digest(secret)):
@@ -320,7 +331,7 @@ class Hysteria2UserStore:
 
     def delete_user(self, external_id: str) -> None:
         value = self._load()
-        value["users"].pop(str(external_id), None)
+        value["users"].pop(_identifier(external_id), None)
         self._write(value)
 
     def authenticate(self, presented: str) -> dict[str, Any]:
@@ -365,16 +376,18 @@ class Hysteria2Provider:
         _route: Mapping[str, Any],
         intent: Mapping[str, Any],
     ) -> dict[str, Any]:
+        external_id = _identifier(external_id)
         secret = str(intent.get("secret") or "").strip()
-        if not secret:
+        if not secret or len(secret) > 4096:
             raise ProviderBackendError("Hysteria2 customer secret is required")
         return self.users.create_user(external_id, name, secret, intent)
 
     def delete_user(self, external_id: str) -> None:
-        self.users.delete_user(external_id)
+        self.users.delete_user(_identifier(external_id))
 
     def get_user_usage(self, external_id: str) -> dict[str, Any]:
-        value = self.stats.traffic().get(str(external_id), {})
+        external_id = _identifier(external_id)
+        value = self.stats.traffic().get(external_id, {})
         if not isinstance(value, Mapping):
             raise ProviderBackendError("Hysteria2 user traffic has an invalid shape")
         tx = _int_value(value.get("tx"), field="Hysteria2 tx")
@@ -382,7 +395,7 @@ class Hysteria2Provider:
         return {"external_id": str(external_id), "tx_bytes": tx, "rx_bytes": rx}
 
     def terminate_user_sessions(self, external_id: str) -> dict[str, Any]:
-        self.stats.kick([str(external_id)])
+        self.stats.kick([_identifier(external_id)])
         return {
             "supported": True,
             "terminated": False,
