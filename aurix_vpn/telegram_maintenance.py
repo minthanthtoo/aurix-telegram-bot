@@ -201,6 +201,9 @@ class TelegramMaintenanceMixin:
         if metrics_result is None:
             _latency_log("maintenance_metrics", started_at, status="error")
         free_provisioning = getattr(self.service, "process_free_provisioning", None)
+        giveaway_provisioning = getattr(self.service, "process_giveaway_provisioning", None)
+        if callable(giveaway_provisioning):
+            run_stage("giveaway_provisioning", giveaway_provisioning)
         if callable(free_provisioning):
             run_stage("free_provisioning", free_provisioning)
         # Quota first preserves the more informative cause when a key is both

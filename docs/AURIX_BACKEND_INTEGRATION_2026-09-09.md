@@ -161,15 +161,17 @@ round-trip, read-only Control Center failover/audit visibility, and a bounded
 agent-boundary isolation, quota assignment, usage/probe/reconcile wiring, and
 cleanup under eight worker threads; it is not evidence of live protocol behavior.
 
-The current checkout has `329` discovered test entries, and complete discovery
-passes (`Ran 329 tests ... OK`) after the reproducible Python environment added
+The current checkout has `331` discovered test entries, and complete discovery
+passes (`Ran 331 tests ... OK`) after the reproducible Python environment added
 the previously missing OpenCV dependency. Ruff, Python compilation, JavaScript
 syntax validation, and `git diff --check` pass for the continuation files. Notification
 delivery now claims due rows with a bounded lease and token-guarded completion,
 so a second worker cannot duplicate a live claim and a stale worker cannot
 complete a reclaimed row. Daily free and monthly trial issuance now use the
 same durable intent boundary, deterministic provider identity where supported,
-and encrypted recovery notifications. The resulting commits are recorded in
+and encrypted recovery notifications. Promo/giveaway issuance now has the same
+durable reservation and retry boundary, including capacity release on provider
+failure. The resulting commits are recorded in
 Git history after this verification.
 
 ## Remaining gates and next action

@@ -88,7 +88,7 @@ Important remaining facts:
 - `runtime.py` still reads exactly one `OUTLINE_API_URL` and one certificate fingerprint, creates one `OutlineClient`, and injects it into both free and paid services.
 - `ports.OutlineGateway` remains the compatibility API, while `ConnectivityAdapter` now provides the generic endpoint-scoped lifecycle seam.
 - Legacy `paid_vpn_keys` and free `keys` retain `outline_key_id`; endpoint assignments and credential-generation/quota projections now carry the durable transport-neutral identity.
-- Daily free and monthly trial issuance now persist a durable intent before the provider call; promo/giveaway issuance is still synchronous.
+- Daily free, monthly trial, and promo/giveaway issuance now persist a durable intent before provider I/O; promo reservations release capacity on provider failure and retry through maintenance.
 - Notification outbox delivery now has an atomic claim lease; Telegram long polling and process-local maintenance are still single-process gates.
 - Startup degrades cleanly when the one Outline management endpoint is unavailable; provisioning remains fail-closed until health returns.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
@@ -165,18 +165,18 @@ Completed since the earlier roadmap:
 - [x] Multiple paid entitlements, quota warnings, maintenance heartbeat, and failure visibility are covered by tests.
 - [x] Notification delivery uses durable claim leases with stale-worker protection.
 - [x] Daily free and monthly trial provisioning use durable jobs with deterministic provider identity and recovery notifications.
+- [x] Promo/giveaway provisioning uses durable reservations, retryable jobs, deterministic provider identity where supported, and recovery notifications.
 
 Still required before or as the first bounded part of V3:
 
-1. Move promo/giveaway provisioning onto the same durable intent/job/reconcile pattern.
-2. Automate database backups and complete a restore drill, including receipt-object reconciliation.
-3. Run the documented live one-server acceptance test with known users.
-4. Capture real usage, connection success, support, and contribution-margin evidence.
+1. Automate database backups and complete a restore drill, including receipt-object reconciliation.
+2. Run the documented live one-server acceptance test with known users.
+3. Capture real usage, connection success, support, and contribution-margin evidence.
 
 Completed immediately before this remaining-gate list: the recoverable baseline
 was committed in major steps, and the project now declares Python
 `>=3.13,<3.14`, carries a checked-in `uv.lock`, and uses `uv sync --locked` in
-local/CI validation. Complete local discovery passes with 329 tests.
+local/CI validation. Complete local discovery passes with 331 tests.
 
 Exit gate:
 
@@ -918,7 +918,7 @@ health/usage worker
 
 Do not split into network microservices merely because the code has modules.
 
-The current PostgreSQL job and notification claims support `FOR UPDATE SKIP LOCKED` and expiring leases, but that does not make the whole deployment replica-safe. Telegram remains long polling, promo provisioning is synchronous, and maintenance is process-local.
+The current PostgreSQL job and notification claims support `FOR UPDATE SKIP LOCKED` and expiring leases, but that does not make the whole deployment replica-safe. Telegram remains long polling, promo provisioning is durable, and maintenance is process-local.
 
 ## Cross-version invariants
 

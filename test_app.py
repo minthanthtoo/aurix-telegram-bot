@@ -351,6 +351,49 @@ class ClaimServiceTest(unittest.TestCase):
         result = self.service.claim_giveaway(123, "Min", self.now)
         self.assertEqual(result.winner_number, 1)
 
+    def test_giveaway_reservation_is_durable_before_provider_call(self):
+        job_id = self.service._prepare_giveaway_provision_job(
+            telegram_id=123,
+            first_name="Min",
+            username="min",
+            code="100GBFREE",
+            now=self.now,
+        )
+        self.assertIsInstance(job_id, str)
+        status = self.service.giveaway_status(456, now=self.now)
+        self.assertEqual(status["window_claimed_count"], 1)
+        self.assertEqual(status["remaining_slots"], 4)
+
+        with self.db.connect() as connection:
+            row = connection.execute(
+                "SELECT status, winner_number, external_id FROM giveaway_provisioning_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+        self.assertEqual(row["status"], "pending")
+        self.assertEqual(row["winner_number"], 1)
+        self.assertEqual(row["external_id"], f"aurix-promo-{job_id}")
+
+    def test_failed_giveaway_job_is_recovered_by_maintenance(self):
+        self.outline.fail_create = True
+        with self.assertRaises(OutlineError):
+            self.service.claim_giveaway(123, "Min", self.now)
+
+        self.outline.fail_create = False
+        completed = self.service.process_giveaway_provisioning(
+            self.now + timedelta(seconds=31)
+        )
+        self.assertEqual(completed, 1)
+        status = self.service.giveaway_status(123, now=self.now + timedelta(seconds=31))
+        self.assertTrue(status["winner"])
+        self.assertEqual(status["remaining_slots"], 4)
+        with self.db.connect() as connection:
+            job = connection.execute(
+                "SELECT status, key_id, attempts FROM giveaway_provisioning_jobs WHERE telegram_id = 123"
+            ).fetchone()
+        self.assertEqual(job["status"], "done")
+        self.assertIsNotNone(job["key_id"])
+        self.assertEqual(job["attempts"], 2)
+
     def test_giveaway_usage_is_labeled_separately_from_paid_plan(self):
         self.service.claim_giveaway(123, "Min", self.now)
         usage = self.service.user_usage(123, {"1": 25_000_000_000})

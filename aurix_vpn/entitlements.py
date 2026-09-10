@@ -381,12 +381,24 @@ class ClaimService:
                    WHERE campaign_code = ? AND window_start = ?""",
                 (campaign["code"], window_start),
             ).fetchone()
+            reserved = connection.execute(
+                """SELECT COUNT(*) AS n FROM giveaway_provisioning_jobs
+                   WHERE campaign_code = ? AND window_start = ?
+                     AND status IN ('pending', 'running')""",
+                (campaign["code"], window_start),
+            ).fetchone()["n"]
+            provisioning = connection.execute(
+                """SELECT status FROM giveaway_provisioning_jobs
+                   WHERE campaign_code = ? AND telegram_id = ?""",
+                (campaign["code"], telegram_id),
+            ).fetchone()
         frequency = str(campaign["frequency"] or "campaign")
-        window_claimed = (
+        finalized_window_claimed = (
             int(window["claimed_count"])
             if window is not None
             else (total_claimed if frequency == "campaign" else 0)
         )
+        window_claimed = finalized_window_claimed + int(reserved or 0)
         winner_limit = int(campaign["winner_limit"])
         state = self._campaign_state(campaign, current)
         gift_active = bool(
@@ -410,6 +422,13 @@ class ClaimService:
             "remaining_slots": max(0, winner_limit - window_claimed),
             "active": state == "active",
             "winner": claim is not None,
+            "provisioning": bool(
+                provisioning is not None
+                and str(provisioning["status"]) in {"pending", "running"}
+            ),
+            "provisioning_status": (
+                str(provisioning["status"]) if provisioning is not None else None
+            ),
             "gift_active": gift_active,
             "access_lock_active": state == "active" and gift_active,
         }
@@ -594,11 +613,90 @@ class ClaimService:
         username: str | None = None,
         code: str | None = None,
     ) -> GiveawayResult:
-        """Atomically issue one configured promotional entitlement."""
-        now = (now or datetime.now(UTC)).astimezone(UTC)
-        now_text = now.isoformat()
+        """Reserve and issue one configured promotional entitlement."""
+        current = (now or datetime.now(UTC)).astimezone(UTC)
         normalized = str(code or GIVEAWAY_CODE).strip().upper()
-        key: dict[str, Any] | None = None
+        job = self._prepare_giveaway_provision_job(
+            telegram_id=telegram_id,
+            first_name=first_name,
+            username=username,
+            code=normalized,
+            now=current,
+        )
+        if isinstance(job, GiveawayResult):
+            return job
+        return self._execute_giveaway_provision_job(job, current)
+
+    def _giveaway_window_counts(
+        self, connection: Any, campaign: Any, window_start: str
+    ) -> tuple[int, int, int]:
+        """Return finalized, active-reservation, and remaining window slots."""
+        window = connection.execute(
+            """SELECT claimed_count FROM giveaway_windows
+               WHERE campaign_code = ? AND window_start = ?""",
+            (campaign["code"], window_start),
+        ).fetchone()
+        if window is None:
+            initial_count = (
+                int(campaign["claimed_count"])
+                if str(campaign["frequency"] or "campaign") == "campaign"
+                else 0
+            )
+            connection.execute(
+                """INSERT INTO giveaway_windows
+                   (campaign_code, window_start, claimed_count) VALUES (?, ?, ?)""",
+                (campaign["code"], window_start, initial_count),
+            )
+            finalized = initial_count
+        else:
+            finalized = int(window["claimed_count"])
+        reservations = int(
+            connection.execute(
+                """SELECT COUNT(*) AS n FROM giveaway_provisioning_jobs
+                   WHERE campaign_code = ? AND window_start = ?
+                     AND status IN ('pending', 'running')""",
+                (campaign["code"], window_start),
+            ).fetchone()["n"]
+        )
+        remaining = max(0, int(campaign["winner_limit"]) - finalized - reservations)
+        return finalized, reservations, remaining
+
+    @staticmethod
+    def _giveaway_result_from_claim(
+        campaign: Any, claim: Any, remaining_slots: int
+    ) -> GiveawayResult:
+        return GiveawayResult(
+            "already_won",
+            code=str(campaign["code"]),
+            quota_bytes=int(campaign["quota_bytes"]),
+            duration_days=int(campaign["duration_days"]),
+            expires_at=datetime.fromisoformat(str(claim["expires_at"])).astimezone(UTC),
+            winner_number=int(claim["winner_number"]),
+            remaining_slots=max(0, int(remaining_slots)),
+        )
+
+    @staticmethod
+    def _giveaway_pending_result(campaign: Any, remaining_slots: int) -> GiveawayResult:
+        return GiveawayResult(
+            "provisioning_pending",
+            code=str(campaign["code"]),
+            quota_bytes=int(campaign["quota_bytes"]),
+            duration_days=int(campaign["duration_days"]),
+            remaining_slots=max(0, int(remaining_slots)),
+            reason="Your promo reservation is being provisioned; refresh shortly.",
+        )
+
+    def _prepare_giveaway_provision_job(
+        self,
+        *,
+        telegram_id: int,
+        first_name: str,
+        username: str | None,
+        code: str,
+        now: datetime,
+    ) -> str | GiveawayResult:
+        """Reserve one winner slot before any provider call is made."""
+        now_text = now.isoformat()
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             connection.execute(
@@ -610,7 +708,7 @@ class ClaimService:
                 (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
             )
             self._lock_user(connection, telegram_id)
-            if normalized == GIVEAWAY_CODE:
+            if code == GIVEAWAY_CODE:
                 connection.execute(
                     """INSERT INTO giveaway_campaigns
                        (code, quota_bytes, duration_days, winner_limit, claimed_count, active,
@@ -628,47 +726,110 @@ class ClaimService:
             suffix = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
             campaign = connection.execute(
                 "SELECT * FROM giveaway_campaigns WHERE UPPER(code) = ?" + suffix,
-                (normalized,),
+                (code,),
             ).fetchone()
             if campaign is None:
                 return GiveawayResult("unavailable", reason="Promo code is invalid or unavailable.")
-            existing = connection.execute(
+
+            window_start = self._campaign_window_start(campaign, now)
+            finalized, reservations, remaining = self._giveaway_window_counts(
+                connection, campaign, window_start
+            )
+            total_finalized = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
+                    (campaign["code"],),
+                ).fetchone()["n"]
+            )
+            total_reservations = int(
+                connection.execute(
+                    """SELECT COUNT(*) AS n FROM giveaway_provisioning_jobs
+                       WHERE campaign_code = ? AND status IN ('pending', 'running')""",
+                    (campaign["code"],),
+                ).fetchone()["n"]
+            )
+            existing_claim = connection.execute(
                 """SELECT g.winner_number, k.expires_at
                    FROM giveaway_claims g JOIN keys k ON k.id = g.key_id
                    WHERE g.campaign_code = ? AND g.telegram_id = ?""",
                 (campaign["code"], telegram_id),
             ).fetchone()
-            window_start = self._campaign_window_start(campaign, now)
-            window = connection.execute(
-                """SELECT claimed_count FROM giveaway_windows
-                   WHERE campaign_code = ? AND window_start = ?""",
-                (campaign["code"], window_start),
+            if existing_claim is not None:
+                return self._giveaway_result_from_claim(campaign, existing_claim, remaining)
+
+            existing_job = connection.execute(
+                """SELECT * FROM giveaway_provisioning_jobs
+                   WHERE campaign_code = ? AND telegram_id = ?""" + suffix,
+                (campaign["code"], telegram_id),
             ).fetchone()
-            if window is None:
-                initial_count = (
-                    int(campaign["claimed_count"])
-                    if str(campaign["frequency"] or "campaign") == "campaign"
-                    else 0
-                )
-                connection.execute(
-                    """INSERT INTO giveaway_windows
-                       (campaign_code, window_start, claimed_count) VALUES (?, ?, ?)""",
-                    (campaign["code"], window_start, initial_count),
-                )
-                window_claimed = initial_count
-            else:
-                window_claimed = int(window["claimed_count"])
-            remaining = max(0, int(campaign["winner_limit"]) - window_claimed)
-            if existing is not None:
-                return GiveawayResult(
-                    "already_won",
-                    code=str(campaign["code"]),
-                    quota_bytes=int(campaign["quota_bytes"]),
-                    duration_days=int(campaign["duration_days"]),
-                    expires_at=datetime.fromisoformat(existing["expires_at"]),
-                    winner_number=int(existing["winner_number"]),
-                    remaining_slots=remaining,
-                )
+            if existing_job is not None:
+                status = str(existing_job["status"])
+                if status == "done":
+                    raise OutlineError("completed promo provisioning job lacks its claim")
+                if status == "running" and existing_job["locked_at"]:
+                    try:
+                        lock_time = datetime.fromisoformat(
+                            str(existing_job["locked_at"])
+                        ).astimezone(UTC)
+                    except ValueError:
+                        lock_time = now - FREE_PROVISION_LEASE
+                    if lock_time + FREE_PROVISION_LEASE > now:
+                        return self._giveaway_pending_result(campaign, remaining)
+                if status == "failed":
+                    state = self._campaign_state(campaign, now)
+                    if state != "active":
+                        return GiveawayResult(
+                            state,
+                            code=str(campaign["code"]),
+                            quota_bytes=int(campaign["quota_bytes"]),
+                            duration_days=int(campaign["duration_days"]),
+                            remaining_slots=remaining,
+                        )
+                    if remaining <= 0:
+                        return GiveawayResult(
+                            "full",
+                            code=str(campaign["code"]),
+                            quota_bytes=int(campaign["quota_bytes"]),
+                            duration_days=int(campaign["duration_days"]),
+                            remaining_slots=0,
+                        )
+                if status == "pending" and str(existing_job["next_attempt_at"]) > now_text:
+                    connection.execute(
+                        "UPDATE giveaway_provisioning_jobs SET next_attempt_at = ? WHERE id = ?",
+                        (now_text, existing_job["id"]),
+                    )
+                else:
+                    # Failed jobs release their reservation. Reassigning the
+                    # winner number here preserves the capacity invariant when
+                    # another account claimed the old slot during the outage.
+                    next_number = total_finalized + total_reservations + 1
+                    if status == "failed":
+                        connection.execute(
+                            """UPDATE giveaway_provisioning_jobs
+                               SET status = 'pending', window_start = ?, winner_number = ?,
+                                   quota_bytes = ?, duration_seconds = ?, first_name = ?,
+                                   username = ?, next_attempt_at = ?, last_error = NULL
+                               WHERE id = ?""",
+                            (
+                                window_start,
+                                next_number,
+                                int(campaign["quota_bytes"]),
+                                int(campaign["duration_days"]) * 86400,
+                                first_name[:128],
+                                (username or "")[:64] or None,
+                                now_text,
+                                existing_job["id"],
+                            ),
+                        )
+                    else:
+                        connection.execute(
+                            """UPDATE giveaway_provisioning_jobs
+                               SET next_attempt_at = ?, first_name = ?, username = ?
+                               WHERE id = ?""",
+                            (now_text, first_name[:128], (username or "")[:64] or None, existing_job["id"]),
+                        )
+                return str(existing_job["id"])
+
             state = self._campaign_state(campaign, now)
             if state != "active":
                 return GiveawayResult(
@@ -704,103 +865,281 @@ class ClaimService:
                         remaining_slots=remaining,
                         reason="An open or completed paid order already belongs to this account.",
                     )
-            plan_code = f"PROMO:{campaign['code']}"
-            endpoint_id, endpoint_client = self._select_endpoint(connection, plan_code)
+            job_id = _new_id()
+            connection.execute(
+                """INSERT INTO giveaway_provisioning_jobs
+                   (id, campaign_code, telegram_id, first_name, username, window_start,
+                    winner_number, quota_bytes, duration_seconds, status, next_attempt_at,
+                    external_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)""",
+                (
+                    job_id,
+                    campaign["code"],
+                    telegram_id,
+                    first_name[:128],
+                    (username or "")[:64] or None,
+                    window_start,
+                    total_finalized + total_reservations + 1,
+                    int(campaign["quota_bytes"]),
+                    int(campaign["duration_days"]) * 86400,
+                    now_text,
+                    f"aurix-promo-{job_id}",
+                    now_text,
+                ),
+            )
+        return job_id
+
+    def _execute_giveaway_provision_job(
+        self, job_id: str, now: datetime, *, notify: bool = False
+    ) -> GiveawayResult:
+        """Execute one reserved promo job outside the database transaction."""
+        now_text = now.isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            suffix = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
+            row = connection.execute(
+                "SELECT * FROM giveaway_provisioning_jobs WHERE id = ?" + suffix,
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise OutlineError("giveaway provisioning job does not exist")
+            campaign = connection.execute(
+                "SELECT * FROM giveaway_campaigns WHERE code = ?" + suffix,
+                (row["campaign_code"],),
+            ).fetchone()
+            if campaign is None:
+                raise OutlineError("giveaway provisioning job references missing campaign")
+            claim = connection.execute(
+                """SELECT g.winner_number, k.expires_at
+                   FROM giveaway_claims g JOIN keys k ON k.id = g.key_id
+                   WHERE g.campaign_code = ? AND g.telegram_id = ?""",
+                (row["campaign_code"], row["telegram_id"]),
+            ).fetchone()
+            if claim is not None:
+                _finalized, _reservations, remaining = self._giveaway_window_counts(
+                    connection, campaign, self._campaign_window_start(campaign, now)
+                )
+                return self._giveaway_result_from_claim(campaign, claim, remaining)
+            if str(row["status"]) == "done":
+                raise OutlineError("completed promo provisioning job lacks its claim")
+            if str(row["status"]) == "running" and row["locked_at"]:
+                try:
+                    lock_time = datetime.fromisoformat(str(row["locked_at"])).astimezone(UTC)
+                except ValueError:
+                    lock_time = now - FREE_PROVISION_LEASE
+                if lock_time + FREE_PROVISION_LEASE > now:
+                    return self._giveaway_pending_result(campaign, 0)
+            if str(row["status"]) not in {"pending", "failed", "running"}:
+                return self._giveaway_pending_result(campaign, 0)
+            if str(row["next_attempt_at"]) > now_text and str(row["status"]) != "running":
+                return self._giveaway_pending_result(campaign, 0)
+            endpoint_id = str(row["endpoint_id"] or "")
+            endpoint_client = None
+            if endpoint_id:
+                endpoint_client = self._client_for_endpoint(endpoint_id)
+            else:
+                endpoint_id, endpoint_client = self._select_endpoint(
+                    connection, f"PROMO:{row['campaign_code']}"
+                )
+            connection.execute(
+                """UPDATE giveaway_provisioning_jobs
+                   SET status = 'running', attempts = attempts + 1,
+                       locked_at = ?, endpoint_id = ?, last_error = NULL
+                   WHERE id = ?""",
+                (now_text, endpoint_id, job_id),
+            )
+            job = dict(row)
+            job["endpoint_id"] = endpoint_id
+            job["attempts"] = int(row["attempts"] or 0) + 1
+
+        name = _outline_key_name(
+            int(job["telegram_id"]),
+            job.get("username"),
+            f"PROMO-{job['campaign_code']}",
+            f"{int(job['duration_seconds']) // 86400}day",
+            now,
+        )
+        grant: dict[str, Any] | None = None
+        try:
             grant, key = self._provision_route_key(
                 endpoint_id,
                 endpoint_client,
-                _outline_key_name(
-                    telegram_id,
-                    username,
-                    f"PROMO-{campaign['code']}",
-                    f"{int(campaign['duration_days'])}day",
-                    now,
-                ),
-                int(campaign["quota_bytes"]),
+                name,
+                int(job["quota_bytes"]),
+                external_id=str(job["external_id"] or f"aurix-promo-{job_id}"),
             )
-            expires_at = now + timedelta(days=int(campaign["duration_days"]))
-            total_claimed = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS n FROM giveaway_claims WHERE campaign_code = ?",
-                    (campaign["code"],),
-                ).fetchone()["n"]
-            )
-            winner_number = total_claimed + 1
-            try:
-                connection.execute(
-                    """INSERT INTO keys
-                       (telegram_id, outline_key_id, endpoint_id, key_type, created_at, expires_at,
-                        data_limit_bytes, status)
-                       VALUES (?, ?, ?, 'monthly_trial', ?, ?, ?, 'active')""",
-                    (
-                        telegram_id,
-                        str(key["id"]),
-                        endpoint_id,
-                        now_text,
-                        expires_at.isoformat(),
-                        int(campaign["quota_bytes"]),
-                    ),
-                )
+            if not grant.get("external_id"):
+                raise OutlineError("promo provisioning grant lacks external id")
+            expires_at = now + timedelta(seconds=int(job["duration_seconds"]))
+            with self.database.connect() as connection:
+                self.database.begin_write(connection)
                 key_row = connection.execute(
-                    "SELECT id FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
+                    "SELECT id, expires_at FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
                     (endpoint_id, str(key["id"])),
                 ).fetchone()
-                if self.connectivity is not None:
-                    self.connectivity.assign_free_key(
-                        connection,
-                        endpoint_id=endpoint_id,
-                        free_key_id=int(key_row["id"]),
-                        plan_code=plan_code,
-                        quota_bytes=int(campaign["quota_bytes"]),
-                        now=now,
+                if key_row is None:
+                    connection.execute(
+                        """INSERT INTO keys
+                           (telegram_id, outline_key_id, endpoint_id, key_type, created_at,
+                            expires_at, data_limit_bytes, status)
+                           VALUES (?, ?, ?, 'monthly_trial', ?, ?, ?, 'active')""",
+                        (
+                            int(job["telegram_id"]),
+                            str(key["id"]),
+                            endpoint_id,
+                            now_text,
+                            expires_at.isoformat(),
+                            int(job["quota_bytes"]),
+                        ),
+                    )
+                    key_row = connection.execute(
+                        "SELECT id, expires_at FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
+                        (endpoint_id, str(key["id"])),
+                    ).fetchone()
+                    if self.connectivity is not None:
+                        self.connectivity.assign_free_key(
+                            connection,
+                            endpoint_id=endpoint_id,
+                            free_key_id=int(key_row["id"]),
+                            plan_code=f"PROMO:{job['campaign_code']}",
+                            quota_bytes=int(job["quota_bytes"]),
+                            now=now,
+                        )
+                key_id = int(key_row["id"])
+                if key_row["expires_at"]:
+                    expires_at = datetime.fromisoformat(str(key_row["expires_at"])).astimezone(UTC)
+                claim = connection.execute(
+                    """SELECT winner_number FROM giveaway_claims
+                       WHERE campaign_code = ? AND telegram_id = ?""",
+                    (job["campaign_code"], job["telegram_id"]),
+                ).fetchone()
+                if claim is None:
+                    connection.execute(
+                        """INSERT INTO giveaway_claims
+                           (campaign_code, telegram_id, key_id, winner_number, claimed_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (
+                            job["campaign_code"],
+                            int(job["telegram_id"]),
+                            key_id,
+                            int(job["winner_number"]),
+                            now_text,
+                        ),
+                    )
+                    connection.execute(
+                        """UPDATE giveaway_windows SET claimed_count = claimed_count + 1
+                           WHERE campaign_code = ? AND window_start = ?
+                             AND claimed_count < ?""",
+                        (
+                            job["campaign_code"],
+                            job["window_start"],
+                            int(campaign["winner_limit"]),
+                        ),
+                    )
+                    connection.execute(
+                        """UPDATE giveaway_campaigns
+                           SET claimed_count = CASE
+                                   WHEN claimed_count < winner_limit THEN claimed_count + 1
+                                   ELSE claimed_count
+                               END,
+                               updated_at = ?
+                           WHERE code = ?""",
+                        (now_text, job["campaign_code"]),
                     )
                 connection.execute(
-                    """INSERT INTO giveaway_claims
-                       (campaign_code, telegram_id, key_id, winner_number, claimed_at)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (campaign["code"], telegram_id, key_row["id"], winner_number, now_text),
+                    """UPDATE giveaway_provisioning_jobs
+                       SET status = 'done', locked_at = NULL, key_id = ?,
+                           external_id = ?, completed_at = ?, last_error = NULL
+                       WHERE id = ?""",
+                    (key_id, str(key["id"]), now_text, job_id),
                 )
+                if notify and self._access_url_cipher is not None:
+                    encrypted_url = self._access_url_cipher.encrypt(
+                        str(key["accessUrl"]).encode("utf-8")
+                    ).decode("ascii")
+                    connection.execute(
+                        """INSERT INTO notifications
+                           (id, dedupe_key, telegram_id, kind, text,
+                            access_url_ciphertext, status, next_attempt_at, created_at)
+                           VALUES (?, ?, ?, 'key_delivery', ?, ?, 'pending', ?, ?)
+                           ON CONFLICT(dedupe_key) DO NOTHING""",
+                        (
+                            _new_id(),
+                            f"promo-provision:{job_id}",
+                            int(job["telegram_id"]),
+                            "Your AuriX promo key is ready. It is attached below.",
+                            encrypted_url,
+                            now_text,
+                            now_text,
+                        ),
+                    )
+            self._project_free_generation(
+                telegram_id=int(job["telegram_id"]),
+                key_id=key_id,
+                endpoint_id=endpoint_id,
+                key=key,
+                quota_bytes=int(job["quota_bytes"]),
+                expires_at=expires_at,
+                grant=grant,
+                now=now,
+            )
+            status = self.giveaway_status(
+                int(job["telegram_id"]), str(job["campaign_code"]), now=now
+            )
+            return GiveawayResult(
+                "won",
+                code=str(job["campaign_code"]),
+                quota_bytes=int(job["quota_bytes"]),
+                duration_days=int(job["duration_seconds"]) // 86400,
+                access_url=str(key["accessUrl"]),
+                expires_at=expires_at,
+                winner_number=int(job["winner_number"]),
+                remaining_slots=int(status.get("remaining_slots", 0)),
+            )
+        except Exception as exc:
+            with self.database.connect() as connection:
                 connection.execute(
-                    """UPDATE giveaway_windows SET claimed_count = claimed_count + 1
-                       WHERE campaign_code = ? AND window_start = ?
-                         AND claimed_count < ?""",
-                    (campaign["code"], window_start, int(campaign["winner_limit"])),
+                    """UPDATE giveaway_provisioning_jobs
+                       SET status = 'failed', locked_at = NULL,
+                           next_attempt_at = ?, last_error = ?
+                       WHERE id = ? AND status = 'running'""",
+                    (
+                        (now + FREE_PROVISION_RETRY_DELAY).isoformat(),
+                        type(exc).__name__,
+                        job_id,
+                    ),
                 )
-                connection.execute(
-                    """UPDATE giveaway_campaigns
-                       SET claimed_count = CASE
-                               WHEN claimed_count < winner_limit THEN claimed_count + 1
-                               ELSE claimed_count
-                           END,
-                           updated_at = ?
-                       WHERE code = ?""",
-                    (now_text, campaign["code"]),
+            raise
+
+    def process_giveaway_provisioning(
+        self, now: datetime | None = None, limit: int = 10
+    ) -> int:
+        """Resume reserved promo issuance after a crash or provider outage."""
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT id FROM giveaway_provisioning_jobs
+                   WHERE (status IN ('pending', 'failed') AND next_attempt_at <= ?)
+                      OR (status = 'running' AND locked_at <= ?)
+                   ORDER BY created_at LIMIT ?""",
+                (
+                    now_text,
+                    (current - FREE_PROVISION_LEASE).isoformat(),
+                    max(1, min(int(limit), 50)),
+                ),
+            ).fetchall()
+        completed = 0
+        for row in rows:
+            try:
+                result = self._execute_giveaway_provision_job(
+                    str(row["id"]), current, notify=True
                 )
-            except Exception:
-                try:
-                    self._adapter_for_endpoint(endpoint_id, endpoint_client).revoke_auth(grant)
-                finally:
-                    raise
-        self._project_free_generation(
-            telegram_id=telegram_id,
-            key_id=int(key_row["id"]),
-            endpoint_id=endpoint_id,
-            key=key,
-            quota_bytes=int(campaign["quota_bytes"]),
-            expires_at=expires_at,
-            grant=grant,
-            now=now,
-        )
-        return GiveawayResult(
-            "won",
-            code=str(campaign["code"]),
-            quota_bytes=int(campaign["quota_bytes"]),
-            duration_days=int(campaign["duration_days"]),
-            access_url=str(key["accessUrl"]),
-            expires_at=expires_at,
-            winner_number=winner_number,
-            remaining_slots=max(0, remaining - 1),
-        )
+                if result.outcome == "won" and result.access_url:
+                    completed += 1
+            except Exception as exc:
+                print(f"giveaway provisioning retry error: {type(exc).__name__}", file=sys.stderr)
+        return completed
 
     def track_user(
         self,

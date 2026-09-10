@@ -299,6 +299,66 @@ FREE_ACCESS_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS free_provisioning_jobs_account ON free_provisioning_jobs(telegram_id, plan_code, created_at)",
         ),
     ),
+    Migration(
+        6,
+        "durable_giveaway_provisioning_jobs",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS giveaway_provisioning_jobs (
+                   id TEXT PRIMARY KEY,
+                   campaign_code TEXT NOT NULL REFERENCES giveaway_campaigns(code),
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   first_name TEXT NOT NULL DEFAULT '',
+                   username TEXT,
+                   window_start TEXT NOT NULL,
+                   winner_number INTEGER NOT NULL CHECK (winner_number > 0),
+                   quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                   duration_seconds INTEGER NOT NULL CHECK (duration_seconds > 0),
+                   status TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'running', 'done', 'failed')),
+                   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   endpoint_id TEXT,
+                   external_id TEXT,
+                   key_id INTEGER UNIQUE REFERENCES keys(id),
+                   last_error TEXT,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   UNIQUE (campaign_code, telegram_id),
+                   UNIQUE (campaign_code, window_start, winner_number)
+               )""",
+            "CREATE INDEX IF NOT EXISTS giveaway_provisioning_jobs_due ON giveaway_provisioning_jobs(status, next_attempt_at)",
+            "CREATE INDEX IF NOT EXISTS giveaway_provisioning_jobs_window ON giveaway_provisioning_jobs(campaign_code, window_start, status)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS giveaway_provisioning_jobs (
+                   id TEXT PRIMARY KEY,
+                   campaign_code TEXT NOT NULL REFERENCES giveaway_campaigns(code),
+                   telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
+                   first_name TEXT NOT NULL DEFAULT '',
+                   username TEXT,
+                   window_start TEXT NOT NULL,
+                   winner_number INTEGER NOT NULL CHECK (winner_number > 0),
+                   quota_bytes BIGINT NOT NULL CHECK (quota_bytes > 0),
+                   duration_seconds INTEGER NOT NULL CHECK (duration_seconds > 0),
+                   status TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'running', 'done', 'failed')),
+                   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                   next_attempt_at TIMESTAMPTZ NOT NULL,
+                   locked_at TIMESTAMPTZ,
+                   endpoint_id TEXT,
+                   external_id TEXT,
+                   key_id BIGINT UNIQUE REFERENCES keys(id),
+                   last_error TEXT,
+                   created_at TIMESTAMPTZ NOT NULL,
+                   completed_at TIMESTAMPTZ,
+                   UNIQUE (campaign_code, telegram_id),
+                   UNIQUE (campaign_code, window_start, winner_number)
+               )""",
+            "CREATE INDEX IF NOT EXISTS giveaway_provisioning_jobs_due ON giveaway_provisioning_jobs(status, next_attempt_at)",
+            "CREATE INDEX IF NOT EXISTS giveaway_provisioning_jobs_window ON giveaway_provisioning_jobs(campaign_code, window_start, status)",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (

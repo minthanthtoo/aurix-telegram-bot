@@ -420,6 +420,13 @@ class TelegramCommandMixin:
                 )
             elif result.outcome == "ineligible":
                 self.send(chat["id"], f"This account is not eligible: {result.reason}")
+            elif result.outcome == "provisioning_pending":
+                self.send(
+                    chat["id"],
+                    result.reason
+                    or "Your promo reservation is being provisioned. Open My VPN shortly to retrieve it.",
+                    self._customer_keyboard(telegram_id),
+                )
             elif result.outcome == "scheduled":
                 self.send(chat["id"], "This promo has not started yet. Open Plans later to refresh.")
             elif result.outcome in {"ended", "paused", "unavailable"}:
