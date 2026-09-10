@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import mimetypes
 import os
@@ -11,9 +12,10 @@ from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .commerce import CommerceError
+from .device_api import DeviceAPIService, ManifestSigner, create_device_wsgi_app
 from .entitlements import OutlineError
 from .runtime import RuntimeServices, build_runtime_services
 from telegram_web_app import TelegramWebAppAuthError, VerifiedTelegramUser, verify_init_data
@@ -23,9 +25,14 @@ from .vpn_dashboard import collect_customer_vpn_state
 # The product package is below the repository/container root; the browser
 # assets remain top-level so each subdomain has an explicit web directory.
 STATIC_ROOT = Path(__file__).resolve().parents[1] / "web" / "vpn-app"
+ADMIN_STATIC_ROOT = Path(__file__).resolve().parents[1] / "web" / "vpn-admin"
 MAX_JSON_BYTES = 16 * 1024
 ORDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 PROMO_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$")
+
+
+class AdminAuthorizationError(PermissionError):
+    """The signed Telegram identity is valid but is not an operator."""
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:
@@ -149,8 +156,11 @@ class AuriXVpnWebApplication:
         *,
         max_init_data_age: int = 86_400,
         telegram_url: str = "",
+        device_api: DeviceAPIService | None = None,
     ):
         self.runtime = runtime
+        self.device_api = device_api
+        self.device_wsgi_app = create_device_wsgi_app(device_api) if device_api else None
         self.max_init_data_age = max(60, int(max_init_data_age))
         parsed_telegram_url = urlsplit(telegram_url.strip())
         self.telegram_url = (
@@ -167,6 +177,14 @@ class AuriXVpnWebApplication:
             }
         except ValueError as exc:
             raise ValueError("TRIAL_TELEGRAM_IDS must contain comma-separated numeric IDs") from exc
+        try:
+            self.admin_ids = {
+                int(value.strip())
+                for value in os.environ.get("ADMIN_TELEGRAM_IDS", "").split(",")
+                if value.strip()
+            }
+        except ValueError as exc:
+            raise ValueError("ADMIN_TELEGRAM_IDS must contain comma-separated numeric IDs") from exc
 
     def authenticate(self, init_data: str | None) -> VerifiedTelegramUser:
         return verify_init_data(
@@ -174,6 +192,12 @@ class AuriXVpnWebApplication:
             self.runtime.token,
             max_age_seconds=self.max_init_data_age,
         )
+
+    def authenticate_admin(self, init_data: str | None) -> VerifiedTelegramUser:
+        user = self.authenticate(init_data)
+        if user.telegram_id not in self.admin_ids:
+            raise AdminAuthorizationError("administrator access required")
+        return user
 
     def plans_payload(self) -> dict[str, Any]:
         plans = []
@@ -285,6 +309,149 @@ class AuriXVpnWebApplication:
             except (TypeError, ValueError):
                 continue
         return False
+
+    @staticmethod
+    def _admin_limit(value: str | None, default: int = 100) -> int:
+        try:
+            return max(1, min(int(value or default), 200))
+        except (TypeError, ValueError):
+            return default
+
+    def admin_fleet(self) -> list[dict[str, Any]]:
+        """Return operator-safe endpoint metadata without probing providers."""
+        registry = getattr(self.runtime, "connectivity", None)
+        list_endpoints = getattr(registry, "list_endpoints", None)
+        raw = list_endpoints() if callable(list_endpoints) else []
+        safe: list[dict[str, Any]] = []
+        for item in raw:
+            safe.append(
+                {
+                    "id": item.get("id"),
+                    "code": item.get("code"),
+                    "provider": item.get("provider"),
+                    "region": item.get("region"),
+                    "state": item.get("state"),
+                    "accepts_new_assignments": bool(item.get("accepts_new_assignments")),
+                    "outline_version": item.get("outline_version"),
+                    "max_active_keys": item.get("max_active_keys"),
+                    "reserved_transfer_bytes": item.get("reserved_transfer_bytes"),
+                    "active_assignments": item.get("active_assignments", 0),
+                    "last_healthy_at": item.get("last_healthy_at"),
+                }
+            )
+        return safe
+
+    def admin_summary(self) -> dict[str, Any]:
+        """Read-only overview for the AuriX Control Center."""
+        commerce = self.runtime.commerce
+        identity = getattr(commerce, "identity", None)
+        counts = identity.admin_counts() if identity and callable(getattr(identity, "admin_counts", None)) else {}
+        consistency = (
+            commerce.consistency_report()
+            if callable(getattr(commerce, "consistency_report", None))
+            else {}
+        )
+        registry = getattr(commerce, "adapter_registry", None)
+        catalog = (
+            registry.protocol_catalog()
+            if registry and callable(getattr(registry, "protocol_catalog", None))
+            else []
+        )
+        fleet = self.admin_fleet()
+        return {
+            "product": "aurix-control-center",
+            "management_mode": "read-only",
+            "control_plane": "durable-state",
+            "counts": counts,
+            "consistency": consistency,
+            "protocols": catalog,
+            "fleet": {
+                "endpoints": len(fleet),
+                "healthy": sum(1 for item in fleet if item.get("state") == "ACTIVE"),
+            },
+            "safety": {
+                "provider_mutations_from_web": False,
+                "secrets_in_payloads": False,
+                "remote_probe_on_page_load": False,
+            },
+        }
+
+    def admin_accounts(self, query: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        identity = getattr(self.runtime.commerce, "identity", None)
+        method = getattr(identity, "admin_accounts", None)
+        return method(query=query or "", limit=limit) if callable(method) else []
+
+    def admin_account(self, account_id: str) -> dict[str, Any] | None:
+        identity = getattr(self.runtime.commerce, "identity", None)
+        method = getattr(identity, "admin_account", None)
+        return method(account_id) if callable(method) else None
+
+    def admin_devices(
+        self, query: str | None = None, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        identity = getattr(self.runtime.commerce, "identity", None)
+        method = getattr(identity, "admin_devices", None)
+        return method(query=query or "", status=status, limit=limit) if callable(method) else []
+
+    def admin_credentials(
+        self, protocol: str | None = None, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        identity = getattr(self.runtime.commerce, "identity", None)
+        method = getattr(identity, "admin_generations", None)
+        return (
+            method(protocol=protocol, status=status, limit=limit)
+            if callable(method)
+            else []
+        )
+
+    def admin_failover(self, limit: int = 100) -> list[dict[str, Any]]:
+        failover = getattr(self.runtime.commerce, "failover", None)
+        method = getattr(failover, "decisions", None)
+        return method(limit=limit) if callable(method) else []
+
+    def admin_operations(self, limit: int = 100) -> dict[str, Any]:
+        commerce = self.runtime.commerce
+        jobs = (
+            commerce.failed_jobs(limit=limit, include_nonterminal=True)
+            if callable(getattr(commerce, "failed_jobs", None))
+            else []
+        )
+        pending = (
+            commerce.list_pending_orders(limit=limit)
+            if callable(getattr(commerce, "list_pending_orders", None))
+            else []
+        )
+        # Deliberately select fields instead of forwarding payment references,
+        # receipt paths, or provider metadata from the commerce repository.
+        pending_safe = [
+            {
+                key: item.get(key)
+                for key in (
+                    "id", "plan_code", "amount_minor", "currency", "status",
+                    "created_at", "order_type", "receipt_status", "stage",
+                    "wallet_reservation_status",
+                )
+                if key in item
+            }
+            for item in pending
+        ]
+        return {
+            "jobs": jobs,
+            "pending_orders": pending_safe,
+            "consistency": commerce.consistency_report(),
+        }
+
+    def admin_audit(self, limit: int = 100) -> list[dict[str, Any]]:
+        database = getattr(self.runtime, "commerce_database", None)
+        if database is None:
+            return []
+        with database.connect() as connection:
+            rows = connection.execute(
+                """SELECT actor_type, actor_id, action, target_type, target_id, created_at
+                     FROM audit_events ORDER BY created_at DESC LIMIT ?""",
+                (max(1, min(int(limit), 200)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def _claim_allowed(self, user: VerifiedTelegramUser, *, trial: bool = False) -> None:
         subscriptions = self.runtime.commerce.user_vpns(user.telegram_id)
@@ -398,7 +565,11 @@ class AuriXVpnWebApplication:
         return {"status": status, **self.order_detail(user, order_id)}
 
 
-def make_handler(application: AuriXVpnWebApplication, static_root: Path = STATIC_ROOT):
+def make_handler(
+    application: AuriXVpnWebApplication,
+    static_root: Path = STATIC_ROOT,
+    admin_static_root: Path = ADMIN_STATIC_ROOT,
+):
     class Handler(BaseHTTPRequestHandler):
         server_version = "AuriXVPN/1.0"
 
@@ -414,6 +585,67 @@ def make_handler(application: AuriXVpnWebApplication, static_root: Path = STATIC
 
         def _error(self, status: int, message: str) -> None:
             self._write(status, {"error": message})
+
+        def _device_api(self, method: str) -> None:
+            app = application.device_wsgi_app
+            if app is None:
+                self._error(404, "Not found")
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = -1
+            if length < 0 or length > 128 * 1024:
+                self._error(413, "Request body is invalid")
+                return
+            body = self.rfile.read(length) if length else b""
+            path_info, _, query = self.path.partition("?")
+            environ: dict[str, Any] = {
+                "REQUEST_METHOD": method,
+                "PATH_INFO": path_info,
+                "QUERY_STRING": query,
+                "CONTENT_LENGTH": str(length),
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                "REMOTE_ADDR": self.client_address[0],
+                "SERVER_NAME": self.server.server_address[0],
+                "SERVER_PORT": str(self.server.server_address[1]),
+                "SERVER_PROTOCOL": self.request_version,
+                "wsgi.url_scheme": "https",
+                "wsgi.input": io.BytesIO(body),
+            }
+            for key, value in self.headers.items():
+                header = "HTTP_" + key.upper().replace("-", "_")
+                if header not in {"HTTP_CONTENT_LENGTH", "HTTP_CONTENT_TYPE"}:
+                    environ[header] = value
+            response_status = "500 Internal Server Error"
+            response_headers: list[tuple[str, str]] = []
+            response_parts: list[bytes] = []
+
+            def start_response(status: str, headers: list[tuple[str, str]], *_: Any) -> None:
+                nonlocal response_status, response_headers
+                response_status = status
+                response_headers = headers
+
+            response_parts = list(app(environ, start_response))
+            response_body = b"".join(
+                part if isinstance(part, bytes) else str(part).encode("utf-8")
+                for part in response_parts
+            )
+            try:
+                status_code = int(response_status.split(" ", 1)[0])
+            except (ValueError, IndexError):
+                status_code = 500
+            self.send_response(status_code)
+            has_length = False
+            for header, value in response_headers:
+                if header.lower() == "content-length":
+                    has_length = True
+                self.send_header(header, value)
+            if not has_length:
+                self.send_header("Content-Length", str(len(response_body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(response_body)
 
         def _read_json(self) -> dict[str, Any]:
             try:
@@ -433,12 +665,84 @@ def make_handler(application: AuriXVpnWebApplication, static_root: Path = STATIC
         def _user(self) -> VerifiedTelegramUser:
             return application.authenticate(self.headers.get("X-Telegram-Init-Data"))
 
+        def _admin_user(self) -> VerifiedTelegramUser:
+            return application.authenticate_admin(self.headers.get("X-Telegram-Init-Data"))
+
+        def _route_admin(self, method: str, path: str) -> None:
+            if method != "GET":
+                self._error(405, "Method not allowed")
+                return
+            query = parse_qs(urlsplit(self.path).query)
+            limit = application._admin_limit((query.get("limit") or [None])[0])
+            if path == "/api/admin/summary":
+                self._write(200, application.admin_summary())
+                return
+            if path == "/api/admin/fleet":
+                self._write(200, {"endpoints": application.admin_fleet()})
+                return
+            if path == "/api/admin/accounts":
+                self._write(
+                    200,
+                    {
+                        "accounts": application.admin_accounts(
+                            (query.get("q") or [""])[0], limit
+                        )
+                    },
+                )
+                return
+            account_prefix = "/api/admin/accounts/"
+            if path.startswith(account_prefix):
+                account = application.admin_account(unquote(path[len(account_prefix) :]))
+                if account is None:
+                    self._error(404, "Account not found")
+                else:
+                    self._write(200, {"account": account})
+                return
+            if path == "/api/admin/credentials":
+                self._write(
+                    200,
+                    {
+                        "credentials": application.admin_credentials(
+                            (query.get("protocol") or [None])[0],
+                            (query.get("status") or [None])[0],
+                            limit,
+                        )
+                    },
+                )
+                return
+            if path == "/api/admin/devices":
+                self._write(
+                    200,
+                    {
+                        "devices": application.admin_devices(
+                            (query.get("q") or [""])[0],
+                            (query.get("status") or [None])[0],
+                            limit,
+                        )
+                    },
+                )
+                return
+            if path == "/api/admin/failover":
+                self._write(200, {"decisions": application.admin_failover(limit)})
+                return
+            if path == "/api/admin/operations":
+                self._write(200, application.admin_operations(limit))
+                return
+            if path == "/api/admin/audit":
+                self._write(200, {"events": application.admin_audit(limit)})
+                return
+            self._error(404, "Not found")
+
         def _route_api(self, method: str, path: str) -> None:
             if path == "/api/healthz" and method == "GET":
                 self._write(200, {"ok": True, "service": "aurix-vpn-web"})
                 return
             if path == "/api/plans" and method == "GET":
                 self._write(200, application.plans_payload(), no_store=False)
+                return
+            if path == "/api/admin" or path.startswith("/api/admin/"):
+                self._admin_user()
+                self._route_admin(method, path)
                 return
             user = self._user()
             if path == "/api/servers" and method == "GET":
@@ -500,10 +804,13 @@ def make_handler(application: AuriXVpnWebApplication, static_root: Path = STATIC
                     return
             self._error(404, "Not found")
 
-        def _serve_static(self, path: str) -> None:
-            relative = "index.html" if path in ("/", "/app", "/app/") else path.lstrip("/")
-            target = (static_root / relative).resolve()
-            root = static_root.resolve()
+        def _serve_static_from(self, path: str, root_path: Path, prefix: str) -> None:
+            if (not prefix and path in ("/", "/app", "/app/")) or path in (prefix, prefix + "/"):
+                relative = "index.html"
+            else:
+                relative = path[len(prefix) :].lstrip("/")
+            root = root_path.resolve()
+            target = (root / relative).resolve()
             if root not in target.parents and target != root:
                 self._error(404, "Not found")
                 return
@@ -527,11 +834,26 @@ def make_handler(application: AuriXVpnWebApplication, static_root: Path = STATIC
             self.end_headers()
             self.wfile.write(body)
 
+        def _serve_static(self, path: str) -> None:
+            self._serve_static_from(path, static_root, "")
+
+        def _serve_admin_static(self, path: str) -> None:
+            self._serve_static_from(path, admin_static_root, "/admin")
+
         def _dispatch(self, method: str) -> None:
             path = urlsplit(self.path).path
             try:
+                if path.startswith("/v1/devices/"):
+                    self._device_api(method)
+                    return
                 if path.startswith("/api/"):
                     self._route_api(method, path)
+                    return
+                if path == "/admin" or path.startswith("/admin/"):
+                    if method == "GET":
+                        self._serve_admin_static(path)
+                    else:
+                        self._error(405, "Method not allowed")
                     return
                 if method == "GET":
                     self._serve_static(path)
@@ -539,6 +861,8 @@ def make_handler(application: AuriXVpnWebApplication, static_root: Path = STATIC
                 self._error(405, "Method not allowed")
             except TelegramWebAppAuthError as exc:
                 self._error(401, str(exc))
+            except AdminAuthorizationError as exc:
+                self._error(403, str(exc))
             except CommerceError as exc:
                 self._error(400, str(exc))
             except OutlineError:
@@ -562,10 +886,19 @@ def make_handler(application: AuriXVpnWebApplication, static_root: Path = STATIC
     return Handler
 
 
-def create_server(application: AuriXVpnWebApplication, *, port: int, static_root: Path = STATIC_ROOT):
+def create_server(
+    application: AuriXVpnWebApplication,
+    *,
+    port: int,
+    static_root: Path = STATIC_ROOT,
+    admin_static_root: Path = ADMIN_STATIC_ROOT,
+):
     if not 1 <= int(port) <= 65_535:
         raise ValueError("PORT must be between 1 and 65535")
-    return ThreadingHTTPServer(("0.0.0.0", int(port)), make_handler(application, static_root))
+    return ThreadingHTTPServer(
+        ("0.0.0.0", int(port)),
+        make_handler(application, static_root, admin_static_root),
+    )
 
 
 def main() -> int:
@@ -582,10 +915,25 @@ def main() -> int:
             reconcile=False,
             configure_bootstrap=False,
         )
+        device_api = None
+        manifest_seed = os.environ.get("AURIX_DEVICE_MANIFEST_PRIVATE_KEY", "").strip()
+        if manifest_seed:
+            signer = ManifestSigner.from_base64_seed(
+                manifest_seed,
+                key_id=os.environ.get("AURIX_DEVICE_MANIFEST_KEY_ID", "aurix-manifest-1"),
+            )
+            device_api = DeviceAPIService(
+                runtime.commerce_database,
+                identity=runtime.commerce.identity,
+                manifest_signer=signer,
+                route_provider=runtime.commerce.identity.routes_for_account,
+                secret_decryptor=runtime.commerce._decrypt_access_url,
+            )
         application = AuriXVpnWebApplication(
             runtime,
             max_init_data_age=max_age,
             telegram_url=os.environ.get("AURIX_TELEGRAM_URL", ""),
+            device_api=device_api,
         )
         server = create_server(application, port=port)
     except Exception as exc:

@@ -19,6 +19,8 @@ The new implementation is organized under the VPN product package:
 - `aurix_vpn/vpn_dashboard.py` — shared customer VPN snapshot assembly.
 - `aurix_vpn/vpn_web_api.py` — HTTPS-facing API and static portal server.
 - `web/vpn-app/` — AuriX-adapted portal UI and Telegram Mini App shell.
+- `web/vpn-admin/` — read-only AuriX Control Center for fleet, account,
+  credential-generation, device, and queue visibility.
 - `deploy/render_vpn_web.py` — Render entrypoint.
 - `render-vpn-web.yaml` — separate web-service deployment template.
 - `deploy/render_combined.py` and `render-combined.yaml` — recommended MVP
@@ -88,6 +90,21 @@ The browser never uses `initDataUnsafe` for authorization, never stores keys in
 `localStorage`, and never receives `OUTLINE_API_URL`, `OUTLINE_CERT_SHA256`,
 `AURIX_ACCESS_URL_KEY`, payment QR values, database URLs, or bot tokens.
 
+## Control Center boundary
+
+Operators open `/admin` from the same web service. Every `/api/admin/*` request
+must carry Telegram-signed `initData` and the verified numeric Telegram ID must
+be present in `ADMIN_TELEGRAM_IDS`. The first console slice is intentionally
+read-only: it reads durable state, never probes or mutates a provider on page
+load, and omits management URLs, certificates, public addresses, provider
+resource IDs, access URLs, device public keys, and session tokens from payloads.
+
+The existing Telegram admin boundary remains the only place for mutations such
+as receipt approval, job retry, capacity configuration, and termination
+operations. Provider-specific actions should be added to the console only after
+the relevant adapter capability, audit event, confirmation flow, and rollback
+behavior have been proven.
+
 ## API contract
 
 Public endpoints:
@@ -124,6 +141,26 @@ Authenticated endpoints require `X-Telegram-Init-Data`:
 
 Authenticated responses use `Cache-Control: no-store`. Request logs omit paths,
 query strings, headers, and user IDs.
+
+### Managed devices and additional protocols
+
+The same HTTPS service can expose the signed managed-device API when
+`AURIX_DEVICE_MANIFEST_PRIVATE_KEY` is configured. Pairing is initiated from
+Telegram with `/pair`; the one-time token is stored only as a hash. The device
+then uses:
+
+- `POST /v1/devices/pair` — consume a one-time token and register an Ed25519
+  public key;
+- signed `GET /v1/devices/manifest` — retrieve account-owned route metadata;
+- signed `GET /v1/devices/config?route_id=...` — retrieve one owned encrypted
+  route configuration after server-side entitlement checks; and
+- signed `POST /v1/devices/ack` — report connection/failure observations for
+  failover evaluation.
+
+Route delivery is protocol-neutral and accepts verified `ss`, VLESS, Hysteria2,
+Trojan, VMess, and WireGuard schemes. This does not by itself enable a new
+server: the node-agent, quota/accounting, restart, and data-plane evidence
+must pass before an Xray/Hysteria2 route is registered for production use.
 
 ## Deployment boundary
 

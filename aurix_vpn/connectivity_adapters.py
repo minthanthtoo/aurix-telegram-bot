@@ -734,6 +734,21 @@ class ConnectivityAdapterRegistry:
             raise ValueError("adapter protocol and factory are required")
         self._factories[normalized] = factory
 
+    def protocol_catalog(self) -> list[dict[str, Any]]:
+        """Describe registered protocol contracts without contacting a node."""
+        catalog: list[dict[str, Any]] = []
+        for protocol, factory in sorted(self._factories.items()):
+            capabilities: dict[str, bool] = {}
+            try:
+                adapter = factory(None)
+                capabilities = dict(getattr(adapter, "capabilities", {}) or {})
+            except Exception:
+                # A factory may require a concrete client.  The protocol still
+                # belongs in the UI, but its capability proof is unavailable.
+                capabilities = {}
+            catalog.append({"protocol": protocol, "capabilities": capabilities})
+        return catalog
+
     def for_route(self, route: Mapping[str, Any], client: Any) -> ConnectivityAdapter:
         protocol = str(route.get("protocol") or "").strip().lower()
         factory = self._factories.get(protocol)

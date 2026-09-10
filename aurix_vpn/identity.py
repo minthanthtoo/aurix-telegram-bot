@@ -290,6 +290,129 @@ class IdentityService:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def admin_counts(self) -> dict[str, int]:
+        """Return non-secret counts for the operator Control Center."""
+        with self.database.connect() as connection:
+            counts = {
+                "accounts": int(connection.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()["n"]),
+                "active_accounts": int(
+                    connection.execute("SELECT COUNT(*) AS n FROM accounts WHERE status = 'active'").fetchone()["n"]
+                ),
+                "devices": int(connection.execute("SELECT COUNT(*) AS n FROM devices").fetchone()["n"]),
+                "active_devices": int(
+                    connection.execute("SELECT COUNT(*) AS n FROM devices WHERE status = 'active'").fetchone()["n"]
+                ),
+                "credential_generations": int(
+                    connection.execute("SELECT COUNT(*) AS n FROM credential_generations").fetchone()["n"]
+                ),
+                "active_generations": int(
+                    connection.execute(
+                        "SELECT COUNT(*) AS n FROM credential_generations WHERE status IN ('pending', 'active', 'retiring', 'unknown')"
+                    ).fetchone()["n"]
+                ),
+                "active_leases": int(
+                    connection.execute("SELECT COUNT(*) AS n FROM quota_leases WHERE status = 'active'").fetchone()["n"]
+                ),
+            }
+        return counts
+
+    def admin_accounts(self, *, query: str = "", limit: int = 100) -> list[dict[str, Any]]:
+        """Return account directory rows without Telegram/device secrets."""
+        normalized = str(query or "").strip()[:128]
+        like = f"%{normalized}%"
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT a.account_id, a.status, a.created_at, a.updated_at,
+                          i.identity_value AS telegram_id,
+                          (SELECT COUNT(*) FROM devices d WHERE d.account_id = a.account_id) AS device_count,
+                          (SELECT COUNT(*) FROM devices d
+                             WHERE d.account_id = a.account_id AND d.status = 'active') AS active_device_count,
+                          (SELECT COUNT(*) FROM subscriptions s
+                             WHERE CAST(s.telegram_id AS TEXT) = i.identity_value
+                               AND s.status = 'active') AS active_subscription_count
+                     FROM accounts a
+                     LEFT JOIN account_identities i
+                       ON i.account_id = a.account_id AND i.identity_type = 'telegram'
+                    WHERE (? = '' OR a.account_id LIKE ? OR COALESCE(i.identity_value, '') LIKE ?)
+                    ORDER BY a.updated_at DESC LIMIT ?""",
+                (normalized, like, like, max(1, min(int(limit), 200))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def admin_account(self, account_id: str) -> dict[str, Any] | None:
+        """Return one account with safe device and route metadata."""
+        account_id = str(account_id or "").strip()
+        if not account_id or len(account_id) > 128:
+            return None
+        with self.database.connect() as connection:
+            account = connection.execute(
+                """SELECT a.account_id, a.status, a.created_at, a.updated_at,
+                          i.identity_value AS telegram_id, e.epoch AS revocation_epoch
+                     FROM accounts a
+                     LEFT JOIN account_identities i
+                       ON i.account_id = a.account_id AND i.identity_type = 'telegram'
+                     LEFT JOIN device_revocation_epochs e ON e.account_id = a.account_id
+                    WHERE a.account_id = ?""",
+                (account_id,),
+            ).fetchone()
+            if account is None:
+                return None
+            devices = connection.execute(
+                """SELECT device_id, label, status, created_at, last_seen_at, revoked_at
+                     FROM devices WHERE account_id = ? ORDER BY created_at DESC""",
+                (account_id,),
+            ).fetchall()
+        result = dict(account)
+        result["devices"] = [dict(row) for row in devices]
+        result["routes"] = self.routes_for_account(int(account["telegram_id"])) if account["telegram_id"] else []
+        return result
+
+    def admin_devices(self, *, query: str = "", status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        """Return fleet device inventory without public keys or session tokens."""
+        normalized = str(query or "").strip()[:128]
+        state = str(status or "").strip().lower()
+        if state and state not in {"active", "revoked"}:
+            raise IdentityError("device status filter is invalid")
+        like = f"%{normalized}%"
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT d.device_id, d.account_id, d.label, d.status,
+                          d.created_at, d.last_seen_at, d.revoked_at,
+                          a.status AS account_status
+                     FROM devices d JOIN accounts a ON a.account_id = d.account_id
+                    WHERE (? = '' OR d.device_id LIKE ? OR d.label LIKE ? OR d.account_id LIKE ?)
+                      AND (? = '' OR d.status = ?)
+                    ORDER BY COALESCE(d.last_seen_at, d.created_at) DESC LIMIT ?""",
+                (normalized, like, like, like, state, state, max(1, min(int(limit), 200))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def admin_generations(
+        self, *, protocol: str | None = None, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Return credential lifecycle metadata while omitting credential material."""
+        normalized_protocol = str(protocol or "").strip().lower()
+        normalized_status = str(status or "").strip().lower()
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT generation_id, entitlement_key, source_type, source_id,
+                          endpoint_id, protocol, generation_no, status, remote_state,
+                          usage_baseline_provenance, usage_baseline_bytes,
+                          created_at, revoked_at, revoke_verified_at
+                     FROM credential_generations
+                    WHERE (? = '' OR LOWER(protocol) = ?)
+                      AND (? = '' OR status = ?)
+                    ORDER BY created_at DESC LIMIT ?""",
+                (
+                    normalized_protocol,
+                    normalized_protocol,
+                    normalized_status,
+                    normalized_status,
+                    max(1, min(int(limit), 200)),
+                ),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def touch_device(self, device_id: str, *, now: str | datetime | None = None) -> bool:
         timestamp = _now_text(now)
         with self.database.connect() as connection:

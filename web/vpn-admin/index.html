@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AuriX Control Center</title>
+  <link rel="stylesheet" href="/admin/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">A</span><span>AuriX <small>CONTROL CENTER</small></span></div>
+      <div class="mode"><span class="dot"></span> Read-only control plane</div>
+      <nav aria-label="Primary">
+        <button class="nav-item active" data-view="overview">Overview</button>
+        <button class="nav-item" data-view="fleet">Fleet</button>
+        <button class="nav-item" data-view="accounts">Customers</button>
+        <button class="nav-item" data-view="credentials">Access</button>
+        <button class="nav-item" data-view="devices">Devices</button>
+        <button class="nav-item" data-view="operations">Operations</button>
+      </nav>
+      <div class="sidebar-foot">Signed Telegram admin session<br><span id="session-id">checking…</span></div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div><p class="eyebrow">AURIX / OPERATIONS</p><h1 id="page-title">Overview</h1></div>
+        <div class="top-actions"><span id="refresh-time">Not loaded</span><button id="refresh" class="ghost">Refresh</button></div>
+      </header>
+      <div id="notice" class="notice hidden"></div>
+      <section id="view-overview" class="view active"></section>
+      <section id="view-fleet" class="view"></section>
+      <section id="view-accounts" class="view"></section>
+      <section id="view-credentials" class="view"></section>
+      <section id="view-devices" class="view"></section>
+      <section id="view-operations" class="view"></section>
+    </main>
+  </div>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/admin/app.js"></script>
+</body>
+</html>
