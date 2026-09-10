@@ -734,6 +734,11 @@ class TelegramCommandMixin:
                     "Your promo gift is active. Monthly 3 GB returns automatically when the "
                     "gift or promo season ends.",
                 )
+            elif result.denied_reason == "provisioning_pending":
+                self.send(
+                    chat["id"],
+                    "Your monthly trial is being prepared. Please try /trial again shortly.",
+                )
             elif result.access_url:
                 self.send(
                     chat["id"],
@@ -1141,6 +1146,11 @@ class TelegramCommandMixin:
                     chat["id"],
                     "Your promo gift is active. Daily 300 MB returns automatically when the "
                     "gift or promo season ends.",
+                )
+            elif result.denied_reason == "provisioning_pending":
+                self.send(
+                    chat["id"],
+                    "Your daily key is being prepared. Please try /claim again shortly.",
                 )
             elif result.access_url:
                 expiry = result.expires_at.strftime("%Y-%m-%d %H:%M UTC")

@@ -71,9 +71,15 @@ class MvpFeatureTest(unittest.TestCase):
         self.free_db = Database(self.path)
         self.free_db.initialize()
         self.outline = Outline()
-        self.claims = ClaimService(self.free_db, self.outline, limit_bytes=PUBLIC_LIMIT_BYTES)
+        self.access_url_key = Fernet.generate_key()
+        self.claims = ClaimService(
+            self.free_db,
+            self.outline,
+            limit_bytes=PUBLIC_LIMIT_BYTES,
+            access_url_key=self.access_url_key,
+        )
         self.commerce = CommerceService(
-            CommerceDatabase(self.path), self.outline, Fernet.generate_key(),
+            CommerceDatabase(self.path), self.outline, self.access_url_key,
             allow_legacy_text_approval=True,
         )
         self.commerce.initialize()
@@ -134,6 +140,28 @@ class MvpFeatureTest(unittest.TestCase):
                 ).fetchone()["status"],
                 "released",
             )
+
+    def test_recovered_free_job_queues_encrypted_delivery_notification(self):
+        job_id = self.claims._prepare_free_provision_job(
+            telegram_id=101,
+            first_name="A",
+            username="a",
+            plan_code="FREE300MB",
+            key_type="daily_free",
+            quota_bytes=PUBLIC_LIMIT_BYTES,
+            duration=timedelta(hours=24),
+            now=self.now,
+        )
+        self.assertIsInstance(job_id, str)
+        self.assertEqual(self.claims.process_free_provisioning(self.now), 1)
+        with self.commerce.database.connect() as connection:
+            notification = connection.execute(
+                "SELECT text, access_url_ciphertext FROM notifications WHERE dedupe_key = ?",
+                (f"free-provision:{job_id}",),
+            ).fetchone()
+        self.assertEqual(notification["text"], "Your AuriX key is ready. It is attached below.")
+        self.assertIsNotNone(notification["access_url_ciphertext"])
+        self.assertNotIn("ss://", notification["access_url_ciphertext"])
 
     def test_paid_catalog_contains_50gb_and_100gb_monthly(self):
         plans = {plan.code: plan for plan in self.commerce.plans()}

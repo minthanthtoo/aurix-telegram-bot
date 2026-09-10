@@ -161,7 +161,7 @@ round-trip, read-only Control Center failover/audit visibility, and a bounded
 agent-boundary isolation, quota assignment, usage/probe/reconcile wiring, and
 cleanup under eight worker threads; it is not evidence of live protocol behavior.
 
-The current checkout has `301` discovered test entries. `300` application tests
+The current checkout has `303` discovered test entries. `302` application tests
 pass when the pre-existing `test_pay_monitor.py` module is excluded; importing
 that one module still fails because this environment does not provide `cv2`.
 Complete discovery therefore reports one environment-only import error and no
@@ -169,8 +169,10 @@ application test failure. Ruff, Python compilation, JavaScript syntax
 validation, and `git diff --check` pass for the continuation files. Notification
 delivery now claims due rows with a bounded lease and token-guarded completion,
 so a second worker cannot duplicate a live claim and a stale worker cannot
-complete a reclaimed row. The resulting commit is recorded in Git history
-after this verification.
+complete a reclaimed row. Daily free and monthly trial issuance now use the
+same durable intent boundary, deterministic provider identity where supported,
+and encrypted recovery notifications. The resulting commits are recorded in
+Git history after this verification.
 
 ## Remaining gates and next action
 

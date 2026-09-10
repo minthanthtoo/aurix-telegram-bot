@@ -168,7 +168,12 @@ def build_runtime_services(
         )
     # Keep construction compatible with the small test doubles used by the
     # legacy runtime tests, then share the real service seams when present.
-    claim_service = ClaimService(database, outline, limit_bytes=PUBLIC_LIMIT_BYTES)
+    claim_service = ClaimService(
+        database,
+        outline,
+        limit_bytes=PUBLIC_LIMIT_BYTES,
+        access_url_key=access_url_key,
+    )
     claim_service.connectivity = connectivity
     if getattr(commerce, "adapter_registry", None) is not None:
         claim_service.adapter_registry = commerce.adapter_registry

@@ -245,6 +245,60 @@ FREE_ACCESS_MIGRATIONS = (
                )""",
         ),
     ),
+    Migration(
+        5,
+        "durable_free_provisioning_jobs",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS free_provisioning_jobs (
+                   id TEXT PRIMARY KEY,
+                   telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+                   plan_code TEXT NOT NULL,
+                   key_type TEXT NOT NULL,
+                   first_name TEXT NOT NULL DEFAULT '',
+                   username TEXT,
+                   quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                   duration_seconds INTEGER NOT NULL CHECK (duration_seconds > 0),
+                   status TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'running', 'done', 'failed')),
+                   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                   next_attempt_at TEXT NOT NULL,
+                   locked_at TEXT,
+                   endpoint_id TEXT,
+                   external_id TEXT,
+                   key_id INTEGER REFERENCES keys(id),
+                   last_error TEXT,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT
+               )""",
+            "CREATE INDEX IF NOT EXISTS free_provisioning_jobs_due ON free_provisioning_jobs(status, next_attempt_at)",
+            "CREATE INDEX IF NOT EXISTS free_provisioning_jobs_account ON free_provisioning_jobs(telegram_id, plan_code, created_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS free_provisioning_jobs (
+                   id TEXT PRIMARY KEY,
+                   telegram_id BIGINT NOT NULL REFERENCES users(telegram_id),
+                   plan_code TEXT NOT NULL,
+                   key_type TEXT NOT NULL,
+                   first_name TEXT NOT NULL DEFAULT '',
+                   username TEXT,
+                   quota_bytes BIGINT NOT NULL CHECK (quota_bytes > 0),
+                   duration_seconds INTEGER NOT NULL CHECK (duration_seconds > 0),
+                   status TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'running', 'done', 'failed')),
+                   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                   next_attempt_at TIMESTAMPTZ NOT NULL,
+                   locked_at TIMESTAMPTZ,
+                   endpoint_id TEXT,
+                   external_id TEXT,
+                   key_id BIGINT REFERENCES keys(id),
+                   last_error TEXT,
+                   created_at TIMESTAMPTZ NOT NULL,
+                   completed_at TIMESTAMPTZ
+               )""",
+            "CREATE INDEX IF NOT EXISTS free_provisioning_jobs_due ON free_provisioning_jobs(status, next_attempt_at)",
+            "CREATE INDEX IF NOT EXISTS free_provisioning_jobs_account ON free_provisioning_jobs(telegram_id, plan_code, created_at)",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (

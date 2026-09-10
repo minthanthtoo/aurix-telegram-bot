@@ -122,9 +122,47 @@ class ClaimServiceTest(unittest.TestCase):
         self.outline.fail_create = True
         with self.assertRaises(OutlineError):
             self.service.claim(123, "Min", self.now)
+        with self.db.connect() as connection:
+            job = connection.execute(
+                """SELECT status, attempts, last_error FROM free_provisioning_jobs
+                   WHERE telegram_id = 123 AND plan_code = 'FREE300MB'"""
+            ).fetchone()
+            user = connection.execute(
+                "SELECT last_claim_at FROM users WHERE telegram_id = 123"
+            ).fetchone()
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["attempts"], 1)
+        self.assertEqual(job["last_error"], "OutlineError")
+        self.assertIsNone(user["last_claim_at"])
         self.outline.fail_create = False
         result = self.service.claim(123, "Min", self.now)
         self.assertEqual(result.access_url, "ss://secret")
+
+    def test_free_provisioning_maintenance_resumes_due_job(self):
+        job_id = self.service._prepare_free_provision_job(
+            telegram_id=123,
+            first_name="Min",
+            username="min",
+            plan_code="FREE300MB",
+            key_type="daily_free",
+            quota_bytes=self.service.limit_bytes,
+            duration=timedelta(hours=24),
+            now=self.now,
+        )
+        self.assertIsInstance(job_id, str)
+        self.assertEqual(self.service.process_free_provisioning(self.now), 1)
+        with self.db.connect() as connection:
+            job = connection.execute(
+                "SELECT status, key_id, endpoint_id, external_id FROM free_provisioning_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+            key = connection.execute(
+                "SELECT telegram_id, key_type FROM keys WHERE id = ?", (job["key_id"],)
+            ).fetchone()
+        self.assertEqual(job["status"], "done")
+        self.assertTrue(job["endpoint_id"])
+        self.assertTrue(job["external_id"])
+        self.assertEqual(dict(key), {"telegram_id": 123, "key_type": "daily_free"})
 
     def test_expiry_revokes_key_once(self):
         self.service.claim(123, "Min", self.now)

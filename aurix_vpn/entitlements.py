@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from cryptography.fernet import Fernet
 from ports import OutlineGateway
 from repositories import RepositoryDatabase
 from .connectivity_adapters import ConnectivityAdapterRegistry
@@ -48,6 +49,9 @@ GIVEAWAY_WINNER_LIMIT = 5
 
 
 QUOTA_WARNING_THRESHOLDS = ((25, 0.25), (10, 0.10), (5, 0.05))
+
+FREE_PROVISION_RETRY_DELAY = timedelta(seconds=30)
+FREE_PROVISION_LEASE = timedelta(minutes=5)
 
 
 def _outline_key_name(
@@ -121,6 +125,7 @@ class ClaimService:
         trial_limit_bytes: int = TRIAL_LIMIT_BYTES,
         connectivity: Any | None = None,
         adapter_registry: ConnectivityAdapterRegistry | None = None,
+        access_url_key: str | bytes | None = None,
     ):
         self.database = database
         self.outline = outline
@@ -129,6 +134,7 @@ class ClaimService:
         self.connectivity = connectivity
         self.adapter_registry = adapter_registry or ConnectivityAdapterRegistry()
         self.identity = IdentityService(database)
+        self._access_url_cipher = Fernet(access_url_key) if access_url_key else None
 
     def _client_for_endpoint(self, endpoint_id: str | None) -> OutlineGateway:
         if self.connectivity is None or not endpoint_id:
@@ -152,12 +158,21 @@ class ClaimService:
         )
 
     def _provision_route_key(
-        self, endpoint_id: str, client: OutlineGateway, name: str, quota_bytes: int
+        self,
+        endpoint_id: str,
+        client: OutlineGateway,
+        name: str,
+        quota_bytes: int,
+        *,
+        external_id: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         adapter = self._adapter_for_endpoint(endpoint_id, client)
+        intent: dict[str, Any] = {"name": name, "quota_bytes": int(quota_bytes)}
+        if external_id:
+            intent["external_id"] = str(external_id)
         grant = adapter.provision(
             {"route_id": f"outline:{str(endpoint_id)}", "endpoint_id": str(endpoint_id), "protocol": "outline"},
-            {"name": name, "quota_bytes": int(quota_bytes)},
+            intent,
         )
         return grant, {"id": grant["external_id"], "accessUrl": grant["access_url"], "name": name}
 
@@ -805,15 +820,31 @@ class ClaimService:
                 (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
             )
 
-    def claim(
+    @staticmethod
+    def _free_job_pending() -> ClaimResult:
+        return ClaimResult(denied_reason="provisioning_pending")
+
+    def _prepare_free_provision_job(
         self,
+        *,
         telegram_id: int,
         first_name: str,
-        now: datetime | None = None,
-        username: str | None = None,
-    ) -> ClaimResult:
-        now = (now or datetime.now(UTC)).astimezone(UTC)
+        username: str | None,
+        plan_code: str,
+        key_type: str,
+        quota_bytes: int,
+        duration: timedelta,
+        now: datetime,
+    ) -> str | ClaimResult:
+        """Persist free issuance intent before touching a provider.
+
+        The legacy user timestamp is advanced only after the job has been
+        finalized.  A pending or failed job is therefore the durable retry
+        identity for the next request, while a second concurrent request sees
+        a bounded pending result instead of opening another provider call.
+        """
         now_text = now.isoformat()
+        claim_column = "last_claim_at" if key_type == "daily_free" else "trial_claimed_at"
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             connection.execute(
@@ -826,75 +857,290 @@ class ClaimService:
             )
             self._lock_user(connection, telegram_id)
             user = connection.execute(
-                "SELECT last_claim_at FROM users WHERE telegram_id = ?", (telegram_id,)
+                f"SELECT {claim_column} FROM users WHERE telegram_id = ?", (telegram_id,)
             ).fetchone()
             if self._has_active_promo_gift(connection, telegram_id, now):
                 return ClaimResult(denied_reason="active_promo")
-            if user["last_claim_at"]:
-                next_claim = datetime.fromisoformat(user["last_claim_at"]) + CLAIM_PERIOD
+            claimed_at = user[claim_column]
+            if claimed_at:
+                next_claim = datetime.fromisoformat(str(claimed_at)) + duration
                 if now < next_claim:
                     return ClaimResult(next_claim_at=next_claim)
+            existing = connection.execute(
+                """SELECT * FROM free_provisioning_jobs
+                   WHERE telegram_id = ? AND plan_code = ?
+                     AND status IN ('pending', 'running', 'failed')
+                   ORDER BY created_at DESC LIMIT 1""",
+                (telegram_id, plan_code),
+            ).fetchone()
+            if existing is not None:
+                locked_at = existing["locked_at"]
+                if str(existing["status"]) == "running" and locked_at:
+                    try:
+                        lock_time = datetime.fromisoformat(str(locked_at)).astimezone(UTC)
+                    except ValueError:
+                        lock_time = now - FREE_PROVISION_LEASE
+                    if lock_time + FREE_PROVISION_LEASE > now:
+                        return self._free_job_pending()
+                if str(existing["status"]) == "failed":
+                    # A user retry is an explicit request and may retry a
+                    # failed provider call immediately; scheduled maintenance
+                    # still honors the persisted backoff.
+                    connection.execute(
+                        "UPDATE free_provisioning_jobs SET next_attempt_at = ? WHERE id = ?",
+                        (now_text, existing["id"]),
+                    )
+                return str(existing["id"])
+            job_id = _new_id()
+            connection.execute(
+                """INSERT INTO free_provisioning_jobs
+                   (id, telegram_id, plan_code, key_type, first_name, username,
+                    quota_bytes, duration_seconds, status, next_attempt_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (
+                    job_id,
+                    telegram_id,
+                    plan_code,
+                    key_type,
+                    first_name[:128],
+                    (username or "")[:64] or None,
+                    int(quota_bytes),
+                    int(duration.total_seconds()),
+                    now_text,
+                    now_text,
+                ),
+            )
+        return job_id
 
-            endpoint_id, endpoint_client = self._select_endpoint(connection, "FREE300MB")
+    def _execute_free_provision_job(
+        self, job_id: str, now: datetime, *, notify: bool = False
+    ) -> ClaimResult:
+        """Claim one durable free job, execute it, and finalize its projection."""
+        now_text = now.isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            suffix = " FOR UPDATE" if connection.__class__.__name__ == "_PostgresConnection" else ""
+            row = connection.execute(
+                "SELECT * FROM free_provisioning_jobs WHERE id = ?" + suffix,
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise OutlineError("free provisioning job does not exist")
+            if str(row["status"]) == "done":
+                key = connection.execute(
+                    "SELECT expires_at FROM keys WHERE id = ?", (row["key_id"],)
+                ).fetchone()
+                if key is None:
+                    raise OutlineError("completed free provisioning job lacks its key")
+                return ClaimResult(
+                    access_url=None,
+                    expires_at=datetime.fromisoformat(str(key["expires_at"])),
+                    denied_reason="provisioning_completed",
+                )
+            if str(row["status"]) == "running" and row["locked_at"]:
+                try:
+                    lock_time = datetime.fromisoformat(str(row["locked_at"])).astimezone(UTC)
+                except ValueError:
+                    lock_time = now - FREE_PROVISION_LEASE
+                if lock_time + FREE_PROVISION_LEASE > now:
+                    return self._free_job_pending()
+            if str(row["status"]) not in {"pending", "failed", "running"}:
+                return self._free_job_pending()
+            if str(row["next_attempt_at"]) > now_text and str(row["status"]) != "running":
+                return self._free_job_pending()
+            endpoint_id = str(row["endpoint_id"] or "")
+            endpoint_client = None
+            if endpoint_id:
+                endpoint_client = self._client_for_endpoint(endpoint_id)
+            else:
+                endpoint_id, endpoint_client = self._select_endpoint(
+                    connection, str(row["plan_code"])
+                )
+            connection.execute(
+                """UPDATE free_provisioning_jobs
+                   SET status = 'running', attempts = attempts + 1,
+                       locked_at = ?, endpoint_id = ?, last_error = NULL
+                   WHERE id = ?""",
+                (now_text, endpoint_id, job_id),
+            )
+            job = dict(row)
+            job["endpoint_id"] = endpoint_id
+            job["attempts"] = int(row["attempts"] or 0) + 1
+
+        route = {
+            "route_id": f"outline:{endpoint_id}",
+            "endpoint_id": endpoint_id,
+            "protocol": "outline",
+        }
+        name = _outline_key_name(
+            int(job["telegram_id"]),
+            job.get("username"),
+            str(job["plan_code"]),
+            "24hr" if str(job["key_type"]) == "daily_free" else "30day",
+            now,
+        )
+        grant: dict[str, Any] | None = None
+        try:
             grant, key = self._provision_route_key(
                 endpoint_id,
                 endpoint_client,
-                _outline_key_name(telegram_id, username, "FREE300MB", "24hr", now),
-                self.limit_bytes,
+                name,
+                int(job["quota_bytes"]),
+                external_id=f"aurix-free-{job_id}",
             )
-            expires_at = now + CLAIM_PERIOD
-            key_row_id: int | None = None
-            try:
-                connection.execute(
-                    """INSERT INTO keys
-                       (telegram_id, outline_key_id, endpoint_id, key_type, created_at, expires_at, data_limit_bytes, status)
-                       VALUES (?, ?, ?, 'daily_free', ?, ?, ?, 'active')""",
-                    (
-                        telegram_id,
-                        str(key["id"]),
-                        endpoint_id,
-                        now_text,
-                        expires_at.isoformat(),
-                        self.limit_bytes,
-                    ),
-                )
+            # The adapter can use this stable id when its provider supports
+            # deterministic creation; the provider backends already preserve
+            # the same idempotency boundary for Xray/Hysteria2.
+            if not grant.get("external_id"):
+                raise OutlineError("free provisioning grant lacks external id")
+            expires_at = now + timedelta(seconds=int(job["duration_seconds"]))
+            with self.database.connect() as connection:
+                self.database.begin_write(connection)
                 key_row = connection.execute(
-                    "SELECT id FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
+                    "SELECT id, expires_at FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
                     (endpoint_id, str(key["id"])),
                 ).fetchone()
-                key_row_id = int(key_row["id"])
-                if self.connectivity is not None:
-                    self.connectivity.assign_free_key(
-                        connection,
-                        endpoint_id=endpoint_id,
-                        free_key_id=key_row_id,
-                        plan_code="FREE300MB",
-                        quota_bytes=self.limit_bytes,
-                        now=now,
+                if key_row is None:
+                    connection.execute(
+                        """INSERT INTO keys
+                           (telegram_id, outline_key_id, endpoint_id, key_type, created_at,
+                            expires_at, data_limit_bytes, status)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, 'active')""",
+                        (
+                            int(job["telegram_id"]),
+                            str(key["id"]),
+                            endpoint_id,
+                            str(job["key_type"]),
+                            now_text,
+                            expires_at.isoformat(),
+                            int(job["quota_bytes"]),
+                        ),
                     )
-                connection.execute(
-                    """UPDATE users
-                       SET last_claim_at = ?
-                       WHERE telegram_id = ?""",
-                    (now_text, telegram_id),
+                    key_row = connection.execute(
+                        "SELECT id, expires_at FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
+                        (endpoint_id, str(key["id"])),
+                    ).fetchone()
+                    if self.connectivity is not None:
+                        self.connectivity.assign_free_key(
+                            connection,
+                            endpoint_id=endpoint_id,
+                            free_key_id=int(key_row["id"]),
+                            plan_code=str(job["plan_code"]),
+                            quota_bytes=int(job["quota_bytes"]),
+                            now=now,
+                        )
+                key_id = int(key_row["id"])
+                if key_row["expires_at"]:
+                    expires_at = datetime.fromisoformat(str(key_row["expires_at"])).astimezone(UTC)
+                claim_column = (
+                    "last_claim_at"
+                    if str(job["key_type"]) == "daily_free"
+                    else "trial_claimed_at"
                 )
-            except Exception:
-                try:
-                    self._adapter_for_endpoint(endpoint_id, endpoint_client).revoke_auth(grant)
-                finally:
-                    raise
-        if key_row_id is not None:
+                connection.execute(
+                    f"UPDATE users SET {claim_column} = ? WHERE telegram_id = ?",
+                    (now_text, int(job["telegram_id"])),
+                )
+                connection.execute(
+                    """UPDATE free_provisioning_jobs
+                       SET status = 'done', locked_at = NULL, key_id = ?,
+                           external_id = ?, completed_at = ?, last_error = NULL
+                       WHERE id = ?""",
+                    (key_id, str(key["id"]), now_text, job_id),
+                )
+                if notify and self._access_url_cipher is not None:
+                    encrypted_url = self._access_url_cipher.encrypt(
+                        str(key["accessUrl"]).encode("utf-8")
+                    ).decode("ascii")
+                    connection.execute(
+                        """INSERT INTO notifications
+                           (id, dedupe_key, telegram_id, kind, text,
+                            access_url_ciphertext, status, next_attempt_at, created_at)
+                           VALUES (?, ?, ?, 'key_delivery', ?, ?, 'pending', ?, ?)
+                           ON CONFLICT(dedupe_key) DO NOTHING""",
+                        (
+                            _new_id(),
+                            f"free-provision:{job_id}",
+                            int(job["telegram_id"]),
+                            "Your AuriX key is ready. It is attached below.",
+                            encrypted_url,
+                            now_text,
+                            now_text,
+                        ),
+                    )
             self._project_free_generation(
-                telegram_id=telegram_id,
-                key_id=key_row_id,
+                telegram_id=int(job["telegram_id"]),
+                key_id=key_id,
                 endpoint_id=endpoint_id,
                 key=key,
-                quota_bytes=self.limit_bytes,
+                quota_bytes=int(job["quota_bytes"]),
                 expires_at=expires_at,
                 grant=grant,
                 now=now,
             )
-        return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
+            return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
+        except Exception as exc:
+            with self.database.connect() as connection:
+                connection.execute(
+                    """UPDATE free_provisioning_jobs
+                       SET status = 'failed', locked_at = NULL,
+                           next_attempt_at = ?, last_error = ?
+                       WHERE id = ? AND status = 'running'""",
+                    (
+                        (now + FREE_PROVISION_RETRY_DELAY).isoformat(),
+                        type(exc).__name__,
+                        job_id,
+                    ),
+                )
+            raise
+
+    def process_free_provisioning(
+        self, now: datetime | None = None, limit: int = 10
+    ) -> int:
+        """Resume due free/trial issuance intents after a crash or outage."""
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT id FROM free_provisioning_jobs
+                   WHERE (status IN ('pending', 'failed') AND next_attempt_at <= ?)
+                      OR (status = 'running' AND locked_at <= ?)
+                   ORDER BY created_at LIMIT ?""",
+                (now_text, (current - FREE_PROVISION_LEASE).isoformat(), max(1, min(int(limit), 50))),
+            ).fetchall()
+        completed = 0
+        for row in rows:
+            try:
+                result = self._execute_free_provision_job(
+                    str(row["id"]), current, notify=True
+                )
+                if result.access_url:
+                    completed += 1
+            except Exception as exc:
+                print(f"free provisioning retry error: {type(exc).__name__}", file=sys.stderr)
+        return completed
+
+    def claim(
+        self,
+        telegram_id: int,
+        first_name: str,
+        now: datetime | None = None,
+        username: str | None = None,
+    ) -> ClaimResult:
+        now = (now or datetime.now(UTC)).astimezone(UTC)
+        job = self._prepare_free_provision_job(
+            telegram_id=telegram_id,
+            first_name=first_name,
+            username=username,
+            plan_code="FREE300MB",
+            key_type="daily_free",
+            quota_bytes=self.limit_bytes,
+            duration=CLAIM_PERIOD,
+            now=now,
+        )
+        if isinstance(job, ClaimResult):
+            return job
+        return self._execute_free_provision_job(job, now)
 
     def claim_trial(
         self,
@@ -905,85 +1151,19 @@ class ClaimService:
     ) -> ClaimResult:
         """Issue one 3 GiB entitlement per rolling 30 days."""
         now = (now or datetime.now(UTC)).astimezone(UTC)
-        now_text = now.isoformat()
-        with self.database.connect() as connection:
-            self.database.begin_write(connection)
-            connection.execute(
-                """INSERT INTO users (telegram_id, first_name, username, created_at)
-                   VALUES (?, ?, ?, ?)
-                   ON CONFLICT(telegram_id) DO UPDATE SET
-                       first_name = excluded.first_name,
-                       username = excluded.username""",
-                (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
-            )
-            self._lock_user(connection, telegram_id)
-            user = connection.execute(
-                "SELECT trial_claimed_at FROM users WHERE telegram_id = ?", (telegram_id,)
-            ).fetchone()
-            if self._has_active_promo_gift(connection, telegram_id, now):
-                return ClaimResult(denied_reason="active_promo")
-            if user["trial_claimed_at"]:
-                next_claim = datetime.fromisoformat(user["trial_claimed_at"]) + TRIAL_PERIOD
-                if now < next_claim:
-                    return ClaimResult(next_claim_at=next_claim)
-            endpoint_id, endpoint_client = self._select_endpoint(connection, "FREE3GB")
-            grant, key = self._provision_route_key(
-                endpoint_id,
-                endpoint_client,
-                _outline_key_name(telegram_id, username, "FREE3GB", "30day", now),
-                self.trial_limit_bytes,
-            )
-            expires_at = now + TRIAL_PERIOD
-            key_row_id: int | None = None
-            try:
-                connection.execute(
-                    """INSERT INTO keys
-                       (telegram_id, outline_key_id, endpoint_id, key_type, created_at, expires_at, data_limit_bytes, status)
-                       VALUES (?, ?, ?, 'monthly_trial', ?, ?, ?, 'active')""",
-                    (
-                        telegram_id,
-                        str(key["id"]),
-                        endpoint_id,
-                        now_text,
-                        expires_at.isoformat(),
-                        self.trial_limit_bytes,
-                    ),
-                )
-                key_row = connection.execute(
-                    "SELECT id FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
-                    (endpoint_id, str(key["id"])),
-                ).fetchone()
-                key_row_id = int(key_row["id"])
-                if self.connectivity is not None:
-                    self.connectivity.assign_free_key(
-                        connection,
-                        endpoint_id=endpoint_id,
-                        plan_code="FREE3GB",
-                        free_key_id=key_row_id,
-                        quota_bytes=self.trial_limit_bytes,
-                        now=now,
-                    )
-                connection.execute(
-                    "UPDATE users SET trial_claimed_at = ? WHERE telegram_id = ?",
-                    (now_text, telegram_id),
-                )
-            except Exception:
-                try:
-                    self._adapter_for_endpoint(endpoint_id, endpoint_client).revoke_auth(grant)
-                finally:
-                    raise
-        if key_row_id is not None:
-            self._project_free_generation(
-                telegram_id=telegram_id,
-                key_id=key_row_id,
-                endpoint_id=endpoint_id,
-                key=key,
-                quota_bytes=self.trial_limit_bytes,
-                expires_at=expires_at,
-                grant=grant,
-                now=now,
-            )
-        return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
+        job = self._prepare_free_provision_job(
+            telegram_id=telegram_id,
+            first_name=first_name,
+            username=username,
+            plan_code="FREE3GB",
+            key_type="monthly_trial",
+            quota_bytes=self.trial_limit_bytes,
+            duration=TRIAL_PERIOD,
+            now=now,
+        )
+        if isinstance(job, ClaimResult):
+            return job
+        return self._execute_free_provision_job(job, now)
 
     def _terminate_key(
         self,

@@ -86,13 +86,13 @@ The refactor delivered eight structural phases:
 Important remaining facts:
 
 - `runtime.py` still reads exactly one `OUTLINE_API_URL` and one certificate fingerprint, creates one `OutlineClient`, and injects it into both free and paid services.
-- `ports.OutlineGateway` is an Outline API contract. It is not yet a generic endpoint-scoped `VpnAdapter`.
-- `paid_vpn_keys` and free `keys` still store `outline_key_id` without endpoint, region, provider, assignment, or transport identity.
-- Free/trial creation still performs the remote Outline call inside the entitlement database transaction.
+- `ports.OutlineGateway` remains the compatibility API, while `ConnectivityAdapter` now provides the generic endpoint-scoped lifecycle seam.
+- Legacy `paid_vpn_keys` and free `keys` retain `outline_key_id`; endpoint assignments and credential-generation/quota projections now carry the durable transport-neutral identity.
+- Daily free and monthly trial issuance now persist a durable intent before the provider call; promo/giveaway issuance is still synchronous.
 - Notification outbox delivery now has an atomic claim lease; Telegram long polling and process-local maintenance are still single-process gates.
-- Startup still exits when the one Outline management endpoint is unavailable.
+- Startup degrades cleanly when the one Outline management endpoint is unavailable; provisioning remains fail-closed until health returns.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
-- The application/refactor files remain untracked in the current workspace Git repository; the branding-only Git history is not a recoverable application baseline.
+- The application/refactor baseline is now in the `codex/aurix-vpn-portal` history; unrelated AI/UI and pay-monitor work remains intentionally outside the VPN commits.
 
 ## Canonical version ledger
 
@@ -164,17 +164,16 @@ Completed since the earlier roadmap:
 - [x] Private receipt storage and stronger admin confirmation controls are implemented.
 - [x] Multiple paid entitlements, quota warnings, maintenance heartbeat, and failure visibility are covered by tests.
 - [x] Notification delivery uses durable claim leases with stale-worker protection.
+- [x] Daily free and monthly trial provisioning use durable jobs with deterministic provider identity and recovery notifications.
 
 Still required before or as the first bounded part of V3:
 
 1. Commit the current application, tests, docs, and deployment files as a recoverable baseline.
 2. Add `requires-python = ">=3.13,<3.14"` and a reproducible lock/check strategy; local `uv` currently falls back to Python 3.12 when not explicitly constrained.
-3. Move free/trial provisioning onto the same durable intent/job/reconcile pattern as paid provisioning.
-4. Permit degraded control-plane startup when Outline management is unavailable.
-5. Convert future schema changes into actual migration version 2+ entries; version 1 currently adopts the legacy bootstrap rather than creating new endpoint structures.
-6. Automate database backups and complete a restore drill, including receipt-object reconciliation.
-7. Run the documented live one-server acceptance test with known users.
-8. Capture real usage, connection success, support, and contribution-margin evidence.
+3. Move promo/giveaway provisioning onto the same durable intent/job/reconcile pattern.
+4. Automate database backups and complete a restore drill, including receipt-object reconciliation.
+5. Run the documented live one-server acceptance test with known users.
+6. Capture real usage, connection success, support, and contribution-margin evidence.
 
 Exit gate:
 
@@ -882,12 +881,11 @@ Already durable:
 - paid notifications with retry/dead-letter state;
 - remote paid-key reconciliation after ambiguous create.
 - notification delivery claim/lease with stale-worker protection;
+- daily free and monthly trial provisioning with retry/recovery;
 
 Still to unify:
 
-- free key provision;
-- monthly trial provision;
-- free/trial remote reconciliation after ambiguous create;
+- promo/giveaway provision and remote reconciliation after ambiguous create;
 - replacement/migration;
 - endpoint probe;
 - endpoint lifecycle operations.
@@ -917,7 +915,7 @@ health/usage worker
 
 Do not split into network microservices merely because the code has modules.
 
-The current PostgreSQL job and notification claims support `FOR UPDATE SKIP LOCKED` and expiring leases, but that does not make the whole deployment replica-safe. Telegram remains long polling, free/trial provisioning is synchronous, and maintenance is process-local.
+The current PostgreSQL job and notification claims support `FOR UPDATE SKIP LOCKED` and expiring leases, but that does not make the whole deployment replica-safe. Telegram remains long polling, promo provisioning is synchronous, and maintenance is process-local.
 
 ## Cross-version invariants
 
