@@ -169,14 +169,16 @@ Completed since the earlier roadmap:
 
 Still required before or as the first bounded part of V3:
 
-1. Automate database backups and complete a restore drill, including receipt-object reconciliation.
+1. Complete the live PostgreSQL/Supabase backup, isolated restore, and receipt-object reconciliation drill; the local SQLite artifact/restore drill is now executable and tested.
 2. Run the documented live one-server acceptance test with known users.
 3. Capture real usage, connection success, support, and contribution-margin evidence.
 
 Completed immediately before this remaining-gate list: the recoverable baseline
 was committed in major steps, and the project now declares Python
 `>=3.13,<3.14`, carries a checked-in `uv.lock`, and uses `uv sync --locked` in
-local/CI validation. Complete local discovery passes with 331 tests.
+local/CI validation. Complete local discovery passes with 333 tests, including
+the backup/restore artifact tests. Executable recovery tooling is documented in
+[`docs/AURIX_BACKUP_RESTORE_RUNBOOK.md`](AURIX_BACKUP_RESTORE_RUNBOOK.md).
 
 Exit gate:
 

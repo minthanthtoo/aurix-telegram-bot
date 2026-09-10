@@ -335,7 +335,8 @@ Do not accept real payments until this sequence passes.
 The deployment preflight never prints secret values. Do not paste Render or
 Supabase secrets into issues, screenshots, Git commits, or support messages.
 For backup, rollback, and the full acceptance runbook, see
-[`docs/RENDER_DEPLOYMENT.md`](docs/RENDER_DEPLOYMENT.md).
+[`docs/RENDER_DEPLOYMENT.md`](docs/RENDER_DEPLOYMENT.md) and the executable
+[`docs/AURIX_BACKUP_RESTORE_RUNBOOK.md`](docs/AURIX_BACKUP_RESTORE_RUNBOOK.md).
 
 ## Commands
 
