@@ -322,7 +322,9 @@ class EndpointRegistry:
             result.append(item)
         return result
 
-    def list_customer_endpoints(self, plan_code: str | None = None) -> list[dict[str, Any]]:
+    def list_customer_endpoints(
+        self, plan_code: str | None = None, protocol: str = "outline"
+    ) -> list[dict[str, Any]]:
         """Return the safe endpoint directory used by the customer portal.
 
         Management URLs, certificates, provider resource IDs, and public IPs
@@ -330,6 +332,11 @@ class EndpointRegistry:
         control-plane observation and must not be presented as a user ping.
         """
         plan = str(plan_code or "").strip() or None
+        selected_protocol = str(protocol or "").strip().lower()
+        if not selected_protocol or len(selected_protocol) > 64 or any(
+            char.isspace() for char in selected_protocol
+        ):
+            raise ConnectivityError("protocol is invalid")
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT e.id, e.code, e.region, e.state,
@@ -348,7 +355,11 @@ class EndpointRegistry:
                           (SELECT s.observed_at
                            FROM endpoint_capacity_snapshots s
                            WHERE s.endpoint_id = e.id
-                           ORDER BY s.observed_at DESC LIMIT 1) AS last_probe_at
+                           ORDER BY s.observed_at DESC LIMIT 1) AS last_probe_at,
+                          (SELECT pp.status
+                           FROM endpoint_protocol_profiles pp
+                           WHERE pp.endpoint_id = e.id AND pp.protocol = ?
+                           LIMIT 1) AS protocol_status
                    FROM vpn_endpoints e
                    LEFT JOIN endpoint_assignments a
                      ON a.endpoint_id = e.id AND a.status = 'active'
@@ -359,7 +370,7 @@ class EndpointRegistry:
                             e.accepts_new_assignments, e.last_healthy_at,
                             e.max_active_keys, l.enabled, l.max_active_assignments
                    ORDER BY e.code""",
-                (plan, plan),
+                (plan, selected_protocol, plan),
             ).fetchall()
         max_age_seconds = max(
             30, int(os.environ.get("AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS", "900"))
@@ -384,10 +395,12 @@ class EndpointRegistry:
                 and int(item["plan_active"] or 0) >= int(item["plan_max"])
             )
             item["healthy"] = healthy
+            item["protocol"] = selected_protocol
             item["eligible"] = (
                 str(item.get("state")) == "ACTIVE"
                 and item.get("accepts_new_assignments") not in (False, 0)
                 and healthy
+                and item.get("protocol_status") == "enabled"
                 and plan_enabled
                 and not at_endpoint_capacity
                 and not at_plan_capacity
@@ -576,7 +589,7 @@ class EndpointRegistry:
         connection: Any,
         plan_code: str,
         preferred_endpoint_id: str | None = None,
-        protocol: str | None = None,
+        protocol: str | None = "outline",
     ) -> str:
         """Select and lock a capacity-eligible endpoint inside the caller transaction."""
         max_age_seconds = max(
@@ -704,7 +717,7 @@ class EndpointRegistry:
         *,
         reason: str = "deterministic-allocation",
         preferred_endpoint_id: str | None = None,
-        protocol: str | None = None,
+        protocol: str | None = "outline",
         now: datetime | None = None,
     ) -> EndpointAssignment:
         timestamp = (now or datetime.now(UTC)).isoformat()

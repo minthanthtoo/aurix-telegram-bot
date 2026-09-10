@@ -184,6 +184,13 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertFalse(endpoint["healthy"])
         self.assertFalse(endpoint["eligible"])
 
+    def test_customer_directory_requires_enabled_protocol_profile(self):
+        self.registry.register_protocol_profile("legacy-default", "outline", status="disabled")
+        endpoint = self.registry.list_customer_endpoints("basic")[0]
+        self.assertEqual(endpoint["protocol"], "outline")
+        self.assertEqual(endpoint["protocol_status"], "disabled")
+        self.assertFalse(endpoint["eligible"])
+
     def test_full_endpoint_is_not_selected(self):
         with self.database.connect() as connection:
             connection.execute(

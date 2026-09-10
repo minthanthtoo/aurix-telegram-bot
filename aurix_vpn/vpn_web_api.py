@@ -118,6 +118,7 @@ def _safe_endpoint(item: dict[str, Any]) -> dict[str, Any]:
         "id",
         "code",
         "region",
+        "protocol",
         "state",
         "healthy",
         "eligible",
