@@ -30,7 +30,13 @@
   function renderOverview() {
     const s = state.summary || {};
     const c = s.counts || {}, q = s.consistency || {}, f = s.fleet || {};
-    const protocols = (s.protocols || []).map((p) => `<div class="protocol-row"><span>${esc(p.protocol)}</span><span>${Object.entries(p.capabilities || {}).filter(([, v]) => v).length} capabilities</span></div>`).join("") || empty("No protocol adapters registered.");
+    const protocols = (s.protocol_readiness || s.protocols || []).map((p) => {
+      const active = p.status === "enabled";
+      const detail = active
+        ? `${Object.entries(p.capabilities || {}).filter(([, v]) => v).length} capabilities`
+        : (p.activation_gate || p.status || "not ready");
+      return `<div class="protocol-row"><span>${esc(p.protocol)} ${badge(p.status, active ? "good" : "warn")}</span><span>${esc(detail)}</span></div>`;
+    }).join("") || empty("No protocol readiness data.");
     $("view-overview").innerHTML = `<div class="metrics">
       ${card("Active accounts", fmt(c.active_accounts), `${fmt(c.accounts)} total`)}
       ${card("Managed devices", fmt(c.active_devices), `${fmt(c.devices)} enrolled`)}

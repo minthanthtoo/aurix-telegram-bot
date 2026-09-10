@@ -357,6 +357,11 @@ class AuriXVpnWebApplication:
             if registry and callable(getattr(registry, "protocol_catalog", None))
             else []
         )
+        readiness = (
+            registry.protocol_readiness()
+            if registry and callable(getattr(registry, "protocol_readiness", None))
+            else catalog
+        )
         fleet = self.admin_fleet()
         return {
             "product": "aurix-control-center",
@@ -365,6 +370,7 @@ class AuriXVpnWebApplication:
             "counts": counts,
             "consistency": consistency,
             "protocols": catalog,
+            "protocol_readiness": readiness,
             "fleet": {
                 "endpoints": len(fleet),
                 "healthy": sum(1 for item in fleet if item.get("state") == "ACTIVE"),

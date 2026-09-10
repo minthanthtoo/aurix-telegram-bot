@@ -56,6 +56,10 @@ class ControlCenterTest(unittest.TestCase):
             fleet = app.admin_fleet()
         self.assertEqual(summary["management_mode"], "read-only")
         self.assertEqual(summary["counts"]["accounts"], 1)
+        readiness = {item["protocol"]: item for item in summary["protocol_readiness"]}
+        self.assertEqual(readiness["outline"]["status"], "enabled")
+        self.assertEqual(readiness["xray"]["status"], "candidate")
+        self.assertEqual(readiness["wireguard"]["status"], "unimplemented")
         self.assertEqual(fleet[0]["code"], "BKK-A")
         self.assertNotIn("public_address", json.dumps(fleet))
         self.assertNotIn("management_url", json.dumps(fleet))

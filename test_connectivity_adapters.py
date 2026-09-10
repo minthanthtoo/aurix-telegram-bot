@@ -120,6 +120,15 @@ class _WorkerHarness(CommerceWorkerMixin):
 
 
 class ConnectivityAdapterTest(unittest.TestCase):
+    def test_protocol_readiness_distinguishes_enabled_candidates_and_unimplemented(self):
+        readiness = ConnectivityAdapterRegistry().protocol_readiness()
+        by_protocol = {item["protocol"]: item for item in readiness}
+        self.assertEqual(by_protocol["outline"]["status"], "enabled")
+        self.assertEqual(by_protocol["xray"]["status"], "candidate")
+        self.assertEqual(by_protocol["hysteria2"]["status"], "candidate")
+        self.assertEqual(by_protocol["wireguard"]["status"], "unimplemented")
+        self.assertFalse(by_protocol["xray"]["registered"])
+
     def test_ambiguous_readback_is_uncertain_and_not_owned(self):
         client = _Outline()
         client.ambiguous = True

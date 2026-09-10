@@ -108,6 +108,10 @@ load test, or speed test was changed or performed.
   client. The Hysteria2 store encrypts customer secrets at rest and the Xray
   backend preserves unknown config users. These are node-local building blocks,
   not proof of live quota, restart, or client compatibility.
+- Read-only operator visibility: the Control Center now reports protocol
+  readiness separately from the allocation registry. Outline is shown as
+  enabled, Xray/Hysteria2 as evidence-gated candidates, and WireGuard as not
+  implemented; this does not register any new protocol for customer traffic.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates

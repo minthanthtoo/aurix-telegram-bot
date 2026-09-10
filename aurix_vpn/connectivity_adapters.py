@@ -727,6 +727,12 @@ class Hysteria2ConnectivityAdapter(_ManagedCredentialAdapter):
 class ConnectivityAdapterRegistry:
     """Explicit registry; unsupported protocols fail closed."""
 
+    CANDIDATE_PROTOCOLS = {
+        "xray": "Requires live per-user lifecycle, quota, restart, and client-path evidence",
+        "hysteria2": "Requires per-customer auth/accounting and UDP client-path evidence",
+        "wireguard": "Adapter is not implemented",
+    }
+
     def __init__(self, factories: Mapping[str, Callable[[Any], ConnectivityAdapter]] | None = None):
         self._factories: dict[str, Callable[[Any], ConnectivityAdapter]] = {
             "outline": OutlineConnectivityAdapter,
@@ -753,6 +759,34 @@ class ConnectivityAdapterRegistry:
                 capabilities = {}
             catalog.append({"protocol": protocol, "capabilities": capabilities})
         return catalog
+
+    def protocol_readiness(self) -> list[dict[str, Any]]:
+        """Expose enabled and evidence-gated protocols without enabling them.
+
+        This is intentionally separate from :meth:`protocol_catalog`: callers
+        use the catalog to construct adapters, while operator surfaces use this
+        view to explain why a roadmap protocol is not allocatable yet.
+        """
+        registered = {item["protocol"]: item for item in self.protocol_catalog()}
+        result: list[dict[str, Any]] = []
+        for protocol, item in sorted(registered.items()):
+            result.append({
+                **item,
+                "registered": True,
+                "status": "enabled",
+                "activation_gate": None,
+            })
+        for protocol, gate in sorted(self.CANDIDATE_PROTOCOLS.items()):
+            if protocol in registered:
+                continue
+            result.append({
+                "protocol": protocol,
+                "capabilities": {},
+                "registered": False,
+                "status": "candidate" if protocol != "wireguard" else "unimplemented",
+                "activation_gate": gate,
+            })
+        return result
 
     def for_route(self, route: Mapping[str, Any], client: Any) -> ConnectivityAdapter:
         protocol = str(route.get("protocol") or "").strip().lower()
