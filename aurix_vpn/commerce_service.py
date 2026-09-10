@@ -22,6 +22,9 @@ from .commerce_models import (
     _now_text,
 )
 from .commerce_repositories import _PostgresConnection
+from .connectivity_adapters import ConnectivityAdapterRegistry
+from .identity import IdentityService
+from .route_failover import RouteFailoverService
 from ports import OutlineGateway, ReceiptStorageGateway
 from repositories import RepositoryDatabase
 from .commerce_worker import CommerceWorkerMixin
@@ -40,6 +43,7 @@ class CommerceService(CommerceWorkerMixin):
         receipt_storage: ReceiptStorageGateway | None = None,
         receipt_storage_required: bool = False,
         connectivity: Any | None = None,
+        adapter_registry: ConnectivityAdapterRegistry | None = None,
     ):
         self.database = database
         self.outline = outline
@@ -49,6 +53,9 @@ class CommerceService(CommerceWorkerMixin):
         self.receipt_storage = receipt_storage or NullReceiptStorage()
         self.receipt_storage_required = bool(receipt_storage_required)
         self.connectivity = connectivity
+        self.adapter_registry = adapter_registry or ConnectivityAdapterRegistry()
+        self.identity = IdentityService(database)
+        self.failover = RouteFailoverService(database)
         try:
             self.access_url_cipher = Fernet(access_url_key)
         except (TypeError, ValueError) as exc:
@@ -136,6 +143,10 @@ class CommerceService(CommerceWorkerMixin):
 
     def initialize(self) -> None:
         self.database.initialize()
+        # This is a convergence pass, not a remote mutation.  It makes every
+        # legacy credential visible to aggregate accounting before maintenance
+        # starts observing usage.
+        self.identity.reconcile_legacy()
 
     def plans(self) -> list[Plan]:
         with self.database.connect() as connection:

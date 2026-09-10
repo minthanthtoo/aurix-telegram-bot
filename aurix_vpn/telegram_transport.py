@@ -752,6 +752,8 @@ class TelegramBot(
             {"command": "topup", "description": "Add money to your wallet"},
             {"command": "myorders", "description": "Track your recent orders"},
             {"command": "whoami", "description": "Show your Telegram ID"},
+            {"command": "pair", "description": "Enroll a managed VPN device"},
+            {"command": "devices", "description": "List or revoke managed devices"},
             {"command": "help", "description": "Show customer help"},
         ]
         errors: list[str] = []

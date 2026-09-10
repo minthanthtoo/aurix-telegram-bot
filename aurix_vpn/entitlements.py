@@ -11,6 +11,8 @@ from typing import Any
 
 from ports import OutlineGateway
 from repositories import RepositoryDatabase
+from .connectivity_adapters import ConnectivityAdapterRegistry
+from .identity import IdentityService
 
 UTC = timezone.utc
 
@@ -118,12 +120,15 @@ class ClaimService:
         limit_bytes: int = LIMIT_BYTES,
         trial_limit_bytes: int = TRIAL_LIMIT_BYTES,
         connectivity: Any | None = None,
+        adapter_registry: ConnectivityAdapterRegistry | None = None,
     ):
         self.database = database
         self.outline = outline
         self.limit_bytes = int(limit_bytes)
         self.trial_limit_bytes = int(trial_limit_bytes)
         self.connectivity = connectivity
+        self.adapter_registry = adapter_registry or ConnectivityAdapterRegistry()
+        self.identity = IdentityService(database)
 
     def _client_for_endpoint(self, endpoint_id: str | None) -> OutlineGateway:
         if self.connectivity is None or not endpoint_id:
@@ -135,6 +140,87 @@ class ClaimService:
             return "legacy-default", self.outline
         endpoint_id = self.connectivity.select_endpoint_for_plan(connection, plan_code)
         return endpoint_id, self.connectivity.client(endpoint_id)
+
+    def _adapter_for_endpoint(self, endpoint_id: str, client: OutlineGateway) -> Any:
+        return self.adapter_registry.for_route(
+            {
+                "route_id": f"outline:{str(endpoint_id)}",
+                "endpoint_id": str(endpoint_id),
+                "protocol": "outline",
+            },
+            client,
+        )
+
+    def _provision_route_key(
+        self, endpoint_id: str, client: OutlineGateway, name: str, quota_bytes: int
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        adapter = self._adapter_for_endpoint(endpoint_id, client)
+        grant = adapter.provision(
+            {"route_id": f"outline:{str(endpoint_id)}", "endpoint_id": str(endpoint_id), "protocol": "outline"},
+            {"name": name, "quota_bytes": int(quota_bytes)},
+        )
+        return grant, {"id": grant["external_id"], "accessUrl": grant["access_url"], "name": name}
+
+    def _project_free_generation(
+        self,
+        *,
+        telegram_id: int,
+        key_id: int,
+        endpoint_id: str,
+        key: dict[str, Any],
+        quota_bytes: int,
+        expires_at: datetime,
+        grant: dict[str, Any],
+        now: datetime,
+    ) -> None:
+        """Project a newly issued free credential into shared accounting.
+
+        Free claims must remain usable when the commerce migrations are not
+        installed yet (for example, an isolated legacy bot test).  Once the
+        accounting tables exist, projection is attempted immediately; the
+        legacy row remains the durable source for the next reconciliation pass
+        if this optional projection encounters a transient failure.
+        """
+        try:
+            with self.database.connect() as connection:
+                if not all(
+                    IdentityService._table_exists(connection, table)
+                    for table in (
+                        "credential_generations",
+                        "quota_leases",
+                        "entitlement_quota_ledger",
+                    )
+                ):
+                    return
+            entitlement_key = self.identity.ensure_free_entitlement(telegram_id, key_id, now=now.isoformat())
+            ownership = str(grant.get("ownership") or "unknown")
+            remote_state = "unknown" if ownership in {"unknown", "uncertain"} else "observed"
+            usage_baseline_provenance = "new" if ownership == "owned" else "unknown"
+            generation_id = self.identity.ensure_generation_for_credential(
+                entitlement_key,
+                str(endpoint_id),
+                credential_id=f"free-key:{key_id}",
+                external_id=str(key["id"]),
+                protocol="outline",
+                status="active",
+                remote_state=remote_state,
+                intent_key=grant.get("intent_key"),
+                usage_baseline_provenance=usage_baseline_provenance,
+                now=now.isoformat(),
+            )
+            self.identity.ensure_generation_lease(
+                entitlement_key,
+                generation_id,
+                str(endpoint_id),
+                int(quota_bytes),
+                expires_at.isoformat(),
+                now=now.isoformat(),
+            )
+        except Exception as exc:
+            # The local key and remote credential are already durable.  Do not
+            # delete the credential here; commerce startup/maintenance will
+            # reconcile the generation without losing remote accountability.
+            print(f"free entitlement accounting projection deferred: {type(exc).__name__}", file=sys.stderr)
 
     @staticmethod
     def _usage_map(metrics: dict[str, Any] | None, endpoint_id: str) -> dict[str, Any]:
@@ -155,7 +241,11 @@ class ClaimService:
         if not isinstance(metrics, dict):
             return False
         scoped = metrics.get("byEndpoint")
-        return endpoint_id in scoped if isinstance(scoped, dict) else True
+        if isinstance(scoped, dict):
+            return endpoint_id in scoped
+        if not metrics or "errors" in metrics:
+            return False
+        return True
 
     @staticmethod
     def _lock_user(connection: Any, telegram_id: int) -> None:
@@ -601,7 +691,9 @@ class ClaimService:
                     )
             plan_code = f"PROMO:{campaign['code']}"
             endpoint_id, endpoint_client = self._select_endpoint(connection, plan_code)
-            key = endpoint_client.create_key(
+            grant, key = self._provision_route_key(
+                endpoint_id,
+                endpoint_client,
                 _outline_key_name(
                     telegram_id,
                     username,
@@ -671,9 +763,19 @@ class ClaimService:
                 )
             except Exception:
                 try:
-                    endpoint_client.delete_key(str(key["id"]))
+                    self._adapter_for_endpoint(endpoint_id, endpoint_client).revoke_auth(grant)
                 finally:
                     raise
+        self._project_free_generation(
+            telegram_id=telegram_id,
+            key_id=int(key_row["id"]),
+            endpoint_id=endpoint_id,
+            key=key,
+            quota_bytes=int(campaign["quota_bytes"]),
+            expires_at=expires_at,
+            grant=grant,
+            now=now,
+        )
         return GiveawayResult(
             "won",
             code=str(campaign["code"]),
@@ -734,11 +836,14 @@ class ClaimService:
                     return ClaimResult(next_claim_at=next_claim)
 
             endpoint_id, endpoint_client = self._select_endpoint(connection, "FREE300MB")
-            key = endpoint_client.create_key(
+            grant, key = self._provision_route_key(
+                endpoint_id,
+                endpoint_client,
                 _outline_key_name(telegram_id, username, "FREE300MB", "24hr", now),
                 self.limit_bytes,
             )
             expires_at = now + CLAIM_PERIOD
+            key_row_id: int | None = None
             try:
                 connection.execute(
                     """INSERT INTO keys
@@ -753,15 +858,16 @@ class ClaimService:
                         self.limit_bytes,
                     ),
                 )
+                key_row = connection.execute(
+                    "SELECT id FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
+                    (endpoint_id, str(key["id"])),
+                ).fetchone()
+                key_row_id = int(key_row["id"])
                 if self.connectivity is not None:
-                    key_row = connection.execute(
-                        "SELECT id FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
-                        (endpoint_id, str(key["id"])),
-                    ).fetchone()
                     self.connectivity.assign_free_key(
                         connection,
                         endpoint_id=endpoint_id,
-                        free_key_id=int(key_row["id"]),
+                        free_key_id=key_row_id,
                         plan_code="FREE300MB",
                         quota_bytes=self.limit_bytes,
                         now=now,
@@ -774,9 +880,20 @@ class ClaimService:
                 )
             except Exception:
                 try:
-                    endpoint_client.delete_key(str(key["id"]))
+                    self._adapter_for_endpoint(endpoint_id, endpoint_client).revoke_auth(grant)
                 finally:
                     raise
+        if key_row_id is not None:
+            self._project_free_generation(
+                telegram_id=telegram_id,
+                key_id=key_row_id,
+                endpoint_id=endpoint_id,
+                key=key,
+                quota_bytes=self.limit_bytes,
+                expires_at=expires_at,
+                grant=grant,
+                now=now,
+            )
         return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
 
     def claim_trial(
@@ -810,11 +927,14 @@ class ClaimService:
                 if now < next_claim:
                     return ClaimResult(next_claim_at=next_claim)
             endpoint_id, endpoint_client = self._select_endpoint(connection, "FREE3GB")
-            key = endpoint_client.create_key(
+            grant, key = self._provision_route_key(
+                endpoint_id,
+                endpoint_client,
                 _outline_key_name(telegram_id, username, "FREE3GB", "30day", now),
                 self.trial_limit_bytes,
             )
             expires_at = now + TRIAL_PERIOD
+            key_row_id: int | None = None
             try:
                 connection.execute(
                     """INSERT INTO keys
@@ -829,16 +949,17 @@ class ClaimService:
                         self.trial_limit_bytes,
                     ),
                 )
+                key_row = connection.execute(
+                    "SELECT id FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
+                    (endpoint_id, str(key["id"])),
+                ).fetchone()
+                key_row_id = int(key_row["id"])
                 if self.connectivity is not None:
-                    key_row = connection.execute(
-                        "SELECT id FROM keys WHERE endpoint_id = ? AND outline_key_id = ?",
-                        (endpoint_id, str(key["id"])),
-                    ).fetchone()
                     self.connectivity.assign_free_key(
                         connection,
                         endpoint_id=endpoint_id,
-                        free_key_id=int(key_row["id"]),
                         plan_code="FREE3GB",
+                        free_key_id=key_row_id,
                         quota_bytes=self.trial_limit_bytes,
                         now=now,
                     )
@@ -848,9 +969,20 @@ class ClaimService:
                 )
             except Exception:
                 try:
-                    endpoint_client.delete_key(str(key["id"]))
+                    self._adapter_for_endpoint(endpoint_id, endpoint_client).revoke_auth(grant)
                 finally:
                     raise
+        if key_row_id is not None:
+            self._project_free_generation(
+                telegram_id=telegram_id,
+                key_id=key_row_id,
+                endpoint_id=endpoint_id,
+                key=key,
+                quota_bytes=self.trial_limit_bytes,
+                expires_at=expires_at,
+                grant=grant,
+                now=now,
+            )
         return ClaimResult(access_url=str(key["accessUrl"]), expires_at=expires_at)
 
     def _terminate_key(
@@ -889,8 +1021,17 @@ class ClaimService:
                 ),
             )
         try:
-            endpoint_client = self._client_for_endpoint(row.get("endpoint_id") if hasattr(row, "get") else row["endpoint_id"])
-            endpoint_client.delete_key(str(row["outline_key_id"]))
+            endpoint_id = str(row.get("endpoint_id") if hasattr(row, "get") else row["endpoint_id"])
+            endpoint_client = self._client_for_endpoint(endpoint_id)
+            adapter = self._adapter_for_endpoint(endpoint_id, endpoint_client)
+            grant = {
+                "protocol": "outline",
+                "route_id": f"outline:{endpoint_id}",
+                "endpoint_id": endpoint_id,
+                "external_id": str(row["outline_key_id"]),
+                "access_url": "ss://legacy-redacted",
+            }
+            adapter.revoke_auth(grant)
             getter = getattr(endpoint_client, "get_key", None)
             verified = callable(getter)
             if verified and getter(str(row["outline_key_id"])) is not None:
@@ -925,6 +1066,48 @@ class ClaimService:
                    WHERE key_id = ? AND reason = ?""",
                 (remote_state, now_text if verified else None, row["id"], reason),
             )
+        identity = getattr(self, "identity", None)
+        if identity is not None:
+            try:
+                with self.database.connect() as connection:
+                    generation = None
+                    if IdentityService._table_exists(connection, "credential_generations"):
+                        generation = connection.execute(
+                            """SELECT generation_id FROM credential_generations
+                                WHERE entitlement_key = ? AND endpoint_id = ?
+                                  AND external_id = ?
+                                ORDER BY generation_no DESC LIMIT 1""",
+                            (
+                                f"free:{row['id']}",
+                                endpoint_id,
+                                str(row["outline_key_id"]),
+                            ),
+                        ).fetchone()
+                if generation is not None:
+                    session_result = adapter.terminate_sessions(grant)
+                    sessions_terminated = bool(
+                        isinstance(session_result, dict)
+                        and session_result.get("supported")
+                        and session_result.get("terminated")
+                    )
+                    identity.mark_remote_revoked(
+                        str(generation["generation_id"]),
+                        verified=verified,
+                        # Preserve the legacy free-claim contract: its
+                        # verified Outline deletion has historically been the
+                        # terminal enforcement proof. Paid/multi-protocol
+                        # generations use the stricter worker path above.
+                        sessions_terminated=sessions_terminated or grant["protocol"] == "outline",
+                        now=now_text,
+                    )
+            except Exception as exc:
+                # The termination event is durable; startup reconciliation can
+                # repair the accounting projection if this bookkeeping write
+                # loses a race with another worker.
+                print(
+                    f"free entitlement revocation projection deferred: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
         return True
 
     def enforce_quota(

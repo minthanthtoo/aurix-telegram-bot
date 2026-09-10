@@ -57,6 +57,9 @@ class Outline:
     def list_keys(self):
         return {"accessKeys": []}
 
+    def get_key(self, key_id):
+        return None
+
     def set_data_limit(self, *_args):
         return None
 
@@ -91,6 +94,46 @@ class MvpFeatureTest(unittest.TestCase):
         self.assertTrue(monthly.access_url)
         self.assertEqual(len(self.outline.created), 3)
         self.assertTrue(free.access_url)
+        with self.commerce.database.connect() as connection:
+            generations = connection.execute(
+                """SELECT entitlement_key, status FROM credential_generations
+                   WHERE entitlement_key LIKE 'free:%' ORDER BY generation_no"""
+            ).fetchall()
+            leases = connection.execute(
+                """SELECT entitlement_key, status FROM quota_leases
+                   WHERE entitlement_key LIKE 'free:%' ORDER BY created_at"""
+            ).fetchall()
+        self.assertEqual(len(generations), 3)
+        self.assertTrue(all(row["status"] == "active" for row in generations))
+        self.assertEqual(len(leases), 3)
+        self.assertTrue(all(row["status"] == "active" for row in leases))
+
+    def test_verified_free_expiry_releases_generation_lease(self):
+        self.claims.claim(101, "A", self.now)
+        with self.commerce.database.connect() as connection:
+            generation = connection.execute(
+                "SELECT generation_id FROM credential_generations WHERE entitlement_key LIKE 'free:%'"
+            ).fetchone()
+            lease = connection.execute(
+                "SELECT lease_id FROM quota_leases WHERE generation_id = ?",
+                (generation["generation_id"],),
+            ).fetchone()
+        self.assertEqual(self.claims.revoke_expired(self.now + timedelta(days=2)), 1)
+        with self.commerce.database.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM credential_generations WHERE generation_id = ?",
+                    (generation["generation_id"],),
+                ).fetchone()["status"],
+                "revoked",
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM quota_leases WHERE lease_id = ?",
+                    (lease["lease_id"],),
+                ).fetchone()["status"],
+                "released",
+            )
 
     def test_paid_catalog_contains_50gb_and_100gb_monthly(self):
         plans = {plan.code: plan for plan in self.commerce.plans()}

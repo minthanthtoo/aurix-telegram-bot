@@ -31,6 +31,48 @@ class OutlineGateway(Protocol):
 
 
 @runtime_checkable
+class ConnectivityAdapter(Protocol):
+    """Protocol-neutral boundary for a customer-facing service route.
+
+    Adapters are the only layer allowed to translate provider APIs into the
+    lifecycle contract.  Capabilities are descriptive: an unsupported
+    operation must be reported as unsupported, never inferred from local
+    state or from credential deletion.
+    """
+
+    protocol: str
+
+    @property
+    def capabilities(self) -> dict[str, bool]: ...
+
+    def provision(
+        self, route: dict[str, Any], credential_intent: dict[str, Any]
+    ) -> dict[str, Any]: ...
+
+    def render_managed_config(self, grant: dict[str, Any]) -> dict[str, Any]: ...
+
+    def render_manual_export(self, grant: dict[str, Any]) -> str: ...
+
+    def apply_quota_cap(self, grant: dict[str, Any], absolute_limit: int) -> None: ...
+
+    def read_usage(self, grant: dict[str, Any]) -> dict[str, Any]: ...
+
+    def rotate(self, grant: dict[str, Any]) -> dict[str, Any]: ...
+
+    def revoke_auth(self, grant: dict[str, Any]) -> None: ...
+
+    def verify_auth_revoked(self, grant: dict[str, Any]) -> dict[str, Any]: ...
+
+    def terminate_sessions(self, grant: dict[str, Any]) -> dict[str, Any]: ...
+
+    def probe_management(self, route: dict[str, Any]) -> dict[str, Any]: ...
+
+    def probe_data_plane(self, route: dict[str, Any]) -> dict[str, Any]: ...
+
+    def reconcile(self, route: dict[str, Any]) -> dict[str, Any]: ...
+
+
+@runtime_checkable
 class ReceiptStorageGateway(Protocol):
     configured: bool
     bucket: str | None

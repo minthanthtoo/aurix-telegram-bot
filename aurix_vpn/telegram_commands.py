@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import re
+import os
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -12,6 +13,17 @@ from .commerce import CommerceError
 from .entitlements import OutlineError
 
 UTC = timezone.utc
+
+
+def _device_api_url() -> str:
+    """Return the configured HTTPS device API origin, never a management URL."""
+    from urllib.parse import urlsplit
+
+    value = os.environ.get("AURIX_DEVICE_API_URL", "").strip().rstrip("/")
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        return ""
+    return value
 
 
 def _parse_promo_datetime(value: str) -> datetime:
@@ -319,6 +331,59 @@ class TelegramCommandMixin:
                 chat["id"],
                 f"Your Telegram ID: {telegram_id}{access}",
                 self._customer_keyboard(telegram_id),
+            )
+        elif command == "/pair":
+            identity = getattr(self.commerce, "identity", None)
+            api_url = _device_api_url()
+            if identity is None or not api_url:
+                self.send(chat["id"], "Managed-device pairing is not configured yet.")
+                return
+            try:
+                token = identity.create_pairing_token(telegram_id)
+            except Exception as exc:
+                self.send(chat["id"], "Pairing is temporarily unavailable. Try again shortly.")
+                print(f"pairing token error: {type(exc).__name__}", file=sys.stderr)
+                return
+            self.send(
+                chat["id"],
+                "🔐 AuriX managed-device pairing\n\n"
+                f"API: {api_url}\n"
+                f"One-time token (valid for 5 minutes):\n{token}\n\n"
+                "Enter this token only in the official AuriX client. Do not forward it; "
+                "anyone with it can enroll one device to your account.",
+            )
+        elif command == "/devices":
+            identity = getattr(self.commerce, "identity", None)
+            if identity is None:
+                self.send(chat["id"], "Managed-device control is not configured yet.")
+                return
+            devices = identity.devices_for_account(telegram_id)
+            if not devices:
+                self.send(chat["id"], "No managed devices are enrolled. Use /pair to enroll one.")
+                return
+            lines = ["📱 Your managed devices"]
+            for device in devices:
+                label = str(device.get("label") or "Unnamed device")
+                status = str(device.get("status") or "unknown")
+                last_seen = str(device.get("last_seen_at") or "never")
+                lines.append(f"• {label} · {status} · last seen {last_seen}\n  ID: {device['device_id']}")
+            self.send(chat["id"], "\n".join(lines))
+        elif command == "/revoke_device":
+            identity = getattr(self.commerce, "identity", None)
+            if identity is None or len(args) != 1:
+                self.send(chat["id"], "Usage: /revoke_device <device-id>")
+                return
+            try:
+                revoked = identity.revoke_device(telegram_id, args[0])
+            except Exception as exc:
+                self.send(chat["id"], "Device revocation is temporarily unavailable.")
+                print(f"device revocation error: {type(exc).__name__}", file=sys.stderr)
+                return
+            self.send(
+                chat["id"],
+                "Device revoked. It can no longer request manifests or configurations."
+                if revoked
+                else "That device was not found on your account.",
             )
         elif command in {"/claimpromo", "/giveaway100gb"}:
             promo_code = args[0] if command == "/claimpromo" and args else None

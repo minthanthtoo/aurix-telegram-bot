@@ -1803,6 +1803,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "topup",
                 "myorders",
                 "whoami",
+                "pair",
+                "devices",
                 "help",
                 "admin",
                 "promo",

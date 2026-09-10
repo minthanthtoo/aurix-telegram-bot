@@ -166,8 +166,14 @@ def build_runtime_services(
             region=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_REGION", "sgp1"),
             mark_healthy=check_outline,
         )
+    # Keep construction compatible with the small test doubles used by the
+    # legacy runtime tests, then share the real service seams when present.
     claim_service = ClaimService(database, outline, limit_bytes=PUBLIC_LIMIT_BYTES)
     claim_service.connectivity = connectivity
+    if getattr(commerce, "adapter_registry", None) is not None:
+        claim_service.adapter_registry = commerce.adapter_registry
+    if getattr(commerce, "identity", None) is not None:
+        claim_service.identity = commerce.identity
     if check_outline:
         try:
             outline_info = outline.server_info()

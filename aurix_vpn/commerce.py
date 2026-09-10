@@ -16,12 +16,16 @@ from .commerce_repositories import (
     _PostgresConnection as _PostgresConnection,
 )
 from .commerce_service import CommerceService as CommerceService
+from .identity import IdentityService as IdentityService
+from .route_failover import RouteFailoverService as RouteFailoverService
 
 __all__ = [
     "ApprovalResult",
     "CommerceDatabase",
     "CommerceError",
     "CommerceService",
+    "IdentityService",
+    "RouteFailoverService",
     "JOB_RETRY_DELAY",
     "NOTIFICATION_RETRY_DELAY",
     "OrderResult",
