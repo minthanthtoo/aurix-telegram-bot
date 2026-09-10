@@ -35,7 +35,7 @@ def _int_value(value: Any, *, field: str) -> int:
     try:
         return max(0, int(value or 0))
     except (TypeError, ValueError) as exc:
-            raise ProviderBackendError(f"{field} is not an integer") from exc
+        raise ProviderBackendError(f"{field} is not an integer") from exc
 
 
 def _identifier(value: Any, *, field: str = "external_id") -> str:
