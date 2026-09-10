@@ -101,6 +101,9 @@ class ControlCenterTest(unittest.TestCase):
             self.assertEqual(payload["management_mode"], "read-only")
 
             for endpoint, key in (
+                ("accounts", "accounts"),
+                ("credentials", "credentials"),
+                ("devices", "devices"),
                 ("operations", "jobs"),
                 ("failover", "decisions"),
                 ("audit", "events"),
@@ -112,6 +115,23 @@ class ControlCenterTest(unittest.TestCase):
                 with urllib.request.urlopen(detail_request, timeout=3) as detail_response:
                     detail_payload = json.load(detail_response)
                 self.assertIn(key, detail_payload)
+
+            accounts_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/admin/accounts",
+                headers={"X-Telegram-Init-Data": _init_data("bot-token")},
+            )
+            with urllib.request.urlopen(accounts_request, timeout=3) as accounts_response:
+                accounts_payload = json.load(accounts_response)
+            self.assertEqual(len(accounts_payload["accounts"]), 1)
+            account_id = accounts_payload["accounts"][0]["account_id"]
+            account_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/admin/accounts/{account_id}",
+                headers={"X-Telegram-Init-Data": _init_data("bot-token")},
+            )
+            with urllib.request.urlopen(account_request, timeout=3) as account_response:
+                account_payload = json.load(account_response)
+            self.assertEqual(account_payload["account"]["account_id"], account_id)
+            self.assertNotIn("public_key", json.dumps(account_payload))
 
             endpoint_request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_address[1]}/api/admin/fleet/bkk-a",

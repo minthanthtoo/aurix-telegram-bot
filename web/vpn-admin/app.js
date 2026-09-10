@@ -73,9 +73,28 @@
   }
 
   function renderAccounts(data) {
-    const rows = (data.accounts || []).map((a) => `<tr><td><strong>${esc(a.account_id)}</strong><small>Telegram ${esc(a.telegram_id)}</small></td><td>${badge(a.status, a.status === "active" ? "good" : "warn")}</td><td>${fmt(a.active_device_count)} / ${fmt(a.device_count)}</td><td>${fmt(a.active_subscription_count)}</td><td>${esc(a.updated_at)}</td></tr>`);
-    $("view-accounts").innerHTML = `<div class="section-intro"><div><p class="eyebrow">CUSTOMER CONTROL</p><h2>Accounts</h2><p>Opaque account ownership and entitlement posture, without access URLs or device public keys.</p></div><input id="account-search" class="search" placeholder="Search account or Telegram ID" aria-label="Search accounts"></div>${table(["Account", "Status", "Devices", "Subscriptions", "Updated"], rows)}`;
+    const rows = (data.accounts || []).map((a) => `<tr><td><button class="link-button account-link" data-account="${esc(a.account_id)}">${esc(a.account_id)}</button><small>Telegram ${esc(a.telegram_id)}</small></td><td>${badge(a.status, a.status === "active" ? "good" : "warn")}</td><td>${fmt(a.active_device_count)} / ${fmt(a.device_count)}</td><td>${fmt(a.active_subscription_count)}</td><td>${esc(a.updated_at)}</td></tr>`);
+    $("view-accounts").innerHTML = `<div class="section-intro"><div><p class="eyebrow">CUSTOMER CONTROL</p><h2>Accounts</h2><p>Opaque account ownership and entitlement posture, without access URLs or device public keys. Select an account for safe route and device detail.</p></div><input id="account-search" class="search" placeholder="Search account or Telegram ID" aria-label="Search accounts"></div>${table(["Account", "Status", "Devices", "Subscriptions", "Updated"], rows)}<div id="account-detail" class="endpoint-detail"></div>`;
     $("account-search").addEventListener("change", () => load("accounts", `?q=${encodeURIComponent($("account-search").value)}`));
+    document.querySelectorAll(".account-link").forEach((button) => button.addEventListener("click", () => loadAccountDetail(button.dataset.account)));
+  }
+
+  function renderAccountDetail(data) {
+    const account = data.account || {};
+    const devices = (account.devices || []).map((d) => `<tr><td><strong>${esc(d.label || "Unnamed device")}</strong><small>${esc(d.device_id)}</small></td><td>${badge(d.status, d.status === "active" ? "good" : "warn")}</td><td>${esc(d.last_seen_at || "Never")}</td><td>${esc(d.revoked_at || "—")}</td></tr>`);
+    const routes = (account.routes || []).map((r) => `<tr><td><strong>${esc(r.protocol)}</strong><small>${esc(r.route_id)}</small></td><td>${esc(r.endpoint_id)}</td><td>${esc(r.region)}</td><td>${esc(r.generation)}</td></tr>`);
+    $("account-detail").innerHTML = `<article class="panel"><div class="panel-head"><div><p class="eyebrow">ACCOUNT DETAIL</p><h2>${esc(account.account_id)}</h2><p class="muted">Telegram ${esc(account.telegram_id)} · ${esc(account.status)}</p></div><span class="read-only">NO SECRETS</span></div><div class="metrics mini">${card("Devices", fmt((account.devices || []).length), "enrolled records")}${card("Routes", fmt((account.routes || []).length), "active observed paths")}${card("Revocation epoch", fmt(account.revocation_epoch), "account-wide control")}</div><div class="grid two"><div><h3>Devices</h3>${table(["Device", "State", "Last seen", "Revoked"], devices)}</div><div><h3>Active routes</h3>${table(["Protocol / route", "Endpoint", "Region", "Generation"], routes)}</div></div></article>`;
+  }
+
+  async function loadAccountDetail(accountId) {
+    if (!accountId) return;
+    try {
+      const data = await api(`/api/admin/accounts/${encodeURIComponent(accountId)}`);
+      renderAccountDetail(data);
+    } catch (error) {
+      $("notice").textContent = error.message;
+      $("notice").classList.remove("hidden");
+    }
   }
 
   function renderCredentials(data) {
