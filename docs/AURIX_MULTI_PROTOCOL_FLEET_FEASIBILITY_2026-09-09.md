@@ -1183,13 +1183,14 @@ a production activation decision.
 
 The read-only Control Center now shows Outline as enabled, Xray/Hysteria2 as
 evidence-gated candidates, and WireGuard as unimplemented. It does not register
-candidate protocols or expose secrets. The current local verification is 297
-passing application tests out of 298 discovered entries; the sole discovery
+candidate protocols or expose secrets. The current local verification is 299
+passing application tests out of 300 discovered entries; the sole discovery
 error is the environment-only `cv2` import failure in `test_pay_monitor.py`.
 
 The implementation commits are `151186f` (provider backends), `46b9b99`
-(readiness record), `60a9009` (operator readiness view), and `890c165`
-(verification refresh). Remaining release gates are unchanged: approved
+(readiness record), `60a9009` (operator readiness view), `890c165`
+(verification refresh), and `e9b978d` (authenticated node-agent integration
+coverage). Remaining release gates are unchanged: approved
 canary-only node-agent binding, Hysteria2 isolation, Myanmar client paths,
 PostgreSQL concurrency/restore, staged 2/5/expected-load tests, 24–48 hour
 soak, cost evidence, and explicit approval before any server mutation.
