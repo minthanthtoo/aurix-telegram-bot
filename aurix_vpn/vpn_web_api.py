@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .commerce import CommerceError
+from .connectivity import ConnectivityError
 from .device_api import DeviceAPIService, ManifestSigner, create_device_wsgi_app
 from .entitlements import OutlineError
 from .runtime import RuntimeServices, build_runtime_services
@@ -340,6 +341,62 @@ class AuriXVpnWebApplication:
                 }
             )
         return safe
+
+    def admin_endpoint(self, endpoint_id: str) -> dict[str, Any] | None:
+        """Return one endpoint's safe operational detail for the admin console."""
+        registry = getattr(self.runtime, "connectivity", None)
+        endpoint_method = getattr(registry, "endpoint", None)
+        if callable(endpoint_method):
+            try:
+                raw = endpoint_method(str(endpoint_id))
+            except ConnectivityError:
+                raw = None
+        else:
+            raw = None
+        if raw is None:
+            raw = next(
+                (item for item in self.admin_fleet() if str(item.get("id")) == str(endpoint_id)),
+                None,
+            )
+        if raw is None:
+            return None
+        safe_endpoint = {
+            key: raw.get(key)
+            for key in (
+                "id", "code", "provider", "region", "state",
+                "accepts_new_assignments", "outline_version", "max_active_keys",
+                "reserved_transfer_bytes", "active_assignments", "last_healthy_at",
+            )
+            if key in raw
+        }
+        database = getattr(self.runtime, "commerce_database", None)
+        assignments: list[dict[str, Any]] = []
+        if database is not None:
+            with database.connect() as connection:
+                rows = connection.execute(
+                    """SELECT id, endpoint_id, subscription_id, free_key_id,
+                              plan_code, status, reason, reserved_quota_bytes,
+                              assigned_at, released_at
+                           FROM endpoint_assignments
+                          WHERE endpoint_id = ?
+                          ORDER BY assigned_at DESC LIMIT 200""",
+                    (str(endpoint_id),),
+                ).fetchall()
+            assignments = [dict(row) for row in rows]
+        identity = getattr(self.runtime.commerce, "identity", None)
+        generations = []
+        method = getattr(identity, "admin_generations", None)
+        if callable(method):
+            generations = [
+                item
+                for item in method(limit=200)
+                if str(item.get("endpoint_id")) == str(endpoint_id)
+            ]
+        return {
+            "endpoint": safe_endpoint,
+            "assignments": assignments,
+            "credentials": generations,
+        }
 
     def admin_summary(self) -> dict[str, Any]:
         """Read-only overview for the AuriX Control Center."""
@@ -685,6 +742,14 @@ def make_handler(
                 return
             if path == "/api/admin/fleet":
                 self._write(200, {"endpoints": application.admin_fleet()})
+                return
+            fleet_prefix = "/api/admin/fleet/"
+            if path.startswith(fleet_prefix):
+                detail = application.admin_endpoint(unquote(path[len(fleet_prefix) :]))
+                if detail is None:
+                    self._error(404, "Endpoint not found")
+                else:
+                    self._write(200, detail)
                 return
             if path == "/api/admin/accounts":
                 self._write(

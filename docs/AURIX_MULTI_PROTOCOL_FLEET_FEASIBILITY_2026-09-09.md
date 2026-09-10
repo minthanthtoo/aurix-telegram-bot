@@ -1181,7 +1181,7 @@ a production activation decision.
 
 ### Operator visibility and verification
 
-The read-only Control Center now shows Outline as enabled, Xray/Hysteria2 as
+The read-only Control Center now shows safe fleet/node detail, Outline as enabled, Xray/Hysteria2 as
 evidence-gated candidates, and WireGuard as unimplemented. It does not register
 candidate protocols or expose secrets. The latest local verification passes all
 337 discovered tests after the reproducible Python environment installed OpenCV;

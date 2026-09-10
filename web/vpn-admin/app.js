@@ -49,8 +49,27 @@
   }
 
   function renderFleet(data) {
-    const rows = (data.endpoints || []).map((e) => `<tr><td><strong>${esc(e.code || e.id)}</strong><small>${esc(e.id)}</small></td><td>${esc(e.provider)}</td><td>${esc(e.region)}</td><td>${badge(e.state, e.state === "ACTIVE" ? "good" : "warn")}</td><td>${fmt(e.active_assignments)}${e.max_active_keys ? ` / ${fmt(e.max_active_keys)}` : ""}</td><td>${esc(e.last_healthy_at || "—")}</td></tr>`);
-    $("view-fleet").innerHTML = `<div class="section-intro"><div><p class="eyebrow">INFRASTRUCTURE</p><h2>Fleet / nodes</h2><p>Safe endpoint metadata only. Management URLs, certificates, public addresses, and provider IDs stay server-side.</p></div><span class="read-only">READ ONLY</span></div>${table(["Endpoint", "Provider", "Region", "State", "Assignments", "Last healthy"], rows)}`;
+    const rows = (data.endpoints || []).map((e) => `<tr><td><button class="link-button endpoint-link" data-endpoint="${esc(e.id)}">${esc(e.code || e.id)}</button><small>${esc(e.id)}</small></td><td>${esc(e.provider)}</td><td>${esc(e.region)}</td><td>${badge(e.state, e.state === "ACTIVE" ? "good" : "warn")}</td><td>${fmt(e.active_assignments)}${e.max_active_keys ? ` / ${fmt(e.max_active_keys)}` : ""}</td><td>${esc(e.last_healthy_at || "—")}</td></tr>`);
+    $("view-fleet").innerHTML = `<div class="section-intro"><div><p class="eyebrow">INFRASTRUCTURE</p><h2>Fleet / nodes</h2><p>Safe endpoint metadata only. Management URLs, certificates, public addresses, and provider IDs stay server-side. Select a node for assignment and credential lifecycle detail.</p></div><span class="read-only">READ ONLY</span></div>${table(["Endpoint", "Provider", "Region", "State", "Assignments", "Last healthy"], rows)}<div id="endpoint-detail" class="endpoint-detail"></div>`;
+    document.querySelectorAll(".endpoint-link").forEach((button) => button.addEventListener("click", () => loadEndpointDetail(button.dataset.endpoint)));
+  }
+
+  function renderEndpointDetail(data) {
+    const endpoint = data.endpoint || {};
+    const assignments = (data.assignments || []).map((a) => `<tr><td><strong>${esc(a.plan_code)}</strong><small>${esc(a.id)}</small></td><td>${esc(a.subscription_id || `free:${a.free_key_id}`)}</td><td>${badge(a.status, a.status === "active" ? "good" : "neutral")}</td><td>${fmt(a.reserved_quota_bytes)}</td><td>${esc(a.reason || "—")}</td></tr>`);
+    const credentials = (data.credentials || []).map((c) => `<tr><td><strong>${esc(c.protocol)}</strong><small>${esc(c.generation_id)}</small></td><td>${esc(c.entitlement_key)}</td><td>${badge(c.status, c.status === "active" ? "good" : "neutral")}</td><td>${badge(c.remote_state, c.remote_state === "observed" ? "good" : "warn")}</td><td>${esc(c.created_at)}</td></tr>`);
+    $("endpoint-detail").innerHTML = `<article class="panel"><div class="panel-head"><div><p class="eyebrow">NODE DETAIL</p><h2>${esc(endpoint.code || endpoint.id)}</h2><p class="muted">${esc(endpoint.provider)} · ${esc(endpoint.region)} · ${esc(endpoint.state)}</p></div><span class="read-only">NO SECRETS</span></div><div class="metrics mini">${card("Active assignments", fmt(endpoint.active_assignments), endpoint.max_active_keys ? `of ${fmt(endpoint.max_active_keys)}` : "no hard cap")}${card("Credentials", fmt(credentials.length), "generation records")}${card("Allocation", endpoint.accepts_new_assignments ? "open" : "paused", "new assignments", endpoint.accepts_new_assignments ? "good" : "warn")}</div><div class="grid two"><div><h3>Assignments</h3>${table(["Plan", "Entitlement", "State", "Reserved bytes", "Reason"], assignments)}</div><div><h3>Credential generations</h3>${table(["Protocol", "Entitlement", "State", "Remote", "Created"], credentials)}</div></div></article>`;
+  }
+
+  async function loadEndpointDetail(endpointId) {
+    if (!endpointId) return;
+    try {
+      const data = await api(`/api/admin/fleet/${encodeURIComponent(endpointId)}`);
+      renderEndpointDetail(data);
+    } catch (error) {
+      $("notice").textContent = error.message;
+      $("notice").classList.remove("hidden");
+    }
   }
 
   function renderAccounts(data) {

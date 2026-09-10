@@ -33,6 +33,20 @@ class ControlCenterTest(unittest.TestCase):
             list_pending_orders=lambda limit=100: [],
         )
         connectivity = SimpleNamespace(
+            endpoint=lambda endpoint_id: {
+                "id": endpoint_id,
+                "code": "BKK-A",
+                "provider": "manual",
+                "region": "bkk1",
+                "state": "ACTIVE",
+                "accepts_new_assignments": 1,
+                "outline_version": "x",
+                "max_active_keys": 100,
+                "reserved_transfer_bytes": 1,
+                "public_address": "198.51.100.10",
+                "provider_resource_id": "do-secret",
+                "management_url_ciphertext": "secret",
+            },
             list_endpoints=lambda: [{
                 "id": "bkk-a", "code": "BKK-A", "provider": "manual", "provider_resource_id": "do-secret",
                 "region": "bkk1", "state": "ACTIVE", "accepts_new_assignments": 1,
@@ -65,6 +79,12 @@ class ControlCenterTest(unittest.TestCase):
         self.assertNotIn("management_url", json.dumps(fleet))
         self.assertNotIn("provider_resource_id", json.dumps(fleet))
 
+        detail = app.admin_endpoint("bkk-a")
+        self.assertEqual(detail["endpoint"]["code"], "BKK-A")
+        self.assertNotIn("public_address", json.dumps(detail))
+        self.assertNotIn("provider_resource_id", json.dumps(detail))
+        self.assertNotIn("management_url_ciphertext", json.dumps(detail))
+
     def test_admin_api_requires_signed_allowlisted_telegram_identity(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
             app = AuriXVpnWebApplication(self.runtime)
@@ -92,6 +112,15 @@ class ControlCenterTest(unittest.TestCase):
                 with urllib.request.urlopen(detail_request, timeout=3) as detail_response:
                     detail_payload = json.load(detail_response)
                 self.assertIn(key, detail_payload)
+
+            endpoint_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/admin/fleet/bkk-a",
+                headers={"X-Telegram-Init-Data": _init_data("bot-token")},
+            )
+            with urllib.request.urlopen(endpoint_request, timeout=3) as endpoint_response:
+                endpoint_payload = json.load(endpoint_response)
+            self.assertEqual(endpoint_payload["endpoint"]["code"], "BKK-A")
+            self.assertNotIn("public_address", json.dumps(endpoint_payload))
 
             with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "999"}, clear=False):
                 denied_app = AuriXVpnWebApplication(self.runtime)

@@ -156,7 +156,7 @@ workspace.
 
 The continuation added and committed the authenticated WSGI node-agent boundary,
 the reproducible node-agent client/config writer, a real-localhost HTTP transport
-round-trip, read-only Control Center failover/audit visibility, a bounded staged
+round-trip, redacted Control Center fleet-detail/failover/audit visibility, a bounded staged
 2/5/16-customer mixed Xray/Hysteria2 contract matrix, and confirmed operator
 drain queueing. The local matrix proves shared agent-boundary isolation, quota
 assignment, usage/probe/reconcile wiring, latency sampling, and cleanup under
