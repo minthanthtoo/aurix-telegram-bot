@@ -1,6 +1,20 @@
 # AuriX AI gateway
 
-Status: **live and verified 2026-09-09 (Asia/Rangoon)**
+Status: **source implementation current; public deployment parity must be rechecked**
+
+The repository now contains the durable conversation and AI-console
+implementation. A public deployment is not considered current merely because
+health and mode endpoints respond: run the read-only parity probe before
+calling a rollout complete:
+
+```sh
+python scripts/aurix_ai_release_probe.py --base-url https://ai.aurix-mart.tech
+```
+
+On 2026-09-11, the public origin passed health and mode checks but served
+older browser assets and returned `404` for `/api/conversations`; the current
+source therefore remains ahead of that deployment until a controlled rollout
+and the probe pass.
 
 The AI product uses the existing 9Router as its model provider while giving
 customers a stable AuriX hostname and a small server-side policy boundary:
@@ -270,7 +284,7 @@ Before enabling the service, verify that the configured model route is present
 and that an authenticated direct 9Router request returns the expected model.
 Do not print the API key or prompt contents in a diagnostic log.
 
-## Live Caddy route
+## Intended Caddy route and deployment gate
 
 The Caddy configuration routes the AuriX AI hostname to the live container:
 
@@ -281,17 +295,19 @@ ai.aurix-mart.tech {
 }
 ```
 
-The live deployment backed up the active Caddyfile, validated the configuration,
-recreated the Caddy container so the read-only bind-mounted file was refreshed,
-and verified these HTTPS endpoints without `-k`:
+The intended deployment backs up the active Caddyfile, validates the
+configuration, recreates the Caddy container when a read-only bind-mounted
+file is refreshed, and verifies these HTTPS endpoints without `-k`:
 
 ```sh
 curl -fsS https://ai.aurix-mart.tech/api/healthz
 curl -fsS https://ai.aurix-mart.tech/api/modes
 ```
 
-An authenticated `/api/chat` request returned `PUBLIC_AURIX_AI_OK` with the
-current configured route and an unauthenticated request returned 401.
+The deployment gate additionally requires `/api/conversations` and the
+admin-report route to be present, the browser assets to match the source
+snapshot, and an unauthenticated `/api/chat` request to return 401. The probe
+never performs an authenticated model call or mutates the deployment.
 The old `.sslip.io` hostname remains available as an infrastructure/admin
 compatibility alias and is not used in customer documentation.
 
