@@ -131,6 +131,47 @@ def _safe_endpoint(item: dict[str, Any]) -> dict[str, Any]:
     return {key: item[key] for key in allowed if key in item}
 
 
+def _safe_protocol_observation(item: dict[str, Any]) -> dict[str, Any]:
+    """Expose protocol evidence fields without trusting arbitrary details."""
+    allowed = {
+        "observation_id",
+        "profile_id",
+        "endpoint_id",
+        "protocol",
+        "signal",
+        "status",
+        "latency_ms",
+        "observed_at",
+        "expires_at",
+        "source",
+        "created_at",
+    }
+    result = {key: item[key] for key in allowed if key in item}
+    detail_keys = {
+        "error",
+        "reason",
+        "network_bucket",
+        "sample_count",
+        "active_users",
+        "status_code",
+        "quota_enforced",
+        "restart_persisted",
+        "session_termination",
+        "client_path",
+    }
+    raw_details = item.get("details")
+    if isinstance(raw_details, dict):
+        result["details"] = {
+            str(key): value
+            for key, value in raw_details.items()
+            if str(key).strip().lower() in detail_keys
+            and isinstance(value, (bool, int, float, str))
+        }
+    else:
+        result["details"] = {}
+    return result
+
+
 def _safe_giveaway(giveaway: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "exists",
@@ -374,6 +415,14 @@ class AuriXVpnWebApplication:
         profile_method = getattr(registry, "list_protocol_profiles", None)
         if callable(profile_method):
             safe_endpoint["protocols"] = profile_method(str(endpoint_id))
+        observation_method = getattr(registry, "list_protocol_observations", None)
+        observations: list[dict[str, Any]] = []
+        if callable(observation_method):
+            observations = [
+                _safe_protocol_observation(item)
+                for item in observation_method(str(endpoint_id), limit=200)
+                if isinstance(item, dict)
+            ]
         database = getattr(self.runtime, "commerce_database", None)
         assignments: list[dict[str, Any]] = []
         if database is not None:
@@ -401,6 +450,7 @@ class AuriXVpnWebApplication:
             "endpoint": safe_endpoint,
             "assignments": assignments,
             "credentials": generations,
+            "protocol_observations": observations,
         }
 
     def admin_summary(self) -> dict[str, Any]:

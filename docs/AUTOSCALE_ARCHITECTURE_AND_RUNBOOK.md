@@ -158,6 +158,24 @@ cpu_percent, memory_percent, peak_mbps
 management_latency_ms, last_error
 ```
 
+### `endpoint_protocol_profiles` and `endpoint_protocol_observations`
+
+Protocol readiness is separate from endpoint-wide capacity. A profile binds an
+endpoint to one adapter and remains non-allocatable unless its status is
+`enabled`. The observation ledger records append-only evidence by profile:
+
+```text
+profile_id, endpoint_id, protocol
+signal, status, latency_ms
+bounded details, observed_at, expires_at, source, created_at
+```
+
+Observation details are scalar and allow-listed before persistence. They may
+describe management reachability, client-path results, quota enforcement,
+restart persistence, or session behavior, but they never contain management
+URLs, credentials, or provider secrets. Evidence supports operator promotion
+and diagnosis; it does not promote a candidate profile automatically.
+
 ### `endpoint_plan_limits`
 
 Admin-owned allocation policy:

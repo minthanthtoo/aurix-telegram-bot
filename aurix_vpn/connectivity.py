@@ -42,6 +42,26 @@ class EndpointAssignment:
 class EndpointRegistry:
     """PostgreSQL/SQLite-compatible endpoint and assignment repository."""
 
+    _PROTOCOL_OBSERVATION_STATUSES = {
+        "healthy",
+        "degraded",
+        "failed",
+        "unsupported",
+        "unknown",
+    }
+    _SAFE_OBSERVATION_DETAIL_KEYS = {
+        "error",
+        "reason",
+        "network_bucket",
+        "sample_count",
+        "active_users",
+        "status_code",
+        "quota_enforced",
+        "restart_persisted",
+        "session_termination",
+        "client_path",
+    }
+
     def __init__(self, database: Any, secret_key: bytes | str):
         self.database = database
         try:
@@ -170,6 +190,186 @@ class EndpointRegistry:
             except (TypeError, ValueError, json.JSONDecodeError):
                 capabilities = {}
             item["capabilities"] = capabilities if isinstance(capabilities, dict) else {}
+            result.append(item)
+        return result
+
+    @classmethod
+    def _safe_protocol_observation_details(
+        cls, details: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Keep protocol evidence scalar and non-secret before persistence."""
+        safe: dict[str, Any] = {}
+        if details is None:
+            return safe
+        if not isinstance(details, dict):
+            raise ConnectivityError("protocol observation details are invalid")
+        for raw_key, value in details.items():
+            key = str(raw_key).strip().lower()
+            if key not in cls._SAFE_OBSERVATION_DETAIL_KEYS:
+                continue
+            if isinstance(value, bool):
+                safe[key] = value
+            elif isinstance(value, int):
+                safe[key] = value
+            elif isinstance(value, float):
+                if value == value and abs(value) != float("inf"):
+                    safe[key] = value
+            elif isinstance(value, str):
+                safe[key] = value[:256]
+        return safe
+
+    @staticmethod
+    def _observation_time(value: datetime | str | None) -> datetime:
+        if value is None:
+            return datetime.now(UTC)
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).astimezone(UTC)
+
+    def record_protocol_observation(
+        self,
+        endpoint_id: str,
+        protocol: str,
+        *,
+        signal: str = "management",
+        status: str = "healthy",
+        details: dict[str, Any] | None = None,
+        latency_ms: float | None = None,
+        observed_at: datetime | str | None = None,
+        expires_at: datetime | str | None = None,
+        source: str = "operator",
+        now: datetime | str | None = None,
+    ) -> dict[str, Any]:
+        """Append one safe, protocol-scoped health/evidence observation."""
+        endpoint = str(endpoint_id or "").strip()
+        transport = str(protocol or "").strip().lower()
+        observation_signal = str(signal or "").strip().lower()
+        observation_status = str(status or "").strip().lower()
+        observation_source = str(source or "").strip().lower()
+        if not endpoint or len(endpoint) > 128:
+            raise ConnectivityError("endpoint ID is invalid")
+        if not transport or len(transport) > 64 or any(char.isspace() for char in transport):
+            raise ConnectivityError("protocol is invalid")
+        if not observation_signal or len(observation_signal) > 64 or any(
+            char.isspace() for char in observation_signal
+        ):
+            raise ConnectivityError("protocol observation signal is invalid")
+        if observation_status not in self._PROTOCOL_OBSERVATION_STATUSES:
+            raise ConnectivityError("protocol observation status is invalid")
+        if not observation_source or len(observation_source) > 64 or any(
+            char.isspace() for char in observation_source
+        ):
+            raise ConnectivityError("protocol observation source is invalid")
+        if latency_ms is not None and not 0 <= float(latency_ms) <= 120_000:
+            raise ConnectivityError("protocol observation latency is invalid")
+        created = self._observation_time(now)
+        observed = self._observation_time(observed_at) if observed_at is not None else created
+        if observed > created + timedelta(minutes=5):
+            raise ConnectivityError("protocol observation cannot be far in the future")
+        expires = self._observation_time(expires_at) if expires_at is not None else None
+        if expires is not None and expires <= observed:
+            raise ConnectivityError("protocol observation expiry must be after observation")
+        timestamp = created.isoformat()
+        observed_text = observed.isoformat()
+        expires_text = expires.isoformat() if expires is not None else None
+        safe_details = self._safe_protocol_observation_details(details)
+        observation_id = uuid.uuid4().hex
+        profile_id = f"{transport}:{endpoint}"
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            profile = connection.execute(
+                """SELECT profile_id FROM endpoint_protocol_profiles
+                    WHERE profile_id = ? AND endpoint_id = ? AND protocol = ?""",
+                (profile_id, endpoint, transport),
+            ).fetchone()
+            if profile is None:
+                raise ConnectivityError("protocol profile does not exist")
+            connection.execute(
+                """INSERT INTO endpoint_protocol_observations
+                   (observation_id, profile_id, endpoint_id, protocol, signal, status,
+                    details_json, latency_ms, observed_at, expires_at, source, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    observation_id,
+                    profile_id,
+                    endpoint,
+                    transport,
+                    observation_signal,
+                    observation_status,
+                    json.dumps(safe_details, sort_keys=True, separators=(",", ":")),
+                    None if latency_ms is None else float(latency_ms),
+                    observed_text,
+                    expires_text,
+                    observation_source,
+                    timestamp,
+                ),
+            )
+            if observation_status == "healthy":
+                connection.execute(
+                    """UPDATE endpoint_protocol_profiles
+                          SET last_healthy_at = CASE
+                                WHEN last_healthy_at IS NULL OR last_healthy_at < ? THEN ?
+                                ELSE last_healthy_at END
+                        WHERE profile_id = ?""",
+                    (observed_text, observed_text, profile_id),
+                )
+        return {
+            "observation_id": observation_id,
+            "profile_id": profile_id,
+            "endpoint_id": endpoint,
+            "protocol": transport,
+            "signal": observation_signal,
+            "status": observation_status,
+            "details": safe_details,
+            "latency_ms": None if latency_ms is None else float(latency_ms),
+            "observed_at": observed_text,
+            "expires_at": expires_text,
+            "source": observation_source,
+            "created_at": timestamp,
+        }
+
+    def list_protocol_observations(
+        self,
+        endpoint_id: str | None = None,
+        protocol: str | None = None,
+        signal: str | None = None,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return recent protocol evidence without exposing credential material."""
+        clauses: list[str] = []
+        values: list[Any] = []
+        if endpoint_id is not None:
+            clauses.append("endpoint_id = ?")
+            values.append(str(endpoint_id))
+        if protocol is not None:
+            clauses.append("protocol = ?")
+            values.append(str(protocol).strip().lower())
+        if signal is not None:
+            clauses.append("signal = ?")
+            values.append(str(signal).strip().lower())
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        bounded_limit = max(1, min(int(limit), 200))
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT observation_id, profile_id, endpoint_id, protocol, signal,
+                          status, details_json, latency_ms, observed_at, expires_at,
+                          source, created_at
+                     FROM endpoint_protocol_observations"""
+                + where
+                + " ORDER BY observed_at DESC, observation_id DESC LIMIT ?",
+                tuple(values + [bounded_limit]),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                details = json.loads(str(item.pop("details_json") or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                details = {}
+            item["details"] = details if isinstance(details, dict) else {}
             result.append(item)
         return result
 

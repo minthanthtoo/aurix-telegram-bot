@@ -36,6 +36,11 @@ target-generation verification. A candidate or disabled profile therefore cannot
 be reached by a queued or in-flight move; this is a local invariant, not live
 protocol evidence.
 
+Protocol-specific observations are stored separately from endpoint-wide capacity
+snapshots, so management, client-path, quota, restart, and session evidence can
+be reviewed per transport without promoting a candidate profile. Observation
+records are bounded and redacted before persistence.
+
 Those external gates remain ordered: validate one disposable canary per protocol,
 then run staged 2/5/expected concurrency and speed/soak measurements on approved
 targets before registering either protocol in the production adapter registry.

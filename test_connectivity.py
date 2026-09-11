@@ -123,6 +123,40 @@ class EndpointRegistryTest(unittest.TestCase):
                 "legacy-default",
             )
 
+    def test_protocol_observations_are_safe_append_only_evidence(self):
+        now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+        self.registry.register_protocol_profile(
+            "legacy-default", "xray", status="candidate", now=now
+        )
+        observation = self.registry.record_protocol_observation(
+            "legacy-default",
+            "xray",
+            signal="client_path",
+            status="degraded",
+            details={
+                "network_bucket": "mm-mpt",
+                "client_path": "udp-timeout",
+                "secret": "must-not-persist",
+            },
+            latency_ms=321.5,
+            observed_at=now,
+            expires_at=now.replace(hour=1),
+            source="canary",
+            now=now,
+        )
+        self.assertEqual(observation["profile_id"], "xray:legacy-default")
+        self.assertNotIn("secret", observation["details"])
+        listed = self.registry.list_protocol_observations(
+            "legacy-default", protocol="xray", signal="client_path"
+        )
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["status"], "degraded")
+        self.assertEqual(listed[0]["details"]["client_path"], "udp-timeout")
+        with self.assertRaisesRegex(ConnectivityError, "profile does not exist"):
+            self.registry.record_protocol_observation(
+                "legacy-default", "hysteria2", now=now
+            )
+
     def test_transfer_assignment_preserves_identity_and_moves_capacity(self):
         now = datetime.now(UTC)
         with self.database.connect() as connection:

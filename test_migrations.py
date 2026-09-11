@@ -125,6 +125,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 7, "opaque_accounts_and_managed_devices"),
                     ("commerce", 8, "notification_delivery_leases"),
                     ("commerce", 9, "endpoint_protocol_profiles"),
+                    ("commerce", 10, "protocol_health_observations"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),
@@ -132,6 +133,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("free_access", 5, "durable_free_provisioning_jobs"),
                     ("free_access", 6, "durable_giveaway_provisioning_jobs"),
                     ("free_access", 7, "endpoint_protocol_profiles"),
+                    ("free_access", 8, "protocol_health_observations"),
                 ],
             )
 

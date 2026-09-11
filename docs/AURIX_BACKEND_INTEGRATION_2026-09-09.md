@@ -123,6 +123,12 @@ load test, or speed test was changed or performed.
   failover target selector, drain planner, assignment transfer, and verified
   target-generation attach now apply that gate as well, and reject a target
   route whose protocol differs from the source generation.
+- Protocol health evidence: commerce migration 10 and free-access migration 8
+  add an append-only, protocol-scoped observation ledger. Only bounded scalar
+  evidence fields are persisted, and the Control Center can inspect recent
+  management/client-path/quota/restart observations without receiving secrets.
+  Observations inform promotion and operations but do not enable a candidate
+  profile or constitute live compatibility proof by themselves.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates
@@ -176,8 +182,8 @@ queueing pauses new source assignments and preserves order/payment/entitlement
 identity while the verified worker owns target provision, probes, assignment
 transfer, lease transfer, and commit.
 
-The current checkout has `339` discovered test entries, and complete discovery
-passes (`Ran 339 tests ... OK`) after the reproducible Python environment added
+The current checkout has `341` discovered test entries, and complete discovery
+passes (`Ran 341 tests ... OK`) after the reproducible Python environment added
 the previously missing OpenCV dependency. Ruff, Python compilation, JavaScript
 syntax validation, and `git diff --check` pass for the continuation files. Notification
 delivery now claims due rows with a bounded lease and token-guarded completion,

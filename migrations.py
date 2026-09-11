@@ -410,6 +410,46 @@ FREE_ACCESS_MIGRATIONS = (
                 ON CONFLICT(endpoint_id, protocol) DO NOTHING""",
         ),
     ),
+    Migration(
+        8,
+        "protocol_health_observations",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_protocol_observations (
+                   observation_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES endpoint_protocol_profiles(profile_id),
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   protocol TEXT NOT NULL,
+                   signal TEXT NOT NULL,
+                   status TEXT NOT NULL
+                       CHECK (status IN ('healthy', 'degraded', 'failed', 'unsupported', 'unknown')),
+                   details_json TEXT NOT NULL DEFAULT '{}',
+                   latency_ms REAL,
+                   observed_at TEXT NOT NULL,
+                   expires_at TEXT,
+                   source TEXT NOT NULL,
+                   created_at TEXT NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_protocol_observations_lookup ON endpoint_protocol_observations(endpoint_id, protocol, signal, observed_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_protocol_observations (
+                   observation_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES endpoint_protocol_profiles(profile_id),
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   protocol TEXT NOT NULL,
+                   signal TEXT NOT NULL,
+                   status TEXT NOT NULL
+                       CHECK (status IN ('healthy', 'degraded', 'failed', 'unsupported', 'unknown')),
+                   details_json TEXT NOT NULL DEFAULT '{}',
+                   latency_ms DOUBLE PRECISION,
+                   observed_at TIMESTAMPTZ NOT NULL,
+                   expires_at TIMESTAMPTZ,
+                   source TEXT NOT NULL,
+                   created_at TIMESTAMPTZ NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_protocol_observations_lookup ON endpoint_protocol_observations(endpoint_id, protocol, signal, observed_at)",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (
@@ -1121,6 +1161,46 @@ COMMERCE_MIGRATIONS = (
                       '{}', verified_at, last_healthy_at, created_at
                  FROM vpn_endpoints
                 ON CONFLICT(endpoint_id, protocol) DO NOTHING""",
+        ),
+    ),
+    Migration(
+        10,
+        "protocol_health_observations",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_protocol_observations (
+                   observation_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES endpoint_protocol_profiles(profile_id),
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   protocol TEXT NOT NULL,
+                   signal TEXT NOT NULL,
+                   status TEXT NOT NULL
+                       CHECK (status IN ('healthy', 'degraded', 'failed', 'unsupported', 'unknown')),
+                   details_json TEXT NOT NULL DEFAULT '{}',
+                   latency_ms REAL,
+                   observed_at TEXT NOT NULL,
+                   expires_at TEXT,
+                   source TEXT NOT NULL,
+                   created_at TEXT NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_protocol_observations_lookup ON endpoint_protocol_observations(endpoint_id, protocol, signal, observed_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_protocol_observations (
+                   observation_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL REFERENCES endpoint_protocol_profiles(profile_id),
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   protocol TEXT NOT NULL,
+                   signal TEXT NOT NULL,
+                   status TEXT NOT NULL
+                       CHECK (status IN ('healthy', 'degraded', 'failed', 'unsupported', 'unknown')),
+                   details_json TEXT NOT NULL DEFAULT '{}',
+                   latency_ms DOUBLE PRECISION,
+                   observed_at TIMESTAMPTZ NOT NULL,
+                   expires_at TIMESTAMPTZ,
+                   source TEXT NOT NULL,
+                   created_at TIMESTAMPTZ NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_protocol_observations_lookup ON endpoint_protocol_observations(endpoint_id, protocol, signal, observed_at)",
         ),
     ),
 )

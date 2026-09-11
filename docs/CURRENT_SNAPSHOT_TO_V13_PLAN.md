@@ -102,6 +102,10 @@ Important remaining facts:
   verification, so a healthy endpoint cannot receive a credential for a transport it
   has not explicitly enabled. The operator console exposes this state and its
   capability metadata without secrets.
+- Protocol health evidence now has an append-only endpoint/protocol/signal ledger
+  (commerce migration 10; free-access migration 8) with bounded redacted details
+  and Control Center visibility. It records readiness evidence without promoting
+  candidate protocols or silently turning observations into customer eligibility.
 - Startup degrades cleanly when the one Outline management endpoint is unavailable; provisioning remains fail-closed until health returns.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
 - The application/refactor baseline is now in the `codex/aurix-vpn-portal` history; unrelated AI/UI and pay-monitor work remains intentionally outside the VPN commits.
