@@ -405,7 +405,9 @@ FREE_ACCESS_MIGRATIONS = (
                    (profile_id, endpoint_id, protocol, adapter_type, status,
                     capabilities_json, verified_at, last_healthy_at, created_at)
                SELECT 'outline:' || id, id, 'outline', 'outline', 'enabled',
-                      '{}', verified_at, last_healthy_at, created_at
+                      '{}', NULLIF(verified_at, '')::timestamptz,
+                      NULLIF(last_healthy_at, '')::timestamptz,
+                      created_at::timestamptz
                  FROM vpn_endpoints
                 ON CONFLICT(endpoint_id, protocol) DO NOTHING""",
         ),
@@ -1158,7 +1160,9 @@ COMMERCE_MIGRATIONS = (
                    (profile_id, endpoint_id, protocol, adapter_type, status,
                     capabilities_json, verified_at, last_healthy_at, created_at)
                SELECT 'outline:' || id, id, 'outline', 'outline', 'enabled',
-                      '{}', verified_at, last_healthy_at, created_at
+                      '{}', NULLIF(verified_at, '')::timestamptz,
+                      NULLIF(last_healthy_at, '')::timestamptz,
+                      created_at::timestamptz
                  FROM vpn_endpoints
                 ON CONFLICT(endpoint_id, protocol) DO NOTHING""",
         ),

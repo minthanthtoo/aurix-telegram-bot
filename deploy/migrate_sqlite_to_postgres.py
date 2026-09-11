@@ -29,6 +29,9 @@ from aurix_vpn.commerce import PostgresCommerceDatabase
 
 CONFIRMATION = "STOP_BOT_AND_MIGRATE"
 EXCLUDED_TABLES = {"schema_migrations", "sqlite_sequence"}
+# These tables are populated by the PostgreSQL initializer before a migration
+# copy.  They are catalog/bootstrap state, not evidence that the destination
+# already contains an operational customer or infrastructure workload.
 SEEDED_TABLES = {"plans", "vpn_endpoints"}
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -125,6 +128,17 @@ def _convert(value: Any, data_type: str) -> Any:
     return value
 
 
+def _is_bootstrap_protocol_profile(row: Any) -> bool:
+    """Recognize only the profile inserted by the PostgreSQL initializer."""
+    return (
+        str(row["profile_id"]) == "outline:legacy-default"
+        and str(row["endpoint_id"]) == "legacy-default"
+        and str(row["protocol"]) == "outline"
+        and str(row["adapter_type"]) == "outline"
+        and str(row["status"]) == "enabled"
+    )
+
+
 def migrate(source: Path, target_url: str) -> dict[str, Any]:
     database = PostgresCommerceDatabase(target_url)
     source_connection = sqlite3.connect(f"file:{source.resolve()}?mode=ro", uri=True)
@@ -140,6 +154,16 @@ def migrate(source: Path, target_url: str) -> dict[str, Any]:
                 raise RuntimeError("PostgreSQL schema is missing: " + ", ".join(missing_tables))
             occupied = []
             for table in sorted((set(tables) - SEEDED_TABLES) & set(schema)):
+                if table == "endpoint_protocol_profiles":
+                    profiles = target.execute(
+                        """SELECT profile_id, endpoint_id, protocol, adapter_type, status
+                           FROM endpoint_protocol_profiles"""
+                    ).fetchall()
+                    if all(_is_bootstrap_protocol_profile(row) for row in profiles):
+                        continue
+                    if profiles:
+                        occupied.append(f"{table}={len(profiles)}")
+                    continue
                 count = int(target.execute(f"SELECT COUNT(*) AS n FROM {_quote(table)}").fetchone()["n"])
                 if count:
                     occupied.append(f"{table}={count}")

@@ -347,7 +347,7 @@ remain local-only; this milestone is committed as `31054f7` (`Serialize VPN
 provider state mutations`).
 
 The focused scale-control tests, Control Center/API tests, VPN-oriented
-regression set (323 tests), Ruff, Python compilation, JavaScript syntax, and
+regression set (324 tests), Ruff, Python compilation, JavaScript syntax, and
 `git diff --check` pass locally. No live server, customer credential,
 provider/database deployment, load test, speed test, or automatic scale action
 was performed. The remaining action is still the separately authorized
@@ -361,6 +361,12 @@ contract checks. Provision latency was mean 0.365 ms, p95 0.440 ms, p99 2.762
 ms, and max 30.107 ms in the local process. These are disposable in-memory
 harness timings only; they are not server capacity, customer speed, or live
 protocol-compatibility evidence.
+
+A disposable local PostgreSQL rehearsal also completed: an initialized SQLite
+snapshot containing account and protocol-observation timestamps migrated into a
+fresh PostgreSQL database with row-count reconciliation, and 16 concurrent
+provision requests collapsed to one durable regional intent. This rehearsal
+does not validate the hosted database, network latency, or production cutover.
 
 ## Remaining gates and next action
 
