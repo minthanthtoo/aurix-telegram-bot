@@ -29,7 +29,7 @@
 
   function renderOverview() {
     const s = state.summary || {};
-    const c = s.counts || {}, q = s.consistency || {}, f = s.fleet || {};
+    const c = s.counts || {}, q = s.consistency || {}, f = s.fleet || {}, scale = s.scale_out || {};
     const protocols = (s.protocol_readiness || s.protocols || []).map((p) => {
       const active = p.status === "enabled";
       const detail = active
@@ -42,6 +42,7 @@
       ${card("Managed devices", fmt(c.active_devices), `${fmt(c.devices)} enrolled`)}
       ${card("Active credentials", fmt(c.active_generations), `${fmt(c.active_leases)} active quota leases`)}
       ${card("Fleet health", `${fmt(f.healthy)} / ${fmt(f.endpoints)}`, "active endpoints", f.healthy === f.endpoints ? "good" : "warn")}
+      ${card("Scale posture", scale.recommended ? "review" : (scale.status || "unavailable"), scale.trigger || scale.mode || "recommendation-only", scale.recommended ? "warn" : "neutral")}
     </div>
     <div class="grid two"><article class="panel"><div class="panel-head"><div><p class="eyebrow">SYSTEM INTEGRITY</p><h2>Consistency checks</h2></div>${badge((q.failed_jobs || 0) + (q.failed_revocations || 0) ? "attention" : "clear", (q.failed_jobs || 0) + (q.failed_revocations || 0) ? "warn" : "good")}</div>
       <div class="check-grid">${Object.entries(q).map(([k, v]) => `<div><span>${esc(k.replaceAll("_", " "))}</span><strong>${esc(v)}</strong></div>`).join("") || empty("No checks available.")}</div>

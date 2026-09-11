@@ -1887,6 +1887,241 @@ class FleetController:
             "on",
         }
 
+    @staticmethod
+    def _setting_int(name: str, default: int, *, minimum: int = 0) -> int:
+        try:
+            value = int(os.environ.get(name, str(default)))
+        except (TypeError, ValueError) as exc:
+            raise ConnectivityError(f"{name} is invalid") from exc
+        if value < minimum:
+            raise ConnectivityError(f"{name} is invalid")
+        return value
+
+    @staticmethod
+    def _setting_bool(name: str, default: bool = False) -> bool:
+        value = os.environ.get(name, "1" if default else "0").strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _fresh_endpoint_health(value: Any, now: datetime) -> bool:
+        try:
+            observed_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=UTC)
+            max_age = max(
+                30,
+                FleetController._setting_int(
+                    "AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS", 900, minimum=0
+                ),
+            )
+            return observed_at.astimezone(UTC) >= now - timedelta(seconds=max_age)
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+    @staticmethod
+    def _active_provision_intents(connection: Any) -> list[tuple[str, str | None]]:
+        """Return active provision intents and their durable requested regions."""
+        rows = connection.execute(
+            """SELECT id, status FROM infrastructure_jobs
+                WHERE operation = 'provision'
+                  AND status IN ('pending', 'running', 'awaiting_verification')"""
+        ).fetchall()
+        intents: list[tuple[str, str | None]] = []
+        for row in rows:
+            event = connection.execute(
+                """SELECT metadata_json FROM infrastructure_events
+                    WHERE infrastructure_job_id = ? AND event_type = 'provision_requested'
+                    ORDER BY created_at ASC LIMIT 1""",
+                (str(row["id"]),),
+            ).fetchone()
+            region: str | None = None
+            if event is not None:
+                try:
+                    metadata = json.loads(str(event["metadata_json"] or "{}"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    metadata = {}
+                if isinstance(metadata, dict) and str(metadata.get("region") or "").strip():
+                    region = str(metadata["region"]).strip()
+            intents.append((str(row["id"]), region))
+        return intents
+
+    def scale_out_recommendation(
+        self,
+        *,
+        plan_code: str | None = None,
+        protocol: str = "outline",
+        region: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Return a read-only, recommendation-only scale-out decision.
+
+        This method never queues work and never contacts DigitalOcean. It
+        combines fresh endpoint readiness with durable node/job guard state so
+        an operator can review a recommendation without treating it as an
+        authorization to create infrastructure.
+        """
+        if self.registry is None:
+            return {"status": "unavailable", "reason": "endpoint registry is not configured"}
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        selected_protocol = str(protocol or "").strip().lower()
+        if not selected_protocol or any(char.isspace() for char in selected_protocol):
+            raise ConnectivityError("protocol is invalid")
+        selected_plan = str(plan_code or "").strip() or None
+        allowed_regions = {
+            item.strip()
+            for item in os.environ.get("AURIX_ALLOWED_REGIONS", "sgp1").split(",")
+            if item.strip()
+        }
+        selected_region = str(region or os.environ.get("AURIX_SCALE_REGION", "")).strip()
+        if not selected_region:
+            selected_region = sorted(allowed_regions)[0] if allowed_regions else ""
+        warm_buffer = self._setting_int(
+            "AURIX_SCALE_WARM_BUFFER_ASSIGNMENTS", 0, minimum=0
+        )
+        max_total = self._setting_int("AURIX_MAX_VPN_NODES", 3, minimum=1)
+        max_region = self._setting_int(
+            "AURIX_MAX_VPN_NODES_PER_REGION", max_total, minimum=1
+        )
+        max_daily = self._setting_int(
+            "AURIX_MAX_NODE_CREATIONS_PER_DAY", 2, minimum=1
+        )
+        cooldown_seconds = self._setting_int(
+            "AURIX_NODE_CREATION_COOLDOWN_SECONDS", 1800, minimum=0
+        )
+
+        endpoints = self.registry.list_endpoints()
+        plan_directory: dict[str, dict[str, Any]] = {}
+        if selected_plan:
+            plan_directory = {
+                str(item["id"]): item
+                for item in self.registry.list_customer_endpoints(
+                    selected_plan, protocol=selected_protocol
+                )
+            }
+        ready_endpoints = 0
+        eligible_endpoints = 0
+        finite_headroom = 0
+        unknown_capacity = 0
+        for endpoint in endpoints:
+            if selected_region and str(endpoint.get("region") or "") != selected_region:
+                continue
+            endpoint_id = str(endpoint.get("id") or "")
+            profiles = endpoint.get("protocols") or []
+            profile_enabled = any(
+                isinstance(profile, dict)
+                and str(profile.get("protocol") or "").lower() == selected_protocol
+                and str(profile.get("status") or "").lower() == "enabled"
+                for profile in profiles
+            )
+            if (
+                str(endpoint.get("state") or "").upper() != "ACTIVE"
+                or endpoint.get("accepts_new_assignments") in (False, 0)
+                or not self._fresh_endpoint_health(endpoint.get("last_healthy_at"), current)
+                or not profile_enabled
+            ):
+                continue
+            ready_endpoints += 1
+            plan_item = plan_directory.get(endpoint_id)
+            plan_eligible = True
+            if selected_plan:
+                plan_eligible = bool(plan_item)
+                if plan_item:
+                    plan_eligible = plan_item.get("plan_enabled") not in (False, 0)
+                    plan_max = plan_item.get("plan_max")
+                    if plan_max is not None:
+                        plan_eligible = plan_eligible and int(
+                            plan_item.get("plan_active") or 0
+                        ) < int(plan_max)
+            if plan_eligible:
+                eligible_endpoints += 1
+            capacity = endpoint.get("max_active_keys")
+            if capacity is None:
+                unknown_capacity += 1
+            else:
+                finite_headroom += max(
+                    0,
+                    int(capacity) - int(endpoint.get("active_assignments") or 0),
+                )
+
+        triggers: list[str] = []
+        if selected_plan and eligible_endpoints == 0:
+            triggers.append("no_eligible_endpoint_for_plan")
+        if warm_buffer > 0 and unknown_capacity == 0 and finite_headroom < warm_buffer:
+            triggers.append("healthy_ready_capacity_below_warm_buffer")
+        recommended = bool(triggers)
+
+        with self.database.connect() as connection:
+            endpoint_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS n FROM vpn_endpoints WHERE state != 'RETIRED'"
+                ).fetchone()["n"]
+                or 0
+            )
+            regional_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS n FROM vpn_endpoints WHERE state != 'RETIRED' AND region = ?",
+                    (selected_region,),
+                ).fetchone()["n"]
+                or 0
+            )
+            active_intents = self._active_provision_intents(connection)
+            active_total = len(active_intents)
+            active_region = sum(1 for _job, intent_region in active_intents if intent_region == selected_region)
+            unknown_region_intent = any(intent_region is None for _job, intent_region in active_intents)
+            day_start = current.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            created_today = int(
+                connection.execute(
+                    """SELECT COUNT(*) AS n FROM infrastructure_jobs
+                        WHERE operation = 'provision' AND created_at >= ?""",
+                    (day_start,),
+                ).fetchone()["n"]
+                or 0
+            )
+            latest = connection.execute(
+                """SELECT created_at FROM infrastructure_jobs
+                    WHERE operation = 'provision' ORDER BY created_at DESC LIMIT 1"""
+            ).fetchone()
+        cooldown_clear = True
+        if latest is not None:
+            try:
+                latest_at = datetime.fromisoformat(str(latest["created_at"])).astimezone(UTC)
+                cooldown_clear = current >= latest_at + timedelta(seconds=cooldown_seconds)
+            except (TypeError, ValueError, OverflowError):
+                cooldown_clear = False
+        guards = {
+            "node_cap": endpoint_count + active_total < max_total,
+            "region_node_cap": regional_count + active_region < max_region,
+            "daily_creation_cap": created_today < max_daily,
+            "cooldown": cooldown_clear,
+            "active_scale_intent": not unknown_region_intent and active_region == 0,
+        }
+        blocked_by = [name for name, passed in guards.items() if not passed]
+        return {
+            "status": "recommendation" if recommended else "steady",
+            "recommended": recommended,
+            "triggers": triggers,
+            "trigger": triggers[0] if triggers else None,
+            "plan_code": selected_plan,
+            "protocol": selected_protocol,
+            "region": selected_region,
+            "mode": "recommendation-only",
+            "capacity": {
+                "ready_endpoints": ready_endpoints,
+                "eligible_endpoints": eligible_endpoints,
+                "finite_headroom_assignments": finite_headroom,
+                "unknown_capacity_endpoints": unknown_capacity,
+                "warm_buffer_assignments": warm_buffer,
+            },
+            "guards": guards,
+            "blocked_by": blocked_by,
+            "ready_to_queue": recommended and not blocked_by,
+            "automatic_scale_enabled": self._setting_bool(
+                "AURIX_AUTOMATIC_SCALE_ENABLED", False
+            ),
+            "owner_confirmation_required": True,
+            "provider_mutations_enabled": self._mutations_enabled(),
+        }
+
     def queue_provision(
         self,
         *,
@@ -1896,6 +2131,9 @@ class FleetController:
         requested_by: int,
         now: datetime | None = None,
     ) -> str:
+        region = str(region or "").strip()
+        size = str(size or "").strip()
+        image = str(image or "").strip()
         allowed_regions = {
             item.strip() for item in os.environ.get("AURIX_ALLOWED_REGIONS", "sgp1").split(",")
         }
@@ -1909,18 +2147,42 @@ class FleetController:
         }
         if region not in allowed_regions or size not in allowed_sizes or image not in allowed_images:
             raise ConnectivityError("Droplet specification is outside the configured allowlist")
-        timestamp = (now or datetime.now(UTC)).isoformat()
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        timestamp = current.isoformat()
         fingerprint = hashlib.sha256(f"provision:{region}:{size}:{image}:{timestamp[:13]}".encode()).hexdigest()
         job_id = uuid.uuid4().hex
         with self.database.connect() as connection:
             self.database.begin_write(connection)
-            max_total = int(os.environ.get("AURIX_MAX_VPN_NODES", "3"))
+            if isinstance(connection, _PostgresConnection):
+                connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('aurix:infrastructure:provision'))"
+                ).fetchone()
+            existing_fingerprint = connection.execute(
+                "SELECT id FROM infrastructure_jobs WHERE request_fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+            if existing_fingerprint is not None:
+                return str(existing_fingerprint["id"])
+            max_total = self._setting_int("AURIX_MAX_VPN_NODES", 3, minimum=1)
             count = connection.execute(
                 "SELECT COUNT(*) AS n FROM vpn_endpoints WHERE state != 'RETIRED'"
             ).fetchone()["n"]
-            if int(count) >= max_total:
+            active_intents = self._active_provision_intents(connection)
+            if int(count) + len(active_intents) >= max_total:
                 raise ConnectivityError("Configured VPN node limit has been reached")
-            day_start = (now or datetime.now(UTC)).replace(
+            max_region = self._setting_int("AURIX_MAX_VPN_NODES_PER_REGION", max_total, minimum=1)
+            region_count = connection.execute(
+                "SELECT COUNT(*) AS n FROM vpn_endpoints WHERE state != 'RETIRED' AND region = ?",
+                (region,),
+            ).fetchone()["n"]
+            active_region = sum(1 for _job, intent_region in active_intents if intent_region == region)
+            if int(region_count) + active_region >= max_region:
+                raise ConnectivityError("Configured VPN node limit for this region has been reached")
+            if any(intent_region is None for _job, intent_region in active_intents):
+                raise ConnectivityError("An infrastructure intent has no durable region")
+            if active_region:
+                raise ConnectivityError("Another server provisioning job is already active in this region")
+            day_start = current.replace(
                 hour=0, minute=0, second=0, microsecond=0
             ).isoformat()
             created_today = connection.execute(
@@ -1928,36 +2190,38 @@ class FleetController:
                    WHERE operation = 'provision' AND created_at >= ?""",
                 (day_start,),
             ).fetchone()["n"]
-            max_daily = int(os.environ.get("AURIX_MAX_NODE_CREATIONS_PER_DAY", "2"))
+            max_daily = self._setting_int("AURIX_MAX_NODE_CREATIONS_PER_DAY", 2, minimum=1)
             if int(created_today) >= max_daily:
                 raise ConnectivityError("Daily VPN node creation limit has been reached")
             latest = connection.execute(
                 """SELECT created_at FROM infrastructure_jobs
                    WHERE operation = 'provision' ORDER BY created_at DESC LIMIT 1"""
             ).fetchone()
-            cooldown_seconds = max(
-                0, int(os.environ.get("AURIX_NODE_CREATION_COOLDOWN_SECONDS", "1800"))
+            cooldown_seconds = self._setting_int(
+                "AURIX_NODE_CREATION_COOLDOWN_SECONDS", 1800, minimum=0
             )
             if latest is not None:
                 latest_at = datetime.fromisoformat(str(latest["created_at"])).astimezone(UTC)
-                if (now or datetime.now(UTC)).astimezone(UTC) < latest_at + timedelta(
+                if current < latest_at + timedelta(
                     seconds=cooldown_seconds
                 ):
                     raise ConnectivityError("VPN node creation cooldown is still active")
-            active = connection.execute(
-                """SELECT 1 FROM infrastructure_jobs
-                   WHERE operation = 'provision' AND status IN ('pending', 'running')
-                   LIMIT 1"""
-            ).fetchone()
-            if active is not None:
-                raise ConnectivityError("Another server provisioning job is already active")
-            connection.execute(
+            inserted = connection.execute(
                 """INSERT INTO infrastructure_jobs
                    (id, operation, status, attempts, next_attempt_at,
                     request_fingerprint, created_at)
-                   VALUES (?, 'provision', 'pending', 0, ?, ?, ?)""",
+                   VALUES (?, 'provision', 'pending', 0, ?, ?, ?)
+                   ON CONFLICT(request_fingerprint) DO NOTHING""",
                 (job_id, timestamp, fingerprint, timestamp),
             )
+            if int(getattr(inserted, "rowcount", 0) or 0) != 1:
+                existing = connection.execute(
+                    "SELECT id FROM infrastructure_jobs WHERE request_fingerprint = ?",
+                    (fingerprint,),
+                ).fetchone()
+                if existing is None:
+                    raise ConnectivityError("Provisioning intent could not be made idempotent")
+                return str(existing["id"])
             connection.execute(
                 """INSERT INTO infrastructure_events
                    (id, infrastructure_job_id, event_type, metadata_json, created_at)

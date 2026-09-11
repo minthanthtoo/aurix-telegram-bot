@@ -490,6 +490,19 @@ class AuriXVpnWebApplication:
             if registry and callable(getattr(registry, "protocol_readiness", None))
             else catalog
         )
+        controller = getattr(commerce, "fleet_controller", None)
+        recommendation_method = getattr(controller, "scale_out_recommendation", None)
+        if callable(recommendation_method):
+            try:
+                scale_out = recommendation_method(
+                    plan_code=os.environ.get("AURIX_SCALE_PLAN_CODE") or None,
+                    protocol="outline",
+                    region=os.environ.get("AURIX_SCALE_REGION") or None,
+                )
+            except ConnectivityError as exc:
+                scale_out = {"status": "unavailable", "reason": str(exc)}
+        else:
+            scale_out = {"status": "unavailable", "reason": "scale controller is not configured"}
         fleet = self.admin_fleet()
         return {
             "product": "aurix-control-center",
@@ -499,6 +512,7 @@ class AuriXVpnWebApplication:
             "consistency": consistency,
             "protocols": catalog,
             "protocol_readiness": readiness,
+            "scale_out": scale_out,
             "fleet": {
                 "endpoints": len(fleet),
                 "healthy": sum(1 for item in fleet if item.get("healthy")),

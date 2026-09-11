@@ -556,6 +556,95 @@ class EndpointRegistryTest(unittest.TestCase):
 
 
 class DigitalOceanAndFleetTest(unittest.TestCase):
+    def test_scale_out_recommendation_is_read_only_and_guarded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            registry = EndpointRegistry(database, Fernet.generate_key())
+            now = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+            registry.configure_bootstrap(
+                "https://outline.invalid:1234/secret",
+                "0" * 64,
+                now=now,
+            )
+            with database.connect() as connection:
+                connection.execute(
+                    """UPDATE vpn_endpoints
+                          SET region = 'sgp1', state = 'ACTIVE', accepts_new_assignments = 1,
+                              max_active_keys = 10, last_healthy_at = ?
+                        WHERE id = 'legacy-default'""",
+                    (now.isoformat(),),
+                )
+            controller = FleetController(database, registry=registry)
+            with patch.dict(
+                os.environ,
+                {
+                    "AURIX_SCALE_REGION": "sgp1",
+                    "AURIX_SCALE_WARM_BUFFER_ASSIGNMENTS": "2",
+                    "AURIX_SCALE_PLAN_CODE": "basic",
+                    "AURIX_MAX_VPN_NODES": "3",
+                    "AURIX_MAX_VPN_NODES_PER_REGION": "3",
+                },
+                clear=False,
+            ):
+                steady = controller.scale_out_recommendation(
+                    plan_code="basic", now=now
+                )
+            self.assertEqual(steady["status"], "steady")
+            self.assertFalse(steady["recommended"])
+            self.assertEqual(steady["mode"], "recommendation-only")
+            with database.connect() as connection:
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) AS n FROM infrastructure_jobs").fetchone()["n"],
+                    0,
+                )
+
+            with database.connect() as connection:
+                connection.execute(
+                    "UPDATE vpn_endpoints SET last_healthy_at = ? WHERE id = 'legacy-default'",
+                    ("2026-09-01T00:00:00+00:00",),
+                )
+            with patch.dict(os.environ, {"AURIX_SCALE_WARM_BUFFER_ASSIGNMENTS": "0"}, clear=False):
+                recommended = controller.scale_out_recommendation(
+                    plan_code="basic", now=now
+                )
+            self.assertTrue(recommended["recommended"])
+            self.assertEqual(recommended["trigger"], "no_eligible_endpoint_for_plan")
+
+    def test_queue_provision_is_idempotent_and_limits_active_intents_by_region(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            controller = FleetController(database)
+            now = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+            environment = {
+                "AURIX_MAX_VPN_NODES": "3",
+                "AURIX_MAX_VPN_NODES_PER_REGION": "3",
+                "AURIX_MAX_NODE_CREATIONS_PER_DAY": "3",
+                "AURIX_NODE_CREATION_COOLDOWN_SECONDS": "0",
+            }
+            with patch.dict(os.environ, environment, clear=False):
+                first = controller.queue_provision(
+                    region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+                    requested_by=1, now=now,
+                )
+                repeated = controller.queue_provision(
+                    region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+                    requested_by=99, now=now,
+                )
+            self.assertEqual(repeated, first)
+            with database.connect() as connection:
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) AS n FROM infrastructure_jobs").fetchone()["n"],
+                    1,
+                )
+            with patch.dict(
+                os.environ,
+                {**environment, "AURIX_ALLOWED_REGIONS": "sgp1,bkk1"},
+                clear=False,
+            ), self.assertRaisesRegex(ConnectivityError, "already active in this region"):
+                controller.queue_provision(
+                    region="sgp1", size="s-1vcpu-1gb", image="ubuntu-24-04-x64",
+                    requested_by=1, now=now.replace(hour=13),
+                )
     def test_api_client_returns_created_droplet_without_leaking_token(self):
         client = DigitalOceanClient("private-token")
         response = FakeResponse({"droplet": {"id": 42, "action_ids": [99]}})
