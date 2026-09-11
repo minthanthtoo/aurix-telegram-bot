@@ -487,6 +487,47 @@ class CommerceServiceTest(unittest.TestCase):
         basic = next(item for item in plans if item["plan_code"] == "basic_50gb")
         self.assertEqual(basic["max_active_assignments"], 10)
 
+    def test_protocol_promotion_flows_through_commerce_admin_boundary(self):
+        registry = EndpointRegistry(self.database, Fernet.generate_key())
+        registry.configure_bootstrap(
+            "https://outline.invalid:1234/secret", "0" * 64, now=self.now
+        )
+        registry.register_protocol_profile(
+            "legacy-default",
+            "xray",
+            status="candidate",
+            capabilities={"usage": True},
+            now=self.now,
+        )
+        self.service.connectivity = registry
+        registry.record_protocol_observation(
+            "legacy-default",
+            "xray",
+            signal="management",
+            status="healthy",
+            observed_at=self.now,
+            expires_at=self.now + timedelta(hours=1),
+            source="admin-test",
+            now=self.now,
+        )
+        preview = self.service.protocol_profile_promotion_readiness(
+            "legacy-default",
+            "xray",
+            required_signals=("management",),
+            required_capabilities=("usage",),
+            now=self.now,
+        )
+        self.assertTrue(preview["promotable"])
+        promoted = self.service.promote_protocol_profile(
+            "legacy-default",
+            "xray",
+            999,
+            required_signals=("management",),
+            required_capabilities=("usage",),
+            now=self.now,
+        )
+        self.assertEqual(promoted["status"], "enabled")
+
     def test_unavailable_endpoint_metrics_do_not_reset_last_paid_usage(self):
         order = self._paid_order(128)
         self.service.approve_order(order.order_id, 999, self.now)

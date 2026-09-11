@@ -135,6 +135,8 @@ load test, or speed test was changed or performed.
   direct registration cannot bypass this boundary for non-Outline protocols.
   The non-mutating promotion-readiness check exposes missing fresh signals and
   capabilities before an operator attempts the state-changing decision.
+  The commerce worker exposes both readiness and promotion through the existing
+  administrator authorization boundary; the web Control Center remains read-only.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates

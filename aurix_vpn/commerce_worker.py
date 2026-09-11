@@ -20,6 +20,7 @@ from .commerce_models import (
 )
 from .commerce_repositories import _PostgresConnection
 from .connectivity_adapters import ConnectivityAdapterRegistry
+from .connectivity import ConnectivityError
 from .identity import IdentityError, IdentityService
 from .route_failover import FailoverError
 
@@ -1380,6 +1381,60 @@ class CommerceWorkerMixin:
             "endpoints": endpoints,
             "metrics_errors": metrics.get("errors", {}) if isinstance(metrics, dict) else {},
         }
+
+    def protocol_profile_promotion_readiness(
+        self,
+        endpoint_id: str,
+        protocol: str,
+        *,
+        required_signals: tuple[str, ...] | list[str],
+        required_capabilities: tuple[str, ...] | list[str] = (),
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Return the registry's redacted, non-mutating promotion preview."""
+        if self.connectivity is None:
+            raise CommerceError("Protocol profile management is not configured")
+        method = getattr(self.connectivity, "protocol_profile_promotion_readiness", None)
+        if not callable(method):
+            raise CommerceError("Protocol profile readiness is not available")
+        try:
+            return method(
+                endpoint_id,
+                protocol,
+                required_signals=required_signals,
+                required_capabilities=required_capabilities,
+                now=now,
+            )
+        except ConnectivityError as exc:
+            raise CommerceError(str(exc)) from exc
+
+    def promote_protocol_profile(
+        self,
+        endpoint_id: str,
+        protocol: str,
+        admin_id: int,
+        *,
+        required_signals: tuple[str, ...] | list[str],
+        required_capabilities: tuple[str, ...] | list[str] = (),
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Apply an explicit, audited protocol promotion decision."""
+        if self.connectivity is None:
+            raise CommerceError("Protocol profile management is not configured")
+        method = getattr(self.connectivity, "promote_protocol_profile", None)
+        if not callable(method):
+            raise CommerceError("Protocol profile promotion is not available")
+        try:
+            return method(
+                endpoint_id,
+                protocol,
+                required_signals=required_signals,
+                required_capabilities=required_capabilities,
+                actor_id=admin_id,
+                now=now,
+            )
+        except ConnectivityError as exc:
+            raise CommerceError(str(exc)) from exc
 
     def configure_endpoint_capacity(
         self,

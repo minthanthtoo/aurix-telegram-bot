@@ -182,6 +182,9 @@ available. A protocol must therefore remain a candidate until both the live
 evidence gate and the explicit operator decision are complete.
 The generic registration path rejects direct enablement for non-Outline
 protocols, so callers cannot skip that boundary accidentally.
+The commerce worker is the authorized application boundary for the readiness
+preview and promotion call; the browser Control Center does not perform this
+mutation.
 
 ### `endpoint_plan_limits`
 
