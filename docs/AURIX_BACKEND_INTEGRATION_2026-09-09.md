@@ -449,8 +449,11 @@ replayable against the durable decision history without exposing route secrets.
 Commerce migration 14 now stores an immutable policy snapshot for every version.
 Decision listing joins the captured version to its exact thresholds, cooldown,
 standby lease, and retry budget; the failover service also exposes read-only
-policy-history and decision-explanation methods. This closes the gap where a
-decision had a version number but the old policy values were otherwise lost.
+policy-history and decision-explanation methods. The authenticated
+`GET /api/admin/failover/<decision-id>` route and Operations detail panel expose
+that explanation without entitlement, generation, idempotency, or provider
+error material. This closes the gap where a decision had a version number but
+the old policy values were otherwise lost.
 
 Failover target selection now treats pending/creating/verified decisions as
 destination reservations alongside active assignments. This prevents concurrent
@@ -479,7 +482,7 @@ route mutation. Example forms are `/setsafety global pause 5 60` and
 `/setsafety region sgp1 resume 20 300`.
 
 Focused failover, migration, Control Center, VPN web API, and render checks pass;
-the non-PostgreSQL VPN regression passes `332` tests, and the two non-PostgreSQL
+the non-PostgreSQL VPN regression passes `334` tests, and the two non-PostgreSQL
 migration-manifest checks also pass. The optional PostgreSQL end-to-end rehearsal
 was not re-run at this checkpoint because the host filesystem has only about
 `308 MiB` available and the disposable PostgreSQL cluster exhausted that space
