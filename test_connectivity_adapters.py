@@ -135,6 +135,9 @@ class ConnectivityAdapterTest(unittest.TestCase):
         self.assertTrue(registered_xray["registered"])
         self.assertEqual(registered_xray["status"], "candidate")
         self.assertIn("endpoint evidence", registered_xray["activation_gate"])
+
+        malformed = ConnectivityAdapterRegistry({"xray": lambda _client: object()})
+        self.assertFalse(malformed.is_registered("xray"))
         self.assertFalse(by_protocol["xray"]["registered"])
 
     def test_ambiguous_readback_is_uncertain_and_not_owned(self):

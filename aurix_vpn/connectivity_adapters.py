@@ -745,6 +745,21 @@ class ConnectivityAdapterRegistry:
             raise ValueError("adapter protocol and factory are required")
         self._factories[normalized] = factory
 
+    def is_registered(self, protocol: str) -> bool:
+        """Return whether a factory can construct the requested adapter contract."""
+        normalized = str(protocol or "").strip().lower()
+        factory = self._factories.get(normalized)
+        if not callable(factory):
+            return False
+        try:
+            adapter = factory(None)
+        except Exception:
+            return False
+        return bool(
+            isinstance(adapter, ConnectivityAdapter)
+            and str(getattr(adapter, "protocol", "")).strip().lower() == normalized
+        )
+
     def protocol_catalog(self) -> list[dict[str, Any]]:
         """Describe registered protocol contracts without contacting a node."""
         catalog: list[dict[str, Any]] = []

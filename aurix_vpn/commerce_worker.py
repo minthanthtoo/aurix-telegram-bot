@@ -1423,6 +1423,12 @@ class CommerceWorkerMixin:
         """Require an installed adapter before the commerce boundary can enable it."""
         normalized = str(protocol or "").strip().lower()
         registry = getattr(self, "adapter_registry", None) or ConnectivityAdapterRegistry()
+        checker = getattr(registry, "is_registered", None)
+        if callable(checker):
+            try:
+                return bool(checker(normalized))
+            except Exception:
+                return False
         catalog = getattr(registry, "protocol_catalog", None)
         if not callable(catalog):
             return False
