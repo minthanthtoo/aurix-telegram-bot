@@ -182,6 +182,20 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(audit["action"], "protocol_profile_disabled")
         self.assertEqual(audit["actor_id"], "7")
         self.assertEqual(audit["target_id"], "xray:legacy-default")
+        reenabled = self.registry.promote_protocol_profile(
+            "legacy-default",
+            "xray",
+            required_signals=("management",),
+            required_capabilities=("usage",),
+            actor_id=7,
+            now=now,
+        )
+        self.assertEqual(reenabled["status"], "enabled")
+        with self.database.connect() as connection:
+            self.assertEqual(
+                self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray"),
+                "legacy-default",
+            )
         self.registry.register_protocol_profile(
             "legacy-default", "xray", status="retired", now=now
         )
