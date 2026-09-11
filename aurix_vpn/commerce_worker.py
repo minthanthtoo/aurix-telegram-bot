@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -357,6 +358,158 @@ class CommerceWorkerMixin:
             if result.get("exhausted"):
                 exhausted.append({**generation, **result})
         return exhausted
+
+    def enforce_managed_quotas(
+        self,
+        *,
+        route_provider: Callable[[str, str], Mapping[str, Any]],
+        adapter_provider: Callable[[Mapping[str, Any]], Any] | None = None,
+        now: datetime | str | None = None,
+    ) -> dict[str, Any]:
+        """Account protocol-managed generations and queue exhausted revokes.
+
+        Unlike :meth:`enforce_quotas`, which consumes Outline's aggregate
+        transfer snapshot, this path reads each Xray/Hysteria2-compatible
+        generation through its adapter. The identity service remains the sole
+        source of durable quota truth, and the provider's counter is treated as
+        an observation rather than a hard-quota guarantee. Revoke execution is
+        intentionally deferred to the existing idempotent worker job so a
+        provider outage cannot turn a partial sweep into local success.
+
+        ``route_provider`` is explicit because non-Outline route metadata is
+        deployment-specific and must never be guessed from an endpoint ID.
+        ``adapter_provider`` may inject the reviewed node-agent binding; when
+        omitted, the configured connectivity registry is used.
+        """
+        if not callable(route_provider):
+            raise CommerceError("managed quota route provider is required")
+        identity = getattr(self, "identity", None)
+        if identity is None:
+            raise CommerceError("identity service is required for managed quota enforcement")
+        timestamp = _now_text(now)
+        current = datetime.fromisoformat(timestamp).astimezone(UTC)
+        try:
+            generations = identity.generations_for_accounting()
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "generations": 0,
+                "eligible": 0,
+                "observed": 0,
+                "credited_bytes": 0,
+                "exhausted": 0,
+                "queued_revocations": 0,
+                "skipped": 0,
+                "errors": [{"error": type(exc).__name__}],
+            }
+
+        errors: list[dict[str, str]] = []
+        exhausted: list[dict[str, Any]] = []
+        eligible = observed_count = skipped = credited_bytes = 0
+        protocol_counts: dict[str, int] = {}
+
+        def default_adapter(route: Mapping[str, Any]) -> Any:
+            protocol = str(route.get("protocol") or "").strip().lower()
+            endpoint_id = str(route.get("endpoint_id") or "").strip()
+            connectivity = getattr(self, "connectivity", None)
+            if connectivity is None and protocol != "outline":
+                raise CommerceError(
+                    f"managed {protocol} quota enforcement requires connectivity"
+                )
+            client = (
+                connectivity.client(endpoint_id)
+                if connectivity is not None
+                else getattr(self, "outline", None)
+            )
+            return self._adapter_for_route(dict(route), client)
+
+        resolve_adapter = adapter_provider if callable(adapter_provider) else default_adapter
+        for generation in generations:
+            protocol = str(generation.get("protocol") or "outline").strip().lower()
+            endpoint_id = str(generation.get("endpoint_id") or "").strip()
+            external_id = str(generation.get("external_id") or "").strip()
+            status = str(generation.get("status") or "").strip().lower()
+            remote_state = str(generation.get("remote_state") or "").strip().lower()
+            if status not in {"active", "retiring"} or remote_state != "observed":
+                skipped += 1
+                continue
+            eligible += 1
+            protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
+            try:
+                route = route_provider(endpoint_id, protocol)
+                if not isinstance(route, Mapping):
+                    raise CommerceError("managed quota route is not an object")
+                route = dict(route)
+                route_protocol = str(route.get("protocol") or "").strip().lower()
+                route_endpoint = str(route.get("endpoint_id") or "").strip()
+                if route_protocol != protocol or route_endpoint != endpoint_id:
+                    raise CommerceError("managed quota route does not match its generation")
+                adapter = resolve_adapter(route)
+                encrypted = generation.get("access_url_ciphertext")
+                decrypt = getattr(self, "_decrypt_access_url", None)
+                access_url = decrypt(encrypted) if callable(decrypt) else str(encrypted or "")
+                if not access_url:
+                    raise CommerceError("managed generation access URL is unavailable")
+                usage = adapter.read_usage(
+                    {
+                        "protocol": protocol,
+                        "route_id": str(route.get("route_id") or f"{protocol}:{endpoint_id}"),
+                        "endpoint_id": endpoint_id,
+                        "external_id": external_id,
+                        "access_url": access_url,
+                    }
+                )
+                if not isinstance(usage, Mapping):
+                    raise CommerceError("managed usage response is not an object")
+                raw_bytes = usage.get("bytes_transferred")
+                if isinstance(raw_bytes, (bool, float)):
+                    raise CommerceError("managed usage is not an integer")
+                try:
+                    remote_bytes = int(raw_bytes)
+                except (TypeError, ValueError) as exc:
+                    raise CommerceError("managed usage is not an integer") from exc
+                if remote_bytes < 0:
+                    raise CommerceError("managed usage cannot be negative")
+                counter_mode = str(
+                    usage.get("counter_mode")
+                    or ("rolling_window" if protocol == "outline" else "reset_on_decrease")
+                )
+                recorded = identity.record_usage(
+                    str(generation["entitlement_key"]),
+                    str(generation["generation_id"]),
+                    remote_bytes,
+                    endpoint_id=endpoint_id,
+                    source_external_id=external_id,
+                    observed_at=timestamp,
+                    counter_mode=counter_mode,
+                )
+                observed_count += 1
+                credited_bytes += int(recorded.get("credited_bytes") or 0)
+                if recorded.get("exhausted"):
+                    exhausted.append({**generation, **recorded})
+            except Exception as exc:
+                errors.append(
+                    {
+                        "generation_id": str(generation.get("generation_id") or ""),
+                        "protocol": protocol,
+                        "endpoint_id": endpoint_id,
+                        "error": type(exc).__name__,
+                    }
+                )
+
+        queued = self._queue_aggregate_revoke_jobs(exhausted, current)
+        return {
+            "status": "completed" if not errors else "partial",
+            "generations": len(generations),
+            "eligible": eligible,
+            "observed": observed_count,
+            "credited_bytes": credited_bytes,
+            "exhausted": len(exhausted),
+            "queued_revocations": queued,
+            "skipped": skipped,
+            "protocol_counts": protocol_counts,
+            "errors": errors,
+        }
 
     def _queue_aggregate_revoke_jobs(self, exhausted: list[dict[str, Any]], now: datetime) -> int:
         """Queue legacy subscription revocation once aggregate usage is exhausted."""

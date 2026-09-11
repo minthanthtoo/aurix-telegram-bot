@@ -6,6 +6,7 @@ from pathlib import Path
 
 from commerce import CommerceDatabase
 from aurix_vpn.commerce_repositories import _PostgresConnection
+from aurix_vpn.commerce_worker import CommerceWorkerMixin
 from identity import IdentityError, IdentityService
 
 
@@ -53,6 +54,31 @@ class RecordingPostgresDatabase:
         return None
 
 
+class ManagedQuotaWorkerHarness(CommerceWorkerMixin):
+    def __init__(self, database, identity):
+        self.database = database
+        self.identity = identity
+
+    @staticmethod
+    def _decrypt_access_url(value):
+        return value
+
+
+class ManagedUsageAdapter:
+    def __init__(self, bytes_transferred):
+        self.bytes_transferred = bytes_transferred
+        self.grants = []
+
+    def read_usage(self, grant):
+        self.grants.append(dict(grant))
+        return {
+            "protocol": grant["protocol"],
+            "external_id": grant["external_id"],
+            "bytes_transferred": self.bytes_transferred,
+            "counter_mode": "reset_on_decrease",
+        }
+
+
 class IdentityAccountingTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -81,6 +107,97 @@ class IdentityAccountingTest(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_managed_quota_sweep_is_protocol_neutral_and_idempotent(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)
+        generation = self.identity.ensure_generation_for_credential(
+            entitlement,
+            "sg-a",
+            credential_id="xray-credential",
+            external_id="xray-credential",
+            protocol="xray",
+            access_url_ciphertext="vless://xray-credential@example.com:18443",
+            usage_baseline_provenance="new",
+            now=self.now.isoformat(),
+        )
+        self.identity.ensure_generation_lease(
+            entitlement, generation, "sg-a", 1000, (self.now + timedelta(days=1)).isoformat(), now=self.now
+        )
+        worker = ManagedQuotaWorkerHarness(self.database, self.identity)
+        adapter = ManagedUsageAdapter(1250)
+        routes = []
+
+        def route_provider(endpoint_id, protocol):
+            routes.append((endpoint_id, protocol))
+            return {
+                "route_id": f"{protocol}:{endpoint_id}",
+                "endpoint_id": endpoint_id,
+                "protocol": protocol,
+            }
+
+        first = worker.enforce_managed_quotas(
+            route_provider=route_provider,
+            adapter_provider=lambda _route: adapter,
+            now=self.now,
+        )
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(first["protocol_counts"], {"xray": 1})
+        self.assertEqual(first["observed"], 1)
+        self.assertEqual(first["credited_bytes"], 1000)
+        self.assertEqual(first["exhausted"], 1)
+        self.assertEqual(first["queued_revocations"], 1)
+        self.assertEqual(routes, [("sg-a", "xray")])
+        self.assertEqual(adapter.grants[0]["external_id"], "xray-credential")
+
+        second = worker.enforce_managed_quotas(
+            route_provider=route_provider,
+            adapter_provider=lambda _route: adapter,
+            now=self.now,
+        )
+        self.assertEqual(second["status"], "completed")
+        self.assertEqual(second["credited_bytes"], 0)
+        self.assertEqual(second["queued_revocations"], 0)
+        with self.database.connect() as connection:
+            subscription = connection.execute(
+                "SELECT status, consumed_bytes FROM subscriptions WHERE id = 'sub-1'"
+            ).fetchone()
+            jobs = connection.execute(
+                "SELECT COUNT(*) AS n FROM provisioning_jobs WHERE subscription_id = 'sub-1' AND operation = 'revoke'"
+            ).fetchone()
+        self.assertEqual((subscription["status"], subscription["consumed_bytes"]), ("revoked", 1000))
+        self.assertEqual(jobs["n"], 1)
+
+    def test_managed_quota_sweep_rejects_a_route_protocol_mismatch(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)
+        generation = self.identity.ensure_generation_for_credential(
+            entitlement,
+            "sg-a",
+            credential_id="h2-credential",
+            external_id="h2-credential",
+            protocol="hysteria2",
+            access_url_ciphertext="hysteria2://secret@example.com:8444/",
+            usage_baseline_provenance="new",
+            now=self.now.isoformat(),
+        )
+        self.identity.ensure_generation_lease(
+            entitlement, generation, "sg-a", 1000, (self.now + timedelta(days=1)).isoformat(), now=self.now
+        )
+        worker = ManagedQuotaWorkerHarness(self.database, self.identity)
+        adapter = ManagedUsageAdapter(50)
+        result = worker.enforce_managed_quotas(
+            route_provider=lambda _endpoint_id, _protocol: {
+                "route_id": "xray:sg-a",
+                "endpoint_id": "sg-a",
+                "protocol": "xray",
+            },
+            adapter_provider=lambda _route: adapter,
+            now=self.now,
+        )
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["observed"], 0)
+        self.assertEqual(result["credited_bytes"], 0)
+        self.assertEqual(len(adapter.grants), 0)
+        self.assertEqual(result["errors"][0]["error"], "CommerceError")
 
     def test_failover_generations_share_one_quota_and_never_double_credit(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)
