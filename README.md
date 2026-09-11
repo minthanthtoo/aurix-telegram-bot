@@ -105,6 +105,9 @@ Optional:
   pairing remains disabled when this is absent.
 - `AURIX_DEVICE_MANIFEST_KEY_ID` — public identifier for the manifest signing
   key (default `aurix-manifest-1`).
+- `AURIX_MAX_ACTIVE_DEVICES` — optional positive account-level ceiling enforced
+  during managed-device pairing; absent means unlimited and does not prove a
+  physical-device identity.
 - `AURIX_AI_ROUTER_BASE_URL`, `AURIX_AI_ROUTER_API_KEY`, and `AURIX_AI_MODEL` —
   server-only connection to the existing 9Router; `AURIX_AI_MODEL` must be the
   exact route verified in that router and has no guessed default.
