@@ -223,7 +223,7 @@ capabilities, and evidence timestamps while ignoring only the preview's
 volatile `checked_at` timestamp; the promotion method rechecks all evidence
 before enabling the profile. Customer identities cannot reach either command.
 
-The complete suite now passes `345` tests (`Ran 345 tests ... OK`) with
+The complete suite now passes `346` tests (`Ran 346 tests ... OK`) with
 `PYTHONWARNINGS=error::ResourceWarning`; focused Telegram authorization and
 promotion tests, Python compilation, Ruff, and `git diff --check` also pass.
 This verification is local only: no server, database, credential, customer,

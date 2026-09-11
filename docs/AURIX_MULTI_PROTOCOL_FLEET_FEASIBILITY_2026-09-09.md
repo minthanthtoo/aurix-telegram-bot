@@ -1208,7 +1208,7 @@ and rechecks fresh evidence at execution. The browser Control Center remains
 read-only, and customer Telegram identities are denied before any commerce
 operation is called.
 
-The complete local regression suite passes `345` tests. This does not change
+The complete local regression suite passes `346` tests. This does not change
 the release decision: Xray and Hysteria2 remain candidates until their live
 per-customer lifecycle, quota, restart, outage, client-path, concurrency, soak,
 and accounting evidence is accepted. BKK-A remains Outline-only and no live
