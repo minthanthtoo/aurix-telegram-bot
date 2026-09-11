@@ -643,24 +643,86 @@ class CommerceWorkerMixin:
         request pending/running retries so a silent revoke failure is visible
         before the eighth attempt.
         """
+        bounded_limit = max(1, min(limit, 100))
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT j.id AS job_id, j.operation, j.attempts, j.last_error,
                           j.next_attempt_at, j.status AS job_status, s.order_id, s.telegram_id,
-                          s.plan_code, s.status AS subscription_status
+                          s.plan_code, s.status AS subscription_status, j.created_at
                    FROM provisioning_jobs j
                    JOIN subscriptions s ON s.id = j.subscription_id
                    WHERE j.status = 'failed' OR (? = 1 AND j.status IN ('pending', 'running'))
-                   ORDER BY j.created_at LIMIT ?""",
-                (1 if include_nonterminal else 0, max(1, min(limit, 100))),
+                   ORDER BY j.created_at DESC LIMIT ?""",
+                (1 if include_nonterminal else 0, bounded_limit),
             ).fetchall()
-        return [dict(row) for row in rows]
+            infrastructure_rows = connection.execute(
+                """SELECT id AS job_id, operation, attempts, last_error,
+                          next_attempt_at, status AS job_status, created_at
+                   FROM infrastructure_jobs
+                   WHERE operation = 'provision'
+                     AND (status = 'failed' OR (? = 1 AND status IN ('pending', 'running')))
+                   ORDER BY created_at DESC LIMIT ?""",
+                (1 if include_nonterminal else 0, bounded_limit),
+            ).fetchall()
+        result = [dict(row) for row in rows]
+        result.extend(
+            {
+                **dict(row),
+                "order_id": None,
+                "telegram_id": None,
+                "plan_code": None,
+                "subscription_status": None,
+                "infrastructure": True,
+            }
+            for row in infrastructure_rows
+        )
+        result.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return result[:bounded_limit]
 
     def retry_job(self, job_id: str, admin_id: int, now: datetime | None = None) -> str:
         """Requeue one exact failed job (avoids ambiguous order-level retries)."""
         current = _now_text(now)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            infrastructure = connection.execute(
+                """SELECT id, operation, provider_resource_id
+                     FROM infrastructure_jobs
+                    WHERE id = ? AND operation = 'provision' AND status = 'failed'""",
+                (job_id,),
+            ).fetchone()
+            if infrastructure is not None:
+                if infrastructure["provider_resource_id"]:
+                    raise CommerceError(
+                        "Infrastructure intent has a provider resource; reconcile it instead of retrying"
+                    )
+                connection.execute(
+                    """UPDATE infrastructure_jobs
+                          SET status = 'pending', attempts = 0,
+                              next_attempt_at = ?, locked_at = NULL, last_error = NULL
+                        WHERE id = ? AND status = 'failed'""",
+                    (current, job_id),
+                )
+                connection.execute(
+                    """INSERT INTO infrastructure_events
+                       (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                       VALUES (?, ?, 'provision_retry_requested', ?, ?)""",
+                    (
+                        _new_id(),
+                        job_id,
+                        json.dumps({"admin_id": int(admin_id)}, sort_keys=True),
+                        current,
+                    ),
+                )
+                self._audit(
+                    connection,
+                    "infrastructure_job_retried",
+                    "infrastructure_job",
+                    job_id,
+                    "admin",
+                    str(admin_id),
+                    {"operation": infrastructure["operation"]},
+                )
+                return str(infrastructure["operation"])
             row = connection.execute(
                 "SELECT id, operation, subscription_id FROM provisioning_jobs WHERE id = ? AND status = 'failed'",
                 (job_id,),

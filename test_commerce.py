@@ -18,7 +18,7 @@ from commerce import (
     PostgresCommerceDatabase,
     _PostgresConnection,
 )
-from connectivity import EndpointRegistry
+from connectivity import EndpointRegistry, FleetController
 from connectivity_adapters import XrayConnectivityAdapter
 from persistence import open_sqlite_connection
 
@@ -354,6 +354,42 @@ class CommerceServiceTest(unittest.TestCase):
                 "SELECT status, attempts, last_error FROM provisioning_jobs WHERE operation = 'provision'"
             ).fetchone()
         self.assertEqual(tuple(job), ("pending", 0, None))
+
+    def test_admin_can_requeue_failed_infrastructure_intent(self):
+        controller = FleetController(self.database)
+        self.service.fleet_controller = controller
+        job_id = controller.queue_provision(
+            region="sgp1",
+            size="s-1vcpu-1gb",
+            image="ubuntu-24-04-x64",
+            requested_by=999,
+            now=self.now,
+        )
+        with self.database.connect() as connection:
+            connection.execute(
+                """UPDATE infrastructure_jobs
+                      SET status = 'failed', last_error = 'provider unavailable'
+                    WHERE id = ?""",
+                (job_id,),
+            )
+        failures = self.service.failed_jobs()
+        self.assertEqual(failures[0]["job_id"], job_id)
+        self.assertTrue(failures[0]["infrastructure"])
+        self.assertEqual(self.service.retry_job(job_id, 999, self.now), "provision")
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT status, attempts, last_error FROM infrastructure_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+            event = connection.execute(
+                """SELECT event_type, metadata_json FROM infrastructure_events
+                     WHERE infrastructure_job_id = ?
+                       AND event_type = 'provision_retry_requested'""",
+                (job_id,),
+            ).fetchone()
+        self.assertEqual(tuple(row), ("pending", 0, None))
+        self.assertEqual(event["event_type"], "provision_retry_requested")
+        self.assertIn('"admin_id": 999', event["metadata_json"])
 
     def test_paid_duration_starts_when_outline_activation_succeeds(self):
         order = self._paid_order(125)

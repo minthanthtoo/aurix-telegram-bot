@@ -299,8 +299,14 @@ repeated hour-scoped request fingerprint. The web Control Center endpoint
 detail now also shows redacted capacity-by-plan policy and active assignment
 counts, matching the existing Telegram admin capacity view.
 
+Failed infrastructure intents are now included in the redacted admin job
+surface and can be requeued through the existing owner confirmation path. A
+retry is marked durably and the dedicated worker reads back the stable
+provision tag before creating anything, recovering one matching provider
+resource and failing closed on multiple matches.
+
 The focused scale-control tests, Control Center/API tests, VPN-oriented
-regression set (216 tests), Ruff, Python compilation, JavaScript syntax, and
+regression set (218 tests), Ruff, Python compilation, JavaScript syntax, and
 `git diff --check` pass locally. No live server, customer credential,
 provider/database deployment, load test, speed test, or automatic scale action
 was performed. The remaining action is still the separately authorized

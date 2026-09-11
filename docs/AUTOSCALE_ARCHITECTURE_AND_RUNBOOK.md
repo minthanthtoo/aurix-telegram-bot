@@ -324,8 +324,14 @@ Provisioning is asynchronous and reconciled:
 9. Install a pinned Outline release and retrieve its management URL/pin through
    the protected bootstrap channel.
 10. Encrypt the management capability, probe server info, create/delete a test
-    key, and read metrics.
+   key, and read metrics.
 11. Mark `ACTIVE` only after verification.
+
+If a deterministic provider failure leaves an intent terminal, an owner may
+requeue that exact infrastructure job through the existing admin retry
+challenge. The worker records the retry request and performs a tag read-back
+before creating anything; an existing matching resource is reconciled instead
+of duplicated, while multiple matches fail closed.
 
 User data remains available from the Droplet metadata service. It may contain
 public bootstrap configuration, package pins, and a short-lived one-time token,

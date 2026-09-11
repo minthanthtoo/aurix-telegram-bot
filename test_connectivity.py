@@ -898,6 +898,61 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
                 ("failed", "ambiguous provider resources"),
             )
 
+    def test_infrastructure_retry_reconciles_tag_before_create(self):
+        class Provider:
+            def __init__(self):
+                self.created = 0
+
+            def create_droplet(self, specification):
+                self.created += 1
+                raise AssertionError("retry must reconcile the existing tagged resource")
+
+            def list_by_tag(self, tag):
+                return [{"id": 46, "action_ids": [100], "status": "active"}]
+
+            def action(self, action_id):
+                return {"id": action_id, "status": "completed"}
+
+            def droplet(self, droplet_id):
+                return {
+                    "id": droplet_id,
+                    "status": "active",
+                    "networks": {"v4": [{"type": "public", "ip_address": "198.51.100.23"}]},
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            provider = Provider()
+            controller = FleetController(database, provider)
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            with database.connect() as connection:
+                connection.execute(
+                    "UPDATE infrastructure_jobs SET status = 'pending', last_error = 'previous failure' WHERE id = ?",
+                    (job,),
+                )
+                connection.execute(
+                    """INSERT INTO infrastructure_events
+                       (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                       VALUES (?, ?, 'provision_retry_requested', '{}', ?)""",
+                    ("retry-event", job, datetime.now(UTC).isoformat()),
+                )
+            with patch.dict(os.environ, {"AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1"}):
+                result = controller.process_infrastructure_once()
+            self.assertEqual(result["status"], "awaiting_verification")
+            self.assertEqual(result["public_ip"], "198.51.100.23")
+            self.assertEqual(provider.created, 0)
+            with database.connect() as connection:
+                row = connection.execute(
+                    "SELECT provider_resource_id, status FROM infrastructure_jobs WHERE id = ?",
+                    (job,),
+                ).fetchone()
+            self.assertEqual((row["provider_resource_id"], row["status"]), ("46", "awaiting_verification"))
+
     def test_endpoint_activation_rejects_region_mismatch_before_management_probe(self):
         with tempfile.TemporaryDirectory() as tmp:
             database = initialized_database(Path(tmp) / "fleet.db")

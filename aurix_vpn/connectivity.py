@@ -2276,6 +2276,58 @@ class FleetController:
             }
         )
         specification["tags"] = sorted(tags)
+        retry_requested = False
+        with self.database.connect() as connection:
+            pending = connection.execute(
+                """SELECT id FROM infrastructure_jobs
+                     WHERE id = ? AND operation = 'provision' AND status = 'pending'""",
+                (job_id,),
+            ).fetchone()
+            if pending is None:
+                raise ConnectivityError("Provisioning job is not pending")
+            retry_requested = connection.execute(
+                """SELECT 1 FROM infrastructure_events
+                     WHERE infrastructure_job_id = ?
+                       AND event_type = 'provision_retry_requested'
+                     LIMIT 1""",
+                (job_id,),
+            ).fetchone() is not None
+        if retry_requested:
+            list_by_tag = getattr(self.provider, "list_by_tag", None)
+            if not callable(list_by_tag):
+                raise ConnectivityError("provider cannot reconcile a retried infrastructure intent")
+            candidates = list_by_tag(f"aurix-provision-job-{job_id}")
+            if not isinstance(candidates, list):
+                raise ConnectivityError("provider tag reconciliation returned an invalid response")
+            if len(candidates) > 1:
+                raise ConnectivityError("retried infrastructure intent matches multiple provider resources")
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                if not isinstance(candidate, dict) or not candidate.get("id"):
+                    raise ConnectivityError("provider recovery candidate has no resource ID")
+                action_ids = candidate.get("action_ids") or []
+                with self.database.connect() as connection:
+                    self.database.begin_write(connection)
+                    updated = connection.execute(
+                        """UPDATE infrastructure_jobs
+                              SET status = 'running', attempts = attempts + 1,
+                                  provider_resource_id = ?, provider_action_id = ?, locked_at = NULL
+                            WHERE id = ? AND status = 'pending'""",
+                        (
+                            str(candidate["id"]),
+                            str(action_ids[0]) if action_ids else None,
+                            job_id,
+                        ),
+                    )
+                    if getattr(updated, "rowcount", 1) != 1:
+                        raise ConnectivityError("Provisioning job is no longer pending")
+                    connection.execute(
+                        """INSERT INTO infrastructure_events
+                           (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                           VALUES (?, ?, 'provider_retry_recovered', '{}', ?)""",
+                        (uuid.uuid4().hex, job_id, datetime.now(UTC).isoformat()),
+                    )
+                return self.reconcile_provision(job_id)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             row = connection.execute(
