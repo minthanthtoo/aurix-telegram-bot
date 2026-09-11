@@ -137,6 +137,9 @@ load test, or speed test was changed or performed.
   capabilities before an operator attempts the state-changing decision.
   The commerce worker exposes both readiness and promotion through the existing
   administrator authorization boundary; the web Control Center remains read-only.
+  Telegram admins can request the same bounded readiness preview with
+  `/protocolreadiness` and can invoke `/promoteprotocol` only through a
+  state-bound, one-time confirmation that rechecks the evidence before commit.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates

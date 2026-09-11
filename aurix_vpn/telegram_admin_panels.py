@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import sys
 import time
@@ -12,9 +13,35 @@ from typing import Any
 
 UTC = timezone.utc
 ADMIN_CONFIRMATION_TTL = timedelta(minutes=5)
+_PROTOCOL_TOKEN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 class TelegramAdminMixin:
+    @staticmethod
+    def _protocol_promotion_args(args: list[str]) -> tuple[str, str, tuple[str, ...], tuple[str, ...]]:
+        """Parse the bounded operator syntax for protocol readiness/promotion."""
+        if len(args) not in {3, 4}:
+            raise ValueError(
+                "Usage: /protocolreadiness <endpoint> <protocol> <signals> [capabilities]"
+            )
+        endpoint, protocol = (str(value).strip().lower() for value in args[:2])
+        if not _PROTOCOL_TOKEN.fullmatch(endpoint) or not _PROTOCOL_TOKEN.fullmatch(protocol):
+            raise ValueError("Endpoint and protocol names are invalid")
+
+        def tokens(raw: str, *, required: bool) -> tuple[str, ...]:
+            if raw.strip() in {"", "-"}:
+                if required:
+                    raise ValueError("At least one protocol evidence signal is required")
+                return ()
+            values = tuple(sorted({item.strip().lower() for item in raw.split(",") if item.strip()}))
+            if not values or any(not _PROTOCOL_TOKEN.fullmatch(item) for item in values):
+                raise ValueError("Protocol signals and capabilities must be comma-separated names")
+            return values
+
+        signals = tokens(args[2], required=True)
+        capabilities = tokens(args[3], required=False) if len(args) == 4 else ()
+        return endpoint, protocol, signals, capabilities
+
     def _new_panel(self, chat_id: int, telegram_id: int, view: str) -> str:
         token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
         with self._panel_lock:
@@ -207,6 +234,23 @@ class TelegramAdminMixin:
             except Exception as exc:
                 snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
             return snapshot
+        if command in {"/protocolreadiness", "/promoteprotocol"}:
+            try:
+                endpoint, protocol, signals, capabilities = self._protocol_promotion_args(args)
+                snapshot.update(
+                    self._admin_call(
+                        telegram_id,
+                        "protocol_profile_promotion_readiness",
+                        endpoint,
+                        protocol,
+                        required_signals=signals,
+                        required_capabilities=capabilities,
+                    )
+                )
+                snapshot["state"] = "present" if snapshot.get("profile_exists") else "missing"
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
         if command == "/drain":
             if not args or len(args) > 3:
                 snapshot["state"] = "missing"
@@ -347,7 +391,14 @@ class TelegramAdminMixin:
         self, command: str, args: list[str], telegram_id: int
     ) -> tuple[str, dict[str, Any]]:
         snapshot = self._admin_state_snapshot(command, args, telegram_id)
-        encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
+        fingerprint_snapshot = dict(snapshot)
+        # Readiness previews deliberately stamp the instant they were checked.
+        # That timestamp must not invalidate an otherwise unchanged confirmation;
+        # evidence timestamps, profile state, and all decision fields remain bound.
+        fingerprint_snapshot.pop("checked_at", None)
+        encoded = json.dumps(
+            fingerprint_snapshot, sort_keys=True, separators=(",", ":"), default=str
+        )
         return hashlib.sha256(encoded.encode()).hexdigest(), snapshot
 
     @staticmethod
@@ -391,6 +442,27 @@ class TelegramAdminMixin:
                     "Existing credentials are not revoked until a target is provisioned and probed.",
                 ]
             )
+        if command in {"/protocolreadiness", "/promoteprotocol"}:
+            status = "READY" if snapshot.get("promotable") else "BLOCKED"
+
+            def label(name: str, key: str) -> str:
+                values = snapshot.get(key) or []
+                return f"{name}: " + (", ".join(str(value) for value in values) or "—")
+
+            lines = [
+                f"Endpoint: {snapshot.get('endpoint_id') or (args[0] if args else '-')} · "
+                f"Protocol: {snapshot.get('protocol') or (args[1] if len(args) > 1 else '-')}",
+                f"Profile: {snapshot.get('profile_status') or 'missing'} · {status}",
+                label("Required signals", "required_signals"),
+                label("Fresh healthy signals", "fresh_healthy_signals"),
+                label("Missing signals", "missing_signals"),
+                label("Missing capabilities", "missing_capabilities"),
+            ]
+            if command == "/promoteprotocol" and snapshot.get("promotable"):
+                lines.append("Result: explicitly enable this profile after confirmation.")
+            elif snapshot.get("reasons"):
+                lines.append("Reasons: " + "; ".join(str(item) for item in snapshot["reasons"]))
+            return "\n".join(lines)
         if command == "/retryjob":
             return "\n".join(
                 [

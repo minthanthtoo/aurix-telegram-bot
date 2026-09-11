@@ -17,6 +17,7 @@ from cryptography.x509.oid import NameOID
 
 from app import ClaimService, Database, OutlineClient, OutlineError, TelegramBot
 from commerce import CommerceDatabase, CommerceService
+from connectivity import EndpointRegistry
 from persistence import open_sqlite_connection
 from telegram_transport import TelegramAPIError
 
@@ -1285,6 +1286,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "/receipts",
             "/capacity",
             "/drain sg-a bkk-a 2",
+            "/protocolreadiness sg-a xray management usage",
+            "/promoteprotocol sg-a xray management usage",
             "/reconcile",
             "/enforcement",
             "/failed",
@@ -1378,6 +1381,54 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(request_calls[0][0:2], ("sg-a", 999))
         self.assertEqual(request_calls[0][2]["target_endpoint_id"], "bkk-a")
         self.assertEqual(request_calls[0][2]["limit"], 2)
+
+    def test_admin_protocol_readiness_and_promotion_are_confirmation_bound(self):
+        registry = EndpointRegistry(self.commerce.database, Fernet.generate_key())
+        now = datetime.now(UTC)
+        registry.configure_bootstrap(
+            "https://outline.invalid:1234/secret", "0" * 64, now=now
+        )
+        registry.register_protocol_profile(
+            "legacy-default", "xray", status="candidate", capabilities={"usage": True}, now=now
+        )
+        registry.record_protocol_observation(
+            "legacy-default",
+            "xray",
+            signal="management",
+            status="healthy",
+            observed_at=now,
+            expires_at=now + timedelta(hours=1),
+            source="telegram-test",
+            now=now,
+        )
+        self.commerce.connectivity = registry
+
+        self.bot.handle(self.message(999, "/protocolreadiness legacy-default xray management usage"))
+        self.assertIn("READY", self.bot.sent[-1][1])
+        self.assertIn("Fresh healthy signals: management", self.bot.sent[-1][1])
+
+        self.bot.handle(self.message(999, "/promoteprotocol legacy-default xray management usage"))
+        self.assertIn("expires in 5 minutes", self.bot.sent[-1][1])
+        confirm = next(
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["callback_data"].startswith("a:k:")
+        )
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "callback-promote",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": confirm["callback_data"],
+            }
+        )
+        self.assertIn("is now enabled", self.bot.sent[-1][1])
+        self.assertEqual(
+            registry.list_protocol_profiles("legacy-default", enabled_only=True)[1]["protocol"],
+            "xray",
+        )
 
     def test_admin_button_labels_are_separate_and_customer_menu_is_side_effect_free(self):
         self.bot.handle(self.message(123, "📥 Pending Orders"))

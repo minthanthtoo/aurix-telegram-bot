@@ -209,6 +209,53 @@ class TelegramCommandMixin:
                     "Usage: /drain <source-endpoint> [target-endpoint] [limit 1-200]",
                 )
                 return
+        if command in {"/protocolreadiness", "/promoteprotocol"}:
+            try:
+                endpoint, protocol, signals, capabilities = self._protocol_promotion_args(args)
+            except ValueError as exc:
+                self.send(chat["id"], str(exc))
+                return
+            if command == "/protocolreadiness":
+                try:
+                    readiness = dict(self._admin_call(
+                        telegram_id,
+                        "protocol_profile_promotion_readiness",
+                        endpoint,
+                        protocol,
+                        required_signals=signals,
+                        required_capabilities=capabilities,
+                    ))
+                    readiness["state"] = "present"
+                except CommerceError as exc:
+                    self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+                else:
+                    self.send(
+                        chat["id"],
+                        self._admin_preview_text(command, args, "Protocol readiness", readiness),
+                        self._admin_keyboard(telegram_id),
+                    )
+                return
+            if not confirmed:
+                try:
+                    readiness = dict(self._admin_call(
+                        telegram_id,
+                        "protocol_profile_promotion_readiness",
+                        endpoint,
+                        protocol,
+                        required_signals=signals,
+                        required_capabilities=capabilities,
+                    ))
+                    readiness["state"] = "present"
+                except CommerceError as exc:
+                    self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+                    return
+                if not readiness.get("promotable"):
+                    self.send(
+                        chat["id"],
+                        self._admin_preview_text(command, args, "Protocol promotion", readiness),
+                        self._admin_keyboard(telegram_id),
+                    )
+                    return
         if command == "/setpromo" and not confirmed and len(args) == 7:
             try:
                 _promo_gb_to_bytes(args[1])
@@ -242,6 +289,8 @@ class TelegramCommandMixin:
                 pass
             elif command in {"/stoppromo", "/resumepromo"} and len(args) != 1:
                 pass
+            elif command == "/promoteprotocol" and len(args) not in {3, 4}:
+                pass
             else:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
@@ -257,6 +306,9 @@ class TelegramCommandMixin:
                     f"Drain endpoint {args[0]}"
                     + (f" to {args[1]}" if len(args) >= 2 else " to the best eligible target")
                     + "?"
+                ),
+                "/promoteprotocol": lambda: (
+                    f"Promote protocol {args[1]} on endpoint {args[0]} after rechecking evidence?"
                 ),
             }[command]()
                 self._queue_admin_confirmation(
@@ -276,6 +328,7 @@ class TelegramCommandMixin:
                         "/stoppromo": "⏸ Confirm Stop",
                         "/resumepromo": "▶ Confirm Resume",
                         "/drain": "🚧 Confirm Drain",
+                        "/promoteprotocol": "🛡 Confirm Promotion",
                     }[command],
                 )
                 return
@@ -1028,6 +1081,27 @@ class TelegramCommandMixin:
                     )
                 else:
                     self._open_admin_panel(chat["id"], telegram_id, "failed")
+        elif command == "/promoteprotocol":
+            try:
+                endpoint, protocol, signals, capabilities = self._protocol_promotion_args(args)
+                result = self._admin_call(
+                    telegram_id,
+                    "promote_protocol_profile",
+                    endpoint,
+                    protocol,
+                    telegram_id,
+                    required_signals=signals,
+                    required_capabilities=capabilities,
+                )
+            except (CommerceError, ValueError) as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                self.send(
+                    chat["id"],
+                    f"Protocol profile {result['protocol']} on {result['endpoint_id']} is now enabled. "
+                    "Customer traffic remains governed by the registered adapter and endpoint gates.",
+                    self._admin_keyboard(telegram_id),
+                )
         elif command == "/drain":
             target = args[1] if len(args) >= 2 else None
             limit = int(args[2]) if len(args) == 3 else 50

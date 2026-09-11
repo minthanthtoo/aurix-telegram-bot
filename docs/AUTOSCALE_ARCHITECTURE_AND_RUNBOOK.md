@@ -184,7 +184,9 @@ The generic registration path rejects direct enablement for non-Outline
 protocols, so callers cannot skip that boundary accidentally.
 The commerce worker is the authorized application boundary for the readiness
 preview and promotion call; the browser Control Center does not perform this
-mutation.
+mutation. Telegram exposes `/protocolreadiness` for a redacted operator
+preview and `/promoteprotocol` for the same promotion only after a five-minute,
+single-use confirmation whose state fingerprint is rechecked before execution.
 
 ### `endpoint_plan_limits`
 
