@@ -818,6 +818,12 @@ class EndpointRegistry:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Verify Outline first, then make a newly provisioned endpoint allocatable."""
+        with self.database.connect() as connection:
+            existing = connection.execute(
+                "SELECT state FROM vpn_endpoints WHERE id = ?", (str(endpoint_id),)
+            ).fetchone()
+        if existing is not None and str(existing["state"]).upper() in {"DRAINING", "RETIRED"}:
+            raise ConnectivityError("endpoint lifecycle does not permit activation")
         fingerprint = certificate_sha256.lower().replace(":", "")
         client = OutlineClient(api_url.rstrip("/"), fingerprint)
         info = client.server_info()
@@ -825,6 +831,12 @@ class EndpointRegistry:
         parsed = urllib.parse.urlsplit(api_url)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            lock = " FOR UPDATE" if isinstance(connection, _PostgresConnection) else ""
+            current = connection.execute(
+                "SELECT state FROM vpn_endpoints WHERE id = ?" + lock, (str(endpoint_id),)
+            ).fetchone()
+            if current is not None and str(current["state"]).upper() in {"DRAINING", "RETIRED"}:
+                raise ConnectivityError("endpoint lifecycle does not permit activation")
             connection.execute(
                 """INSERT INTO vpn_endpoints
                    (id, code, provider, provider_resource_id, region, state,

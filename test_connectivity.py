@@ -138,6 +138,24 @@ class EndpointRegistryTest(unittest.TestCase):
                 "legacy-default", "retired", actor_id=99, now=now
             )
 
+    def test_endpoint_activation_cannot_reopen_draining_or_retired_endpoint(self):
+        with patch("connectivity.OutlineClient") as outline_client:
+            with self.database.connect() as connection:
+                connection.execute(
+                    "UPDATE vpn_endpoints SET state = 'RETIRED', accepts_new_assignments = 0 WHERE id = 'legacy-default'"
+                )
+            with self.assertRaisesRegex(ConnectivityError, "lifecycle"):
+                self.registry.register_verified_endpoint(
+                    endpoint_id="legacy-default",
+                    code="SGP-01",
+                    provider="digitalocean",
+                    provider_resource_id="42",
+                    region="sgp1",
+                    api_url="https://outline.invalid:1234/secret",
+                    certificate_sha256="0" * 64,
+                )
+            outline_client.assert_not_called()
+
     def test_endpoint_protocol_profiles_default_to_outline_and_can_stage_candidates(self):
         profiles = self.registry.list_protocol_profiles("legacy-default")
         self.assertEqual([item["protocol"] for item in profiles], ["outline"])
