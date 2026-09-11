@@ -18,9 +18,9 @@ uv run python scripts/aurix_protocol_matrix.py --customers-per-protocol 16 --wor
 These commands exercise only an in-memory provider and the authenticated local
 agent contract. They are safe regression checks, not live server load tests.
 
-Latest bounded stress run (2026-09-10 22:06 UTC): `--customers-per-protocol
+Latest bounded stress run (2026-09-11 03:56 UTC): `--customers-per-protocol
 200 --workers 64` passed with 400 provisioned/reconciled/revoked grants and no
-errors. Provision latency was mean 0.102 ms, p95 0.115 ms, and max 2.237 ms in
+errors. Provision latency was mean 0.150 ms, p95 0.203 ms, and max 6.301 ms in
 the local process. These timings describe the test harness only and must not be
 used as server capacity or customer speed evidence.
 

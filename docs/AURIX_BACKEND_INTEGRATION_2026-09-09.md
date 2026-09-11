@@ -228,7 +228,7 @@ capabilities, and evidence timestamps while ignoring only the preview's
 volatile `checked_at` timestamp; the promotion method rechecks all evidence
 before enabling the profile. Customer identities cannot reach either command.
 
-The complete suite now passes `348` tests (`Ran 348 tests ... OK`) with
+The complete suite now passes `349` tests (`Ran 349 tests ... OK`) with
 `PYTHONWARNINGS=error::ResourceWarning`; focused Telegram authorization and
 promotion/disable tests, Python compilation, Ruff, and `git diff --check` also
 pass.
@@ -239,7 +239,11 @@ confirmed protocol disable workflow`), and `10a0270` (`Serialize protocol
 disable state transition`). The disable transition re-reads the profile inside
 the write transaction, rejects a concurrently retired profile, blocks new
 allocation, preserves existing credentials, and records the actual prior state
-in the audit event.
+in the audit event. The subsequent node-agent quota-boundary hardening is
+committed as `5dddbe0` (`Reject boolean node-agent quotas`), `5634df3`
+(`Normalize node-agent quota errors`), and `daa4565` (`Reject non-integer
+protocol quotas`); malformed boolean, floating-point, empty, and non-numeric
+quota values now fail before provider creation.
 
 ## Remaining gates and next action
 
