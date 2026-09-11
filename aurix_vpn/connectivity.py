@@ -1848,6 +1848,48 @@ class DigitalOceanClient:
             raise ConnectivityError("DigitalOcean response lacks Droplets")
         return [item for item in droplets if isinstance(item, dict)]
 
+    def validate_droplet_specification(self, specification: dict[str, Any]) -> None:
+        """Validate a placement against the provider's current catalog."""
+        region = str(specification.get("region") or "").strip()
+        size = str(specification.get("size") or "").strip()
+        image = str(specification.get("image") or "").strip()
+        if not region or not size or not image:
+            raise ConnectivityError("DigitalOcean placement specification is incomplete")
+        regions = self._request("GET", "/regions?per_page=200")
+        sizes = self._request("GET", "/sizes?per_page=200")
+        images = self._request("GET", "/images?type=distribution&per_page=200")
+        region_rows = regions.get("regions") if isinstance(regions, dict) else None
+        size_rows = sizes.get("sizes") if isinstance(sizes, dict) else None
+        image_rows = images.get("images") if isinstance(images, dict) else None
+        if not isinstance(region_rows, list) or not isinstance(size_rows, list) or not isinstance(image_rows, list):
+            raise ConnectivityError("DigitalOcean placement catalog is invalid")
+        region_row = next(
+            (item for item in region_rows if isinstance(item, dict) and item.get("slug") == region),
+            None,
+        )
+        if region_row is None or region_row.get("available") is False:
+            raise ConnectivityError("DigitalOcean region is unavailable")
+        size_row = next(
+            (item for item in size_rows if isinstance(item, dict) and item.get("slug") == size),
+            None,
+        )
+        if size_row is None or size_row.get("available") is False:
+            raise ConnectivityError("DigitalOcean size is unavailable")
+        size_regions = size_row.get("regions")
+        if isinstance(size_regions, list) and region not in {str(item) for item in size_regions}:
+            raise ConnectivityError("DigitalOcean size is unavailable in the requested region")
+        image_row = next(
+            (
+                item
+                for item in image_rows
+                if isinstance(item, dict)
+                and (item.get("slug") == image or str(item.get("id")) == image)
+            ),
+            None,
+        )
+        if image_row is None or image_row.get("deprecated") is True:
+            raise ConnectivityError("DigitalOcean image is unavailable")
+
     def action(self, action_id: str | int) -> dict[str, Any]:
         result = self._request("GET", f"/actions/{action_id}")
         action = result.get("action") if isinstance(result, dict) else None
@@ -1944,6 +1986,37 @@ class FleetController:
                     region = str(metadata["region"]).strip()
             intents.append((str(row["id"]), region))
         return intents
+
+    @staticmethod
+    def _validate_provision_specification(specification: dict[str, Any]) -> dict[str, str]:
+        region = str(specification.get("region") or "").strip()
+        size = str(specification.get("size") or "").strip()
+        image = str(specification.get("image") or "").strip()
+        allowed_regions = {
+            item.strip()
+            for item in os.environ.get("AURIX_ALLOWED_REGIONS", "sgp1").split(",")
+            if item.strip()
+        }
+        allowed_sizes = {
+            item.strip()
+            for item in os.environ.get("AURIX_ALLOWED_DROPLET_SIZES", "s-1vcpu-1gb").split(",")
+            if item.strip()
+        }
+        allowed_images = {
+            item.strip()
+            for item in os.environ.get("AURIX_ALLOWED_DROPLET_IMAGES", "ubuntu-24-04-x64").split(",")
+            if item.strip()
+        }
+        if (
+            not region
+            or not size
+            or not image
+            or region not in allowed_regions
+            or size not in allowed_sizes
+            or image not in allowed_images
+        ):
+            raise ConnectivityError("Droplet specification is outside the configured allowlist")
+        return {"region": region, "size": size, "image": image}
 
     def scale_out_recommendation(
         self,
@@ -2249,6 +2322,7 @@ class FleetController:
             raise ConnectivityError("Infrastructure mutations are disabled")
         if self.provider is None:
             raise ConnectivityError("DigitalOcean provider is not configured")
+        durable_specification = self._provision_specification(job_id)
         maximum_budget = os.environ.get("AURIX_MAX_MONTHLY_INFRA_BUDGET_USD", "").strip()
         if maximum_budget:
             try:
@@ -2276,6 +2350,16 @@ class FleetController:
             }
         )
         specification["tags"] = sorted(tags)
+        for field in ("region", "size", "image"):
+            supplied = str(specification.get(field) or "").strip()
+            durable = durable_specification[field]
+            if supplied and supplied != durable:
+                raise ConnectivityError("Provisioning specification does not match durable intent")
+            specification[field] = durable
+        placement = self._validate_provision_specification(specification)
+        validator = getattr(self.provider, "validate_droplet_specification", None)
+        if callable(validator):
+            validator(placement)
         retry_requested = False
         with self.database.connect() as connection:
             pending = connection.execute(

@@ -306,8 +306,15 @@ provision tag before creating anything, recovering one matching provider
 resource and failing closed on multiple matches.
 This recovery step is committed as `cd923f7` (`Make VPN infrastructure retries safe`).
 
+The worker now treats the durable provisioning intent as the placement source
+of truth, rejects conflicting caller-supplied region/size/image values, and
+rechecks the configured allowlists at execution time. The DigitalOcean client
+also validates the current region, size, image, availability, and size-region
+compatibility catalogs before a create; invalid placement fails closed without
+reaching the provider mutation call.
+
 The focused scale-control tests, Control Center/API tests, VPN-oriented
-regression set (218 tests), Ruff, Python compilation, JavaScript syntax, and
+regression set (220 tests), Ruff, Python compilation, JavaScript syntax, and
 `git diff --check` pass locally. No live server, customer credential,
 provider/database deployment, load test, speed test, or automatic scale action
 was performed. The remaining action is still the separately authorized

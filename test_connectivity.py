@@ -663,6 +663,48 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
         self.assertEqual(droplet["id"], 42)
         self.assertEqual(request.call_args.args[0].headers["Authorization"], "Bearer private-token")
 
+    def test_api_client_validates_current_placement_catalog(self):
+        client = DigitalOceanClient("private-token")
+        responses = [
+            FakeResponse({"regions": [{"slug": "sgp1", "available": True}]}),
+            FakeResponse({"sizes": [{"slug": "s-1vcpu-1gb", "available": True, "regions": ["sgp1"]}]}),
+            FakeResponse({"images": [{"slug": "ubuntu-24-04-x64", "public": True}]}),
+        ]
+        with patch("connectivity.urllib.request.urlopen", side_effect=responses):
+            client.validate_droplet_specification(
+                {"region": "sgp1", "size": "s-1vcpu-1gb", "image": "ubuntu-24-04-x64"}
+            )
+
+    def test_execute_provision_revalidates_durable_allowlist_before_provider(self):
+        class Provider:
+            def create_droplet(self, specification):
+                raise AssertionError("invalid durable placement must not reach provider")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            controller = FleetController(database, Provider())
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            with database.connect() as connection:
+                connection.execute(
+                    """UPDATE infrastructure_events
+                          SET metadata_json = ?
+                        WHERE infrastructure_job_id = ?
+                          AND event_type = 'provision_requested'""",
+                    (json.dumps({"region": "bkk1", "size": "s-1vcpu-1gb", "image": "ubuntu-24-04-x64"}), job),
+                )
+            with patch.dict(
+                os.environ,
+                {"AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1", "AURIX_ALLOWED_REGIONS": "sgp1"},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(ConnectivityError, "outside the configured allowlist"):
+                    controller.process_infrastructure_once()
+
     def test_provider_mutation_is_disabled_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             database = initialized_database(Path(tmp) / "fleet.db")

@@ -311,6 +311,10 @@ active unless a bounded, audited overlap budget has been explicitly approved.
 Provisioning is asynchronous and reconciled:
 
 1. Validate budget, region, size/image allowlists, cooldown, and global node cap.
+   At execution time, rebuild placement from the durable intent, reject any
+   conflicting caller placement, and recheck the current DigitalOcean
+   region/size/image catalogs; unavailable or incompatible placement fails
+   closed before provider creation.
 2. Insert one infrastructure intent and acquire a region leadership lock.
 3. Call `POST /v2/droplets` with a stable intent tag and no permanent secret in
    user data.
@@ -332,6 +336,9 @@ requeue that exact infrastructure job through the existing admin retry
 challenge. The worker records the retry request and performs a tag read-back
 before creating anything; an existing matching resource is reconciled instead
 of duplicated, while multiple matches fail closed.
+This recovery and execution-safety behavior is committed as `cd923f7`
+(`Make VPN infrastructure retries safe`) and the placement-catalog guard as
+the subsequent continuation milestone.
 
 User data remains available from the Droplet metadata service. It may contain
 public bootstrap configuration, package pins, and a short-lived one-time token,
