@@ -1045,6 +1045,225 @@ class EndpointRegistry:
             raise ConnectivityError("VPN endpoint does not exist")
         return dict(row)
 
+    @staticmethod
+    def _endpoint_lifecycle_counts(connection: Any, endpoint_id: str) -> dict[str, int]:
+        """Return durable blockers for a local endpoint retirement decision.
+
+        This deliberately checks both the assignment projection and the
+        credential/key projections.  A stale projection must block retirement;
+        it must never be silently interpreted as an empty endpoint.
+        """
+        def count(query: str, values: tuple[Any, ...] = ()) -> int:
+            row = connection.execute(query, values).fetchone()
+            return int(row["n"] or 0) if row is not None else 0
+
+        return {
+            "active_assignments": count(
+                """SELECT COUNT(*) AS n FROM endpoint_assignments
+                    WHERE endpoint_id = ? AND status = 'active'""",
+                (endpoint_id,),
+            ),
+            "active_free_keys": count(
+                """SELECT COUNT(*) AS n FROM keys
+                    WHERE endpoint_id = ? AND status IN ('active', 'revoke_failed')""",
+                (endpoint_id,),
+            ),
+            "active_paid_keys": count(
+                """SELECT COUNT(*) AS n FROM paid_vpn_keys
+                    WHERE endpoint_id = ? AND status IN ('active', 'revoke_failed')""",
+                (endpoint_id,),
+            ),
+            "live_generations": count(
+                """SELECT COUNT(*) AS n FROM credential_generations
+                    WHERE endpoint_id = ? AND status IN ('pending', 'active', 'retiring', 'unknown')""",
+                (endpoint_id,),
+            ),
+            "unresolved_remote_generations": count(
+                """SELECT COUNT(*) AS n FROM credential_generations
+                    WHERE endpoint_id = ? AND remote_state != 'revoked_verified'""",
+                (endpoint_id,),
+            ),
+            "pending_free_provisioning": count(
+                """SELECT COUNT(*) AS n FROM free_provisioning_jobs
+                    WHERE endpoint_id = ? AND status IN ('pending', 'running')""",
+                (endpoint_id,),
+            ),
+            "pending_giveaway_provisioning": count(
+                """SELECT COUNT(*) AS n FROM giveaway_provisioning_jobs
+                    WHERE endpoint_id = ? AND status IN ('pending', 'running')""",
+                (endpoint_id,),
+            ),
+            "pending_paid_provisioning": count(
+                """SELECT COUNT(*) AS n
+                     FROM provisioning_jobs p
+                     JOIN endpoint_assignments a ON a.id = p.endpoint_assignment_id
+                    WHERE a.endpoint_id = ? AND p.status IN ('pending', 'running')""",
+                (endpoint_id,),
+            ),
+            "pending_failover": count(
+                """SELECT COUNT(*) AS n FROM failover_decisions
+                    WHERE (source_endpoint_id = ? OR target_endpoint_id = ?)
+                      AND state IN ('pending', 'creating', 'verified')""",
+                (endpoint_id, endpoint_id),
+            ),
+            "pending_infrastructure": count(
+                """SELECT COUNT(*) AS n FROM infrastructure_jobs
+                    WHERE endpoint_id = ? AND status IN ('pending', 'running', 'awaiting_verification')""",
+                (endpoint_id,),
+            ),
+        }
+
+    @staticmethod
+    def _endpoint_lifecycle_blockers(
+        current: str,
+        desired: str,
+        counts: dict[str, int],
+    ) -> list[str]:
+        blockers: list[str] = []
+        if desired == "RETIRED":
+            if current not in {"DRAINING", "RETIRED"}:
+                blockers.append("endpoint must be draining first")
+            for name, label in (
+                ("active_assignments", "active assignments"),
+                ("active_free_keys", "active free keys"),
+                ("active_paid_keys", "active paid keys"),
+                ("live_generations", "live credential generations"),
+                ("unresolved_remote_generations", "unresolved remote generations"),
+                ("pending_free_provisioning", "pending free provisioning"),
+                ("pending_giveaway_provisioning", "pending giveaway provisioning"),
+                ("pending_paid_provisioning", "pending paid provisioning"),
+                ("pending_failover", "pending failover decisions"),
+                ("pending_infrastructure", "pending infrastructure work"),
+            ):
+                if counts[name]:
+                    blockers.append(f"{counts[name]} {label}")
+        elif desired in {"ACTIVE", "DRAINING"} and current == "RETIRED":
+            blockers.append("retired endpoint is terminal")
+        return blockers
+
+    def endpoint_lifecycle_preview(
+        self,
+        endpoint_id: str,
+        requested_state: str,
+    ) -> dict[str, Any]:
+        """Return a read-only, durable readiness check for a lifecycle change."""
+        normalized_id = str(endpoint_id or "").strip()
+        desired = str(requested_state or "").strip().upper()
+        if not normalized_id or len(normalized_id) > 128:
+            raise ConnectivityError("Endpoint identity is invalid")
+        if desired not in {"ACTIVE", "DRAINING", "RETIRED"}:
+            raise ConnectivityError("Endpoint lifecycle must be active, draining or retired")
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT id, code, state, accepts_new_assignments, retired_at FROM vpn_endpoints WHERE id = ?",
+                (normalized_id,),
+            ).fetchone()
+            if row is None:
+                raise ConnectivityError("VPN endpoint does not exist")
+            counts = self._endpoint_lifecycle_counts(connection, normalized_id)
+        current = str(row["state"] or "ACTIVE").upper()
+        blockers = self._endpoint_lifecycle_blockers(current, desired, counts)
+        return {
+            "endpoint_id": normalized_id,
+            "endpoint_code": str(row["code"] or normalized_id),
+            "current_state": current,
+            "requested_state": desired,
+            "accepts_new_assignments": bool(row["accepts_new_assignments"]),
+            "retired_at": row["retired_at"],
+            "counts": counts,
+            "blockers": blockers,
+            "ready": not blockers,
+        }
+
+    def set_endpoint_lifecycle(
+        self,
+        endpoint_id: str,
+        requested_state: str,
+        *,
+        actor_id: int | None = None,
+        reason: str = "operator-lifecycle",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Apply a local lifecycle transition without touching the provider.
+
+        Retirement is intentionally terminal and requires the endpoint to be
+        draining with every durable assignment, credential, and queued work
+        projection empty. Provider destruction is a separate owner-approved
+        operation and is not part of this method.
+        """
+        normalized_id = str(endpoint_id or "").strip()
+        desired = str(requested_state or "").strip().upper()
+        if not normalized_id or len(normalized_id) > 128:
+            raise ConnectivityError("Endpoint identity is invalid")
+        if desired not in {"ACTIVE", "DRAINING", "RETIRED"}:
+            raise ConnectivityError("Endpoint lifecycle must be active, draining or retired")
+        timestamp = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+        clean_reason = str(reason or "operator-lifecycle").strip()[:256] or "operator-lifecycle"
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            lock = " FOR UPDATE" if isinstance(connection, _PostgresConnection) else ""
+            row = connection.execute(
+                "SELECT id, code, state, accepts_new_assignments, retired_at FROM vpn_endpoints WHERE id = ?"
+                + lock,
+                (normalized_id,),
+            ).fetchone()
+            if row is None:
+                raise ConnectivityError("VPN endpoint does not exist")
+            current = str(row["state"] or "ACTIVE").upper()
+            if current == desired:
+                counts = self._endpoint_lifecycle_counts(connection, normalized_id)
+                return {
+                    "endpoint_id": normalized_id,
+                    "endpoint_code": str(row["code"] or normalized_id),
+                    "current_state": current,
+                    "requested_state": desired,
+                    "accepts_new_assignments": bool(row["accepts_new_assignments"]),
+                    "retired_at": row["retired_at"],
+                    "counts": counts,
+                    "blockers": [],
+                    "ready": True,
+                    "changed": False,
+                }
+            counts = self._endpoint_lifecycle_counts(connection, normalized_id)
+            blockers = self._endpoint_lifecycle_blockers(current, desired, counts)
+            if blockers:
+                raise ConnectivityError("Endpoint lifecycle change is blocked: " + "; ".join(blockers))
+            accepts = desired == "ACTIVE"
+            retired_at = timestamp if desired == "RETIRED" else None
+            connection.execute(
+                """UPDATE vpn_endpoints
+                      SET state = ?, accepts_new_assignments = ?,
+                          retired_at = CASE WHEN ? = 'RETIRED' THEN ? ELSE retired_at END
+                    WHERE id = ?""",
+                (desired, accepts, desired, retired_at, normalized_id),
+            )
+            connection.execute(
+                """INSERT INTO infrastructure_events
+                   (id, endpoint_id, event_type, metadata_json, created_at)
+                   VALUES (?, ?, 'endpoint_lifecycle_changed', ?, ?)""",
+                (
+                    uuid.uuid4().hex,
+                    normalized_id,
+                    json.dumps(
+                        {
+                            "actor_id": actor_id,
+                            "previous_state": current,
+                            "requested_state": desired,
+                            "reason": clean_reason,
+                            "counts": counts,
+                        },
+                        sort_keys=True,
+                    ),
+                    timestamp,
+                ),
+            )
+        return self.endpoint_lifecycle_preview(normalized_id, desired) | {
+            "changed": True,
+            "changed_at": timestamp,
+            "previous_state": current,
+            "reason": clean_reason,
+        }
+
     def client(self, endpoint_id: str) -> OutlineClient:
         endpoint = self.endpoint(endpoint_id)
         if not endpoint.get("certificate_sha256"):

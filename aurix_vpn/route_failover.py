@@ -254,6 +254,8 @@ class RouteFailoverService:
             ).fetchone()
             if source is None:
                 raise FailoverError("source endpoint does not exist")
+            if str(source["state"]).upper() == "RETIRED":
+                raise FailoverError("retired endpoint cannot be drained")
             generations = connection.execute(
                 """SELECT DISTINCT g.generation_id, g.entitlement_key,
                                   LOWER(COALESCE(NULLIF(g.protocol, ''), 'outline')) AS protocol
@@ -337,7 +339,10 @@ class RouteFailoverService:
                         decision_ids.append(str(existing["decision_id"]))
                         existing_count += 1
             connection.execute(
-                "UPDATE vpn_endpoints SET accepts_new_assignments = FALSE WHERE id = ?",
+                """UPDATE vpn_endpoints
+                      SET state = CASE WHEN state = 'RETIRED' THEN state ELSE 'DRAINING' END,
+                          accepts_new_assignments = FALSE
+                    WHERE id = ?""",
                 (source_id,),
             )
             connection.execute(

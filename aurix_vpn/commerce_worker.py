@@ -1809,6 +1809,42 @@ class CommerceWorkerMixin:
         except FailoverError as exc:
             raise CommerceError(str(exc)) from exc
 
+    def endpoint_lifecycle_preview(
+        self,
+        endpoint_id: str,
+        requested_state: str,
+    ) -> dict[str, Any]:
+        """Return a read-only endpoint lifecycle readiness check."""
+        if self.connectivity is None:
+            raise CommerceError("Endpoint lifecycle management is not configured")
+        try:
+            return self.connectivity.endpoint_lifecycle_preview(endpoint_id, requested_state)
+        except ConnectivityError as exc:
+            raise CommerceError(str(exc)) from exc
+
+    def set_endpoint_lifecycle(
+        self,
+        endpoint_id: str,
+        requested_state: str,
+        admin_id: int,
+        *,
+        reason: str = "operator-lifecycle",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Apply a guarded local lifecycle change; provider deletion is separate."""
+        if self.connectivity is None:
+            raise CommerceError("Endpoint lifecycle management is not configured")
+        try:
+            return self.connectivity.set_endpoint_lifecycle(
+                endpoint_id,
+                requested_state,
+                actor_id=admin_id,
+                reason=reason,
+                now=now,
+            )
+        except ConnectivityError as exc:
+            raise CommerceError(str(exc)) from exc
+
     def configure_endpoint_plan_limit(
         self,
         endpoint_id: str,

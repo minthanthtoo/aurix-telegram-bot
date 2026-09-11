@@ -140,8 +140,9 @@ class RouteFailoverTest(unittest.TestCase):
         self.assertEqual(repeated["existing"], 1)
         with self.database.connect() as connection:
             endpoint = connection.execute(
-                "SELECT accepts_new_assignments FROM vpn_endpoints WHERE id = 'sg-a'"
+                "SELECT state, accepts_new_assignments FROM vpn_endpoints WHERE id = 'sg-a'"
             ).fetchone()
+        self.assertEqual(endpoint["state"], "DRAINING")
         self.assertFalse(bool(endpoint["accepts_new_assignments"]))
         decision = self.failover.claim(now=self.now)
         self.assertEqual(decision["decision_id"], result["decision_ids"][0])

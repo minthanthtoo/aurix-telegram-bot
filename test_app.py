@@ -1323,6 +1323,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "/receipts",
             "/capacity",
             "/drain sg-a bkk-a 2",
+            "/serverstate sg-a draining",
             "/provisionnode sgp1 s-1vcpu-1gb ubuntu-24-04-x64",
             "/protocolreadiness sg-a xray management usage",
             "/promoteprotocol sg-a xray management usage",
@@ -1420,6 +1421,53 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(request_calls[0][0:2], ("sg-a", 999))
         self.assertEqual(request_calls[0][2]["target_endpoint_id"], "bkk-a")
         self.assertEqual(request_calls[0][2]["limit"], 2)
+
+    def test_admin_endpoint_lifecycle_is_confirmation_bound_and_guarded(self):
+        preview_calls = []
+        lifecycle_calls = []
+        self.commerce.endpoint_lifecycle_preview = lambda endpoint, state: preview_calls.append(
+            (endpoint, state)
+        ) or {
+            "state": "present",
+            "endpoint_id": endpoint,
+            "endpoint_code": "SG-A",
+            "current_state": "ACTIVE",
+            "requested_state": state.upper(),
+            "accepts_new_assignments": True,
+            "counts": {"active_assignments": 0},
+            "blockers": [],
+            "ready": True,
+        }
+        self.commerce.set_endpoint_lifecycle = lambda endpoint, state, admin_id, **kwargs: lifecycle_calls.append(
+            (endpoint, state, admin_id, kwargs)
+        ) or {
+            "endpoint_id": endpoint,
+            "current_state": state.upper(),
+            "changed": True,
+        }
+        self.bot.handle(self.message(999, "/serverstate sg-a draining"))
+        self.assertEqual(preview_calls[0], ("sg-a", "draining"))
+        self.assertIn("⚠️ Confirm Endpoint State", {
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+        })
+        confirm = next(
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["callback_data"].startswith("a:k:")
+        )
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "callback-lifecycle-confirm",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": confirm["callback_data"],
+            }
+        )
+        self.assertEqual(lifecycle_calls[0][0:3], ("sg-a", "draining", 999))
 
     def test_admin_node_intent_is_confirmation_bound_and_default_off(self):
         self.bot.handle(self.message(999, "/provisionnode sgp1 s-1vcpu-1gb ubuntu-24-04-x64"))

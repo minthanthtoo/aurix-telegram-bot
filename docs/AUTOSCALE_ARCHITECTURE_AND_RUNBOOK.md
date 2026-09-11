@@ -437,6 +437,14 @@ Lists and pagination edit the existing Telegram message. Mutations require the
 existing admin challenge/confirmation mechanism. Destruction requires owner
 authorization even when normal server administration is delegated.
 
+The current Telegram lifecycle command is `/serverstate <endpoint>
+<active|draining|retired>`. It previews the durable blockers and requires the
+existing confirmation challenge. `retired` is terminal local admission state:
+it is accepted only after the endpoint is draining and all assignments,
+credential projections, unresolved remote generations, and queued work are
+empty. This transition never destroys a provider VM; provider destruction
+remains a separate owner-authorized operation.
+
 ## 17. Rollout gates
 
 ### Gate 0: recoverability and security

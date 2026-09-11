@@ -93,6 +93,51 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(first.id, second.id)
         self.assertEqual(first.endpoint_id, "legacy-default")
 
+    def test_endpoint_lifecycle_is_drain_then_terminal_retirement(self):
+        now = datetime.now(UTC)
+        preview = self.registry.endpoint_lifecycle_preview("legacy-default", "retired")
+        self.assertFalse(preview["ready"])
+        self.assertIn("endpoint must be draining first", preview["blockers"])
+        with self.assertRaisesRegex(ConnectivityError, "must be draining first"):
+            self.registry.set_endpoint_lifecycle(
+                "legacy-default", "retired", actor_id=99, now=now
+            )
+        draining = self.registry.set_endpoint_lifecycle(
+            "legacy-default", "draining", actor_id=99, now=now
+        )
+        self.assertTrue(draining["changed"])
+        self.assertEqual(draining["current_state"], "DRAINING")
+        self.assertFalse(draining["accepts_new_assignments"])
+        ready = self.registry.endpoint_lifecycle_preview("legacy-default", "retired")
+        self.assertTrue(ready["ready"])
+        retired = self.registry.set_endpoint_lifecycle(
+            "legacy-default", "retired", actor_id=99, now=now
+        )
+        self.assertTrue(retired["changed"])
+        self.assertEqual(retired["current_state"], "RETIRED")
+        self.assertEqual(retired["retired_at"], now.isoformat())
+        repeated = self.registry.set_endpoint_lifecycle(
+            "legacy-default", "retired", actor_id=99, now=now
+        )
+        self.assertFalse(repeated["changed"])
+        with self.assertRaisesRegex(ConnectivityError, "terminal"):
+            self.registry.set_endpoint_lifecycle("legacy-default", "active", actor_id=99, now=now)
+
+    def test_endpoint_retirement_requires_zero_durable_assignments(self):
+        now = datetime.now(UTC)
+        self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000, now=now
+        )
+        self.registry.set_endpoint_lifecycle("legacy-default", "draining", actor_id=99, now=now)
+        preview = self.registry.endpoint_lifecycle_preview("legacy-default", "retired")
+        self.assertFalse(preview["ready"])
+        self.assertEqual(preview["counts"]["active_assignments"], 1)
+        self.assertIn("1 active assignments", preview["blockers"])
+        with self.assertRaisesRegex(ConnectivityError, "active assignments"):
+            self.registry.set_endpoint_lifecycle(
+                "legacy-default", "retired", actor_id=99, now=now
+            )
+
     def test_endpoint_protocol_profiles_default_to_outline_and_can_stage_candidates(self):
         profiles = self.registry.list_protocol_profiles("legacy-default")
         self.assertEqual([item["protocol"] for item in profiles], ["outline"])

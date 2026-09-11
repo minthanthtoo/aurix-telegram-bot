@@ -36,6 +36,8 @@ class AdminOperations:
             "endpoint_plan_capacity",
             "endpoint_drain_preview",
             "request_endpoint_drain",
+            "endpoint_lifecycle_preview",
+            "set_endpoint_lifecycle",
             "queue_infrastructure_provision",
             "protocol_profile_status",
             "protocol_profile_promotion_readiness",

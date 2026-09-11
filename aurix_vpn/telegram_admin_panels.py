@@ -55,6 +55,20 @@ class TelegramAdminMixin:
         return endpoint, protocol
 
     @staticmethod
+    def _endpoint_lifecycle_args(args: list[str]) -> tuple[str, str]:
+        """Parse the owner-confirmed endpoint lifecycle command."""
+        if len(args) != 2:
+            raise ValueError("Usage: /serverstate <endpoint> <active|draining|retired>")
+        endpoint, state = (str(value).strip().lower() for value in args)
+        if not _PROTOCOL_TOKEN.fullmatch(endpoint) or state not in {
+            "active",
+            "draining",
+            "retired",
+        }:
+            raise ValueError("Endpoint and lifecycle state are invalid")
+        return endpoint, state
+
+    @staticmethod
     def _infrastructure_provision_args(args: list[str]) -> tuple[str, str, str]:
         if len(args) != 3:
             raise ValueError("Usage: /provisionnode <region> <size> <image>")
@@ -301,6 +315,21 @@ class TelegramAdminMixin:
             except Exception as exc:
                 snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
             return snapshot
+        if command == "/serverstate":
+            try:
+                endpoint, requested_state = self._endpoint_lifecycle_args(args)
+                snapshot.update(
+                    self._admin_call(
+                        telegram_id,
+                        "endpoint_lifecycle_preview",
+                        endpoint,
+                        requested_state,
+                    )
+                )
+                snapshot["state"] = "present"
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
         if command == "/disableprotocol":
             try:
                 endpoint, protocol = self._protocol_profile_args(args)
@@ -517,6 +546,22 @@ class TelegramAdminMixin:
                     "No provider request runs in this Telegram confirmation.",
                 ]
             )
+        if command == "/serverstate":
+            blockers = [str(value) for value in snapshot.get("blockers") or []]
+            lines = [
+                f"Endpoint: {snapshot.get('endpoint_code') or args[0]}",
+                f"Current state: {snapshot.get('current_state') or '-'}",
+                f"Requested state: {snapshot.get('requested_state') or args[1]}",
+            ]
+            if blockers:
+                lines.append("Current blockers: " + "; ".join(blockers))
+            lines.extend(
+                [
+                    "Result: change local admission lifecycle only; no provider VM action is performed.",
+                    "Retirement is terminal and requires zero durable assignments and unresolved credentials.",
+                ]
+            )
+            return "\n".join(lines)
         if command in {"/protocolreadiness", "/promoteprotocol"}:
             status = "READY" if snapshot.get("promotable") else "BLOCKED"
 

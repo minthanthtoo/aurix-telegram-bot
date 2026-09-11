@@ -209,6 +209,26 @@ class TelegramCommandMixin:
                     "Usage: /drain <source-endpoint> [target-endpoint] [limit 1-200]",
                 )
                 return
+        if command == "/serverstate":
+            try:
+                endpoint, requested_state = self._endpoint_lifecycle_args(args)
+            except ValueError as exc:
+                self.send(chat["id"], str(exc))
+                return
+            if not confirmed:
+                try:
+                    preview = dict(
+                        self._admin_call(
+                            telegram_id,
+                            "endpoint_lifecycle_preview",
+                            endpoint,
+                            requested_state,
+                        )
+                    )
+                    preview["state"] = "present"
+                except CommerceError as exc:
+                    self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+                    return
         if command == "/provisionnode":
             try:
                 self._infrastructure_provision_args(args)
@@ -334,6 +354,8 @@ class TelegramCommandMixin:
                 pass
             elif command == "/provisionnode" and len(args) != 3:
                 pass
+            elif command == "/serverstate" and len(args) != 2:
+                pass
             else:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
@@ -350,6 +372,7 @@ class TelegramCommandMixin:
                     + (f" to {args[1]}" if len(args) >= 2 else " to the best eligible target")
                     + "?"
                 ),
+                "/serverstate": lambda: f"Change endpoint {args[0]} lifecycle to {args[1]}?",
                 "/promoteprotocol": lambda: (
                     f"Promote protocol {args[1]} on endpoint {args[0]} after rechecking evidence?"
                 ),
@@ -377,6 +400,7 @@ class TelegramCommandMixin:
                         "/stoppromo": "⏸ Confirm Stop",
                         "/resumepromo": "▶ Confirm Resume",
                         "/drain": "🚧 Confirm Drain",
+                        "/serverstate": "⚠️ Confirm Endpoint State",
                         "/promoteprotocol": "🛡 Confirm Promotion",
                         "/disableprotocol": "⛔ Confirm Disable",
                         "/provisionnode": "🧱 Confirm Node Intent",
@@ -1193,6 +1217,26 @@ class TelegramCommandMixin:
                     f"Endpoint {result['source_endpoint_id']} is paused. "
                     f"Queued {result['queued']} migration(s) to {result['target_endpoint_id']}; "
                     "maintenance will provision and probe each target before commit.",
+                    self._admin_keyboard(telegram_id),
+                )
+        elif command == "/serverstate":
+            endpoint, requested_state = self._endpoint_lifecycle_args(args)
+            try:
+                result = self._admin_call(
+                    telegram_id,
+                    "set_endpoint_lifecycle",
+                    endpoint,
+                    requested_state,
+                    telegram_id,
+                    reason=f"operator-lifecycle:{telegram_id}",
+                )
+            except (CommerceError, ValueError) as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                self.send(
+                    chat["id"],
+                    f"Endpoint {result['endpoint_id']} is now {result['current_state']}. "
+                    "Only local VPN admission state changed; no provider VM action was performed.",
                     self._admin_keyboard(telegram_id),
                 )
         elif command == "/provisionnode":
