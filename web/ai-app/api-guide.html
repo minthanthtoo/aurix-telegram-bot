@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101827">
+    <title>AuriX AI · Integration guide</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/api-guide.css">
+  </head>
+  <body class="docs-page">
+    <a class="docs-skip" href="#guide-content">Skip to guide</a>
+    <main class="docs-shell">
+      <header class="docs-topbar">
+        <a class="brand" href="/">AuriX <span>AI</span></a>
+        <nav class="docs-nav" aria-label="AuriX AI navigation">
+          <a class="app-nav-link" href="/">Assistant</a>
+          <a class="app-nav-link" href="/admin">API console</a>
+          <a class="app-nav-link active" href="/docs/ai-api" aria-current="page">Developer guide</a>
+        </nav>
+      </header>
+
+      <section class="panel docs-hero">
+        <p class="eyebrow">Developer documentation · AuriX AI</p>
+        <h1>Build an assistant.<br>Speak your language.</h1>
+        <p class="lede">English conversation, Lisu assistance, and translation. One implementation guide for your developers and coding agents.</p>
+        <div class="docs-start"><a href="#section-19">Start building <span>Product blueprint →</span></a><a href="#section-21">Design the experience <span>Layouts & interaction →</span></a><a href="#section-2">Connect your backend <span>Authentication & API →</span></a></div>
+        <div class="docs-actions">
+          <button id="copy-guide" type="button" disabled>Copy full guide for your agent</button>
+          <a class="button-quiet docs-raw" href="/api/docs/external" target="_blank" rel="noopener">Open raw text</a>
+          <span id="copy-status" class="hint" role="status" aria-live="polite"></span>
+        </div>
+      </section>
+
+      <div class="docs-layout">
+        <aside class="docs-sidebar">
+          <label for="guide-search">Find a section</label>
+          <input id="guide-search" type="search" placeholder="Streaming, Lisu, mobile…" autocomplete="off">
+          <p id="search-status" role="status" class="hint"></p>
+          <nav id="guide-nav" aria-label="Guide sections"></nav>
+        </aside>
+        <article id="guide-content" class="docs-article" tabindex="-1" aria-label="Integration guide">Loading integration guide…</article>
+      </div>
+    </main>
+    <script src="/api-guide.js" defer></script>
+  </body>
+</html>
