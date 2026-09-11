@@ -633,7 +633,7 @@ class RouteFailoverService:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT * FROM failover_decisions
-                    WHERE (? IS NULL OR entitlement_key = ?)
+                    WHERE (CAST(? AS TEXT) IS NULL OR entitlement_key = ?)
                     ORDER BY created_at DESC LIMIT ?""",
                 (entitlement_key, entitlement_key, max(1, min(200, int(limit)))),
             ).fetchall()

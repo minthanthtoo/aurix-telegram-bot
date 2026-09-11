@@ -764,7 +764,7 @@ class CommerceWorkerMixin:
                    FROM provisioning_jobs j JOIN subscriptions s
                      ON s.id = j.subscription_id
                    WHERE s.order_id = ? AND j.status = 'failed'
-                     AND (? IS NULL OR j.operation = ?)
+                     AND (CAST(? AS TEXT) IS NULL OR j.operation = ?)
                    ORDER BY j.created_at DESC LIMIT 1""",
                 (order_id, operation, operation),
             ).fetchone()

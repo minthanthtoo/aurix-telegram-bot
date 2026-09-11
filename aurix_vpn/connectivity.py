@@ -1458,7 +1458,7 @@ class EndpointRegistry:
                  AND e.last_healthy_at IS NOT NULL AND e.last_healthy_at >= ?"""
             + protocol_filter
             + """
-                 AND (? IS NULL OR e.id = ?)
+                 AND (CAST(? AS TEXT) IS NULL OR e.id = ?)
                ORDER BY
                  CASE WHEN e.max_active_keys IS NULL THEN 2147483647
                       ELSE e.max_active_keys -

@@ -5,11 +5,15 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from commerce import CommerceDatabase, PostgresCommerceDatabase
 from deploy.migrate_sqlite_to_postgres import dependency_order, migrate, sqlite_manifest
+from connectivity import EndpointRegistry
 from identity import IdentityService
+from route_failover import RouteFailoverService
 
 
 def _postgres_rehearsal_available() -> bool:
@@ -204,6 +208,27 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                     identity.device_auth_record(paired["device_id"])["status"],
                     "revoked",
                 )
+                # PostgreSQL cannot infer the type of an unbound NULL
+                # parameter in the optional VPN selectors. Exercise the
+                # production repositories with no preferred endpoint and no
+                # entitlement filter after the migration rehearsal.
+                now = datetime.now(timezone.utc).replace(microsecond=0)
+                with database.connect() as connection:
+                    connection.execute(
+                        "UPDATE vpn_endpoints SET last_healthy_at = ? WHERE id = 'legacy-default'",
+                        (now.isoformat(),),
+                    )
+                registry = EndpointRegistry(database, Fernet.generate_key())
+                assignment = registry.ensure_subscription_assignment(
+                    "source-sub",
+                    "basic_50gb",
+                    50 * 1024**3,
+                    protocol="outline",
+                    now=now,
+                )
+                self.assertEqual(assignment.endpoint_id, "legacy-default")
+                self.assertEqual(RouteFailoverService(database).decisions(limit=10), [])
+                self.assertEqual(IdentityService(database).generations_for_accounting(), [])
             finally:
                 database.close()
                 subprocess.run(

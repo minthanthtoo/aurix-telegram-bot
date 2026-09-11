@@ -1468,7 +1468,7 @@ class IdentityService:
             rows = connection.execute(
                 """SELECT * FROM credential_generations
                     WHERE status IN ('pending', 'active', 'retiring', 'unknown')
-                      AND (? IS NULL OR entitlement_key = ?)
+                      AND (CAST(? AS TEXT) IS NULL OR entitlement_key = ?)
                     ORDER BY entitlement_key, generation_no""",
                 (entitlement_key, entitlement_key),
             ).fetchall()
