@@ -1221,8 +1221,17 @@ profile inside the write transaction so a concurrent retirement cannot be
 overwritten. The browser Control Center remains read-only, and customer
 Telegram identities are denied before any commerce operation is called.
 
-The complete local regression suite passes `352` tests. This does not change
+The complete local regression suite passes `354` tests. This does not change
 the release decision: Xray and Hysteria2 remain candidates until their live
 per-customer lifecycle, quota, restart, outage, client-path, concurrency, soak,
 and accounting evidence is accepted. BKK-A remains Outline-only and no live
 protocol profile was promoted.
+
+The protocol-neutral managed quota worker is now also implemented and committed
+as `d0b685d` (`Add protocol-neutral managed quota sweep`). It reads each
+remotely observed generation through its adapter, records usage through the
+durable identity ledger, and queues one idempotent revoke job when the aggregate
+entitlement quota is exhausted. It rejects route/generation protocol mismatches,
+isolates provider failures, and treats duplicate observations safely. This is
+controller-side enforcement and does not claim native Xray/Hysteria2 hard-quota
+support; live provider and client-path evidence remain required.

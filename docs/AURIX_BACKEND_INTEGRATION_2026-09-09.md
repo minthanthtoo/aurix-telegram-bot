@@ -258,6 +258,16 @@ before provider-side creation, preventing malformed route metadata from leaving
 an orphaned remote user. This step is committed as `f58a27c` (`Reject malformed
 Hysteria2 route flags`).
 
+The managed quota worker now reads each remotely observed protocol generation
+through its adapter, records the counter through the locked identity ledger,
+and queues the existing idempotent subscription revoke job when aggregate quota
+is exhausted. Route metadata is supplied explicitly per endpoint/protocol and
+must match the durable generation before the adapter is called. Duplicate
+observations remain ledger-idempotent and one provider/route failure is isolated
+as a partial sweep result. This controller-side path is committed as `d0b685d`
+(`Add protocol-neutral managed quota sweep`); it is not evidence of native
+provider hard-quota enforcement.
+
 ## Remaining gates and next action
 
 The local provider backend, node-agent contract, bounded mixed-protocol test
