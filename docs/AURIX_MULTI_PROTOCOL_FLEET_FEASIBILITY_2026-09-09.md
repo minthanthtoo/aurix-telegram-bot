@@ -1221,7 +1221,7 @@ profile inside the write transaction so a concurrent retirement cannot be
 overwritten. The browser Control Center remains read-only, and customer
 Telegram identities are denied before any commerce operation is called.
 
-The complete local regression suite passes `355` tests. This does not change
+The complete local regression suite passes `356` tests. This does not change
 the release decision: Xray and Hysteria2 remain candidates until their live
 per-customer lifecycle, quota, restart, outage, client-path, concurrency, soak,
 and accounting evidence is accepted. BKK-A remains Outline-only and no live
@@ -1239,3 +1239,7 @@ The sweep is wired into scheduled maintenance only when an explicit route
 provider is configured, preserving the default Outline-only runtime behavior;
 that integration is committed as `f10edb2` (`Schedule managed quota
 enforcement`).
+The concrete Hysteria2 backend also fails before remote user creation when a
+requested hard quota is unsupported, and restart reinitialization tests verify
+that encrypted H2 credentials and tagged Xray users persist safely; this guard
+is committed as `e3cdcf1` (`Harden Hysteria2 quota boundaries`).

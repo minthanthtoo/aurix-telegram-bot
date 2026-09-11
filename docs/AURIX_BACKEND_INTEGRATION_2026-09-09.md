@@ -271,6 +271,10 @@ The sweep is wired into scheduled maintenance only when the service is given
 an explicit route provider; existing Outline-only deployments therefore retain
 their prior behavior. This integration is committed as `f10edb2` (`Schedule
 managed quota enforcement`).
+The concrete Hysteria2 backend now fails closed before user creation when no
+hard-quota capability is available, while its encrypted user store and the
+Xray config writer are covered across reinitialization. This guard is committed
+as `e3cdcf1` (`Harden Hysteria2 quota boundaries`).
 
 ## Remaining gates and next action
 
