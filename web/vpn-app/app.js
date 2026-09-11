@@ -126,7 +126,7 @@
     $("#usage-bar-fill").style.width = `${percent}%`;
     $("#usage-used").textContent = key ? `${formatBytes(used)} used` : "— used";
     $("#usage-remaining").textContent = key ? `${formatBytes(remaining)} remaining` : "— remaining";
-    $("#usage-note").textContent = key ? (state.dashboard.usage_available ? `Observed through ${serverLabel(serverFor(key.endpoint_id))}. Expires ${formatDate(key.expires_at)}.` : "Latest transfer observation is temporarily unavailable.") : "AuriX access appears after an approved payment is provisioned.";
+    $("#usage-note").textContent = key ? (key.usage_observed ? `Observed through ${serverLabel(serverFor(key.endpoint_id))}. Expires ${formatDate(key.expires_at)}.` : "Usage is awaiting a fresh protocol-specific observation.") : "AuriX access appears after an approved payment is provisioned.";
     $("#access-badge").textContent = state.dashboard && state.dashboard.access_available ? (key ? "Ready" : "Locked") : "Status only";
     $("#access-badge").className = `state-pill state-pill--gold ${key && state.dashboard.access_available ? "state-pill--ready" : ""}`;
     const actions = $("#key-actions");
