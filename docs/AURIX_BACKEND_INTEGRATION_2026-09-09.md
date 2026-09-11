@@ -384,3 +384,15 @@ at a time behind the existing registry. The default production registry remains
 Outline-only, so unmeasured protocols cannot receive customer traffic. Production
 rollout still requires real PostgreSQL concurrency, Myanmar-client checks, bounded
 mixed-protocol tests, and soak/cost evidence.
+
+The PostgreSQL rehearsal then exposed and repaired an untyped-NULL selector
+compatibility issue in the VPN endpoint, identity, failover, and provisioning
+worker queries. The optional integration regression now exercises the complete
+disposable PostgreSQL path: evidence-gated Xray profile promotion, endpoint
+allocation, failover decision commit, one lease and assignment transfer, and
+post-failover usage/recovery authorization. The selector repair is committed
+as `9518069` (`Fix PostgreSQL VPN selector compatibility`), and the durable
+failover regression as `ac6f655` (`Cover PostgreSQL VPN failover flow`).
+The VPN-only regression selection remains green at 324 tests. This evidence is
+local and disposable; it does not validate the hosted database, live provider
+state, Myanmar client paths, load/speed behavior, or production cutover.
