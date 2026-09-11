@@ -545,6 +545,7 @@ class EndpointRegistryTest(unittest.TestCase):
             {
                 "AURIX_ENDPOINT_DEGRADE_FAILURES": "2",
                 "AURIX_ENDPOINT_RECOVER_SUCCESSES": "2",
+                "AURIX_ENDPOINT_RECOVERY_COOLDOWN_SECONDS": "0",
             },
             clear=False,
         ):
@@ -597,6 +598,47 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(len(audits), 2)
         self.assertEqual(json.loads(audits[0]["metadata_json"])["next_state"], "DEGRADED")
         self.assertEqual(json.loads(audits[1]["metadata_json"])["next_state"], "ACTIVE")
+
+    def test_capacity_recovery_waits_for_cooldown_after_healthy_streak(self):
+        now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+        with patch.dict(
+            os.environ,
+            {
+                "AURIX_ENDPOINT_DEGRADE_FAILURES": "2",
+                "AURIX_ENDPOINT_RECOVER_SUCCESSES": "2",
+                "AURIX_ENDPOINT_RECOVERY_COOLDOWN_SECONDS": "60",
+            },
+            clear=False,
+        ):
+            self.registry.record_capacity(
+                "legacy-default", healthy=False, active_key_count=None,
+                observed_transfer_bytes=None, management_latency_ms=100, now=now,
+            )
+            degraded = self.registry.record_capacity(
+                "legacy-default", healthy=False, active_key_count=None,
+                observed_transfer_bytes=None, management_latency_ms=100,
+                now=now + timedelta(seconds=1),
+            )
+            self.registry.record_capacity(
+                "legacy-default", healthy=True, active_key_count=0,
+                observed_transfer_bytes=0, management_latency_ms=10,
+                now=now + timedelta(seconds=2),
+            )
+            early = self.registry.record_capacity(
+                "legacy-default", healthy=True, active_key_count=0,
+                observed_transfer_bytes=0, management_latency_ms=10,
+                now=now + timedelta(seconds=3),
+            )
+            recovered = self.registry.record_capacity(
+                "legacy-default", healthy=True, active_key_count=0,
+                observed_transfer_bytes=0, management_latency_ms=10,
+                now=now + timedelta(seconds=62),
+            )
+        self.assertEqual(degraded["state"], "DEGRADED")
+        self.assertEqual(early["state"], "DEGRADED")
+        self.assertFalse(early["recovery_cooldown_ready"])
+        self.assertEqual(recovered["state"], "ACTIVE")
+        self.assertTrue(recovered["transitioned"])
 
     def test_customer_directory_requires_enabled_protocol_profile(self):
         self.registry.register_protocol_profile("legacy-default", "outline", status="disabled")

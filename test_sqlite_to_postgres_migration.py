@@ -321,7 +321,7 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                     active_key_count=0,
                     observed_transfer_bytes=0,
                     management_latency_ms=5,
-                    now=now + timedelta(seconds=3),
+                    now=now + timedelta(seconds=62),
                 )
                 self.assertEqual(recovered_health["state"], "ACTIVE")
                 required_signals = ("management", "direct_client")

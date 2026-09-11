@@ -112,7 +112,9 @@ Important remaining facts:
 - Startup degrades cleanly when the one Outline management endpoint is unavailable; provisioning remains fail-closed until health returns.
 - Endpoint capacity observations now use bounded failure/recovery hysteresis and
   audit actual `ACTIVE`/`DEGRADED` transitions; normal failover/drain target
-  selection excludes degraded endpoints.
+  selection excludes degraded endpoints. Recovery also requires a durable
+  transition timestamp plus a bounded cooldown (60 seconds by default), so a
+  short healthy streak cannot immediately reopen a flapping endpoint.
 - Failover safety controls now provide a durable global pause switch plus
   optional region/endpoint pause and migration budgets. Automatic failover and
   operator drains reserve all applicable budgets transactionally before intent

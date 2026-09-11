@@ -372,6 +372,16 @@ class EndpointRegistry:
             raise ConnectivityError(f"{name} is invalid")
         return value
 
+    @staticmethod
+    def _health_recovery_cooldown(name: str, default: int) -> int:
+        try:
+            value = int(os.environ.get(name, str(default)))
+        except (TypeError, ValueError) as exc:
+            raise ConnectivityError(f"{name} is invalid") from exc
+        if not 0 <= value <= 86_400:
+            raise ConnectivityError(f"{name} is invalid")
+        return value
+
     def record_protocol_observation(
         self,
         endpoint_id: str,
@@ -1832,13 +1842,16 @@ class EndpointRegistry:
         recovery_threshold = self._health_threshold(
             "AURIX_ENDPOINT_RECOVER_SUCCESSES", 2
         )
+        recovery_cooldown_seconds = self._health_recovery_cooldown(
+            "AURIX_ENDPOINT_RECOVERY_COOLDOWN_SECONDS", 60
+        )
         timestamp = (now or datetime.now(UTC)).isoformat()
         snapshot_id = uuid.uuid4().hex
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             lock = " FOR UPDATE" if isinstance(connection, _PostgresConnection) else ""
             endpoint = connection.execute(
-                "SELECT state FROM vpn_endpoints WHERE id = ?" + lock,
+                "SELECT state, health_state_changed_at FROM vpn_endpoints WHERE id = ?" + lock,
                 (endpoint_id,),
             ).fetchone()
             if endpoint is None:
@@ -1861,7 +1874,7 @@ class EndpointRegistry:
                 ),
             )
             history = connection.execute(
-                """SELECT healthy FROM endpoint_capacity_snapshots
+                """SELECT healthy, observed_at FROM endpoint_capacity_snapshots
                     WHERE endpoint_id = ?
                     ORDER BY observed_at DESC, id DESC
                     LIMIT ?""",
@@ -1874,6 +1887,15 @@ class EndpointRegistry:
                     break
                 health_streak += 1
             next_state = current_state
+            try:
+                state_changed_at = self._observation_time(endpoint["health_state_changed_at"])
+            except (TypeError, ValueError, OverflowError):
+                state_changed_at = self._observation_time(timestamp)
+            recovery_cooldown_ready = True
+            if current_state == "DEGRADED" and latest_health and health_streak >= recovery_threshold:
+                recovery_cooldown_ready = self._observation_time(timestamp) >= (
+                    state_changed_at + timedelta(seconds=recovery_cooldown_seconds)
+                )
             if current_state not in {"DRAINING", "RETIRED"}:
                 if (
                     not latest_health
@@ -1884,15 +1906,18 @@ class EndpointRegistry:
                 elif (
                     latest_health
                     and health_streak >= recovery_threshold
+                    and recovery_cooldown_ready
                     and current_state == "DEGRADED"
                 ):
                     next_state = "ACTIVE"
+            if next_state != current_state:
+                state_changed_at = self._observation_time(timestamp)
             connection.execute(
                 """UPDATE vpn_endpoints SET
                      last_healthy_at = CASE WHEN ? THEN ? ELSE last_healthy_at END,
-                     state = ?
+                     state = ?, health_state_changed_at = ?
                    WHERE id = ?""",
-                (healthy, timestamp, next_state, endpoint_id),
+                (healthy, timestamp, next_state, state_changed_at.isoformat(), endpoint_id),
             )
             transitioned = next_state != current_state
             if transitioned:
@@ -1910,6 +1935,8 @@ class EndpointRegistry:
                         "health_streak": health_streak,
                         "failure_threshold": failure_threshold,
                         "recovery_threshold": recovery_threshold,
+                        "recovery_cooldown_seconds": recovery_cooldown_seconds,
+                        "recovery_cooldown_ready": recovery_cooldown_ready,
                     },
                     created_at=timestamp,
                 )
@@ -1920,6 +1947,8 @@ class EndpointRegistry:
             "healthy": healthy,
             "state": next_state,
             "health_streak": health_streak,
+            "recovery_cooldown_seconds": recovery_cooldown_seconds,
+            "recovery_cooldown_ready": recovery_cooldown_ready,
             "transitioned": transitioned,
             "active_key_count": active_key_count,
             "observed_transfer_bytes": observed_transfer_bytes,

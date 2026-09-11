@@ -1283,6 +1283,16 @@ COMMERCE_MIGRATIONS = (
             "ALTER TABLE failover_decisions ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1 CHECK (policy_version > 0)",
         ),
     ),
+    Migration(
+        13,
+        "endpoint_health_recovery_cooldown",
+        sqlite_statements=(
+            "ALTER TABLE vpn_endpoints ADD COLUMN health_state_changed_at TEXT",
+        ),
+        postgres_statements=(
+            "ALTER TABLE vpn_endpoints ADD COLUMN IF NOT EXISTS health_state_changed_at TIMESTAMPTZ",
+        ),
+    ),
 )
 
 
