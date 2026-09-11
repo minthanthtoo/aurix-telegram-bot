@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from commerce import CommerceDatabase
-from connectivity_adapters import ConnectivityAdapterRegistry
+from connectivity_adapters import ConnectivityAdapterRegistry, XrayConnectivityAdapter
 from identity import IdentityService
 from test_telegram_web_app import _init_data
 from vpn_web_api import AuriXVpnWebApplication, make_handler
@@ -102,6 +102,15 @@ class ControlCenterTest(unittest.TestCase):
         self.assertNotIn("must-not-leak", json.dumps(detail))
         self.assertEqual(detail["endpoint"]["protocols"][0]["protocol"], "outline")
         self.assertEqual(detail["protocol_observations"][0]["protocol"], "outline")
+
+    def test_registered_non_outline_adapter_remains_evidence_gated_in_summary(self):
+        self.runtime.commerce.adapter_registry.register("xray", XrayConnectivityAdapter)
+        with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
+            summary = AuriXVpnWebApplication(self.runtime).admin_summary()
+        readiness = {item["protocol"]: item for item in summary["protocol_readiness"]}
+        self.assertTrue(readiness["xray"]["registered"])
+        self.assertEqual(readiness["xray"]["status"], "candidate")
+        self.assertIn("endpoint evidence", readiness["xray"]["activation_gate"])
 
     def test_admin_api_requires_signed_allowlisted_telegram_identity(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
