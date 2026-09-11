@@ -45,6 +45,7 @@ from .conversations import (
     ConversationStoreError,
 )
 from .conversation_jobs import ConversationJobManager
+from persistence import open_sqlite_connection
 from telegram_web_app import (
     TelegramWebAppAuthError,
     VerifiedTelegramUser,
@@ -174,9 +175,7 @@ class AISessionStore:
     def _connect(self) -> sqlite3.Connection:
         if self.database_path is None:
             raise RuntimeError("persistent session storage is not configured")
-        connection = sqlite3.connect(self.database_path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        return connection
+        return open_sqlite_connection(self.database_path, timeout_seconds=10)
 
     @staticmethod
     def _user_from_row(row: sqlite3.Row) -> VerifiedTelegramUser:

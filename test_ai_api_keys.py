@@ -1,5 +1,6 @@
 import http.client
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -198,6 +199,14 @@ class AISessionStoreTest(unittest.TestCase):
         self.assertGreaterEqual(row["expires_at"], row["last_seen_at"])
         second.revoke(token)
         self.assertIsNone(second.get(token))
+
+    def test_persistent_session_connection_closes_after_context_exit(self):
+        store = AISessionStore(3600, self.path)
+        connection = store._connect()
+        with connection:
+            connection.execute("SELECT 1")
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
 
     def test_container_includes_api_store_runtime_dependencies(self):
         dockerfile = (Path(__file__).resolve().parent / "deploy" / "aurix-ai.Dockerfile").read_text()
