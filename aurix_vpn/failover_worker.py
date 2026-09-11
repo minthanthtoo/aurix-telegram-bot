@@ -95,8 +95,15 @@ class RouteFailoverExecutor:
             target_endpoint = str(decision["target_endpoint_id"])
             target_route = dict(self.route_provider(target_endpoint))
             target_route.setdefault("endpoint_id", target_endpoint)
-            target_route.setdefault("route_id", f"{target_route.get('protocol') or source['protocol']}:{target_endpoint}")
-            target_route.setdefault("protocol", str(source.get("protocol") or "outline"))
+            source_protocol = str(source.get("protocol") or "outline").strip().lower()
+            target_route.setdefault("protocol", source_protocol)
+            target_protocol = str(target_route.get("protocol") or "").strip().lower()
+            if target_protocol != source_protocol:
+                raise FailoverExecutionError(
+                    "failover target protocol does not match the source generation"
+                )
+            target_route["protocol"] = target_protocol
+            target_route.setdefault("route_id", f"{target_protocol}:{target_endpoint}")
             if not str(target_route.get("endpoint_id") or ""):
                 raise FailoverExecutionError("target route has no endpoint identity")
             if self.adapter_provider is None:
@@ -118,7 +125,7 @@ class RouteFailoverExecutor:
                 entitlement_key,
                 target_endpoint,
                 external_id=str(target_grant["external_id"]),
-                protocol=str(target_route.get("protocol") or source.get("protocol") or "outline"),
+                protocol=target_protocol,
                 access_url_ciphertext=self.access_url_encryptor(str(target_grant["access_url"])),
                 status="active",
                 remote_state="observed",

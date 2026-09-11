@@ -97,7 +97,10 @@ Important remaining facts:
   remain outstanding.
 - Endpoint protocol profiles are now durable: existing endpoints are backfilled with
   enabled Outline, while Xray/Hysteria2 can be staged as candidate profiles without
-  becoming allocation candidates. The operator console exposes this state and its
+  becoming allocation candidates. The protocol gate also applies during automatic
+  failover, operator drain planning, assignment transfer, and target-generation
+  verification, so a healthy endpoint cannot receive a credential for a transport it
+  has not explicitly enabled. The operator console exposes this state and its
   capability metadata without secrets.
 - Startup degrades cleanly when the one Outline management endpoint is unavailable; provisioning remains fail-closed until health returns.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.

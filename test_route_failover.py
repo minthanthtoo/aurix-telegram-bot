@@ -6,6 +6,7 @@ from pathlib import Path
 from commerce import CommerceDatabase
 from identity import IdentityService
 from route_failover import RouteFailoverService
+from aurix_vpn.route_failover import FailoverError
 
 
 UTC = timezone.utc
@@ -47,6 +48,13 @@ class RouteFailoverTest(unittest.TestCase):
                    VALUES ('bkk-a', 'BKK-A', 'test', 'bkk1', 'ACTIVE', 1, ?)""",
                 (self.now.isoformat(),),
             )
+            for endpoint in ("sg-a", "bkk-a"):
+                connection.execute(
+                    """INSERT INTO endpoint_protocol_profiles
+                       (profile_id, endpoint_id, protocol, adapter_type, status, created_at)
+                       VALUES (?, ?, 'outline', 'outline', 'enabled', ?)""",
+                    (f"outline:{endpoint}", endpoint, self.now.isoformat()),
+                )
         self.identity = IdentityService(self.database)
         self.failover = RouteFailoverService(self.database)
 
@@ -137,6 +145,42 @@ class RouteFailoverTest(unittest.TestCase):
         self.assertFalse(bool(endpoint["accepts_new_assignments"]))
         decision = self.failover.claim(now=self.now)
         self.assertEqual(decision["decision_id"], result["decision_ids"][0])
+
+    def test_protocol_profile_is_required_for_failover_and_drain(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
+        source = self.identity.create_generation(
+            entitlement,
+            "sg-a",
+            protocol="xray",
+            external_id="xray-source",
+            usage_baseline_provenance="new",
+        )
+        self.identity.ensure_generation_lease(
+            entitlement,
+            source,
+            "sg-a",
+            1000,
+            (self.now + timedelta(days=30)).isoformat(),
+            now=self.now,
+        )
+        self.failover.configure_policy(entitlement, enabled=True, failure_threshold=1, now=self.now)
+        observed = self.failover.observe(source, outcome="failure", observed_at=self.now)
+        self.assertIsNone(observed["decision_id"])
+        with self.assertRaisesRegex(FailoverError, "enabled xray protocol profile"):
+            self.failover.request_endpoint_drain(
+                "sg-a", target_endpoint_id="bkk-a", limit=10, now=self.now
+            )
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO endpoint_protocol_profiles
+                   (profile_id, endpoint_id, protocol, adapter_type, status, created_at)
+                   VALUES ('xray:bkk-a', 'bkk-a', 'xray', 'xray', 'enabled', ?)""",
+                (self.now.isoformat(),),
+            )
+        observed = self.failover.observe(
+            source, outcome="failure", observed_at=self.now + timedelta(minutes=1)
+        )
+        self.assertIsNotNone(observed["decision_id"])
 
 
 if __name__ == "__main__":

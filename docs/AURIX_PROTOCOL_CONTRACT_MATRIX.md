@@ -30,6 +30,12 @@ authenticated lifecycle contract. It does **not** prove real Xray or Hysteria2
 behavior, public-network reachability, Myanmar compatibility, restart persistence,
 native quota enforcement, bandwidth, latency, or 24–48-hour soak safety.
 
+The control plane now applies the same explicit enabled-profile requirement to
+allocation, failover target selection, operator drain, assignment transfer, and
+target-generation verification. A candidate or disabled profile therefore cannot
+be reached by a queued or in-flight move; this is a local invariant, not live
+protocol evidence.
+
 Those external gates remain ordered: validate one disposable canary per protocol,
 then run staged 2/5/expected concurrency and speed/soak measurements on approved
 targets before registering either protocol in the production adapter registry.

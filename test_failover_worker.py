@@ -71,12 +71,19 @@ class FailoverWorkerTest(unittest.TestCase):
                        VALUES (?, ?, 'test', 'test', 'ACTIVE', 1, ?)""",
                     (endpoint, endpoint.upper(), self.now.isoformat()),
                 )
+                connection.execute(
+                    """INSERT INTO endpoint_protocol_profiles
+                       (profile_id, endpoint_id, protocol, adapter_type, status, created_at)
+                       VALUES (?, ?, 'xray', 'xray', 'enabled', ?)""",
+                    (f"xray:{endpoint}", endpoint, self.now.isoformat()),
+                )
         self.identity = IdentityService(self.database)
         self.failover = RouteFailoverService(self.database)
         self.entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
         self.source = self.identity.create_generation(
             self.entitlement,
             "sg-a",
+            protocol="xray",
             external_id="source-key",
             access_url_ciphertext="enc:ss://source",
             usage_baseline_provenance="new",

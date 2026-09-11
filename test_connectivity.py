@@ -16,6 +16,7 @@ from connectivity import (
     FleetController,
 )
 from free_repository import Database
+from identity import IdentityService
 
 
 UTC = timezone.utc
@@ -132,6 +133,7 @@ class EndpointRegistryTest(unittest.TestCase):
                    VALUES ('bkk-a', 'BKK-A', 'bkk1', 'ACTIVE', 1, ?, ?)""",
                 (now.isoformat(), now.isoformat()),
             )
+        self.registry.register_protocol_profile("bkk-a", "outline", status="enabled", now=now)
         assignment = self.registry.ensure_subscription_assignment(
             "sub-1", "basic", 50_000_000_000,
             preferred_endpoint_id="legacy-default", now=now
@@ -154,6 +156,33 @@ class EndpointRegistryTest(unittest.TestCase):
         )
         self.assertTrue(restored["changed"])
         self.assertEqual(self.registry.assignment_for_subscription("sub-1").endpoint_id, "legacy-default")
+
+    def test_transfer_assignment_rejects_target_without_source_protocol_profile(self):
+        now = datetime.now(UTC)
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, region, state, accepts_new_assignments,
+                    created_at, last_healthy_at)
+                   VALUES ('bkk-xray', 'BKK-XRAY', 'bkk1', 'ACTIVE', 1, ?, ?)""",
+                (now.isoformat(), now.isoformat()),
+            )
+        assignment = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000,
+            preferred_endpoint_id="legacy-default", now=now
+        )
+        identity = IdentityService(self.database)
+        entitlement = identity.ensure_subscription_entitlement(1, "sub-1", now=now.isoformat())
+        identity.create_generation(
+            entitlement,
+            assignment.endpoint_id,
+            protocol="xray",
+            external_id="xray-source",
+            usage_baseline_provenance="new",
+            now=now.isoformat(),
+        )
+        with self.assertRaisesRegex(ConnectivityError, "enabled xray protocol profile"):
+            self.registry.transfer_assignment("paid:sub-1", "bkk-xray", now=now)
 
     def test_preferred_endpoint_is_honored_inside_capacity_selection(self):
         now = datetime.now(UTC)

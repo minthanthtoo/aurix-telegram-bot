@@ -88,8 +88,31 @@ class RouteFailoverService:
         return dict(row) if row is not None else {}
 
     @staticmethod
-    def _target_endpoint(connection: Any, source_endpoint_id: str) -> dict[str, Any] | None:
+    def _target_endpoint(
+        connection: Any,
+        source_endpoint_id: str,
+        *,
+        protocol: str | None = None,
+        target_endpoint_id: str | None = None,
+    ) -> dict[str, Any] | None:
         true = "TRUE" if isinstance(connection, _PostgresConnection) else "1"
+        normalized_protocol = None
+        if protocol is not None:
+            normalized_protocol = str(protocol or "").strip().lower() or "outline"
+        target_filter = ""
+        protocol_filter = ""
+        values: list[Any] = [str(source_endpoint_id)]
+        if target_endpoint_id:
+            target_filter = " AND e.id = ?"
+            values.append(str(target_endpoint_id))
+        if normalized_protocol:
+            protocol_filter = """
+                     AND EXISTS (
+                           SELECT 1 FROM endpoint_protocol_profiles pp
+                            WHERE pp.endpoint_id = e.id
+                              AND pp.protocol = ? AND pp.status = 'enabled'
+                     )"""
+            values.append(normalized_protocol)
         row = connection.execute(
             f"""SELECT e.id, e.code, e.state, e.accepts_new_assignments,
                              e.max_active_keys, COUNT(a.id) AS active_count FROM vpn_endpoints e
@@ -97,10 +120,12 @@ class RouteFailoverService:
                       ON a.endpoint_id = e.id AND a.status = 'active'
                    WHERE e.id <> ? AND UPPER(e.state) IN ('ACTIVE', 'DEGRADED')
                      AND e.accepts_new_assignments = {true}
+                     {target_filter}
+                     {protocol_filter}
                    GROUP BY e.id, e.code, e.state, e.accepts_new_assignments, e.max_active_keys
                    HAVING e.max_active_keys IS NULL OR COUNT(a.id) < e.max_active_keys
                    ORDER BY e.code, e.id LIMIT 1""",
-            (str(source_endpoint_id),),
+            tuple(values),
         ).fetchone()
         return dict(row) if row is not None else None
 
@@ -134,6 +159,36 @@ class RouteFailoverService:
                 if target_id
                 else self._target_endpoint(connection, source_id)
             )
+            protocols = connection.execute(
+                """SELECT DISTINCT LOWER(COALESCE(NULLIF(g.protocol, ''), 'outline')) AS protocol
+                     FROM credential_generations g
+                     JOIN quota_leases l ON l.generation_id = g.generation_id
+                        AND l.status = 'active'
+                    WHERE g.endpoint_id = ? AND g.status = 'active'""",
+                (source_id,),
+            ).fetchall()
+            source_protocols = sorted(
+                {
+                    str(row["protocol"] or "outline").strip().lower()
+                    for row in protocols
+                    if str(row["protocol"] or "outline").strip()
+                }
+            )
+            target_protocols: list[str] = []
+            if target is not None and source_protocols:
+                placeholders = ",".join("?" for _ in source_protocols)
+                target_profile_rows = connection.execute(
+                    f"""SELECT protocol FROM endpoint_protocol_profiles
+                          WHERE endpoint_id = ? AND status = 'enabled'
+                            AND protocol IN ({placeholders})""",
+                    tuple([str(target["id"])] + source_protocols),
+                ).fetchall()
+                target_protocols = sorted(
+                    {str(row["protocol"]).strip().lower() for row in target_profile_rows}
+                )
+            missing_protocols = [
+                protocol for protocol in source_protocols if protocol not in target_protocols
+            ]
             candidates = connection.execute(
                 """SELECT COUNT(*) AS n
                      FROM credential_generations g
@@ -156,7 +211,11 @@ class RouteFailoverService:
             "target_code": str(target["code"] or target["id"]) if target else None,
             "target_available": target is not None
             and str(target["state"]).upper() in {"ACTIVE", "DEGRADED"}
-            and target["accepts_new_assignments"] not in (False, 0),
+            and target["accepts_new_assignments"] not in (False, 0)
+            and not missing_protocols,
+            "protocols": source_protocols,
+            "target_protocols": target_protocols,
+            "missing_protocols": missing_protocols,
             "active_generations": min(int(candidates["n"] or 0), bounded_limit),
             "queued_decisions": int(queued["n"] or 0),
             "limit": bounded_limit,
@@ -195,33 +254,9 @@ class RouteFailoverService:
             ).fetchone()
             if source is None:
                 raise FailoverError("source endpoint does not exist")
-            target = (
-                connection.execute(
-                    """SELECT e.id, e.code, e.state, e.accepts_new_assignments,
-                              e.max_active_keys, COUNT(a.id) AS active_count
-                           FROM vpn_endpoints e
-                           LEFT JOIN endpoint_assignments a
-                             ON a.endpoint_id = e.id AND a.status = 'active'
-                          WHERE e.id = ?
-                          GROUP BY e.id, e.code, e.state, e.accepts_new_assignments,
-                                   e.max_active_keys""",
-                    (requested_target,),
-                ).fetchone()
-                if requested_target
-                else self._target_endpoint(connection, source_id)
-            )
-            if target is None or str(target["id"]) == source_id:
-                raise FailoverError("no eligible drain target endpoint exists")
-            if str(target["state"]).upper() not in {"ACTIVE", "DEGRADED"} or target[
-                "accepts_new_assignments"
-            ] in (False, 0):
-                raise FailoverError("drain target endpoint is not accepting assignments")
-            if target["max_active_keys"] is not None and int(target["active_count"] or 0) >= int(
-                target["max_active_keys"]
-            ):
-                raise FailoverError("drain target endpoint has no capacity")
             generations = connection.execute(
-                """SELECT DISTINCT g.generation_id, g.entitlement_key
+                """SELECT DISTINCT g.generation_id, g.entitlement_key,
+                                  LOWER(COALESCE(NULLIF(g.protocol, ''), 'outline')) AS protocol
                      FROM credential_generations g
                      JOIN quota_leases l ON l.generation_id = g.generation_id
                         AND l.status = 'active'
@@ -229,10 +264,36 @@ class RouteFailoverService:
                     ORDER BY g.created_at, g.generation_id LIMIT ?""",
                 (source_id, bounded_limit),
             ).fetchall()
+            targets: dict[str, dict[str, Any]] = {}
+            for generation in generations:
+                protocol = str(generation["protocol"] or "outline").strip().lower()
+                target = self._target_endpoint(
+                    connection,
+                    source_id,
+                    protocol=protocol,
+                    target_endpoint_id=requested_target,
+                )
+                if target is None:
+                    if requested_target:
+                        raise FailoverError(
+                            f"drain target has no capacity or enabled {protocol} protocol profile"
+                        )
+                    raise FailoverError(
+                        f"no eligible drain target endpoint exists for {protocol}"
+                    )
+                targets[protocol] = target
+            if not generations:
+                target = self._target_endpoint(
+                    connection, source_id, target_endpoint_id=requested_target
+                )
+                if target is None:
+                    raise FailoverError("no eligible drain target endpoint exists")
+                targets["outline"] = target
             decision_ids: list[str] = []
             existing_count = 0
             for generation in generations:
                 entitlement_key = str(generation["entitlement_key"])
+                target = targets[str(generation["protocol"] or "outline").strip().lower()]
                 # Ensure manually queued decisions are claimable even when the
                 # entitlement has no automatic failover policy.
                 connection.execute(
@@ -289,7 +350,9 @@ class RouteFailoverService:
                     json.dumps(
                         {
                             "actor_id": actor_id,
-                            "target_endpoint_id": str(target["id"]),
+                            "target_endpoint_ids": sorted(
+                                {str(item["id"]) for item in targets.values()}
+                            ),
                             "limit": bounded_limit,
                             "queued": len(decision_ids),
                             "existing": existing_count,
@@ -302,7 +365,12 @@ class RouteFailoverService:
             )
         return {
             "source_endpoint_id": source_id,
-            "target_endpoint_id": str(target["id"]),
+            "target_endpoint_id": (
+                str(next(iter(targets.values()))["id"])
+                if len({str(item["id"]) for item in targets.values()}) == 1
+                else None
+            ),
+            "target_endpoint_ids": sorted({str(item["id"]) for item in targets.values()}),
             "queued": len(decision_ids) - existing_count,
             "existing": existing_count,
             "decision_ids": decision_ids,
@@ -396,7 +464,11 @@ class RouteFailoverService:
             target_id = None
             if policy is not None and bool(policy["enabled"]) and normalized == "failure" and failure_streak >= int(policy["failure_threshold"]):
                 if not cooldown_until or _time(cooldown_until) <= _time(timestamp):
-                    target = self._target_endpoint(connection, str(generation["endpoint_id"]))
+                    target = self._target_endpoint(
+                        connection,
+                        str(generation["endpoint_id"]),
+                        protocol=str(generation["protocol"] or "outline").strip().lower(),
+                    )
                     if target is not None:
                         target_id = str(target["id"])
                         idem = f"failover:{generation['entitlement_key']}:{generation_id}:{target_id}:{bucket}:{failure_streak}"
@@ -477,6 +549,25 @@ class RouteFailoverService:
                 raise FailoverError("target generation does not match the decision")
             if str(generation["endpoint_id"]) != str(decision["target_endpoint_id"]):
                 raise FailoverError("target generation is on the wrong endpoint")
+            source = connection.execute(
+                """SELECT protocol FROM credential_generations
+                    WHERE generation_id = ?""",
+                (str(decision["source_generation_id"]),),
+            ).fetchone()
+            source_protocol = str((dict(source) if source is not None else {}).get("protocol") or "outline").strip().lower()
+            target_protocol = str(generation["protocol"] or "outline").strip().lower()
+            if source_protocol != target_protocol:
+                raise FailoverError("target generation protocol does not match the source")
+            profile = connection.execute(
+                """SELECT 1 FROM endpoint_protocol_profiles
+                    WHERE endpoint_id = ? AND protocol = ? AND status = 'enabled'
+                    LIMIT 1""",
+                (str(generation["endpoint_id"]), target_protocol),
+            ).fetchone()
+            if profile is None:
+                raise FailoverError(
+                    f"target endpoint has no enabled {target_protocol} protocol profile"
+                )
             connection.execute(
                 """UPDATE failover_decisions SET target_generation_id = ?, state = 'verified',
                           locked_at = NULL, updated_at = ?

@@ -830,6 +830,29 @@ class EndpointRegistry:
                 target["max_active_keys"]
             ):
                 raise ConnectivityError("target endpoint has no capacity")
+            source_protocols = connection.execute(
+                """SELECT DISTINCT LOWER(COALESCE(NULLIF(protocol, ''), 'outline')) AS protocol
+                     FROM credential_generations
+                    WHERE entitlement_key = ? AND endpoint_id = ?
+                      AND status IN ('pending', 'active', 'retiring', 'unknown')""",
+                (entitlement_key, source_endpoint_id),
+            ).fetchall()
+            protocols = {
+                str(row["protocol"] or "outline").strip().lower()
+                for row in source_protocols
+                if str(row["protocol"] or "outline").strip()
+            } or {"outline"}
+            for protocol in sorted(protocols):
+                profile = connection.execute(
+                    """SELECT 1 FROM endpoint_protocol_profiles
+                        WHERE endpoint_id = ? AND protocol = ? AND status = 'enabled'
+                        LIMIT 1""",
+                    (target_id, protocol),
+                ).fetchone()
+                if profile is None:
+                    raise ConnectivityError(
+                        f"target endpoint has no enabled {protocol} protocol profile"
+                    )
             plan_limit = connection.execute(
                 """SELECT enabled, max_active_assignments
                      FROM endpoint_plan_limits
