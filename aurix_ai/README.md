@@ -38,6 +38,9 @@ reconnectable SSE view of partial output, and the cancel endpoint makes a
 running attempt terminal without allowing a late provider result to overwrite
 it. The bounded worker is process-local by design; startup marks abandoned
 attempts as interrupted instead of resending them.
+The process-local executor is globally bounded, allows only one active attempt
+per conversation, and applies a small per-owner concurrency ceiling; rejected
+jobs become durable `concurrency_limit` failures that can be retried explicitly.
 `POST /api/conversations/{id}/attempts/{id}/retry` creates a fresh attempt for
 the same submitted turn only when the latest attempt failed, was cancelled, or
 was interrupted. It reuses the server-frozen source and context snapshot, so a

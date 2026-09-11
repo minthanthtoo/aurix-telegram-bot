@@ -777,7 +777,7 @@ class AuriXAIApplication:
         )
         if created:
             try:
-                self.conversation_jobs.submit(
+                submitted = self.conversation_jobs.submit(
                     attempt["id"],
                     lambda stop_event: self._run_durable_attempt(
                         user,
@@ -789,7 +789,13 @@ class AuriXAIApplication:
                         direction=direction,
                         stop_event=stop_event,
                     ),
+                    conversation_id=attempt["conversation_id"],
+                    owner_id=user.telegram_id,
                 )
+                if not submitted:
+                    attempt = self.conversations.fail_attempt(
+                        user.telegram_id, attempt["id"], error_code="concurrency_limit"
+                    )
             except Exception:
                 failed = self.conversations.fail_attempt(
                     user.telegram_id, attempt["id"], error_code="worker_unavailable"
@@ -830,7 +836,7 @@ class AuriXAIApplication:
             model_id=model_id,
         )
         try:
-            self.conversation_jobs.submit(
+            submitted = self.conversation_jobs.submit(
                 attempt["id"],
                 lambda stop_event: self._run_durable_attempt(
                     user,
@@ -842,7 +848,13 @@ class AuriXAIApplication:
                     direction=previous["direction"],
                     stop_event=stop_event,
                 ),
+                conversation_id=attempt["conversation_id"],
+                owner_id=user.telegram_id,
             )
+            if not submitted:
+                attempt = self.conversations.fail_attempt(
+                    user.telegram_id, attempt["id"], error_code="concurrency_limit"
+                )
         except Exception:
             attempt = self.conversations.fail_attempt(
                 user.telegram_id, attempt["id"], error_code="worker_unavailable"
