@@ -1,0 +1,64 @@
+(security_headers) {
+  encode zstd gzip
+  header {
+    -Server
+    X-Content-Type-Options nosniff
+    Referrer-Policy same-origin
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  }
+}
+
+157-245-63-95.sslip.io {
+  import security_headers
+  reverse_proxy 9router:20128
+}
+
+aurix-mart.tech {
+  import security_headers
+  reverse_proxy aurix-site:80
+}
+
+www.aurix-mart.tech {
+  import security_headers
+  redir https://aurix-mart.tech{uri} permanent
+}
+
+vpn.aurix-mart.tech {
+  import security_headers
+  @product_root path /
+  rewrite @product_root /product/index.html
+  reverse_proxy aurix-site:80
+}
+
+ai.aurix-mart.tech {
+  import security_headers
+  reverse_proxy aurix-ai:10000
+}
+
+accounts.aurix-mart.tech {
+  import security_headers
+  @product_root path /
+  rewrite @product_root /product/index.html
+  reverse_proxy aurix-site:80
+}
+
+games.aurix-mart.tech {
+  import security_headers
+  @product_root path /
+  rewrite @product_root /product/index.html
+  reverse_proxy aurix-site:80
+}
+
+solutions.aurix-mart.tech {
+  import security_headers
+  @product_root path /
+  rewrite @product_root /product/index.html
+  reverse_proxy aurix-site:80
+}
+
+status.aurix-mart.tech {
+  import security_headers
+  @product_root path /
+  rewrite @product_root /product/index.html
+  reverse_proxy aurix-site:80
+}

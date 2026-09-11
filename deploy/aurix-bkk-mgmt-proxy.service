@@ -1,0 +1,15 @@
+[Unit]
+Description=AuriX TCP relay for bkk-a Outline management
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/libexec/aurix_tcp_proxy.py --listen-port 61605 --target-host 191.40.15.51 --target-port 61603
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

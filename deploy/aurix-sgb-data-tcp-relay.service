@@ -1,0 +1,15 @@
+[Unit]
+Description=AuriX TCP relay for sg-b Outline data traffic
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/libexec/aurix_tcp_proxy.py --listen-port 45525 --target-host 139.59.122.170 --target-port 45525
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
