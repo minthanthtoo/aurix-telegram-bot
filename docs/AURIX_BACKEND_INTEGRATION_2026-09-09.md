@@ -380,6 +380,14 @@ only bounded endpoint, entitlement, protocol, reason, and transition metadata.
 This VPN-only hardening is committed as `3a6b3c4` (`Audit VPN endpoint
 allocation transitions`).
 
+The same unified audit stream now records owner-approved server-control
+decisions: endpoint lifecycle changes, idempotent infrastructure provision
+intents, and endpoint verification after the management probe. The records
+carry bounded actor, placement, lifecycle, and job metadata without provider
+tokens, management URLs, certificates, or credential material. This server
+management hardening is committed as `f339884` (`Audit VPN infrastructure
+control transitions`).
+
 ## Remaining gates and next action
 
 The local provider backend, node-agent contract, bounded mixed-protocol test
