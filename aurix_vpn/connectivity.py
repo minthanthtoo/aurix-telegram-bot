@@ -2034,6 +2034,9 @@ class FleetController:
             ).fetchone()
         if row is None or not row["provider_resource_id"]:
             raise ConnectivityError("Provisioning job is not awaiting endpoint verification")
+        requested = self._provision_specification(job_id)
+        if str(region or "").strip().lower() != requested["region"]:
+            raise ConnectivityError("Endpoint region does not match the durable provisioning intent")
         endpoint_id = f"do-{row['provider_resource_id']}"
         endpoint = self.registry.register_verified_endpoint(
             endpoint_id=endpoint_id,

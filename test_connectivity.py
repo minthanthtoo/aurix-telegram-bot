@@ -720,6 +720,34 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
                 ("failed", "ambiguous provider resources"),
             )
 
+    def test_endpoint_activation_rejects_region_mismatch_before_management_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            registry = EndpointRegistry(database, Fernet.generate_key())
+            controller = FleetController(database, registry=registry)
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            with database.connect() as connection:
+                connection.execute(
+                    """UPDATE infrastructure_jobs
+                          SET status = 'awaiting_verification', provider_resource_id = ?
+                        WHERE id = ?""",
+                    ("42", job),
+                )
+            with patch.dict(os.environ, {"AURIX_ENDPOINT_ACTIVATION_ENABLED": "1"}):
+                with self.assertRaisesRegex(ConnectivityError, "region does not match"):
+                    controller.verify_and_activate(
+                        job,
+                        code="SGP-02",
+                        region="bkk1",
+                        api_url="https://outline.invalid:1234/secret",
+                        certificate_sha256="0" * 64,
+                    )
+
     def test_dedicated_infrastructure_pass_leaves_pending_when_mutations_are_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             database = initialized_database(Path(tmp) / "fleet.db")
