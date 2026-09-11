@@ -92,6 +92,17 @@ class EndpointRegistryTest(unittest.TestCase):
         second = self.registry.ensure_subscription_assignment("sub-1", "basic", 50_000_000_000)
         self.assertEqual(first.id, second.id)
         self.assertEqual(first.endpoint_id, "legacy-default")
+        with self.database.connect() as connection:
+            audit_rows = connection.execute(
+                """SELECT action, target_id, metadata_json
+                     FROM audit_events
+                    WHERE action = 'endpoint_assignment_created'
+                      AND target_id = ?""",
+                (first.id,),
+            ).fetchall()
+        self.assertEqual(len(audit_rows), 1)
+        self.assertEqual(audit_rows[0]["action"], "endpoint_assignment_created")
+        self.assertEqual(json.loads(audit_rows[0]["metadata_json"])["protocol"], "outline")
 
     def test_endpoint_lifecycle_is_drain_then_terminal_retirement(self):
         now = datetime.now(UTC)
@@ -419,6 +430,22 @@ class EndpointRegistryTest(unittest.TestCase):
         )
         self.assertTrue(restored["changed"])
         self.assertEqual(self.registry.assignment_for_subscription("sub-1").endpoint_id, "legacy-default")
+        with self.database.connect() as connection:
+            audit_rows = connection.execute(
+                """SELECT action, metadata_json
+                     FROM audit_events
+                    WHERE action = 'endpoint_assignment_transferred'
+                      AND target_id = ?
+                    ORDER BY id""",
+                (assignment.id,),
+            ).fetchall()
+        self.assertEqual(len(audit_rows), 2)
+        first_transfer = json.loads(audit_rows[0]["metadata_json"])
+        second_transfer = json.loads(audit_rows[1]["metadata_json"])
+        self.assertEqual(first_transfer["source_endpoint_id"], "legacy-default")
+        self.assertEqual(first_transfer["target_endpoint_id"], "bkk-a")
+        self.assertEqual(second_transfer["source_endpoint_id"], "bkk-a")
+        self.assertEqual(second_transfer["target_endpoint_id"], "legacy-default")
 
     def test_transfer_assignment_rejects_target_without_source_protocol_profile(self):
         now = datetime.now(UTC)

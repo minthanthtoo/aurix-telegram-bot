@@ -90,6 +90,52 @@ class EndpointRegistry:
         except (InvalidToken, UnicodeDecodeError, ValueError) as exc:
             raise ConnectivityError("Endpoint management secret cannot be decrypted") from exc
 
+    @staticmethod
+    def _audit_events_available(connection: Any) -> bool:
+        """Return whether this database has the optional commerce audit table."""
+        if isinstance(connection, _PostgresConnection):
+            row = connection.execute(
+                "SELECT to_regclass(?) AS table_name", ("public.audit_events",)
+            ).fetchone()
+            return bool(row and row["table_name"])
+        row = connection.execute(
+            """SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'audit_events'"""
+        ).fetchone()
+        return row is not None
+
+    @classmethod
+    def _record_audit_event(
+        cls,
+        connection: Any,
+        *,
+        actor_type: str,
+        actor_id: str | int | None,
+        action: str,
+        target_type: str,
+        target_id: str,
+        metadata: dict[str, Any] | None,
+        created_at: str,
+    ) -> None:
+        """Write a bounded, non-secret audit event when commerce is initialized."""
+        if not cls._audit_events_available(connection):
+            return
+        connection.execute(
+            """INSERT INTO audit_events
+               (actor_type, actor_id, action, target_type, target_id,
+                metadata_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(actor_type)[:64],
+                None if actor_id is None else str(actor_id)[:128],
+                str(action)[:128],
+                str(target_type)[:128],
+                str(target_id)[:256],
+                json.dumps(dict(metadata or {}), sort_keys=True, separators=(",", ":")),
+                created_at,
+            ),
+        )
+
     def register_protocol_profile(
         self,
         endpoint_id: str,
@@ -269,35 +315,16 @@ class EndpointRegistry:
                     WHERE profile_id = ?""",
                 (str(profile["profile_id"]),),
             )
-            if isinstance(connection, _PostgresConnection):
-                audit_exists = connection.execute(
-                    "SELECT to_regclass(?) AS table_name", ("public.audit_events",)
-                ).fetchone()
-                has_audit_events = bool(audit_exists and audit_exists["table_name"])
-            else:
-                audit_exists = connection.execute(
-                    """SELECT 1 FROM sqlite_master
-                        WHERE type = 'table' AND name = 'audit_events'"""
-                ).fetchone()
-                has_audit_events = audit_exists is not None
-            if has_audit_events:
-                connection.execute(
-                    """INSERT INTO audit_events
-                       (actor_type, actor_id, action, target_type, target_id,
-                        metadata_json, created_at)
-                       VALUES ('admin', ?, 'protocol_profile_disabled',
-                               'endpoint_protocol_profile', ?, ?, ?)""",
-                    (
-                        None if actor_id is None else str(actor_id)[:128],
-                        str(profile["profile_id"]),
-                        json.dumps(
-                            {"previous_status": current_status},
-                            sort_keys=True,
-                            separators=(",", ":"),
-                        ),
-                        timestamp,
-                    ),
-                )
+            self._record_audit_event(
+                connection,
+                actor_type="admin",
+                actor_id=actor_id,
+                action="protocol_profile_disabled",
+                target_type="endpoint_protocol_profile",
+                target_id=str(profile["profile_id"]),
+                metadata={"previous_status": current_status},
+                created_at=timestamp,
+            )
         return self.protocol_profile_status(profile["endpoint_id"], profile["protocol"])
 
     @classmethod
@@ -732,38 +759,19 @@ class EndpointRegistry:
                     WHERE profile_id = ?""",
                 (timestamp, healthy_text, healthy_text, str(profile["profile_id"])),
             )
-            if isinstance(connection, _PostgresConnection):
-                audit_exists = connection.execute(
-                    "SELECT to_regclass(?) AS table_name", ("public.audit_events",)
-                ).fetchone()
-                has_audit_events = bool(audit_exists and audit_exists["table_name"])
-            else:
-                audit_exists = connection.execute(
-                    """SELECT 1 FROM sqlite_master
-                        WHERE type = 'table' AND name = 'audit_events'"""
-                ).fetchone()
-                has_audit_events = audit_exists is not None
-            if has_audit_events:
-                connection.execute(
-                    """INSERT INTO audit_events
-                       (actor_type, actor_id, action, target_type, target_id,
-                        metadata_json, created_at)
-                       VALUES ('admin', ?, 'protocol_profile_promoted',
-                               'endpoint_protocol_profile', ?, ?, ?)""",
-                    (
-                        None if actor_id is None else str(actor_id)[:128],
-                        str(profile["profile_id"]),
-                        json.dumps(
-                            {
-                                "required_signals": list(signals),
-                                "required_capabilities": list(capabilities),
-                            },
-                            sort_keys=True,
-                            separators=(",", ":"),
-                        ),
-                        timestamp,
-                    ),
-                )
+            self._record_audit_event(
+                connection,
+                actor_type="admin",
+                actor_id=actor_id,
+                action="protocol_profile_promoted",
+                target_type="endpoint_protocol_profile",
+                target_id=str(profile["profile_id"]),
+                metadata={
+                    "required_signals": list(signals),
+                    "required_capabilities": list(capabilities),
+                },
+                created_at=timestamp,
+            )
         return next(
             item
             for item in self.list_protocol_profiles(endpoint)
@@ -1511,6 +1519,22 @@ class EndpointRegistry:
                 now.astimezone(UTC).isoformat(),
             ),
         )
+        self._record_audit_event(
+            connection,
+            actor_type="system",
+            actor_id=None,
+            action="endpoint_assignment_created",
+            target_type="endpoint_assignment",
+            target_id=assignment_id,
+            metadata={
+                "endpoint_id": endpoint_id,
+                "entitlement_kind": "free",
+                "free_key_id": int(free_key_id),
+                "plan_code": plan_code,
+                "reason": "free-entitlement",
+            },
+            created_at=now.astimezone(UTC).isoformat(),
+        )
         return assignment_id
 
     @staticmethod
@@ -1578,6 +1602,23 @@ class EndpointRegistry:
                     quota_bytes,
                     timestamp,
                 ),
+            )
+            self._record_audit_event(
+                connection,
+                actor_type="system",
+                actor_id=None,
+                action="endpoint_assignment_created",
+                target_type="endpoint_assignment",
+                target_id=assignment_id,
+                metadata={
+                    "endpoint_id": endpoint_id,
+                    "entitlement_kind": "paid",
+                    "plan_code": str(plan_code),
+                    "preferred_endpoint_id": preferred_endpoint_id,
+                    "protocol": str(protocol or "outline").strip().lower(),
+                    "reason": str(reason or "deterministic-allocation")[:128],
+                },
+                created_at=timestamp,
             )
             row = connection.execute(
                 "SELECT * FROM endpoint_assignments WHERE id = ?", (assignment_id,)
@@ -1703,6 +1744,21 @@ class EndpointRegistry:
                       SET endpoint_id = ?, reason = ?
                     WHERE id = ? AND status = 'active'""",
                 (target_id, str(reason or "operator-drain")[:128], str(assignment["id"])),
+            )
+            self._record_audit_event(
+                connection,
+                actor_type="system",
+                actor_id=None,
+                action="endpoint_assignment_transferred",
+                target_type="endpoint_assignment",
+                target_id=str(assignment["id"]),
+                metadata={
+                    "entitlement_key": entitlement_key,
+                    "source_endpoint_id": source_endpoint_id,
+                    "target_endpoint_id": target_id,
+                    "reason": str(reason or "operator-drain")[:128],
+                },
+                created_at=timestamp,
             )
         return {
             "changed": True,
