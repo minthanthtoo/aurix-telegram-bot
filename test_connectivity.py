@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -116,11 +116,100 @@ class EndpointRegistryTest(unittest.TestCase):
         with self.database.connect() as connection:
             with self.assertRaisesRegex(ConnectivityError, "capacity"):
                 self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray")
-        self.registry.register_protocol_profile("legacy-default", "xray", status="enabled")
+        now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+        self.registry.record_protocol_observation(
+            "legacy-default",
+            "xray",
+            signal="management",
+            status="healthy",
+            observed_at=now,
+            expires_at=now.replace(hour=1),
+            source="promotion-test",
+            now=now,
+        )
+        promoted = self.registry.promote_protocol_profile(
+            "legacy-default",
+            "xray",
+            required_signals=("management",),
+            required_capabilities=("usage",),
+            actor_id=7,
+            now=now,
+        )
+        self.assertEqual(promoted["status"], "enabled")
+        with self.database.connect() as connection:
+            audit = connection.execute(
+                """SELECT action, actor_id, target_id, metadata_json
+                     FROM audit_events
+                    WHERE action = 'protocol_profile_promoted'
+                    ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
+        self.assertEqual(audit["action"], "protocol_profile_promoted")
+        self.assertEqual(audit["actor_id"], "7")
+        self.assertEqual(audit["target_id"], "xray:legacy-default")
+        self.assertEqual(json.loads(audit["metadata_json"])["required_signals"], ["management"])
         with self.database.connect() as connection:
             self.assertEqual(
                 self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray"),
                 "legacy-default",
+            )
+
+    def test_protocol_profile_promotion_requires_fresh_evidence_and_declared_capabilities(self):
+        now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+        self.registry.register_protocol_profile(
+            "legacy-default",
+            "hysteria2",
+            status="candidate",
+            capabilities={"usage": True, "quota_cap": False},
+            now=now,
+        )
+        with self.assertRaisesRegex(ConnectivityError, "evidence is incomplete"):
+            self.registry.promote_protocol_profile(
+                "legacy-default",
+                "hysteria2",
+                required_signals=("management",),
+                now=now,
+            )
+        self.registry.record_protocol_observation(
+            "legacy-default",
+            "hysteria2",
+            signal="management",
+            status="healthy",
+            observed_at=now - timedelta(hours=2),
+            expires_at=now - timedelta(hours=1),
+            source="promotion-test",
+            now=now,
+        )
+        with self.assertRaisesRegex(ConnectivityError, "evidence is incomplete"):
+            self.registry.promote_protocol_profile(
+                "legacy-default",
+                "hysteria2",
+                required_signals=("management",),
+                now=now,
+            )
+        self.registry.record_protocol_observation(
+            "legacy-default",
+            "hysteria2",
+            signal="management",
+            status="healthy",
+            observed_at=now,
+            expires_at=now.replace(hour=1),
+            source="promotion-test",
+            now=now,
+        )
+        with self.assertRaisesRegex(ConnectivityError, "lacks required capabilities"):
+            self.registry.promote_protocol_profile(
+                "legacy-default",
+                "hysteria2",
+                required_signals=("management",),
+                required_capabilities=("quota_cap",),
+                now=now,
+            )
+        with self.assertRaisesRegex(ConnectivityError, "must be a sequence"):
+            self.registry.promote_protocol_profile(
+                "legacy-default",
+                "hysteria2",
+                required_signals="management",
+                now=now,
             )
 
     def test_protocol_observations_are_safe_append_only_evidence(self):

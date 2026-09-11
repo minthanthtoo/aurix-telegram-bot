@@ -127,8 +127,11 @@ load test, or speed test was changed or performed.
   add an append-only, protocol-scoped observation ledger. Only bounded scalar
   evidence fields are persisted, and the Control Center can inspect recent
   management/client-path/quota/restart observations without receiving secrets.
-  Observations inform promotion and operations but do not enable a candidate
-  profile or constitute live compatibility proof by themselves.
+  `EndpointRegistry.promote_protocol_profile` is the explicit promotion
+  boundary: it requires fresh, non-expired healthy observations for every
+  operator-selected signal and matching declared capabilities, then records an
+  audit event when the commerce audit schema is available. Observations alone
+  do not enable a candidate profile or constitute live compatibility proof.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates

@@ -174,7 +174,12 @@ Observation details are scalar and allow-listed before persistence. They may
 describe management reachability, client-path results, quota enforcement,
 restart persistence, or session behavior, but they never contain management
 URLs, credentials, or provider secrets. Evidence supports operator promotion
-and diagnosis; it does not promote a candidate profile automatically.
+and diagnosis; it does not promote a candidate profile automatically. An
+operator may call `promote_protocol_profile` only after choosing the required
+signals and capabilities; the method rejects missing, future, or expired
+healthy evidence and records the decision in `audit_events` when that table is
+available. A protocol must therefore remain a candidate until both the live
+evidence gate and the explicit operator decision are complete.
 
 ### `endpoint_plan_limits`
 

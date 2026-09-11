@@ -17,6 +17,7 @@ from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from .commerce_repositories import _PostgresConnection
 from .outline_adapter import OutlineClient
 
 
@@ -372,6 +373,161 @@ class EndpointRegistry:
             item["details"] = details if isinstance(details, dict) else {}
             result.append(item)
         return result
+
+    def promote_protocol_profile(
+        self,
+        endpoint_id: str,
+        protocol: str,
+        *,
+        required_signals: tuple[str, ...] | list[str],
+        required_capabilities: tuple[str, ...] | list[str] = (),
+        actor_id: str | int | None = None,
+        now: datetime | str | None = None,
+    ) -> dict[str, Any]:
+        """Enable a candidate profile only after explicit fresh evidence.
+
+        This is an operator decision boundary, not an automatic health
+        transition.  Every required signal must have a non-expired healthy
+        observation, and every required capability must already be declared by
+        the profile.  The decision is audited when the commerce audit table is
+        available.
+        """
+        endpoint = str(endpoint_id or "").strip()
+        transport = str(protocol or "").strip().lower()
+        if isinstance(required_signals, str) or isinstance(required_capabilities, str):
+            raise ConnectivityError("protocol evidence requirements must be a sequence")
+        signals = tuple(
+            sorted(
+                {
+                    str(value or "").strip().lower()
+                    for value in required_signals
+                    if str(value or "").strip()
+                }
+            )
+        )
+        capabilities = tuple(
+            sorted(
+                {
+                    str(value or "").strip()
+                    for value in required_capabilities
+                    if str(value or "").strip()
+                }
+            )
+        )
+        if not endpoint or len(endpoint) > 128:
+            raise ConnectivityError("endpoint ID is invalid")
+        if not transport or len(transport) > 64 or any(char.isspace() for char in transport):
+            raise ConnectivityError("protocol is invalid")
+        if not signals:
+            raise ConnectivityError("at least one protocol evidence signal is required")
+        if any(len(value) > 64 or any(char.isspace() for char in value) for value in signals):
+            raise ConnectivityError("protocol evidence signal is invalid")
+        if any(len(value) > 64 or any(char.isspace() for char in value) for value in capabilities):
+            raise ConnectivityError("protocol capability is invalid")
+        timestamp_dt = self._observation_time(now)
+        timestamp = timestamp_dt.isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            profile = connection.execute(
+                """SELECT * FROM endpoint_protocol_profiles
+                    WHERE endpoint_id = ? AND protocol = ?""",
+                (endpoint, transport),
+            ).fetchone()
+            if profile is None:
+                raise ConnectivityError("protocol profile does not exist")
+            if str(profile["status"] or "").lower() == "retired":
+                raise ConnectivityError("retired protocol profile cannot be promoted")
+            try:
+                profile_capabilities = json.loads(str(profile["capabilities_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                profile_capabilities = {}
+            if not isinstance(profile_capabilities, dict):
+                profile_capabilities = {}
+            missing_capabilities = [
+                name for name in capabilities if profile_capabilities.get(name) is not True
+            ]
+            if missing_capabilities:
+                raise ConnectivityError(
+                    "protocol profile lacks required capabilities: "
+                    + ", ".join(missing_capabilities)
+                )
+            observations = connection.execute(
+                """SELECT signal, observed_at, expires_at
+                     FROM endpoint_protocol_observations
+                    WHERE profile_id = ? AND status = 'healthy'""",
+                (str(profile["profile_id"]),),
+            ).fetchall()
+            fresh_signals: set[str] = set()
+            latest_healthy: datetime | None = None
+            for observation in observations:
+                try:
+                    observed = self._observation_time(observation["observed_at"])
+                    expires = (
+                        self._observation_time(observation["expires_at"])
+                        if observation["expires_at"]
+                        else None
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if observed > timestamp_dt or (expires is not None and expires <= timestamp_dt):
+                    continue
+                fresh_signals.add(str(observation["signal"]).strip().lower())
+                if latest_healthy is None or observed > latest_healthy:
+                    latest_healthy = observed
+            missing_signals = [name for name in signals if name not in fresh_signals]
+            if missing_signals:
+                raise ConnectivityError(
+                    "protocol profile evidence is incomplete: "
+                    + ", ".join(missing_signals)
+                )
+            healthy_text = (latest_healthy or timestamp_dt).isoformat()
+            connection.execute(
+                """UPDATE endpoint_protocol_profiles
+                      SET status = 'enabled', verified_at = COALESCE(verified_at, ?),
+                          last_healthy_at = CASE
+                              WHEN last_healthy_at IS NULL OR last_healthy_at < ? THEN ?
+                              ELSE last_healthy_at END,
+                          retired_at = NULL
+                    WHERE profile_id = ?""",
+                (timestamp, healthy_text, healthy_text, str(profile["profile_id"])),
+            )
+            if isinstance(connection, _PostgresConnection):
+                audit_exists = connection.execute(
+                    "SELECT to_regclass(?) AS table_name", ("public.audit_events",)
+                ).fetchone()
+                has_audit_events = bool(audit_exists and audit_exists["table_name"])
+            else:
+                audit_exists = connection.execute(
+                    """SELECT 1 FROM sqlite_master
+                        WHERE type = 'table' AND name = 'audit_events'"""
+                ).fetchone()
+                has_audit_events = audit_exists is not None
+            if has_audit_events:
+                connection.execute(
+                    """INSERT INTO audit_events
+                       (actor_type, actor_id, action, target_type, target_id,
+                        metadata_json, created_at)
+                       VALUES ('admin', ?, 'protocol_profile_promoted',
+                               'endpoint_protocol_profile', ?, ?, ?)""",
+                    (
+                        None if actor_id is None else str(actor_id)[:128],
+                        str(profile["profile_id"]),
+                        json.dumps(
+                            {
+                                "required_signals": list(signals),
+                                "required_capabilities": list(capabilities),
+                            },
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        timestamp,
+                    ),
+                )
+        return next(
+            item
+            for item in self.list_protocol_profiles(endpoint)
+            if item["protocol"] == transport
+        )
 
     def configure_bootstrap(
         self,
