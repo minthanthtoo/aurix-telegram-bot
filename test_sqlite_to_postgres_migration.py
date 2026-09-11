@@ -5,7 +5,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -229,6 +229,141 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                 self.assertEqual(assignment.endpoint_id, "legacy-default")
                 self.assertEqual(RouteFailoverService(database).decisions(limit=10), [])
                 self.assertEqual(IdentityService(database).generations_for_accounting(), [])
+
+                # Continue the rehearsal through the protocol-neutral
+                # failover path. This stays inside the disposable database:
+                # no provider or node-agent call is made.
+                with database.connect() as connection:
+                    connection.execute(
+                        """UPDATE subscriptions SET status = 'active', quota_bytes = ?,
+                                  expires_at = ? WHERE id = 'source-sub'""",
+                        (10_000, (now + timedelta(days=1)).isoformat()),
+                    )
+                    connection.execute(
+                        """INSERT INTO vpn_endpoints
+                           (id, code, provider, region, state, accepts_new_assignments,
+                            last_healthy_at, created_at)
+                           VALUES ('postgres-failover-target', 'PG-FAILOVER',
+                                   'local-rehearsal', 'bkk1', 'ACTIVE', TRUE, ?, ?)""",
+                        (now.isoformat(), now.isoformat()),
+                    )
+                required_signals = ("management", "direct_client")
+                required_capabilities = ("per_customer_auth", "usage_stats")
+                for endpoint_id in ("legacy-default", "postgres-failover-target"):
+                    registry.register_protocol_profile(
+                        endpoint_id,
+                        "xray",
+                        adapter_type="xray",
+                        status="candidate",
+                        capabilities={name: True for name in required_capabilities},
+                        now=now,
+                    )
+                    for signal in required_signals:
+                        registry.record_protocol_observation(
+                            endpoint_id,
+                            "xray",
+                            signal=signal,
+                            status="healthy",
+                            details={"quota_enforced": True, "restart_persisted": True},
+                            latency_ms=7,
+                            observed_at=now,
+                            expires_at=now + timedelta(hours=1),
+                            source="postgres-rehearsal",
+                            now=now,
+                        )
+                    registry.promote_protocol_profile(
+                        endpoint_id,
+                        "xray",
+                        required_signals=required_signals,
+                        required_capabilities=required_capabilities,
+                        actor_id="postgres-rehearsal",
+                        now=now,
+                    )
+                xray_endpoints = registry.list_customer_endpoints(
+                    "basic_50gb", protocol="xray"
+                )
+                self.assertEqual(
+                    {item["id"] for item in xray_endpoints if item["eligible"]},
+                    {"legacy-default", "postgres-failover-target"},
+                )
+                entitlement = identity.ensure_subscription_entitlement(
+                    777, "source-sub", now=now.isoformat()
+                )
+                source_generation = identity.create_generation(
+                    entitlement,
+                    "legacy-default",
+                    protocol="xray",
+                    external_id="postgres-xray-source",
+                    access_url_ciphertext="source-ciphertext",
+                    usage_baseline_provenance="new",
+                    now=now.isoformat(),
+                )
+                source_lease = identity.ensure_generation_lease(
+                    entitlement,
+                    source_generation,
+                    "legacy-default",
+                    10_000,
+                    (now + timedelta(days=1)).isoformat(),
+                    now=now.isoformat(),
+                )
+                failover = RouteFailoverService(database)
+                failover.configure_policy(
+                    entitlement,
+                    enabled=True,
+                    failure_threshold=1,
+                    now=now.isoformat(),
+                )
+                observed = failover.observe(
+                    source_generation,
+                    outcome="failure",
+                    network_bucket="mm-mobile",
+                    observed_at=now.isoformat(),
+                )
+                decision = failover.claim(now=now.isoformat())
+                self.assertIsNotNone(observed["decision_id"])
+                self.assertIsNotNone(decision)
+                target_generation = identity.create_generation(
+                    entitlement,
+                    "postgres-failover-target",
+                    protocol="xray",
+                    external_id="postgres-xray-target",
+                    access_url_ciphertext="target-ciphertext",
+                    usage_baseline_provenance="new",
+                    now=now.isoformat(),
+                )
+                failover.attach_target_generation(
+                    decision["decision_id"], target_generation, now=now.isoformat()
+                )
+                transferred_lease = identity.transfer_generation_lease(
+                    entitlement,
+                    source_generation,
+                    target_generation,
+                    "postgres-failover-target",
+                    now=now.isoformat(),
+                )
+                moved = registry.transfer_assignment(
+                    entitlement,
+                    "postgres-failover-target",
+                    reason="failover",
+                    now=now,
+                )
+                failover.mark_committed(decision["decision_id"], now=now.isoformat())
+                usage = identity.record_usage(
+                    entitlement,
+                    target_generation,
+                    125,
+                    observed_at=(now + timedelta(minutes=1)).isoformat(),
+                )
+                recovery = identity.recovery_authorization(
+                    entitlement,
+                    target_generation,
+                    now=(now + timedelta(minutes=1)).isoformat(),
+                )
+                self.assertEqual(source_lease, transferred_lease)
+                self.assertTrue(moved["changed"])
+                self.assertEqual(failover.decisions()[0]["state"], "committed")
+                self.assertEqual(usage["consumed_bytes"], 125)
+                self.assertTrue(recovery["authorized"])
             finally:
                 database.close()
                 subprocess.run(
