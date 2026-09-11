@@ -282,6 +282,31 @@ hard-quota capability is available, while its encrypted user store and the
 Xray config writer are covered across reinitialization. This guard is committed
 as `e3cdcf1` (`Harden Hysteria2 quota boundaries`).
 
+## Continuation verification — 2026-09-12
+
+The VPN fleet-control layer now exposes a read-only
+`FleetController.scale_out_recommendation` decision for the Control Center. It
+evaluates fresh endpoint health, enabled protocol profiles, plan capacity,
+regional/global node caps, daily creation limits, cooldown, active durable
+provision intents, and the configured region allowlist without queuing work or
+contacting DigitalOcean. Automatic scale remains disabled by default; the
+provider worker retains the live billing/budget gate.
+
+Provision admission now serializes PostgreSQL requests with a transaction
+advisory lock, counts active intents toward node caps, fails closed when an
+active intent lacks a durable region, and returns the existing job for a
+repeated hour-scoped request fingerprint. The web Control Center endpoint
+detail now also shows redacted capacity-by-plan policy and active assignment
+counts, matching the existing Telegram admin capacity view.
+
+The focused scale-control tests, Control Center/API tests, VPN-oriented
+regression set (216 tests), Ruff, Python compilation, JavaScript syntax, and
+`git diff --check` pass locally. No live server, customer credential,
+provider/database deployment, load test, speed test, or automatic scale action
+was performed. The remaining action is still the separately authorized
+canary/evidence sequence for real Xray/Hysteria2 behavior and second-node
+rollout gates.
+
 ## Remaining gates and next action
 
 The local provider backend, node-agent contract, bounded mixed-protocol test
