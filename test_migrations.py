@@ -4,7 +4,13 @@ from pathlib import Path
 
 from app import Database
 from commerce import CommerceDatabase, PostgresCommerceDatabase
-from migrations import FREE_ACCESS_MIGRATIONS, Migration, MigrationError, apply_migrations
+from migrations import (
+    COMMERCE_MIGRATIONS,
+    FREE_ACCESS_MIGRATIONS,
+    Migration,
+    MigrationError,
+    apply_migrations,
+)
 from persistence import open_sqlite_connection
 from repositories import HostedRepositoryDatabase, RepositoryDatabase
 
@@ -198,6 +204,72 @@ class MigrationRegistryTest(unittest.TestCase):
                     )
 
             self.assertEqual(key["endpoint_id"], "legacy-default")
+
+    def test_failover_history_migration_backfills_existing_v13_policies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "populated-v13-commerce.db"
+            database = CommerceDatabase(path)
+            database.initialize()
+            with database.connect() as connection:
+                connection.execute(
+                    """INSERT INTO route_failover_policies
+                       (entitlement_key, enabled, failure_threshold,
+                        recovery_threshold, cooldown_seconds, standby_lease_bytes,
+                        max_attempts, policy_version, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        "paid:legacy-entitlement",
+                        True,
+                        4,
+                        3,
+                        900,
+                        200 * 1024 * 1024,
+                        6,
+                        7,
+                        "2026-09-01T00:00:00+00:00",
+                        "2026-09-12T03:04:05+00:00",
+                    ),
+                )
+                connection.execute("DROP TABLE route_failover_policy_versions")
+                connection.execute(
+                    "DELETE FROM schema_migrations WHERE component = 'commerce' AND version = 14"
+                )
+                apply_migrations(
+                    connection,
+                    component="commerce",
+                    dialect="sqlite",
+                    migrations=COMMERCE_MIGRATIONS,
+                )
+                snapshot = connection.execute(
+                    """SELECT entitlement_key, policy_version, enabled,
+                              failure_threshold, recovery_threshold,
+                              cooldown_seconds, standby_lease_bytes, max_attempts,
+                              created_at
+                         FROM route_failover_policy_versions
+                        WHERE entitlement_key = ?""",
+                    ("paid:legacy-entitlement",),
+                ).fetchone()
+                history = connection.execute(
+                    """SELECT version, name
+                         FROM schema_migrations
+                        WHERE component = 'commerce' AND version = 14"""
+                ).fetchone()
+
+            self.assertEqual(
+                tuple(snapshot),
+                (
+                    "paid:legacy-entitlement",
+                    7,
+                    1,
+                    4,
+                    3,
+                    900,
+                    200 * 1024 * 1024,
+                    6,
+                    "2026-09-12T03:04:05+00:00",
+                ),
+            )
+            self.assertEqual(tuple(history), (14, "failover_policy_history"))
 
 
 class RepositoryContractTest(unittest.TestCase):
