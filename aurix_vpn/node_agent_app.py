@@ -163,7 +163,7 @@ class NodeAgentService:
             if len(parts) == 2 and parts[1] == "quota" and method == "PATCH":
                 body = self._body(environ)
                 raw_quota = body.get("quota_bytes")
-                if isinstance(raw_quota, bool):
+                if isinstance(raw_quota, (bool, float)):
                     raise NodeAgentHTTPError(400, "quota_bytes must be a positive integer")
                 try:
                     quota_bytes = int(raw_quota)

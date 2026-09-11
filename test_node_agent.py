@@ -29,7 +29,7 @@ class NodeAgentTest(unittest.TestCase):
 
     def test_invalid_user_quota_fails_closed(self):
         client = NodeAgentClient(requester=lambda *_: {})
-        for value in (0, True, None, "not-a-number"):
+        for value in (0, True, 1.2, None, "not-a-number"):
             with self.subTest(value=value), self.assertRaises(NodeAgentError):
                 client.set_user_quota("u", value)
 

@@ -82,7 +82,7 @@ class OutlineConnectivityAdapter:
     def provision(self, route: dict[str, Any], credential_intent: dict[str, Any]) -> dict[str, Any]:
         name = str(credential_intent.get("name") or "AuriX route")[:128]
         limit = credential_intent.get("quota_bytes")
-        limit_bytes = None if limit is None else int(limit)
+        limit_bytes = None if limit is None else _positive_quota(limit, protocol=self.protocol)
         requested_id = str(credential_intent.get("external_id") or "").strip()
         getter = getattr(self.client, "get_key", None)
         key: dict[str, Any] | None = None
@@ -148,9 +148,7 @@ class OutlineConnectivityAdapter:
 
     def apply_quota_cap(self, grant: dict[str, Any], absolute_limit: int) -> None:
         external_id, _access_url = _checked_grant(grant)
-        value = int(absolute_limit)
-        if value <= 0:
-            raise ConnectivityAdapterError("Outline quota cap must be positive")
+        value = _positive_quota(absolute_limit, protocol=self.protocol)
         self.client.set_data_limit(external_id, value)
 
     def read_usage(self, grant: dict[str, Any]) -> dict[str, Any]:
@@ -265,6 +263,18 @@ def _provider_usage(record: Any) -> int:
             tx
         ) + _provider_counter(rx)
     return _provider_counter(record)
+
+
+def _positive_quota(value: Any, *, protocol: str) -> int:
+    if isinstance(value, (bool, float)):
+        raise ConnectivityAdapterError(f"{protocol} quota is not a positive integer")
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConnectivityAdapterError(f"{protocol} quota is not a positive integer") from exc
+    if normalized <= 0:
+        raise ConnectivityAdapterError(f"{protocol} quota is not a positive integer")
+    return normalized
 
 
 class _ManagedCredentialAdapter:
@@ -400,6 +410,12 @@ class _ManagedCredentialAdapter:
         }
 
     def provision(self, route: dict[str, Any], credential_intent: dict[str, Any]) -> dict[str, Any]:
+        credential_intent = dict(credential_intent)
+        limit = credential_intent.get("quota_bytes")
+        if limit is not None:
+            credential_intent["quota_bytes"] = _positive_quota(
+                limit, protocol=self.protocol
+            )
         name = str(credential_intent.get("name") or f"AuriX {self.protocol} route")[:128]
         external_id = self._new_external_id(credential_intent)
         secret = self._new_secret(credential_intent)
@@ -435,10 +451,10 @@ class _ManagedCredentialAdapter:
         grant["credential_intent"] = {
             key: value for key, value in credential_intent.items() if key != "secret"
         }
-        limit = credential_intent.get("quota_bytes")
         if limit is not None:
-            self.apply_quota_cap(grant, int(limit))
-            grant["quota_bytes"] = int(limit)
+            normalized_limit = credential_intent["quota_bytes"]
+            self.apply_quota_cap(grant, normalized_limit)
+            grant["quota_bytes"] = normalized_limit
         return grant
 
     def render_managed_config(self, grant: dict[str, Any]) -> dict[str, Any]:
@@ -456,9 +472,7 @@ class _ManagedCredentialAdapter:
 
     def apply_quota_cap(self, grant: dict[str, Any], absolute_limit: int) -> None:
         external_id, _access_url = _checked_grant(grant)
-        value = int(absolute_limit)
-        if value <= 0:
-            raise ConnectivityAdapterError(f"{self.protocol} quota cap must be positive")
+        value = _positive_quota(absolute_limit, protocol=self.protocol)
         method = _provider_method(self.client, ("set_user_quota",))
         if method is None:
             raise ConnectivityAdapterError(f"{self.protocol} quota enforcement is unsupported")
@@ -615,10 +629,7 @@ class _ManagedCredentialAdapter:
             secret = self._reconcile_secret(grant, external_id)
             recovery_quota = grant.get("recovery_quota_bytes")
             if recovery_quota is not None:
-                recovery_quota = int(recovery_quota)
-                if recovery_quota <= 0:
-                    skipped += 1
-                    continue
+                recovery_quota = _positive_quota(recovery_quota, protocol=self.protocol)
                 intent["quota_bytes"] = recovery_quota
             intent.update({"external_id": external_id, "name": name, "secret": secret})
             created = False

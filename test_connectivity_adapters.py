@@ -174,6 +174,20 @@ class ConnectivityAdapterTest(unittest.TestCase):
                         }
                     )
 
+    def test_invalid_protocol_quota_fails_before_provider_creation(self):
+        for value in (True, 0, 1.2, "not-a-number"):
+            with self.subTest(value=value):
+                client = _ProtocolClient()
+                adapter = XrayConnectivityAdapter(client)
+                with self.assertRaisesRegex(
+                    ConnectivityAdapterError, "quota is not a positive integer"
+                ):
+                    adapter.provision(
+                        self._xray_route(),
+                        {"external_id": "uuid-a", "name": "customer-a", "quota_bytes": value},
+                    )
+                self.assertEqual(client.users, {})
+
     @staticmethod
     def _xray_route():
         return {
