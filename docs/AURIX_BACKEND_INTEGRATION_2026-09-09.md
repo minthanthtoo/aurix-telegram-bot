@@ -370,6 +370,16 @@ also exercised account creation, one-time device pairing, heartbeat, and
 revocation on the PostgreSQL repository. It does not validate the hosted
 database, network latency, or production cutover.
 
+Automatic VPN placement is now auditable at the same transaction boundary as
+the durable state change. Paid and free endpoint assignments record one
+`endpoint_assignment_created` event, while failover/rollback moves record
+`endpoint_assignment_transferred`; idempotent allocation and already-on-target
+operations do not emit duplicate events. The shared audit writer remains
+compatible with the optional SQLite/PostgreSQL commerce audit table and stores
+only bounded endpoint, entitlement, protocol, reason, and transition metadata.
+This VPN-only hardening is committed as `3a6b3c4` (`Audit VPN endpoint
+allocation transitions`).
+
 ## Remaining gates and next action
 
 The local provider backend, node-agent contract, bounded mixed-protocol test
