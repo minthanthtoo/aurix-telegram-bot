@@ -16,6 +16,7 @@ const translationResult = document.querySelector("#translation-result");
 const translationReviewState = document.querySelector("#translation-review-state");
 const copyTranslationButton = document.querySelector("#copy-translation");
 const useTranslationButton = document.querySelector("#use-translation");
+const translateUpdatedButton = document.querySelector("#translate-updated");
 const messageLabel = document.querySelector("#message-label");
 const messageInput = document.querySelector("#message");
 const form = document.querySelector("#chat-form");
@@ -137,6 +138,15 @@ async function copyText(value) {
 
 function updateTranslationSource(value = "") {
   translationSource.value = value || "";
+  updateUpdatedTextAction();
+}
+
+function updateUpdatedTextAction() {
+  if (!translateUpdatedButton) return;
+  const changed = mode.value === "translate"
+    && messageInput.value.trim()
+    && messageInput.value.trim() !== translationSource.value.trim();
+  translateUpdatedButton.hidden = !changed;
 }
 
 function updateTranslationResult(value = "", state = "Waiting for translation", { force = false } = {}) {
@@ -150,6 +160,7 @@ function updateTranslationResult(value = "", state = "Waiting for translation", 
   const ready = Boolean(value && value !== "Translating…");
   copyTranslationButton.disabled = !ready;
   useTranslationButton.disabled = !ready;
+  updateUpdatedTextAction();
 }
 
 function responseNode(role, text, onRetry = null) {
@@ -663,7 +674,15 @@ starterPrompts.addEventListener("click", (event) => {
   messageInput.focus();
 });
 
-messageInput.addEventListener("input", saveDraft);
+messageInput.addEventListener("input", () => {
+  saveDraft();
+  updateUpdatedTextAction();
+});
+
+translateUpdatedButton.addEventListener("click", () => {
+  if (!messageInput.value.trim() || activeRequests > 0) return;
+  form.requestSubmit();
+});
 
 newChatButton.addEventListener("click", async () => {
   if (!authenticatedUser) return;

@@ -217,6 +217,19 @@ function renderAccount(account) {
 
   const keysHeading = element("div", "keys-heading");
   keysHeading.append(element("h5", "keys-title", "Keys"));
+  const activity = element("button", "button-quiet", "View activity");
+  activity.type = "button";
+  activity.addEventListener("click", async () => {
+    activityAccountFilter.value = account.id;
+    activityOffset = 0;
+    document.querySelector("#activity").scrollIntoView({ behavior: "smooth", block: "start" });
+    try {
+      await loadActivity({ reset: true });
+    } catch (error) {
+      showFlash(error instanceof Error ? error.message : "Account activity unavailable.", "error");
+    }
+  });
+  keysHeading.appendChild(activity);
   if (account.status === "active") {
     const issue = element("button", "button-quiet", "Issue new key");
     issue.type = "button";
