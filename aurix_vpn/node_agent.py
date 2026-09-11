@@ -134,7 +134,7 @@ class NodeAgentClient:
         self.request("DELETE", f"/v1/users/{quote(str(external_id), safe='')}")
 
     def set_user_quota(self, external_id: str, quota_bytes: int) -> None:
-        if int(quota_bytes) <= 0:
+        if isinstance(quota_bytes, bool) or int(quota_bytes) <= 0:
             raise NodeAgentError("user quota must be positive")
         self.request(
             "PATCH",
