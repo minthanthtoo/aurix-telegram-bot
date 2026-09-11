@@ -1260,3 +1260,19 @@ new account projection and authenticated redaction regression. This remains
 local evidence only; it does not promote Xray/Hysteria2, change BKK-A's
 Outline-only role, or replace live PostgreSQL, client-path, load, and soak
 acceptance.
+
+## 23. Opt-in node-agent deployment contract — 2026-09-11
+
+The controller binding is now represented in the deployment surfaces without
+changing the default runtime: `render.yaml`, the systemd staging runbook, and
+the Render deployment guide expose `AURIX_MANAGED_NODE_AGENTS_JSON` as blank by
+default. The guides classify it as a secret-bearing, isolated-canary binding,
+not a protocol promotion switch, and explicitly preserve BKK-A's
+Outline-only/capacity-constrained role. This documentation/configuration
+checkpoint is committed as `fdf1c39` (`Document opt-in node agent deployment
+binding`).
+
+The binding contract remains local evidence only. A production value still
+requires approved protected transport, fresh protocol evidence, restart and
+reconciliation validation, per-customer accounting/quota/client-path tests,
+rollback ownership, and explicit authorization before any live mutation.
