@@ -9,10 +9,18 @@
   </head>
   <body>
     <main class="shell">
-      <header class="hero">
+      <header class="app-topbar">
+        <a class="brand" href="/">AuriX <span>AI</span></a>
+        <nav class="app-nav" aria-label="AuriX AI navigation">
+          <a class="app-nav-link active" href="/" aria-current="page">Assistant</a>
+          <a class="app-nav-link" href="/admin">API console</a>
+          <a class="app-nav-link" href="/docs/ai-api">Developer guide</a>
+        </nav>
+      </header>
+      <header class="hero" id="assistant-intro">
         <p class="eyebrow">AuriX / AI</p>
         <h1>Useful answers, in your language.</h1>
-        <p class="lede">Use the existing AuriX AI route for English answers, English ↔ Lisu translation, or a Lisu-first assistant.</p>
+        <p class="lede">Choose a conversation or translation workspace, then keep the result attached to the turn that produced it.</p>
       </header>
 
       <section class="panel access-panel" aria-labelledby="access-title">
@@ -20,17 +28,21 @@
           <p class="eyebrow">Private access</p>
           <h2 id="access-title">Sign in with Telegram</h2>
         </div>
-        <p id="auth-copy" class="hint">Use your Telegram account to create a short-lived secure session.</p>
+        <p id="auth-copy" class="hint">Use your Telegram account to keep one secure AuriX session across the assistant and API console.</p>
         <div id="telegram-login"></div>
         <p id="auth-user" class="hint" hidden></p>
-        <button id="logout" type="button" hidden>Sign out</button>
+        <div class="access-actions">
+          <button id="logout" class="button-quiet" type="button" hidden>Sign out</button>
+          <button id="reauth" class="button-quiet" type="button" hidden>Sign in again</button>
+        </div>
       </section>
 
       <section class="panel chat-panel" aria-labelledby="chat-title">
         <div class="toolbar">
-          <div>
+          <div class="workspace-title">
             <p class="eyebrow">Conversation</p>
             <h2 id="chat-title">AuriX AI</h2>
+            <p id="mode-description" class="hint">Warm, clear answers in English.</p>
           </div>
           <div class="selectors">
             <label class="mode-label" for="mode">Mode
@@ -40,6 +52,12 @@
                 <option value="lisu_assistant">Lisu assistant (experimental)</option>
               </select>
             </label>
+            <label id="direction-control" class="mode-label" for="direction" hidden>Direction
+              <select id="direction">
+                <option value="en_to_lisu">English → Lisu</option>
+                <option value="lisu_to_en">Lisu → English</option>
+              </select>
+            </label>
             <label class="mode-label" for="model">AI model
               <select id="model">
                 <option value="gemini-3.7-flash-high">Gemini 3.7 Flash High</option>
@@ -47,15 +65,44 @@
             </label>
           </div>
         </div>
+        <div id="starter-prompts" class="starter-prompts" aria-label="Suggested prompts">
+          <button type="button" class="starter-button" data-prompt="How are you today?">How are you today?</button>
+          <button type="button" class="starter-button" data-prompt="Explain this simply.">Explain this simply.</button>
+          <button type="button" class="starter-button" data-prompt="Translate this into Lisu.">Try a translation</button>
+        </div>
+        <section id="translator-workspace" class="translator-workspace" hidden aria-labelledby="translator-result-title">
+          <div class="translator-panel-heading">
+            <div>
+              <p class="eyebrow">Translation result</p>
+              <h3 id="translator-result-title">Review before you send it on</h3>
+            </div>
+            <div class="translator-actions">
+              <button id="copy-translation" class="button-quiet" type="button" disabled>Copy result</button>
+              <button id="use-translation" class="button-quiet" type="button" disabled>Use as source</button>
+            </div>
+          </div>
+          <div class="translator-columns">
+            <label class="translator-field" for="translation-source">Submitted source
+              <textarea id="translation-source" rows="4" readonly placeholder="The submitted source will remain visible here."></textarea>
+            </label>
+            <label class="translator-field" for="translation-result">Reviewed result
+              <textarea id="translation-result" rows="4" placeholder="Your translation will appear here."></textarea>
+            </label>
+          </div>
+          <p id="translation-review-state" class="hint" role="status">Waiting for translation</p>
+          <p class="hint">The source is frozen when submitted. You may edit the result for review before using it as the next source.</p>
+        </section>
         <div id="messages" class="messages" aria-live="polite">
           <div class="message assistant">Choose a mode and send a message to begin.</div>
         </div>
         <form id="chat-form" class="composer">
-          <label class="sr-only" for="message">Message</label>
+          <label id="message-label" class="sr-only" for="message">Message</label>
           <textarea id="message" rows="3" maxlength="12000" placeholder="Write a message..."></textarea>
           <div class="composer-footer">
-            <span id="status" class="status">Ready</span>
-            <button type="submit">Send</button>
+            <span id="status" class="status" role="status" aria-live="polite">Ready</span>
+            <button id="cancel-attempt" class="button-quiet" type="button" hidden>Cancel generation</button>
+            <button id="new-chat" class="button-quiet" type="button">New conversation</button>
+            <button id="send" type="submit">Send</button>
           </div>
         </form>
       </section>
@@ -65,6 +112,7 @@
       </footer>
     </main>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="/shared.js"></script>
     <script src="/app.js" defer></script>
   </body>
 </html>
