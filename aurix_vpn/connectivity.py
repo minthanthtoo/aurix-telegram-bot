@@ -1757,16 +1757,21 @@ class FleetController:
         tags.update({"aurix-vpn-node", "aurix-env-production"})
         specification["tags"] = sorted(tags)
         with self.database.connect() as connection:
+            self.database.begin_write(connection)
             row = connection.execute(
                 "SELECT * FROM infrastructure_jobs WHERE id = ? AND status = 'pending'",
                 (job_id,),
             ).fetchone()
             if row is None:
                 raise ConnectivityError("Provisioning job is not pending")
-            connection.execute(
-                "UPDATE infrastructure_jobs SET status = 'running', attempts = attempts + 1, locked_at = ? WHERE id = ?",
+            updated = connection.execute(
+                """UPDATE infrastructure_jobs
+                      SET status = 'running', attempts = attempts + 1, locked_at = ?
+                    WHERE id = ? AND status = 'pending'""",
                 (datetime.now(UTC).isoformat(), job_id),
             )
+            if getattr(updated, "rowcount", 1) != 1:
+                raise ConnectivityError("Provisioning job is no longer pending")
         try:
             droplet = self.provider.create_droplet(specification)
         except Exception as exc:
@@ -1811,6 +1816,10 @@ class FleetController:
             raise ConnectivityError("Provisioning job does not exist")
         if row["status"] in ("failed", "completed"):
             return {"job_id": job_id, "status": str(row["status"])}
+        if row["status"] == "awaiting_verification":
+            # Verification is an explicit operator step after bootstrap. Do
+            # not keep polling or append duplicate events while it is pending.
+            return {"job_id": job_id, "status": "awaiting_verification"}
         action_id = row["provider_action_id"]
         if action_id:
             action = self.provider.action(str(action_id))
@@ -1843,23 +1852,85 @@ class FleetController:
         )
         timestamp = datetime.now(UTC).isoformat()
         with self.database.connect() as connection:
-            connection.execute(
+            self.database.begin_write(connection)
+            updated = connection.execute(
                 """UPDATE infrastructure_jobs SET status = 'awaiting_verification',
                           locked_at = NULL WHERE id = ? AND status = 'running'""",
                 (job_id,),
             )
-            connection.execute(
-                """INSERT INTO infrastructure_events
-                   (id, infrastructure_job_id, event_type, metadata_json, created_at)
-                   VALUES (?, ?, 'droplet_active', ?, ?)""",
-                (
-                    uuid.uuid4().hex,
-                    job_id,
-                    json.dumps({"public_ip": public_ip}, sort_keys=True),
-                    timestamp,
-                ),
-            )
+            if getattr(updated, "rowcount", 1) == 1:
+                connection.execute(
+                    """INSERT INTO infrastructure_events
+                       (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                       VALUES (?, ?, 'droplet_active', ?, ?)""",
+                    (
+                        uuid.uuid4().hex,
+                        job_id,
+                        (
+                            "{}"
+                            if not public_ip
+                            else json.dumps({"public_ip": public_ip}, sort_keys=True)
+                        ),
+                        timestamp,
+                    ),
+                )
         return {"job_id": job_id, "status": "awaiting_verification", "public_ip": public_ip}
+
+    def _provision_specification(self, job_id: str) -> dict[str, Any]:
+        """Rebuild a provider request from the durable, redacted intent event."""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT metadata_json FROM infrastructure_events
+                     WHERE infrastructure_job_id = ? AND event_type = 'provision_requested'
+                     ORDER BY created_at ASC LIMIT 1""",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            raise ConnectivityError("Provisioning intent has no durable specification")
+        try:
+            metadata = json.loads(str(row["metadata_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ConnectivityError("Provisioning intent specification is invalid") from exc
+        if not isinstance(metadata, dict):
+            raise ConnectivityError("Provisioning intent specification is invalid")
+        required = {"region", "size", "image"}
+        if any(not str(metadata.get(key) or "").strip() for key in required):
+            raise ConnectivityError("Provisioning intent specification is incomplete")
+        return {
+            "name": f"aurix-vpn-{str(job_id)[:12]}",
+            "region": str(metadata["region"]).strip(),
+            "size": str(metadata["size"]).strip(),
+            "image": str(metadata["image"]).strip(),
+            "tags": ["aurix-vpn-node", "aurix-env-production"],
+        }
+
+    def process_infrastructure_once(self, now: datetime | None = None) -> dict[str, Any] | None:
+        """Process one durable provider intent from a dedicated worker boundary.
+
+        A pending intent is submitted only through ``execute_provision`` and a
+        submitted intent is only observed through ``reconcile_provision``.
+        Endpoint activation remains a separate, explicit operator action.
+        """
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT id, status FROM infrastructure_jobs
+                     WHERE operation = 'provision'
+                       AND ((status = 'pending' AND next_attempt_at <= ?)
+                            OR status IN ('running', 'awaiting_verification'))
+                     ORDER BY CASE status WHEN 'running' THEN 0
+                                          WHEN 'awaiting_verification' THEN 1
+                                          ELSE 2 END,
+                              created_at ASC
+                     LIMIT 1""",
+                (current.isoformat(),),
+            ).fetchone()
+        if row is None:
+            return None
+        job_id = str(row["id"])
+        if str(row["status"]) == "pending":
+            return self.execute_provision(job_id, self._provision_specification(job_id))
+        return self.reconcile_provision(job_id)
 
     def verify_and_activate(
         self,

@@ -566,6 +566,14 @@ installer, enrollment exchange, Cloud Firewall, budget policy, or second-node
 acceptance has occurred. Those are deployment gates, not facts established by
 unit tests. Keep provider mutations disabled until Gate 0–2 evidence is stored.
 
+The dedicated provider boundary is `scripts/aurix_infrastructure_worker.py`.
+Run it as a bounded one-shot job on the infrastructure worker host after Gate
+0–2 review; it reconstructs only the durable intent, never runs Telegram or
+customer provisioning, and stops at `awaiting_verification` until an operator
+supplies the separately verified Outline management capability. The command
+returns a non-zero, redacted blocked result when mutation is disabled or the
+provider is unavailable. It has no destruction path.
+
 Before deploying these migrations to Supabase:
 
 1. create a restorable database backup;

@@ -542,6 +542,75 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
             self.assertEqual(row["status"], "failed")
             self.assertNotIn("token", str(row["last_error"]).lower())
 
+    def test_dedicated_infrastructure_pass_rebuilds_only_durable_intent(self):
+        class Provider:
+            def __init__(self):
+                self.created = []
+                self.reconciles = 0
+
+            def create_droplet(self, specification):
+                self.created.append(dict(specification))
+                return {"id": 42, "action_ids": [99]}
+
+            def action(self, action_id):
+                self.reconciles += 1
+                return {"id": action_id, "status": "completed"}
+
+            def droplet(self, droplet_id):
+                self.reconciles += 1
+                return {
+                    "id": droplet_id,
+                    "status": "active",
+                    "networks": {"v4": [{"type": "public", "ip_address": "198.51.100.20"}]},
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            provider = Provider()
+            controller = FleetController(database, provider)
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+                now=datetime(2026, 9, 11, tzinfo=UTC),
+            )
+            with patch.dict(os.environ, {"AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1"}):
+                created = controller.process_infrastructure_once(
+                    datetime(2026, 9, 11, 0, 1, tzinfo=UTC)
+                )
+                observed = controller.process_infrastructure_once(
+                    datetime(2026, 9, 11, 0, 2, tzinfo=UTC)
+                )
+                repeated = controller.process_infrastructure_once(
+                    datetime(2026, 9, 11, 0, 3, tzinfo=UTC)
+                )
+            self.assertEqual(created, {"job_id": job, "droplet_id": "42", "status": "creating"})
+            self.assertEqual(observed["status"], "awaiting_verification")
+            self.assertEqual(repeated, {"job_id": job, "status": "awaiting_verification"})
+            self.assertEqual(len(provider.created), 1)
+            self.assertEqual(provider.created[0]["name"], f"aurix-vpn-{job[:12]}")
+            self.assertEqual(provider.reconciles, 2)
+
+    def test_dedicated_infrastructure_pass_leaves_pending_when_mutations_are_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            controller = FleetController(database, provider=None)
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                with self.assertRaisesRegex(ConnectivityError, "disabled"):
+                    controller.process_infrastructure_once()
+            with database.connect() as connection:
+                row = connection.execute(
+                    "SELECT status, attempts FROM infrastructure_jobs WHERE id = ?", (job,)
+                ).fetchone()
+            self.assertEqual((row["status"], row["attempts"]), ("pending", 0))
+
     def test_monthly_budget_guard_blocks_provider_create(self):
         class Provider:
             def billing_balance(self):
