@@ -544,6 +544,7 @@ class AuriXVpnWebApplication:
 
     def admin_operations(self, limit: int = 100) -> dict[str, Any]:
         commerce = self.runtime.commerce
+        database = getattr(self.runtime, "commerce_database", None)
         jobs = (
             commerce.failed_jobs(limit=limit, include_nonterminal=True)
             if callable(getattr(commerce, "failed_jobs", None))
@@ -568,8 +569,39 @@ class AuriXVpnWebApplication:
             }
             for item in pending
         ]
+        infrastructure_jobs: list[dict[str, Any]] = []
+        if database is not None:
+            with database.connect() as connection:
+                rows = connection.execute(
+                    """SELECT id, operation, endpoint_id, status, attempts,
+                              next_attempt_at, created_at, completed_at, last_error
+                         FROM infrastructure_jobs
+                        ORDER BY created_at DESC LIMIT ?""",
+                    (max(1, min(int(limit), 200)),),
+                ).fetchall()
+            infrastructure_jobs = [
+                {
+                    "job_id": row["id"],
+                    "operation": row["operation"],
+                    "endpoint_id": row["endpoint_id"],
+                    "status": row["status"],
+                    "attempts": row["attempts"],
+                    "next_attempt_at": row["next_attempt_at"],
+                    "created_at": row["created_at"],
+                    "completed_at": row["completed_at"],
+                    # Provider exception text is not a safe browser payload;
+                    # preserve only the bounded exception class for triage.
+                    "error_type": (
+                        str(row["last_error"]).split(":", 1)[0][:64]
+                        if row["last_error"]
+                        else None
+                    ),
+                }
+                for row in rows
+            ]
         return {
             "jobs": jobs,
+            "infrastructure_jobs": infrastructure_jobs,
             "pending_orders": pending_safe,
             "consistency": commerce.consistency_report(),
         }

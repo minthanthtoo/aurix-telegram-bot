@@ -198,6 +198,34 @@ class ControlCenterTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_infrastructure_jobs_are_visible_without_provider_identifiers(self):
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO infrastructure_jobs
+                   (id, operation, endpoint_id, status, attempts, next_attempt_at,
+                    provider_resource_id, provider_action_id, request_fingerprint,
+                    last_error, created_at)
+                   VALUES (?, 'provision', ?, 'failed', 2, ?, ?, ?, ?, ?, ?)""",
+                (
+                    "infra-job-1",
+                    "bkk-a",
+                    "2026-09-11T00:00:00+00:00",
+                    "do-12345",
+                    "do-action-99",
+                    "fingerprint-secret",
+                    "ConnectivityError: provider token must not reach the browser",
+                    "2026-09-11T00:00:00+00:00",
+                ),
+            )
+        operations = AuriXVpnWebApplication(self.runtime).admin_operations()
+        self.assertEqual(operations["infrastructure_jobs"][0]["job_id"], "infra-job-1")
+        self.assertEqual(operations["infrastructure_jobs"][0]["error_type"], "ConnectivityError")
+        payload = json.dumps(operations)
+        self.assertNotIn("do-12345", payload)
+        self.assertNotIn("do-action-99", payload)
+        self.assertNotIn("fingerprint-secret", payload)
+        self.assertNotIn("provider token must not reach the browser", payload)
+
     def test_admin_static_shell_is_available_without_api_data(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
             app = AuriXVpnWebApplication(self.runtime)
