@@ -1,3 +1,4 @@
+import threading
 import time
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -5,7 +6,6 @@ from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
-import threading
 
 from connectivity import ConnectivityError
 from test_telegram_web_app import _init_data
