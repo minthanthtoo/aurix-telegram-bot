@@ -987,6 +987,7 @@ class APIKeyStore:
         model_id: str | None = None,
         endpoint: str | None = None,
         status: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return account-level request and token totals for a time window."""
 
@@ -1008,6 +1009,7 @@ class APIKeyStore:
             ("u.model_id", model_id),
             ("u.endpoint", endpoint),
             ("u.status", status),
+            ("u.user_id", user_id),
         ):
             if value:
                 join_filters.append(f"{column} = ?")

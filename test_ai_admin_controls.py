@@ -57,6 +57,7 @@ class AIAdminControlsTest(unittest.TestCase):
             http_status=200,
             usage={"total_tokens": 10},
             endpoint="/v1/chat/completions",
+            user_id="user-a",
         )
         self.store.record_usage(
             request_id="request-b",
@@ -67,11 +68,14 @@ class AIAdminControlsTest(unittest.TestCase):
             http_status=502,
             usage=None,
             endpoint="/v1/embeddings",
+            user_id="user-b",
         )
         all_summary = self.store.usage_summary()
         filtered_summary = self.store.usage_summary(model_id="model-a")
+        user_summary = self.store.usage_summary(user_id="user-b")
         self.assertEqual(all_summary[0]["requests"], 2)
         self.assertEqual(filtered_summary[0]["requests"], 1)
+        self.assertEqual(user_summary[0]["requests"], 1)
         page = self.store.usage_event_page(limit=1)
         self.assertTrue(page["has_more"])
         next_page = self.store.usage_event_page(limit=1, offset=page["next_offset"])
@@ -79,6 +83,10 @@ class AIAdminControlsTest(unittest.TestCase):
         self.assertEqual(
             self.store.usage_events(endpoint="/v1/embeddings")[0]["request_id"],
             "request-b",
+        )
+        self.assertEqual(
+            self.store.usage_event_page(user_id="user-a")["items"][0]["request_id"],
+            "request-a",
         )
 
 

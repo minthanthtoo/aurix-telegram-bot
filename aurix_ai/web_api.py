@@ -1378,6 +1378,7 @@ class AuriXAIApplication:
             model_id=model_id,
             endpoint=endpoint,
             status=status,
+            user_id=user_id,
         )
         event_page = self.api_keys.usage_event_page(
             account_id=account_id,
