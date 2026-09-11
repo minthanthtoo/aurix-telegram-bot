@@ -121,6 +121,35 @@ class EndpointRegistryTest(unittest.TestCase):
             "xray",
         )
 
+    def test_outline_collectors_skip_protocol_only_endpoints(self):
+        now = datetime.now(UTC)
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, provider, region, state, accepts_new_assignments, created_at)
+                   VALUES ('xray-only', 'XRAY-ONLY', 'managed', 'sgp1', 'ACTIVE', 1, ?)""",
+                (now.isoformat(),),
+            )
+        self.registry.register_protocol_profile("xray-only", "xray", status="candidate", now=now)
+
+        class OutlineManagement:
+            @staticmethod
+            def transfer_metrics():
+                return {"bytesTransferredByUserId": {}}
+
+            @staticmethod
+            def list_keys():
+                return {"accessKeys": []}
+
+        with patch.object(self.registry, "client", return_value=OutlineManagement()):
+            metrics = self.registry.collect_metrics()
+            inventory = self.registry.collect_inventory()
+            snapshot = self.registry.collect_customer_snapshot()
+        self.assertNotIn("xray-only", metrics["byEndpoint"])
+        self.assertNotIn("xray-only", metrics["errors"])
+        self.assertNotIn("xray-only", inventory["byEndpoint"])
+        self.assertNotIn("xray-only", snapshot["metrics"]["byEndpoint"])
+
     def test_endpoint_lifecycle_is_drain_then_terminal_retirement(self):
         now = datetime.now(UTC)
         preview = self.registry.endpoint_lifecycle_preview("legacy-default", "retired")

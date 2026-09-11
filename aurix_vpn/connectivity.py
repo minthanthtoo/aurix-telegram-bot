@@ -1373,6 +1373,21 @@ class EndpointRegistry:
             return legacy
         return metrics if "byEndpoint" not in metrics and "errors" not in metrics else {}
 
+    @staticmethod
+    def _has_enabled_outline_profile(endpoint: dict[str, Any]) -> bool:
+        """Return whether the Outline management collector owns this endpoint."""
+        profiles = endpoint.get("protocols")
+        if not isinstance(profiles, list) or not profiles:
+            # Legacy callers may inject endpoint rows without protocol metadata;
+            # preserve their Outline behavior until the registry is upgraded.
+            return True
+        return any(
+            str(profile.get("protocol") or "").strip().lower() == "outline"
+            and str(profile.get("status") or "").strip().lower() == "enabled"
+            for profile in profiles
+            if isinstance(profile, dict)
+        )
+
     def collect_metrics(self) -> dict[str, Any]:
         """Collect collision-safe metrics from every managed, non-retired endpoint.
 
@@ -1384,6 +1399,8 @@ class EndpointRegistry:
         for endpoint in self.list_endpoints():
             endpoint_id = str(endpoint["id"])
             if str(endpoint.get("state")) == "RETIRED":
+                continue
+            if not self._has_enabled_outline_profile(endpoint):
                 continue
             started = time.perf_counter()
             try:
@@ -1423,6 +1440,8 @@ class EndpointRegistry:
             endpoint_id = str(endpoint["id"])
             if str(endpoint.get("state")) == "RETIRED":
                 continue
+            if not self._has_enabled_outline_profile(endpoint):
+                continue
             try:
                 keys = self.client(endpoint_id).list_keys().get("accessKeys", [])
                 if not isinstance(keys, list):
@@ -1444,6 +1463,8 @@ class EndpointRegistry:
         for endpoint in self.list_endpoints():
             endpoint_id = str(endpoint["id"])
             if str(endpoint.get("state")) == "RETIRED":
+                continue
+            if not self._has_enabled_outline_profile(endpoint):
                 continue
             try:
                 client = self.client(endpoint_id)
