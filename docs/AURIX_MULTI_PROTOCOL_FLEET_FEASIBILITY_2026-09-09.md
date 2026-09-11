@@ -1184,7 +1184,7 @@ a production activation decision.
 The read-only Control Center now shows safe fleet/node detail, Outline as enabled, Xray/Hysteria2 as
 evidence-gated candidates, and WireGuard as unimplemented. It does not register
 candidate protocols or expose secrets. The latest local verification passes all
-346 discovered tests after the reproducible Python environment installed OpenCV;
+347 discovered tests after the reproducible Python environment installed OpenCV;
 the earlier 302/303/337 counts are historical.
 
 The implementation commits are `151186f` (provider backends), `46b9b99`
@@ -1194,7 +1194,7 @@ coverage). The later local control commits are `610e3fa` (confirmed protocol
 promotion), `ffc2da3` (confirmed protocol disable), and `10a0270` (serialized
 disable transition). The reproducible Python 3.13 environment now installs the
 previously missing OpenCV dependency, and complete local discovery passes with
-346 tests.
+347 tests.
 Remaining release gates are unchanged: approved
 canary-only node-agent binding, Hysteria2 isolation, Myanmar client paths,
 PostgreSQL concurrency/restore, live staged 2/5/expected-load tests, 24–48 hour
@@ -1214,7 +1214,7 @@ profile inside the write transaction so a concurrent retirement cannot be
 overwritten. The browser Control Center remains read-only, and customer
 Telegram identities are denied before any commerce operation is called.
 
-The complete local regression suite passes `346` tests. This does not change
+The complete local regression suite passes `347` tests. This does not change
 the release decision: Xray and Hysteria2 remain candidates until their live
 per-customer lifecycle, quota, restart, outage, client-path, concurrency, soak,
 and accounting evidence is accepted. BKK-A remains Outline-only and no live
