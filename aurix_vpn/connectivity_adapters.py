@@ -458,6 +458,10 @@ class _ManagedCredentialAdapter:
             credential_intent["quota_bytes"] = _positive_quota(
                 limit, protocol=self.protocol
             )
+            if _provider_method(self.client, ("set_user_quota",)) is None:
+                raise ConnectivityAdapterError(
+                    f"{self.protocol} quota enforcement is unsupported"
+                )
         name = str(credential_intent.get("name") or f"AuriX {self.protocol} route")[:128]
         external_id = self._new_external_id(credential_intent)
         secret = self._new_secret(credential_intent)

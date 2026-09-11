@@ -6,7 +6,11 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
-from aurix_vpn.connectivity_adapters import Hysteria2ConnectivityAdapter, XrayConnectivityAdapter
+from aurix_vpn.connectivity_adapters import (
+    ConnectivityAdapterError,
+    Hysteria2ConnectivityAdapter,
+    XrayConnectivityAdapter,
+)
 from aurix_vpn.node_agent import NodeAgentClient, NodeAgentError, XrayConfigWriter
 from aurix_vpn.node_agent_app import NodeAgentService, create_node_agent_wsgi_app
 from aurix_vpn.provider_backends import (
@@ -82,6 +86,10 @@ class ProviderBackendsTest(unittest.TestCase):
             self.assertEqual(
                 {item["external_id"] for item in provider.list_users()}, {"existing", "xray-1"}
             )
+            restarted = XrayConfigProvider(
+                XrayConfigWriter(path), reload_callback=lambda: None
+            )
+            self.assertEqual(restarted.get_user("xray-1")["external_id"], "xray-1")
             provider.delete_user("xray-1")
             self.assertEqual(reloads, ["reload", "reload"])
             config = json.loads(path.read_text(encoding="utf-8"))
@@ -121,13 +129,20 @@ class ProviderBackendsTest(unittest.TestCase):
     def test_hysteria2_store_encrypts_secrets_and_auth_callback_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "users.json"
-            store = Hysteria2UserStore(path, encryption_key=Fernet.generate_key())
+            encryption_key = Fernet.generate_key()
+            store = Hysteria2UserStore(path, encryption_key=encryption_key)
             record = store.create_user("h2-1", "Customer", "customer-secret")
             self.assertEqual(record["secret"], "customer-secret")
             raw = path.read_text(encoding="utf-8")
             self.assertNotIn("customer-secret", raw)
             self.assertEqual(store.authenticate("customer-secret"), {"ok": True, "id": "h2-1"})
             self.assertEqual(store.authenticate("wrong"), {"ok": False})
+
+            restarted = Hysteria2UserStore(path, encryption_key=encryption_key)
+            self.assertEqual(restarted.get_user("h2-1")["secret"], "customer-secret")
+            self.assertEqual(restarted.authenticate("customer-secret"), {"ok": True, "id": "h2-1"})
+            with self.assertRaises(ProviderBackendError):
+                Hysteria2UserStore(path, encryption_key=Fernet.generate_key()).get_user("h2-1")
 
             app = create_hysteria2_auth_wsgi_app(store)
 
@@ -195,6 +210,33 @@ class ProviderBackendsTest(unittest.TestCase):
             self.assertEqual(calls[-1][3]["Authorization"], "stats-secret")
             adapter.revoke_auth(grant)
             self.assertTrue(adapter.verify_auth_revoked(grant)["verified"])
+
+    def test_hysteria2_quota_request_fails_before_user_creation_without_hard_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Hysteria2UserStore(
+                Path(directory) / "users.json", encryption_key=Fernet.generate_key()
+            )
+            provider = Hysteria2Provider(
+                store,
+                Hysteria2TrafficStatsClient(
+                    "http://127.0.0.1:19000",
+                    "stats-secret",
+                    requester=lambda *_args: {"online": 0},
+                ),
+            )
+            route = {
+                "route_id": "hysteria2:sg-a",
+                "endpoint_id": "sg-a",
+                "protocol": "hysteria2",
+                "public_address": "198.51.100.20",
+                "port": 8444,
+            }
+            with self.assertRaisesRegex(ConnectivityAdapterError, "unsupported"):
+                Hysteria2ConnectivityAdapter(provider).provision(
+                    route,
+                    {"external_id": "h2-quota", "name": "Quota customer", "quota_bytes": 500},
+                )
+            self.assertEqual(store.list_users(), [])
 
     def test_hysteria2_usage_rejects_non_integer_counter(self):
         with tempfile.TemporaryDirectory() as directory:
