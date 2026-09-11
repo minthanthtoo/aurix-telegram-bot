@@ -228,7 +228,7 @@ capabilities, and evidence timestamps while ignoring only the preview's
 volatile `checked_at` timestamp; the promotion method rechecks all evidence
 before enabling the profile. Customer identities cannot reach either command.
 
-The complete suite now passes `350` tests (`Ran 350 tests ... OK`) with
+The complete suite now passes `351` tests (`Ran 351 tests ... OK`) with
 `PYTHONWARNINGS=error::ResourceWarning`; focused Telegram authorization and
 promotion/disable tests, Python compilation, Ruff, and `git diff --check` also
 pass.
@@ -246,6 +246,9 @@ protocol quotas`); malformed boolean, floating-point, empty, and non-numeric
 quota values now fail before provider creation.
 Adapter operations also reject a route whose declared protocol differs from
 the adapter, including provisioning, probing, reconciliation, and recovery.
+Concrete Xray and Hysteria2 provider counters also reject fractional values
+before usage is credited; this step is committed as `38d558d` (`Reject
+fractional provider counters`).
 
 ## Remaining gates and next action
 
