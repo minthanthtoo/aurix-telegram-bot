@@ -586,7 +586,38 @@ class AuriXVpnWebApplication:
     def admin_failover(self, limit: int = 100) -> list[dict[str, Any]]:
         failover = getattr(self.runtime.commerce, "failover", None)
         method = getattr(failover, "decisions", None)
-        return method(limit=limit) if callable(method) else []
+        if not callable(method):
+            return []
+        decisions = method(limit=limit)
+        safe: list[dict[str, Any]] = []
+        for decision in decisions:
+            item = {
+                key: decision[key]
+                for key in (
+                    "decision_id",
+                    "source_endpoint_id",
+                    "target_endpoint_id",
+                    "trigger",
+                    "network_bucket",
+                    "state",
+                    "attempts",
+                    "next_attempt_at",
+                    "locked_at",
+                    "policy_version",
+                    "created_at",
+                    "updated_at",
+                    "completed_at",
+                )
+                if key in decision
+            }
+            # Provider/adapter exception text can contain remote identifiers or
+            # request details. Keep only its bounded class for browser triage.
+            if decision.get("last_error"):
+                item["error_type"] = str(decision["last_error"]).split(":", 1)[0][:64]
+            else:
+                item["error_type"] = None
+            safe.append(item)
+        return safe
 
     def admin_operations(self, limit: int = 100) -> dict[str, Any]:
         commerce = self.runtime.commerce

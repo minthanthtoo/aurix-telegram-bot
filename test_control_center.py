@@ -243,6 +243,40 @@ class ControlCenterTest(unittest.TestCase):
         self.assertNotIn("fingerprint-secret", payload)
         self.assertNotIn("provider token must not reach the browser", payload)
 
+    def test_failover_browser_payload_is_redacted(self):
+        self.runtime.commerce.failover.decisions = lambda **_kwargs: [
+            {
+                "decision_id": "decision-1",
+                "idempotency_key": "idempotency-secret",
+                "entitlement_key": "entitlement-secret",
+                "source_generation_id": "source-generation-secret",
+                "source_endpoint_id": "sg-a",
+                "target_endpoint_id": "bkk-a",
+                "target_generation_id": "target-generation-secret",
+                "trigger": "automatic",
+                "network_bucket": "mmpt",
+                "state": "failed",
+                "attempts": 2,
+                "next_attempt_at": "2026-09-12T00:00:00+00:00",
+                "policy_version": 3,
+                "last_error": "TimeoutError: provider request id must not reach browser",
+                "created_at": "2026-09-12T00:00:00+00:00",
+            }
+        ]
+        payload = AuriXVpnWebApplication(self.runtime).admin_failover()
+        self.assertEqual(payload[0]["error_type"], "TimeoutError")
+        encoded = json.dumps(payload)
+        for secret in (
+            "idempotency-secret",
+            "entitlement-secret",
+            "source-generation-secret",
+            "target-generation-secret",
+            "provider request id must not reach browser",
+        ):
+            self.assertNotIn(secret, encoded)
+        self.assertEqual(payload[0]["source_endpoint_id"], "sg-a")
+        self.assertEqual(payload[0]["policy_version"], 3)
+
     def test_admin_static_shell_is_available_without_api_data(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
             app = AuriXVpnWebApplication(self.runtime)
