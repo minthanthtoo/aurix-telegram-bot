@@ -457,6 +457,11 @@ Recovery now requires the configured consecutive healthy sample threshold and a
 while `DRAINING` and `RETIRED` remain terminal to automatic health transitions.
 The cooldown is observable in the capacity result and transition audit metadata.
 
+Failover decision creation, commit, retry/final failure, and rollback now emit
+redacted lifecycle events into `audit_events`. The durable decision row remains
+the state source of truth; the append-only events provide an operator timeline
+without copying access URLs, provider identifiers, or credential material.
+
 Focused failover, migration, Control Center, VPN web API, and render checks pass;
 the non-PostgreSQL VPN regression passes `327` tests, and the two non-PostgreSQL
 migration-manifest checks also pass. The optional PostgreSQL end-to-end rehearsal

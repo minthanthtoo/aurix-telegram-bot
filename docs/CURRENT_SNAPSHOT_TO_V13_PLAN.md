@@ -128,6 +128,9 @@ Important remaining facts:
 - Failover target selection also counts queued destination decisions as
   reservations, preventing concurrent migration cohorts from exceeding an
   endpoint's active-key cap before commit.
+- Failover decision lifecycle events are now appended to the audit stream for
+  creation, commit, retry/final failure, and rollback, preserving a redacted
+  operator timeline beside the durable decision state.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
 - The application/refactor baseline is now in the `codex/aurix-vpn-portal` history; unrelated AI/UI and pay-monitor work remains intentionally outside the VPN commits.
 

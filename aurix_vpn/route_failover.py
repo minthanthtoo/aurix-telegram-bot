@@ -352,6 +352,28 @@ class RouteFailoverService:
         )
 
     @staticmethod
+    def _record_audit_event(
+        connection: Any,
+        *,
+        action: str,
+        decision_id: str,
+        metadata: dict[str, Any],
+        timestamp: str,
+    ) -> None:
+        connection.execute(
+            """INSERT INTO audit_events
+               (actor_type, actor_id, action, target_type, target_id,
+                metadata_json, created_at)
+               VALUES ('system', NULL, ?, 'failover_decision', ?, ?, ?)""",
+            (
+                str(action)[:128],
+                str(decision_id)[:256],
+                json.dumps(dict(metadata), sort_keys=True, separators=(",", ":")),
+                timestamp,
+            ),
+        )
+
+    @staticmethod
     def _target_endpoint(
         connection: Any,
         source_endpoint_id: str,
@@ -628,6 +650,18 @@ class RouteFailoverService:
                 )
                 if int(getattr(inserted, "rowcount", 0) or 0) == 1:
                     decision_ids.append(candidate)
+                    self._record_audit_event(
+                        connection,
+                        action="failover_decision_created",
+                        decision_id=candidate,
+                        metadata={
+                            "source_endpoint_id": source_id,
+                            "target_endpoint_id": str(target["id"]),
+                            "trigger": normalized_reason,
+                            "policy_version": int(policy["policy_version"] if policy is not None else 1),
+                        },
+                        timestamp=timestamp,
+                    )
                 else:
                     existing = connection.execute(
                         "SELECT decision_id FROM failover_decisions WHERE idempotency_key = ?",
@@ -818,6 +852,19 @@ class RouteFailoverService:
                                 )
                                 if int(getattr(inserted_decision, "rowcount", 0) or 0) == 1:
                                     decision_id = candidate
+                                    self._record_audit_event(
+                                        connection,
+                                        action="failover_decision_created",
+                                        decision_id=candidate,
+                                        metadata={
+                                            "source_endpoint_id": str(generation["endpoint_id"]),
+                                            "target_endpoint_id": target_id,
+                                            "trigger": str(reason or "route_failure_threshold")[:256],
+                                            "network_bucket": bucket,
+                                            "policy_version": int(policy["policy_version"] or 1),
+                                        },
+                                        timestamp=timestamp,
+                                    )
                                     cooldown = _time(timestamp) + timedelta(seconds=int(policy["cooldown_seconds"]))
                                     connection.execute(
                                         "UPDATE route_failover_state SET cooldown_until = ?, updated_at = ? WHERE generation_id = ?",
@@ -928,6 +975,13 @@ class RouteFailoverService:
                     WHERE decision_id = ?""",
                 (timestamp, timestamp, decision_id),
             )
+            self._record_audit_event(
+                connection,
+                action="failover_decision_committed",
+                decision_id=decision_id,
+                metadata={"target_generation_id": str(decision["target_generation_id"])},
+                timestamp=timestamp,
+            )
 
     def mark_failed(self, decision_id: str, error: Exception, *, now: str | datetime | None = None) -> None:
         timestamp = _text(now)
@@ -948,6 +1002,17 @@ class RouteFailoverService:
                           last_error = ?, updated_at = ? WHERE decision_id = ?""",
                 ("failed" if terminal else "pending", next_attempt, f"{type(error).__name__}: {str(error)[:500]}", timestamp, decision_id),
             )
+            self._record_audit_event(
+                connection,
+                action="failover_decision_failed",
+                decision_id=decision_id,
+                metadata={
+                    "state": "failed" if terminal else "pending",
+                    "attempts": attempts,
+                    "error_type": type(error).__name__,
+                },
+                timestamp=timestamp,
+            )
 
     def mark_rolled_back(self, decision_id: str, error: Exception, *, now: str | datetime | None = None) -> None:
         timestamp = _text(now)
@@ -957,6 +1022,13 @@ class RouteFailoverService:
                 """UPDATE failover_decisions SET state = 'rolled_back', locked_at = NULL,
                           last_error = ?, completed_at = ?, updated_at = ? WHERE decision_id = ?""",
                 (f"{type(error).__name__}: {str(error)[:500]}", timestamp, timestamp, decision_id),
+            )
+            self._record_audit_event(
+                connection,
+                action="failover_decision_rolled_back",
+                decision_id=decision_id,
+                metadata={"error_type": type(error).__name__},
+                timestamp=timestamp,
             )
 
     def decisions(self, *, entitlement_key: str | None = None, limit: int = 50) -> list[dict[str, Any]]:

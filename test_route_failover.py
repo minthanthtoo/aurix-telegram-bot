@@ -81,6 +81,17 @@ class RouteFailoverTest(unittest.TestCase):
         )
         self.failover.attach_target_generation(decision["decision_id"], target, now=self.now)
         self.failover.mark_committed(decision["decision_id"], now=self.now)
+        with self.database.connect() as connection:
+            audit_actions = connection.execute(
+                """SELECT action FROM audit_events
+                    WHERE target_type = 'failover_decision' AND target_id = ?
+                    ORDER BY id""",
+                (decision["decision_id"],),
+            ).fetchall()
+        self.assertEqual(
+            [row["action"] for row in audit_actions],
+            ["failover_decision_created", "failover_decision_committed"],
+        )
         generations = self.identity.generations_for_accounting(entitlement)
         statuses = {item["external_id"]: item["status"] for item in generations}
         self.assertEqual(statuses, {"source-key": "retiring", "target-key": "active"})
