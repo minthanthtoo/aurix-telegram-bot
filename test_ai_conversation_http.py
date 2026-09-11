@@ -2,6 +2,7 @@ import http.client
 import json
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -17,9 +18,15 @@ class _ConversationRouter:
 
     def __init__(self):
         self.calls = []
+        self.block = False
+        self.started = threading.Event()
+        self.release = threading.Event()
 
     def chat(self, **kwargs):
         self.calls.append(kwargs)
+        if self.block:
+            self.started.set()
+            self.release.wait(2)
         return AIChatResult(
             text=f"reply:{kwargs['message']}",
             requested_model=kwargs["model"],
@@ -53,6 +60,7 @@ class AIConversationHTTPTest(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
+        self.application.close()
         self.tempdir.cleanup()
 
     def request(self, method, path, body=None, cookie=None, extra_headers=None):
@@ -92,21 +100,45 @@ class AIConversationHTTPTest(unittest.TestCase):
         status, first = self.request(
             "POST", f"/api/conversations/{conversation_id}/turns", body, self.cookie
         )
+        self.assertEqual(status, 202)
+        self.assertEqual(first["attempt"]["status"], "running")
+        attempt_id = first["attempt"]["id"]
+        for _ in range(30):
+            status, polled = self.request(
+                "GET",
+                f"/api/conversations/{conversation_id}/attempts/{attempt_id}",
+                cookie=self.cookie,
+            )
+            if polled["attempt"]["status"] == "completed":
+                break
+            time.sleep(0.02)
         self.assertEqual(status, 200)
-        self.assertEqual(first["attempt"]["status"], "completed")
-        self.assertEqual(first["text"], "reply:Hello")
+        self.assertEqual(polled["attempt"]["output_text"], "reply:Hello")
         self.assertEqual(len(self.router.calls), 1)
         status, duplicate = self.request(
             "POST", f"/api/conversations/{conversation_id}/turns", body, self.cookie
         )
         self.assertEqual(status, 200)
-        self.assertEqual(duplicate["attempt"]["id"], first["attempt"]["id"])
+        self.assertEqual(duplicate["attempt"]["id"], attempt_id)
         self.assertEqual(len(self.router.calls), 1)
         status, detail = self.request(
             "GET", f"/api/conversations/{conversation_id}", cookie=self.cookie
         )
         self.assertEqual(status, 200)
         self.assertEqual(detail["turns"][0]["attempts"][0]["output_text"], "reply:Hello")
+
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "GET",
+            f"/api/conversations/{conversation_id}/attempts/{attempt_id}/events",
+            headers={"Cookie": f"aurix_ai_session={self.cookie}"},
+        )
+        response = connection.getresponse()
+        events = response.read().decode("utf-8")
+        connection.close()
+        self.assertEqual(response.status, 200)
+        self.assertIn("event: snapshot", events)
+        self.assertIn("event: terminal", events)
 
     def test_conversation_and_attempts_are_owner_scoped(self):
         status, conversation = self.request(
@@ -121,6 +153,43 @@ class AIConversationHTTPTest(unittest.TestCase):
         status, listing = self.request("GET", "/api/conversations", cookie=self.other_cookie)
         self.assertEqual(status, 200)
         self.assertEqual(listing["conversations"], [])
+
+    def test_cancel_prevents_late_worker_completion(self):
+        self.router.block = True
+        status, conversation = self.request(
+            "POST", "/api/conversations", {"title": "Cancel"}, self.cookie
+        )
+        self.assertEqual(status, 201)
+        conversation_id = conversation["id"]
+        status, submitted = self.request(
+            "POST",
+            f"/api/conversations/{conversation_id}/turns",
+            {"message": "Do not finish"},
+            self.cookie,
+        )
+        self.assertEqual(status, 202)
+        attempt_id = submitted["attempt"]["id"]
+        self.assertTrue(self.router.started.wait(1))
+        status, cancelled = self.request(
+            "POST",
+            f"/api/conversations/{conversation_id}/attempts/{attempt_id}/cancel",
+            {},
+            self.cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(cancelled["attempt"]["status"], "cancelled")
+        self.router.release.set()
+        for _ in range(30):
+            _status, polled = self.request(
+                "GET",
+                f"/api/conversations/{conversation_id}/attempts/{attempt_id}",
+                cookie=self.cookie,
+            )
+            if polled["attempt"]["status"] != "running":
+                break
+            time.sleep(0.02)
+        self.assertEqual(polled["attempt"]["status"], "cancelled")
+        self.assertIsNone(polled["attempt"]["output_text"])
 
     def test_delete_hides_conversation_and_unauthenticated_requests_fail(self):
         status, _ = self.request("GET", "/api/conversations")

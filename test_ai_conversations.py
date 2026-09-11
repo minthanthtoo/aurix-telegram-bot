@@ -1,9 +1,48 @@
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from aurix_ai.conversations import AIConversationStore, ConversationStoreError
+from aurix_ai.web_api import AuriXAIApplication
+from telegram_web_app import VerifiedTelegramUser
+
+
+class _StreamResponse:
+    def __init__(self):
+        self.lines = iter(
+            [
+                b'data: {"id":"upstream-stream","choices":[{"delta":{"content":"Hel"}}]}\n',
+                b'\n',
+                b'data: {"choices":[{"delta":{"content":"lo"}}],"usage":{"total_tokens":2}}\n',
+                b'\n',
+                b"data: [DONE]\n",
+                b"\n",
+            ]
+        )
+        self.closed = False
+
+    def readline(self):
+        try:
+            return next(self.lines)
+        except StopIteration:
+            return b""
+
+    def close(self):
+        self.closed = True
+
+
+class _StreamingRouter:
+    model = "ag/gemini-3.7-flash-high"
+
+    def __init__(self):
+        self.payload = None
+        self.response = _StreamResponse()
+
+    def openai_chat_stream(self, payload, **_kwargs):
+        self.payload = payload
+        return self.response
 
 
 class AIConversationStoreTest(unittest.TestCase):
@@ -147,6 +186,34 @@ class AIConversationStoreTest(unittest.TestCase):
             self.store.get_conversation(101, conversation["id"])
         with self.assertRaisesRegex(ConversationStoreError, "not found"):
             self.store.attempt(101, attempt["id"])
+
+    def test_streaming_worker_persists_partial_and_final_output(self):
+        router = _StreamingRouter()
+        application = AuriXAIApplication(
+            router,
+            access_token="legacy-test",
+            conversation_store=self.store,
+        )
+        user = VerifiedTelegramUser(101, "Auri", "X", "aurix", "en")
+        conversation = self.store.create_conversation(101)
+        submitted = application.durable_chat_submit(
+            user,
+            conversation["id"],
+            {"message": "Hello", "client_submission_id": "stream-client"},
+        )
+        self.assertEqual(submitted["attempt"]["status"], "running")
+        attempt_id = submitted["attempt"]["id"]
+        for _ in range(40):
+            attempt = self.store.attempt(101, attempt_id)
+            if attempt["status"] == "completed":
+                break
+            time.sleep(0.01)
+        self.assertEqual(attempt["status"], "completed")
+        self.assertEqual(attempt["output_text"], "Hello")
+        self.assertEqual(router.payload["stream"], True)
+        self.assertEqual(router.payload["messages"][-1]["content"], "Hello")
+        self.assertTrue(router.response.closed)
+        application.close()
 
 
 if __name__ == "__main__":

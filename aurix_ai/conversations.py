@@ -555,6 +555,25 @@ class AIConversationStore:
             )
         return self.attempt(owner, clean_id)
 
+    def update_attempt_output(
+        self,
+        owner_telegram_id: int,
+        attempt_id: str,
+        *,
+        output_text: str,
+    ) -> dict[str, Any]:
+        """Persist a bounded partial answer without changing attempt status."""
+        owner = self._owner(owner_telegram_id)
+        clean_id = self._attempt_id(attempt_id)
+        clean_output = _text(output_text, name="output_text", maximum=MAX_SOURCE_CHARS * 4)
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE ai_attempts SET output_text = ?
+                   WHERE id = ? AND owner_telegram_id = ? AND status = 'running'""",
+                (clean_output, clean_id, owner),
+            )
+        return self.attempt(owner, clean_id)
+
     def fail_attempt(
         self,
         owner_telegram_id: int,

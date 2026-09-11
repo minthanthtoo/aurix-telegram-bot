@@ -28,6 +28,7 @@ from .router import (
     AIChatResult,
     AIConfigurationError,
     AIRouterError,
+    build_messages,
     NineRouterClient,
     MAX_MESSAGE_CHARS,
     model_id_for_route,
@@ -43,6 +44,7 @@ from .conversations import (
     ConversationNotFoundError,
     ConversationStoreError,
 )
+from .conversation_jobs import ConversationJobManager
 from telegram_web_app import (
     TelegramWebAppAuthError,
     VerifiedTelegramUser,
@@ -294,12 +296,17 @@ class AuriXAIApplication:
         self.sessions = AISessionStore(session_max_age_seconds, session_database_path)
         self.api_keys = api_keys
         self.conversations = conversation_store
+        self.conversation_jobs = ConversationJobManager() if conversation_store is not None else None
         self.admin_token = admin_token.strip()
         self.admin_telegram_ids = frozenset(admin_telegram_ids or set())
         # Direct construction stays compatible with the old test/client API;
         # environment-based production startup passes an explicit false.
         self.legacy_token_enabled = bool(access_token) if legacy_token_enabled is None else legacy_token_enabled
         self.rate_limiter = AIRateLimiter(requests_per_minute)
+
+    def close(self) -> None:
+        if self.conversation_jobs is not None:
+            self.conversation_jobs.close()
 
     @staticmethod
     def user_payload(user: VerifiedTelegramUser) -> dict[str, Any]:
@@ -570,6 +577,230 @@ class AuriXAIApplication:
             }
         )
         return payload
+
+    def _durable_stream_payload(
+        self,
+        *,
+        mode: str,
+        message: str,
+        history: list[dict[str, str]],
+        model_route: str,
+        direction: str | None,
+    ) -> dict[str, Any]:
+        direction_instruction = (
+            "Translation direction is English to Lisu. Translate the source into Lisu; do not "
+            "answer it. Return only the translation."
+            if direction == "en_to_lisu"
+            else "Translation direction is Lisu to English. Translate the source into English; "
+            "do not answer it. Return only the translation."
+            if direction == "lisu_to_en"
+            else None
+        )
+        messages = build_messages(
+            mode,
+            message,
+            history,
+            instructions=direction_instruction,
+        )
+        return {
+            "model": model_route,
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "temperature": 0.2,
+        }
+
+    @staticmethod
+    def _stream_payloads(response: Any):
+        event_lines: list[bytes] = []
+        while True:
+            line = response.readline()
+            if not line:
+                break
+            if line in {b"\n", b"\r\n"}:
+                if event_lines:
+                    event = b"\n".join(event_lines)
+                    event_lines = []
+                    data_lines = [line[5:].lstrip() for line in event.splitlines() if line.startswith(b"data:")]
+                    if data_lines:
+                        data = b"\n".join(data_lines).strip()
+                        if data == b"[DONE]":
+                            yield None
+                        else:
+                            try:
+                                payload = json.loads(data)
+                            except (TypeError, ValueError, json.JSONDecodeError):
+                                continue
+                            if isinstance(payload, dict):
+                                yield payload
+            else:
+                event_lines.append(line.rstrip(b"\r\n"))
+        if event_lines:
+            data_lines = [line[5:].lstrip() for line in b"\n".join(event_lines).splitlines() if line.startswith(b"data:")]
+            if data_lines:
+                data = b"\n".join(data_lines).strip()
+                if data == b"[DONE]":
+                    yield None
+                else:
+                    try:
+                        payload = json.loads(data)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        payload = None
+                    if isinstance(payload, dict):
+                        yield payload
+
+    def _run_durable_attempt(
+        self,
+        user: VerifiedTelegramUser,
+        attempt: dict[str, Any],
+        *,
+        mode: str,
+        message: str,
+        history: list[dict[str, str]],
+        model_route: str,
+        direction: str | None,
+        stop_event: Any,
+    ) -> None:
+        if self.conversations is None:
+            return
+        attempt_id = str(attempt["id"])
+        response = None
+        try:
+            current = self.conversations.attempt(user.telegram_id, attempt_id)
+            if current["status"] != "running" or stop_event.is_set():
+                return
+            stream_method = getattr(self.router, "openai_chat_stream", None)
+            if callable(stream_method):
+                response = stream_method(
+                    self._durable_stream_payload(
+                        mode=mode,
+                        message=message,
+                        history=history,
+                        model_route=model_route,
+                        direction=direction,
+                    ),
+                    request_id=attempt["request_id"],
+                    user_id=str(user.telegram_id),
+                    conversation_id=attempt["conversation_id"],
+                )
+                output = ""
+                usage = None
+                upstream_request_id = None
+                for payload in self._stream_payloads(response):
+                    if stop_event.is_set():
+                        return
+                    if payload is None:
+                        break
+                    if payload.get("id"):
+                        upstream_request_id = str(payload["id"])
+                    if isinstance(payload.get("usage"), dict):
+                        usage = payload["usage"]
+                    choices = payload.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
+                    fragment = delta.get("content") if isinstance(delta, dict) else None
+                    if isinstance(fragment, str) and fragment:
+                        output += fragment
+                        self.conversations.update_attempt_output(
+                            user.telegram_id, attempt_id, output_text=output
+                        )
+                if not output.strip():
+                    raise AIRouterError("9Router returned an empty stream")
+                self.conversations.complete_attempt(
+                    user.telegram_id,
+                    attempt_id,
+                    output_text=output,
+                    usage=usage,
+                    upstream_request_id=upstream_request_id,
+                )
+                return
+            result = self.router.chat(
+                mode=mode,
+                message=message,
+                history=history,
+                model=model_route,
+                request_id=attempt["request_id"],
+                user_id=str(user.telegram_id),
+                conversation_id=attempt["conversation_id"],
+                direction=direction,
+            )
+            if not stop_event.is_set():
+                self.conversations.complete_attempt(
+                    user.telegram_id,
+                    attempt_id,
+                    output_text=result.text,
+                    usage=result.usage,
+                    upstream_request_id=result.upstream_request_id,
+                )
+        except AIRouterError:
+            self.conversations.fail_attempt(user.telegram_id, attempt_id, error_code="upstream_error")
+        except ConversationNotFoundError:
+            return
+        except Exception:
+            self.conversations.fail_attempt(user.telegram_id, attempt_id, error_code="internal_error")
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+
+    def durable_chat_submit(
+        self,
+        user: VerifiedTelegramUser,
+        conversation_id: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create an attempt and return before inference completes."""
+        if self.conversations is None or self.conversation_jobs is None:
+            raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+        mode = normalize_mode(body.get("mode", "english"))
+        message = _text(body.get("message"), name="message", maximum=MAX_MESSAGE_CHARS)
+        direction = normalize_translation_direction(body.get("direction"))
+        model_route, model_id = resolve_model_id(
+            body.get("model_id"), default_route=self.router.model
+        )
+        client_submission_id = body.get("client_submission_id")
+        if client_submission_id is not None and not isinstance(client_submission_id, str):
+            raise ValueError("client_submission_id must be text")
+        context = self.conversations.context_messages(user.telegram_id, conversation_id)
+        attempt, created = self.conversations.create_turn(
+            user.telegram_id,
+            conversation_id,
+            source=message,
+            mode=mode,
+            direction=direction,
+            model_id=model_id,
+            context=context,
+            client_submission_id=client_submission_id,
+        )
+        if created:
+            try:
+                self.conversation_jobs.submit(
+                    attempt["id"],
+                    lambda stop_event: self._run_durable_attempt(
+                        user,
+                        attempt,
+                        mode=mode,
+                        message=message,
+                        history=context,
+                        model_route=model_route,
+                        direction=direction,
+                        stop_event=stop_event,
+                    ),
+                )
+            except Exception:
+                failed = self.conversations.fail_attempt(
+                    user.telegram_id, attempt["id"], error_code="worker_unavailable"
+                )
+                attempt = failed
+        return {
+            "conversation_id": conversation_id,
+            "turn_id": attempt["turn_id"],
+            "attempt": self._public_attempt(attempt),
+            "mode_result": attempt["status"],
+        }
 
     def external_chat(
         self,
@@ -1868,6 +2099,59 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             self.end_headers()
             self.wfile.write(body)
 
+        def _stream_conversation_attempt(
+            self,
+            user: VerifiedTelegramUser,
+            conversation_id: str,
+            attempt_id: str,
+        ) -> None:
+            if application.conversations is None:
+                raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+            attempt = application.conversations.attempt(user.telegram_id, attempt_id)
+            if attempt["conversation_id"] != conversation_id:
+                raise ConversationNotFoundError("attempt not found")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.close_connection = True
+            last_output = None
+            deadline = time.monotonic() + 900
+            try:
+                while time.monotonic() < deadline:
+                    current = application.conversations.attempt(user.telegram_id, attempt_id)
+                    output = current.get("output_text")
+                    if output != last_output:
+                        last_output = output
+                        payload = {
+                            "attempt_id": attempt_id,
+                            "status": current["status"],
+                            "text": output or "",
+                        }
+                        self.wfile.write(
+                            b"event: snapshot\ndata: "
+                            + json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+                            + b"\n\n"
+                        )
+                        self.wfile.flush()
+                    if current["status"] in {"completed", "failed", "cancelled", "interrupted"}:
+                        payload = application._public_attempt(current)
+                        self.wfile.write(
+                            b"event: terminal\ndata: "
+                            + json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+                            + b"\n\n"
+                        )
+                        self.wfile.flush()
+                        return
+                    time.sleep(0.15)
+                self.wfile.write(b"event: timeout\ndata: {\"status\":\"timeout\"}\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                self.close_connection = True
+
         def _stream_chat(self, stream: _ExternalStream) -> None:
             """Normalize upstream SSE metadata while forwarding each event promptly."""
 
@@ -2076,9 +2360,19 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     if not application.rate_limiter.allow(identity):
                         self._error(429, "AI request rate limit reached", retry_after=60)
                         return
-                    payload = application.durable_chat(user, conversation_id, self._read_json())
+                    payload = application.durable_chat_submit(user, conversation_id, self._read_json())
                     status = 202 if payload.get("attempt", {}).get("status") == "running" else 200
                     self._write(status, payload)
+                    return
+                if (
+                    len(conversation_parts) == 6
+                    and conversation_parts[3] == "attempts"
+                    and conversation_parts[5] == "events"
+                    and method == "GET"
+                ):
+                    self._stream_conversation_attempt(
+                        user, conversation_id, conversation_parts[4]
+                    )
                     return
                 if (
                     len(conversation_parts) == 5
@@ -2107,6 +2401,8 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     )
                     if attempt["conversation_id"] != conversation_id:
                         raise ConversationNotFoundError("attempt not found")
+                    if application.conversation_jobs is not None:
+                        application.conversation_jobs.cancel(conversation_parts[4])
                     cancelled = application.conversations.cancel_attempt(
                         user.telegram_id, conversation_parts[4]
                     )
@@ -2481,6 +2777,7 @@ def main() -> int:
         return 0
     finally:
         server.server_close()
+        application.close()
         if application.api_keys is not None:
             application.api_keys.close()
     return 0

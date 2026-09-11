@@ -32,7 +32,12 @@ session database instead. Submitted turns are persisted before inference;
 duplicate client submission IDs are idempotent, and process restarts mark
 in-flight attempts as interrupted rather than silently resending them. The
 conversation database is component-scoped and does not modify VPN/commerce
-tables.
+tables. `POST /api/conversations/{id}/turns` returns a durable attempt before
+generation completes; `GET /api/conversations/{id}/attempts/{id}/events` is a
+reconnectable SSE view of partial output, and the cancel endpoint makes a
+running attempt terminal without allowing a late provider result to overwrite
+it. The bounded worker is process-local by design; startup marks abandoned
+attempts as interrupted instead of resending them.
 
 The root `ai_router.py`, `ai_api_keys.py`, and `ai_web_api.py` files are
 compatibility shims for existing scripts and imports. New code should import
