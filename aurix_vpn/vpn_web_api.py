@@ -523,6 +523,17 @@ class AuriXVpnWebApplication:
         else:
             scale_out = {"status": "unavailable", "reason": "scale controller is not configured"}
         fleet = self.admin_fleet()
+        max_active_devices = getattr(self.device_api, "max_active_devices", None)
+        device_policy = {
+            "status": (
+                "bounded"
+                if self.device_api is not None and max_active_devices is not None
+                else "unbounded"
+                if self.device_api is not None
+                else "unconfigured"
+            ),
+            "max_active_devices": max_active_devices,
+        }
         return {
             "product": "aurix-control-center",
             "management_mode": "read-only",
@@ -532,6 +543,7 @@ class AuriXVpnWebApplication:
             "protocols": catalog,
             "protocol_readiness": readiness,
             "scale_out": scale_out,
+            "device_policy": device_policy,
             "fleet": {
                 "endpoints": len(fleet),
                 "healthy": sum(1 for item in fleet if item.get("healthy")),

@@ -105,6 +105,7 @@ class ControlCenterTest(unittest.TestCase):
         self.assertEqual(fleet[0]["code"], "BKK-A")
         self.assertFalse(fleet[0]["healthy"])
         self.assertEqual(summary["fleet"], {"endpoints": 1, "healthy": 0})
+        self.assertEqual(summary["device_policy"], {"status": "unconfigured", "max_active_devices": None})
         self.assertNotIn("public_address", json.dumps(fleet))
         self.assertNotIn("management_url", json.dumps(fleet))
         self.assertNotIn("provider_resource_id", json.dumps(fleet))
