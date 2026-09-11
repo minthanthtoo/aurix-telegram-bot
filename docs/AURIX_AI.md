@@ -11,6 +11,18 @@ calling a rollout complete:
 python scripts/aurix_ai_release_probe.py --base-url https://ai.aurix-mart.tech
 ```
 
+Before a real staging smoke, exercise the complete local HTTP stack with the
+deterministic fake-model harness:
+
+```sh
+python scripts/aurix_ai_staging_smoke.py
+```
+
+This validates signed Mini App authentication, durable conversation creation,
+line-oriented Unicode SSE persistence, duplicate-submit idempotency, and
+reconnectable events on loopback. It does not replace a real Telegram,
+9Router, PostgreSQL, or language-quality validation.
+
 On 2026-09-11, the public origin passed health and mode checks but served
 older browser assets and returned `404` for `/api/conversations`; the current
 source therefore remains ahead of that deployment until a controlled rollout
