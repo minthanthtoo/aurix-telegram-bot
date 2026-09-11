@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import ipaddress
 import json
 import mimetypes
 import os
 import secrets
+import sqlite3
 import sys
 import threading
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.parser import BytesParser
 from email.policy import default as email_default_policy
 from pathlib import Path
@@ -30,10 +32,17 @@ from .router import (
     MAX_MESSAGE_CHARS,
     model_id_for_route,
     normalize_mode,
+    normalize_translation_direction,
     _optional_context_text,
+    _text,
     resolve_model_id,
 )
-from .api_keys import APIKeyStore, normalize_token_usage
+from .api_keys import APIKeyStore, APIKeyStoreError, normalize_token_usage
+from .conversations import (
+    AIConversationStore,
+    ConversationNotFoundError,
+    ConversationStoreError,
+)
 from telegram_web_app import (
     TelegramWebAppAuthError,
     VerifiedTelegramUser,
@@ -120,18 +129,87 @@ class _AISession:
 
 
 class AISessionStore:
-    """Process-local opaque sessions; the browser never receives bot data."""
+    """Opaque Telegram sessions with optional durable storage.
 
-    def __init__(self, max_age_seconds: int) -> None:
-        self.max_age_seconds = max(300, min(int(max_age_seconds), 2_592_000))
+    Production uses a small SQLite table on the mounted AuriX data volume so
+    container restarts do not sign every browser out. Only a SHA-256 token
+    digest is persisted; the browser keeps the opaque token in an HttpOnly
+    cookie. Sessions are rolling while the account is active.
+    """
+
+    def __init__(self, max_age_seconds: int, database_path: str | Path | None = None) -> None:
+        self.max_age_seconds = max(300, min(int(max_age_seconds), 7_776_000))
+        self.database_path = Path(database_path) if database_path else None
         self._lock = threading.Lock()
         self._sessions: dict[str, _AISession] = {}
+        if self.database_path is not None:
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ai_web_sessions (
+                        token_hash TEXT PRIMARY KEY,
+                        telegram_id INTEGER NOT NULL,
+                        first_name TEXT NOT NULL,
+                        last_name TEXT,
+                        username TEXT,
+                        language_code TEXT,
+                        expires_at REAL NOT NULL,
+                        created_at REAL NOT NULL,
+                        last_seen_at REAL NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ai_web_sessions_expiry "
+                    "ON ai_web_sessions (expires_at)"
+                )
+
+    @staticmethod
+    def _digest(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def _connect(self) -> sqlite3.Connection:
+        if self.database_path is None:
+            raise RuntimeError("persistent session storage is not configured")
+        connection = sqlite3.connect(self.database_path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    @staticmethod
+    def _user_from_row(row: sqlite3.Row) -> VerifiedTelegramUser:
+        return VerifiedTelegramUser(
+            telegram_id=int(row["telegram_id"]),
+            first_name=row["first_name"],
+            last_name=row["last_name"],
+            username=row["username"],
+            language_code=row["language_code"],
+        )
 
     def issue(self, user: VerifiedTelegramUser) -> str:
         token = secrets.token_urlsafe(32)
+        now = time.time()
         with self._lock:
-            self._purge_locked(time.time())
-            self._sessions[token] = _AISession(user, time.time() + self.max_age_seconds)
+            expires_at = now + self.max_age_seconds
+            if self.database_path is None:
+                self._purge_locked(now)
+                self._sessions[token] = _AISession(user, expires_at)
+            else:
+                with self._connect() as connection:
+                    connection.execute("DELETE FROM ai_web_sessions WHERE expires_at <= ?", (now,))
+                    connection.execute(
+                        """
+                        INSERT INTO ai_web_sessions
+                        (token_hash, telegram_id, first_name, last_name, username,
+                         language_code, expires_at, created_at, last_seen_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            self._digest(token), user.telegram_id, user.first_name,
+                            user.last_name, user.username, user.language_code,
+                            expires_at, now, now,
+                        ),
+                    )
         return token
 
     def get(self, token: str | None) -> VerifiedTelegramUser | None:
@@ -139,16 +217,43 @@ class AISessionStore:
             return None
         now = time.time()
         with self._lock:
-            session = self._sessions.get(token)
-            if session is None or session.expires_at <= now:
-                self._sessions.pop(token, None)
-                return None
-            return session.user
+            if self.database_path is None:
+                session = self._sessions.get(token)
+                if session is None or session.expires_at <= now:
+                    self._sessions.pop(token, None)
+                    return None
+                return session.user
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM ai_web_sessions WHERE token_hash = ?",
+                    (self._digest(token),),
+                ).fetchone()
+                if row is None or float(row["expires_at"]) <= now:
+                    if row is not None:
+                        connection.execute(
+                            "DELETE FROM ai_web_sessions WHERE token_hash = ?",
+                            (self._digest(token),),
+                        )
+                    return None
+                refreshed_expiry = now + self.max_age_seconds
+                connection.execute(
+                    "UPDATE ai_web_sessions SET expires_at = ?, last_seen_at = ? "
+                    "WHERE token_hash = ?",
+                    (refreshed_expiry, now, self._digest(token)),
+                )
+                return self._user_from_row(row)
 
     def revoke(self, token: str | None) -> None:
         if token:
             with self._lock:
-                self._sessions.pop(token, None)
+                if self.database_path is None:
+                    self._sessions.pop(token, None)
+                else:
+                    with self._connect() as connection:
+                        connection.execute(
+                            "DELETE FROM ai_web_sessions WHERE token_hash = ?",
+                            (self._digest(token),),
+                        )
 
     def _purge_locked(self, now: float) -> None:
         if len(self._sessions) > 10_000:
@@ -169,9 +274,11 @@ class AuriXAIApplication:
         requests_per_minute: int = 20,
         telegram_bot_token: str = "",
         telegram_bot_username: str = "",
-        session_max_age_seconds: int = 86_400,
+        session_max_age_seconds: int = 2_592_000,
+        session_database_path: str | Path | None = None,
         legacy_token_enabled: bool | None = None,
         api_keys: APIKeyStore | None = None,
+        conversation_store: AIConversationStore | None = None,
         admin_token: str = "",
         admin_telegram_ids: set[int] | None = None,
     ) -> None:
@@ -184,8 +291,9 @@ class AuriXAIApplication:
         self.allow_anonymous = allow_anonymous
         self.telegram_bot_token = telegram_bot_token
         self.telegram_bot_username = telegram_bot_username
-        self.sessions = AISessionStore(session_max_age_seconds)
+        self.sessions = AISessionStore(session_max_age_seconds, session_database_path)
         self.api_keys = api_keys
+        self.conversations = conversation_store
         self.admin_token = admin_token.strip()
         self.admin_telegram_ids = frozenset(admin_telegram_ids or set())
         # Direct construction stays compatible with the old test/client API;
@@ -203,7 +311,13 @@ class AuriXAIApplication:
             "language_code": user.language_code,
         }
 
-    def authenticate(self, cookie_header: str | None, authorization: str | None) -> VerifiedTelegramUser | None:
+    def authenticate(
+        self,
+        cookie_header: str | None,
+        authorization: str | None,
+        *,
+        required: bool = True,
+    ) -> VerifiedTelegramUser | None:
         if self.allow_anonymous:
             return None
         cookie = SimpleCookie()
@@ -216,7 +330,9 @@ class AuriXAIApplication:
             expected = f"Bearer {self.access_token}"
             if authorization and self.access_token and hmac.compare_digest(authorization, expected):
                 return None
-        raise PermissionError("Telegram login required")
+        if required:
+            raise PermissionError("Telegram login required")
+        return None
 
     def login_widget(self, payload: dict[str, Any]) -> tuple[str, VerifiedTelegramUser]:
         user = verify_login_widget(
@@ -270,7 +386,7 @@ class AuriXAIApplication:
                     "label": item["label"],
                     "description": item["description"],
                     "default": item["route"] == self.router.model,
-                    "capabilities": ["chat", "streaming", "tools"],
+                    "capabilities": ["chat", "streaming"],
                 }
                 for model_id, item in MODEL_CATALOG.items()
             ]
@@ -287,8 +403,173 @@ class AuriXAIApplication:
             history=history if history is not None else [],
             model=model_route,
             summary=body.get("context_summary"),
+            direction=body.get("direction"),
         )
         return _chat_payload(result, model_id=model_id)
+
+    @staticmethod
+    def _public_attempt(attempt: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in attempt.items()
+            if key != "owner_telegram_id"
+        }
+
+    @classmethod
+    def _public_conversation(cls, conversation: dict[str, Any]) -> dict[str, Any]:
+        result = {
+            key: value
+            for key, value in conversation.items()
+            if key != "owner_telegram_id"
+        }
+        turns = []
+        for turn in conversation.get("turns", []):
+            clean_turn = {
+                key: value
+                for key, value in turn.items()
+                if key != "owner_telegram_id"
+            }
+            clean_turn["attempts"] = [
+                cls._public_attempt(attempt)
+                for attempt in turn.get("attempts", [])
+            ]
+            turns.append(clean_turn)
+        if "turns" in conversation:
+            result["turns"] = turns
+        return result
+
+    def durable_conversation_create(
+        self, user: VerifiedTelegramUser, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        if self.conversations is None:
+            raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+        mode = normalize_mode(body.get("mode", "english"))
+        direction = normalize_translation_direction(body.get("direction"))
+        title = _text(body.get("title", "New conversation"), name="title", maximum=120)
+        return self._public_conversation(
+            self.conversations.create_conversation(
+                user.telegram_id,
+                mode=mode,
+                direction=direction,
+                title=title,
+            )
+        )
+
+    def durable_conversation_list(
+        self, user: VerifiedTelegramUser, *, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if self.conversations is None:
+            raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+        return [
+            self._public_conversation(item)
+            for item in self.conversations.list_conversations(user.telegram_id, limit=limit)
+        ]
+
+    def durable_conversation_detail(
+        self, user: VerifiedTelegramUser, conversation_id: str
+    ) -> dict[str, Any]:
+        if self.conversations is None:
+            raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+        return self._public_conversation(
+            self.conversations.get_conversation(user.telegram_id, conversation_id)
+        )
+
+    def durable_conversation_delete(
+        self, user: VerifiedTelegramUser, conversation_id: str
+    ) -> bool:
+        if self.conversations is None:
+            raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+        return self.conversations.delete_conversation(user.telegram_id, conversation_id)
+
+    def durable_chat(
+        self,
+        user: VerifiedTelegramUser,
+        conversation_id: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one submitted turn and execute at most one upstream call.
+
+        A duplicate ``client_submission_id`` returns the existing attempt. A
+        process restart leaves a running attempt as ``interrupted`` and this
+        endpoint will not resend it implicitly; callers must explicitly retry.
+        """
+
+        if self.conversations is None:
+            raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+        mode = normalize_mode(body.get("mode", "english"))
+        message = _text(body.get("message"), name="message", maximum=MAX_MESSAGE_CHARS)
+        direction = normalize_translation_direction(body.get("direction"))
+        model_route, model_id = resolve_model_id(
+            body.get("model_id"), default_route=self.router.model
+        )
+        client_submission_id = body.get("client_submission_id")
+        if client_submission_id is not None and not isinstance(client_submission_id, str):
+            raise ValueError("client_submission_id must be text")
+        context = self.conversations.context_messages(user.telegram_id, conversation_id)
+        attempt, created = self.conversations.create_turn(
+            user.telegram_id,
+            conversation_id,
+            source=message,
+            mode=mode,
+            direction=direction,
+            model_id=model_id,
+            context=context,
+            client_submission_id=client_submission_id,
+        )
+        if not created or attempt["status"] != "running":
+            return {
+                "conversation_id": conversation_id,
+                "turn_id": attempt["turn_id"],
+                "attempt": self._public_attempt(attempt),
+                "mode_result": attempt["status"],
+            }
+        try:
+            result = self.router.chat(
+                mode=mode,
+                message=message,
+                history=context,
+                model=model_route,
+                request_id=attempt["request_id"],
+                user_id=str(user.telegram_id),
+                conversation_id=conversation_id,
+                direction=direction,
+            )
+        except AIRouterError:
+            failed = self.conversations.fail_attempt(
+                user.telegram_id, attempt["id"], error_code="upstream_error"
+            )
+            return {
+                "conversation_id": conversation_id,
+                "turn_id": attempt["turn_id"],
+                "attempt": self._public_attempt(failed),
+                "mode_result": "failed",
+            }
+        except Exception:
+            failed = self.conversations.fail_attempt(
+                user.telegram_id, attempt["id"], error_code="internal_error"
+            )
+            return {
+                "conversation_id": conversation_id,
+                "turn_id": attempt["turn_id"],
+                "attempt": self._public_attempt(failed),
+                "mode_result": "failed",
+            }
+        completed = self.conversations.complete_attempt(
+            user.telegram_id,
+            attempt["id"],
+            output_text=result.text,
+            usage=result.usage,
+            upstream_request_id=result.upstream_request_id,
+        )
+        payload = _chat_payload(result, model_id=model_id)
+        payload.update(
+            {
+                "conversation_id": conversation_id,
+                "turn_id": attempt["turn_id"],
+                "attempt": self._public_attempt(completed),
+            }
+        )
+        return payload
 
     def external_chat(
         self,
@@ -574,13 +855,18 @@ class AuriXAIApplication:
             conversation_id=stream.conversation_id,
         )
 
-    def _authenticate_external_request(self, authorization: str | None) -> Any:
+    def _authenticate_external_request(
+        self,
+        authorization: str | None,
+        *,
+        count_request: bool = True,
+    ) -> Any:
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
         principal = self.api_keys.authenticate(_bearer_token(authorization))
         if principal is None:
             raise PermissionError("AuriX API key required")
-        if not self.rate_limiter.allow(
+        if count_request and not self.rate_limiter.allow(
             f"api-account:{principal.account_id}", limit=principal.requests_per_minute
         ):
             raise ExternalAPIRateLimitError("API request rate limit reached")
@@ -661,9 +947,10 @@ class AuriXAIApplication:
         request_id = request_id or f"req_{secrets.token_urlsafe(12)}"
         principal = self._authenticate_external_request(authorization)
         self._authorize_external_request(principal, model_id=model, mode="audio")
+        upstream_path = path[3:] if path.startswith("/v1/") else path
         try:
             result = self.router.request_raw(
-                path,
+                upstream_path,
                 body,
                 content_type=content_type,
                 accept="application/json, text/plain, text/event-stream, audio/*, */*",
@@ -698,9 +985,9 @@ class AuriXAIApplication:
         return result
 
     def external_models(self, authorization: str | None) -> dict[str, Any]:
-        principal = self._authenticate_external_request(authorization)
+        principal = self._authenticate_external_request(authorization, count_request=False)
         output: list[dict[str, Any]] = []
-        categories = ((None, {"chat", "streaming", "tools"}), ("embedding", {"embeddings"}), ("stt", {"audio_input"}), ("tts", {"audio_output"}))
+        categories = ((None, {"chat", "streaming"}), ("embedding", {"embeddings"}), ("stt", {"audio_input"}), ("tts", {"audio_output"}))
         for category, capabilities in categories:
             try:
                 models = self.router.list_models(category)
@@ -753,17 +1040,20 @@ class AuriXAIApplication:
         self,
         authorization: str | None,
         cookie_header: str | None = None,
-    ) -> None:
+    ) -> VerifiedTelegramUser | None:
         token = _bearer_token(authorization)
         if token is not None and self.admin_token and hmac.compare_digest(token, self.admin_token):
-            return
+            return None
         cookie = SimpleCookie()
         if cookie_header:
             cookie.load(cookie_header)
         session = cookie.get(SESSION_COOKIE_NAME)
         user = self.sessions.get(session.value if session else None)
-        if user is not None and user.telegram_id in self.admin_telegram_ids:
-            return
+        # The browser console is available to every verified Telegram user.
+        # Keep the bearer admin token for non-browser automation; external API
+        # keys remain separately scoped by APIKeyStore.
+        if user is not None:
+            return user
         if not self.admin_token and not self.admin_telegram_ids:
             raise ExternalAPIUnavailableError("Admin API is not configured")
         raise PermissionError("Admin authentication required")
@@ -786,6 +1076,20 @@ class AuriXAIApplication:
             account_id=account_id, start_at=start_at, end_at=end_at, limit=limit
         )
         summary_by_id = {item["account_id"]: item for item in summaries}
+        keys_by_account: dict[str, list[dict[str, Any]]] = {}
+        for key in self.api_keys.list_keys(account_id):
+            keys_by_account.setdefault(str(key["account_id"]), []).append(
+                {
+                    "id": str(key["id"]),
+                    "label": str(key["label"]),
+                    "token_prefix": str(key["token_prefix"]),
+                    "status": str(key["status"]),
+                    "created_at": str(key["created_at"]),
+                    "expires_at": key.get("expires_at"),
+                    "revoked_at": key.get("revoked_at"),
+                    "last_used_at": key.get("last_used_at"),
+                }
+            )
         for account in accounts:
             account.update(summary_by_id.get(account["id"], {
                 "requests": 0,
@@ -798,6 +1102,7 @@ class AuriXAIApplication:
                 "cached_tokens": 0,
                 "cost": 0,
             }))
+            account["keys"] = keys_by_account.get(str(account["id"]), [])
         return {
             "period": {"start_at": start_at, "end_at": end_at},
             "accounts": accounts if account_id is None else [
@@ -805,6 +1110,77 @@ class AuriXAIApplication:
             ],
             "requests": events,
         }
+
+    def admin_create_account(
+        self,
+        body: dict[str, Any],
+        authorization: str | None,
+        cookie_header: str | None,
+    ) -> dict[str, Any]:
+        """Create an all-capability external account and issue its first key."""
+
+        actor = self.authenticate_admin(authorization, cookie_header)
+        if self.api_keys is None:
+            raise ExternalAPIUnavailableError("External API is not configured")
+        name = _text(body.get("name"), name="name", maximum=160)
+        requests_per_minute = _admin_requests_per_minute(body.get("requests_per_minute", 60))
+        label = _text(body.get("key_label", "production"), name="key_label", maximum=160)
+        expires_at = _expires_at(body.get("expires_in_days", 90))
+        owner_type = "telegram_admin" if actor is not None else "operator"
+        owner_id = str(actor.telegram_id) if actor is not None else None
+        account = self.api_keys.create_account(
+            name,
+            allowed_modes=["*"],
+            allowed_models=["*"],
+            requests_per_minute=requests_per_minute,
+            owner_type=owner_type,
+            owner_id=owner_id,
+        )
+        try:
+            issued = self.api_keys.issue_key(
+                account["id"], label=label, expires_at=expires_at
+            )
+        except Exception:
+            self.api_keys.revoke_account(account["id"])
+            raise
+        return {
+            "account": account,
+            "key": _issued_key_payload(issued),
+        }
+
+    def admin_issue_key(
+        self,
+        body: dict[str, Any],
+        authorization: str | None,
+        cookie_header: str | None,
+    ) -> dict[str, Any]:
+        self.authenticate_admin(authorization, cookie_header)
+        if self.api_keys is None:
+            raise ExternalAPIUnavailableError("External API is not configured")
+        account_id = _text(body.get("account_id"), name="account_id", maximum=80)
+        label = _text(body.get("label", "rotation"), name="label", maximum=160)
+        expires_at = _expires_at(body.get("expires_in_days", 90))
+        issued = self.api_keys.issue_key(
+            account_id,
+            label=label,
+            expires_at=expires_at,
+        )
+        return {"key": _issued_key_payload(issued)}
+
+    def admin_revoke_key(
+        self,
+        key_id: str,
+        authorization: str | None,
+        cookie_header: str | None,
+    ) -> dict[str, Any]:
+        self.authenticate_admin(authorization, cookie_header)
+        if self.api_keys is None:
+            raise ExternalAPIUnavailableError("External API is not configured")
+        clean_key_id = _text(key_id, name="key_id", maximum=80)
+        revoked = self.api_keys.revoke_key(clean_key_id)
+        if not revoked:
+            raise APIKeyStoreError("active API key not found")
+        return {"revoked": True, "key_id": clean_key_id}
 
     def admin_9router_usage_export(
         self,
@@ -834,6 +1210,44 @@ def _bearer_token(authorization: str | None) -> str | None:
         return None
     token = authorization[7:].strip()
     return token or None
+
+
+def _admin_requests_per_minute(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("requests_per_minute must be an integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("requests_per_minute must be an integer") from exc
+    if not 1 <= result <= 600:
+        raise ValueError("requests_per_minute must be between 1 and 600")
+    return result
+
+
+def _expires_at(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("expires_in_days must be a positive integer or null")
+    try:
+        days = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("expires_in_days must be a positive integer or null") from exc
+    if not 1 <= days <= 3_650:
+        raise ValueError("expires_in_days must be between 1 and 3650")
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+
+
+def _issued_key_payload(issued: Any) -> dict[str, Any]:
+    return {
+        "account_id": issued.account_id,
+        "key_id": issued.key_id,
+        "label": issued.label,
+        "token": issued.token,
+        "token_prefix": issued.token_prefix,
+        "expires_at": issued.expires_at,
+        "one_time": True,
+    }
 
 
 def _standard_message_text(value: Any, *, index: int) -> str:
@@ -1337,6 +1751,22 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             self.end_headers()
             self.wfile.write(body)
 
+        def _write_text(
+            self,
+            status: int,
+            body: bytes,
+            *,
+            content_type: str = "text/plain; charset=utf-8",
+            no_store: bool = True,
+        ) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store" if no_store else "public, max-age=300")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
         def _error(self, status: int, message: str, *, retry_after: int | None = None) -> None:
             request_id = getattr(self, "_request_id", None)
             payload: dict[str, Any] = {"error": message}
@@ -1444,7 +1874,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache, no-transform")
-            self.send_header("Connection", "keep-alive")
+            self.send_header("Connection", "close")
             self.send_header("X-Accel-Buffering", "no")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Request-ID", stream.request_id)
@@ -1454,6 +1884,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             router_request_id: str | None = None
             completed = False
             stream_completed = False
+            done_sent = False
             event_lines: list[bytes] = []
 
             def emit_event(event: bytes) -> None:
@@ -1484,16 +1915,22 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                             event = b"\n".join(event_lines)
                             emit_event(event)
                             event_lines = []
-                            if completed or b"data: [DONE]" in event:
+                            if b"data: [DONE]" in event:
+                                done_sent = True
                                 break
                     else:
                         event_lines.append(line.rstrip(b"\r\n"))
                 if event_lines:
                     emit_event(b"\n".join(event_lines))
+                if completed and not done_sent:
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                    done_sent = True
                 stream_completed = completed
             except (BrokenPipeError, ConnectionResetError, OSError):
                 stream_completed = False
             finally:
+                self.close_connection = True
                 try:
                     stream.response.close()
                 finally:
@@ -1523,6 +1960,15 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             return morsel.value if morsel else None
 
         def _route_api(self, method: str, path: str, query: str = "") -> None:
+            if path == "/api/docs/external" and method == "GET":
+                guide = static_root / "AURIX_EXTERNAL_API.md"
+                if not guide.is_file():
+                    guide = Path(__file__).resolve().parents[1] / "docs" / "AURIX_EXTERNAL_API.md"
+                if not guide.is_file():
+                    self._error(404, "Guide unavailable")
+                    return
+                self._write_text(200, guide.read_bytes(), no_store=False)
+                return
             if path == "/api/healthz" and method == "GET":
                 self._write(
                     200,
@@ -1545,14 +1991,20 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 self._write(200, application.auth_config(), no_store=False)
                 return
             if path == "/api/session" and method == "GET":
+                session_token = self._request_session_token()
                 user = application.authenticate(
-                    self.headers.get("Cookie"), self.headers.get("Authorization")
+                    self.headers.get("Cookie"), self.headers.get("Authorization"), required=False
                 )
                 self._write(
                     200,
                     {"authenticated": True, "user": application.user_payload(user)}
                     if user is not None
                     else {"authenticated": True, "user": None},
+                    set_cookie=(
+                        self._session_cookie(session_token)
+                        if user is not None and session_token
+                        else None
+                    ),
                 )
                 return
             if path == "/api/auth/telegram" and method == "POST":
@@ -1584,6 +2036,111 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         f"{SESSION_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax"
                     ),
                 )
+                return
+            if path == "/api/conversations" and method in {"GET", "POST"}:
+                user = application.authenticate(
+                    self.headers.get("Cookie"), self.headers.get("Authorization")
+                )
+                if user is None:
+                    raise PermissionError("Telegram login required")
+                if method == "GET":
+                    try:
+                        limit = int(parse_qs(query, keep_blank_values=False).get("limit", ["50"])[0])
+                    except ValueError as exc:
+                        raise ValueError("limit must be an integer") from exc
+                    self._write(
+                        200,
+                        {"conversations": application.durable_conversation_list(user, limit=limit)},
+                    )
+                else:
+                    self._write(201, application.durable_conversation_create(user, self._read_json()))
+                return
+            conversation_parts = path.strip("/").split("/")
+            if len(conversation_parts) >= 3 and conversation_parts[:2] == ["api", "conversations"]:
+                user = application.authenticate(
+                    self.headers.get("Cookie"), self.headers.get("Authorization")
+                )
+                if user is None:
+                    raise PermissionError("Telegram login required")
+                conversation_id = conversation_parts[2]
+                if len(conversation_parts) == 3 and method == "GET":
+                    self._write(200, application.durable_conversation_detail(user, conversation_id))
+                    return
+                if len(conversation_parts) == 3 and method == "DELETE":
+                    if not application.durable_conversation_delete(user, conversation_id):
+                        raise ConversationNotFoundError("conversation not found")
+                    self._write(200, {"deleted": True, "conversation_id": conversation_id})
+                    return
+                if len(conversation_parts) == 4 and conversation_parts[3] == "turns" and method == "POST":
+                    identity = f"telegram:{user.telegram_id}"
+                    if not application.rate_limiter.allow(identity):
+                        self._error(429, "AI request rate limit reached", retry_after=60)
+                        return
+                    payload = application.durable_chat(user, conversation_id, self._read_json())
+                    status = 202 if payload.get("attempt", {}).get("status") == "running" else 200
+                    self._write(status, payload)
+                    return
+                if (
+                    len(conversation_parts) == 5
+                    and conversation_parts[3] == "attempts"
+                    and method == "GET"
+                ):
+                    if application.conversations is None:
+                        raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+                    attempt = application.conversations.attempt(
+                        user.telegram_id, conversation_parts[4]
+                    )
+                    if attempt["conversation_id"] != conversation_id:
+                        raise ConversationNotFoundError("attempt not found")
+                    self._write(200, {"attempt": application._public_attempt(attempt)})
+                    return
+                if (
+                    len(conversation_parts) == 6
+                    and conversation_parts[3] == "attempts"
+                    and conversation_parts[5] == "cancel"
+                    and method == "POST"
+                ):
+                    if application.conversations is None:
+                        raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+                    attempt = application.conversations.attempt(
+                        user.telegram_id, conversation_parts[4]
+                    )
+                    if attempt["conversation_id"] != conversation_id:
+                        raise ConversationNotFoundError("attempt not found")
+                    cancelled = application.conversations.cancel_attempt(
+                        user.telegram_id, conversation_parts[4]
+                    )
+                    self._write(200, {"attempt": application._public_attempt(cancelled)})
+                    return
+                self._error(404, "Not found")
+                return
+            if path == "/api/admin/accounts" and method == "POST":
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                payload = application.admin_create_account(
+                    self._read_json(),
+                    self.headers.get("Authorization"),
+                    self.headers.get("Cookie"),
+                )
+                self._write(201, payload, request_id=self._request_id)
+                return
+            if path == "/api/admin/keys" and method == "POST":
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                payload = application.admin_issue_key(
+                    self._read_json(),
+                    self.headers.get("Authorization"),
+                    self.headers.get("Cookie"),
+                )
+                self._write(201, payload, request_id=self._request_id)
+                return
+            if path.startswith("/api/admin/keys/") and path.endswith("/revoke") and method == "POST":
+                key_id = path[len("/api/admin/keys/") : -len("/revoke")].strip("/")
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                payload = application.admin_revoke_key(
+                    key_id,
+                    self.headers.get("Authorization"),
+                    self.headers.get("Cookie"),
+                )
+                self._write(200, payload, request_id=self._request_id)
                 return
             if path in {"/api/admin/accounts", "/api/admin/usage"} and method == "GET":
                 application.authenticate_admin(
@@ -1703,7 +2260,31 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             self._write(200, application.chat(self._read_json()))
 
         def _serve_static(self, path: str, *, head_only: bool = False) -> None:
-            relative = "index.html" if path in {"/", "/app", "/app/"} else path.lstrip("/")
+            if path == "/AURIX_EXTERNAL_API.md":
+                guide = static_root / "AURIX_EXTERNAL_API.md"
+                if not guide.is_file():
+                    guide = Path(__file__).resolve().parents[1] / "docs" / "AURIX_EXTERNAL_API.md"
+                if not guide.is_file():
+                    self._error(404, "Guide unavailable")
+                    return
+                body = guide.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="AURIX_EXTERNAL_API.md"')
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                if not head_only:
+                    self.wfile.write(body)
+                return
+            if path in {"/", "/app", "/app/"}:
+                relative = "index.html"
+            elif path in {"/admin", "/admin/"}:
+                relative = "admin.html"
+            elif path in {"/docs/ai-api", "/docs/ai-api/"}:
+                relative = "api-guide.html"
+            else:
+                relative = path.lstrip("/")
             target = (static_root / relative).resolve()
             root = static_root.resolve()
             if root not in target.parents and target != root:
@@ -1734,6 +2315,24 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             parsed = urlsplit(self.path)
             path = parsed.path
             try:
+                if path.startswith("/api/admin/") and method == "POST":
+                    # Non-simple header prevents cross-origin HTML form mutations.
+                    # No CORS permission is granted for this admin surface.
+                    origin = self.headers.get("Origin")
+                    host = self.headers.get("Host", "")
+                    if (self.headers.get("X-AuriX-Admin") != "1"
+                        or (origin is not None and origin not in {f"https://{host}", f"http://{host}"})):
+                        self._error(403, "Same-origin admin request required")
+                        return
+                if (
+                    (path == "/api/conversations" or path.startswith("/api/conversations/"))
+                    and method in {"POST", "DELETE"}
+                ):
+                    origin = self.headers.get("Origin")
+                    host = self.headers.get("Host", "")
+                    if origin is not None and origin not in {f"https://{host}", f"http://{host}"}:
+                        self._error(403, "Same-origin conversation request required")
+                        return
                 if path.startswith("/api/") or path.startswith("/v1/"):
                     self._route_api(method, path, parsed.query)
                     return
@@ -1751,6 +2350,8 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 self._error(401, str(exc))
             except TelegramWebAppAuthError as exc:
                 self._error(401, str(exc))
+            except ConversationNotFoundError as exc:
+                self._error(404, str(exc))
             except AIRouterError as exc:
                 self._error(502, str(exc))
             except ValueError as exc:
@@ -1767,6 +2368,9 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
 
         def do_HEAD(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             self._dispatch("HEAD")
+
+        def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            self._dispatch("DELETE")
 
         def log_message(self, format: str, *args: Any) -> None:
             # Never write query strings, prompts, or authentication headers to logs.
@@ -1812,7 +2416,7 @@ def build_application_from_environment() -> AuriXAIApplication:
     except ValueError as exc:
         raise AIConfigurationError("AURIX_AI_MAX_REQUESTS_PER_MINUTE must be an integer") from exc
     try:
-        session_max_age_seconds = int(os.environ.get("AURIX_AI_SESSION_MAX_AGE_SECONDS", "86400"))
+        session_max_age_seconds = int(os.environ.get("AURIX_AI_SESSION_MAX_AGE_SECONDS", "2592000"))
     except ValueError as exc:
         raise AIConfigurationError("AURIX_AI_SESSION_MAX_AGE_SECONDS must be an integer") from exc
     legacy_token_enabled = os.environ.get("AURIX_AI_LEGACY_TOKEN_ENABLED", "0").strip().lower() in {
@@ -1824,6 +2428,9 @@ def build_application_from_environment() -> AuriXAIApplication:
     if not allow_anonymous and not telegram_bot_token and not legacy_token_enabled:
         raise AIConfigurationError("TELEGRAM_BOT_TOKEN is required when legacy token auth is disabled")
     api_keys_path = os.environ.get("AURIX_AI_API_KEYS_DB_PATH", "").strip()
+    session_database_path = os.environ.get(
+        "AURIX_AI_SESSION_DB_PATH", "/var/lib/aurix-ai/sessions.db"
+    ).strip()
     api_database_url = os.environ.get("AURIX_AI_DATABASE_URL", "").strip()
     api_keys = None
     if api_database_url:
@@ -1832,6 +2439,16 @@ def build_application_from_environment() -> AuriXAIApplication:
     elif api_keys_path:
         api_keys = APIKeyStore(api_keys_path)
         api_keys.initialize()
+    conversation_store = None
+    if api_keys is not None:
+        conversation_store = AIConversationStore(
+            connection_factory=api_keys.connect,
+            dialect="postgres" if api_keys.uses_postgres else "sqlite",
+        )
+        conversation_store.initialize()
+    elif session_database_path:
+        conversation_store = AIConversationStore(session_database_path)
+        conversation_store.initialize()
     return AuriXAIApplication(
         router,
         access_token=access_token,
@@ -1840,8 +2457,10 @@ def build_application_from_environment() -> AuriXAIApplication:
         telegram_bot_token=telegram_bot_token,
         telegram_bot_username=telegram_bot_username,
         session_max_age_seconds=session_max_age_seconds,
+        session_database_path=session_database_path or None,
         legacy_token_enabled=legacy_token_enabled,
         api_keys=api_keys,
+        conversation_store=conversation_store,
         admin_token=admin_token,
         admin_telegram_ids=admin_telegram_ids,
     )
