@@ -120,6 +120,9 @@ Important remaining facts:
   migration storm; automatic blocks keep the health observation and add a
   redacted audit event. The read-only Operations view exposes current usage and
   remaining budget, while web access remains mutation-free.
+- Failover decisions now capture a monotonic entitlement policy version, so an
+  operator can distinguish decisions made before and after a policy change and
+  replay the durable history deterministically.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
 - The application/refactor baseline is now in the `codex/aurix-vpn-portal` history; unrelated AI/UI and pay-monitor work remains intentionally outside the VPN commits.
 

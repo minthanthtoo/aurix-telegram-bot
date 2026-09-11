@@ -441,6 +441,11 @@ automatic path still records the route observation and writes a redacted audit
 event. The read-only VPN Operations view exposes each control's current-window
 usage and remaining budget; it does not expose a mutation path.
 
+Commerce migration 12 adds a monotonic `policy_version` to failover policies and
+copies that version onto each automatic or operator-created decision. The
+Operations view shows the captured version, making later policy changes
+replayable against the durable decision history without exposing route secrets.
+
 Focused failover, migration, Control Center, VPN web API, and render checks pass;
 the non-PostgreSQL VPN regression passes `327` tests, and the two non-PostgreSQL
 migration-manifest checks also pass. The optional PostgreSQL end-to-end rehearsal

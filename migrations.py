@@ -1271,6 +1271,18 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS route_failover_control_windows_lookup ON route_failover_control_windows(updated_at)",
         ),
     ),
+    Migration(
+        12,
+        "versioned_failover_decisions",
+        sqlite_statements=(
+            "ALTER TABLE route_failover_policies ADD COLUMN policy_version INTEGER NOT NULL DEFAULT 1 CHECK (policy_version > 0)",
+            "ALTER TABLE failover_decisions ADD COLUMN policy_version INTEGER NOT NULL DEFAULT 1 CHECK (policy_version > 0)",
+        ),
+        postgres_statements=(
+            "ALTER TABLE route_failover_policies ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1 CHECK (policy_version > 0)",
+            "ALTER TABLE failover_decisions ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1 CHECK (policy_version > 0)",
+        ),
+    ),
 )
 
 

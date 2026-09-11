@@ -69,8 +69,9 @@ class RouteFailoverService:
             connection.execute(
                 """INSERT INTO route_failover_policies
                    (entitlement_key, enabled, failure_threshold, recovery_threshold,
-                    cooldown_seconds, standby_lease_bytes, max_attempts, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cooldown_seconds, standby_lease_bytes, max_attempts, policy_version,
+                    created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                    ON CONFLICT(entitlement_key) DO UPDATE SET
                      enabled = excluded.enabled,
                      failure_threshold = excluded.failure_threshold,
@@ -78,6 +79,7 @@ class RouteFailoverService:
                      cooldown_seconds = excluded.cooldown_seconds,
                      standby_lease_bytes = excluded.standby_lease_bytes,
                      max_attempts = excluded.max_attempts,
+                     policy_version = route_failover_policies.policy_version + 1,
                      updated_at = excluded.updated_at""",
                 (str(entitlement_key), bool(enabled), int(failure_threshold), int(recovery_threshold),
                  int(cooldown_seconds), int(standby_lease_bytes), int(max_attempts), timestamp, timestamp),
@@ -590,14 +592,18 @@ class RouteFailoverService:
                        ON CONFLICT(entitlement_key) DO NOTHING""",
                     (entitlement_key, timestamp, timestamp),
                 )
+                policy = connection.execute(
+                    "SELECT policy_version FROM route_failover_policies WHERE entitlement_key = ?",
+                    (entitlement_key,),
+                ).fetchone()
                 idempotency = f"operator-drain:{source_id}:{generation['generation_id']}:{target['id']}"
                 candidate = f"failover-{_new_id()}"
                 inserted = connection.execute(
                     """INSERT INTO failover_decisions
                        (decision_id, idempotency_key, entitlement_key, source_generation_id,
                         source_endpoint_id, target_endpoint_id, trigger, network_bucket,
-                        state, next_attempt_at, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'operator', 'pending', ?, ?, ?)
+                        policy_version, state, next_attempt_at, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'operator', ?, 'pending', ?, ?, ?)
                        ON CONFLICT(idempotency_key) DO NOTHING""",
                     (
                         candidate,
@@ -607,6 +613,7 @@ class RouteFailoverService:
                         source_id,
                         str(target["id"]),
                         normalized_reason,
+                        int(policy["policy_version"] if policy is not None else 1),
                         timestamp,
                         timestamp,
                         timestamp,
@@ -793,13 +800,14 @@ class RouteFailoverService:
                                     """INSERT INTO failover_decisions
                                        (decision_id, idempotency_key, entitlement_key, source_generation_id,
                                         source_endpoint_id, target_endpoint_id, trigger, network_bucket,
-                                        state, next_attempt_at, created_at, updated_at)
-                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                                        policy_version, state, next_attempt_at, created_at, updated_at)
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
                                        ON CONFLICT(idempotency_key) DO NOTHING""",
                                     (candidate, idem, str(generation["entitlement_key"]), str(generation_id),
                                      str(generation["endpoint_id"]), target_id,
                                      str(reason or "route_failure_threshold")[:256],
-                                     bucket, timestamp, timestamp, timestamp),
+                                     bucket, int(policy["policy_version"] or 1),
+                                     timestamp, timestamp, timestamp),
                                 )
                                 if int(getattr(inserted_decision, "rowcount", 0) or 0) == 1:
                                     decision_id = candidate

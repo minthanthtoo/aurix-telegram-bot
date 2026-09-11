@@ -75,6 +75,7 @@ class RouteFailoverTest(unittest.TestCase):
         self.assertIsNotNone(second["decision_id"])
         decision = self.failover.claim(now=self.now + timedelta(minutes=1))
         self.assertEqual(decision["state"], "creating")
+        self.assertEqual(decision["policy_version"], 1)
         target = self.identity.create_generation(
             entitlement, "bkk-a", external_id="target-key", usage_baseline_provenance="new"
         )
@@ -145,6 +146,28 @@ class RouteFailoverTest(unittest.TestCase):
         )
         self.assertIsNotNone(resumed["decision_id"])
         self.assertFalse(resumed["failover_blocked"])
+
+    def test_policy_revision_is_captured_by_automatic_decision(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
+        source = self.identity.create_generation(
+            entitlement, "sg-a", external_id="source-key", usage_baseline_provenance="new"
+        )
+        first = self.failover.configure_policy(
+            entitlement, enabled=True, failure_threshold=1, now=self.now
+        )
+        second = self.failover.configure_policy(
+            entitlement, enabled=True, failure_threshold=1, cooldown_seconds=600, now=self.now
+        )
+        self.assertEqual(first["policy_version"], 1)
+        self.assertEqual(second["policy_version"], 2)
+        observed = self.failover.observe(source, outcome="failure", observed_at=self.now)
+        self.assertIsNotNone(observed["decision_id"])
+        with self.database.connect() as connection:
+            decision = connection.execute(
+                "SELECT policy_version FROM failover_decisions WHERE decision_id = ?",
+                (observed["decision_id"],),
+            ).fetchone()
+        self.assertEqual(decision["policy_version"], 2)
 
     def test_region_budget_blocks_new_failover_decisions_and_is_observable(self):
         with self.database.connect() as connection:
@@ -240,6 +263,7 @@ class RouteFailoverTest(unittest.TestCase):
         self.assertEqual(global_control["migration_count"], 1)
         decision = self.failover.claim(now=self.now)
         self.assertEqual(decision["decision_id"], result["decision_ids"][0])
+        self.assertEqual(decision["policy_version"], 1)
 
     def test_protocol_profile_is_required_for_failover_and_drain(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
