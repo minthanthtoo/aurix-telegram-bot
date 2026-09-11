@@ -78,9 +78,13 @@ because it repeatedly returned task-gating and English fallback text.
   payload to `POST /api/auth/telegram`.
 - AuriX verifies the signature with the server-only `TELEGRAM_BOT_TOKEN`, then
   issues an opaque `HttpOnly; Secure; SameSite=Lax` session cookie.
-- `POST /api/chat` uses that cookie; no AuriX access token is pasted into the
-  browser.
-- `POST /api/auth/logout` revokes the process-local session.
+- `GET/POST /api/conversations` and the nested turn/attempt routes use that
+  cookie; no AuriX access token is pasted into the browser. These durable
+  routes own submitted source, reconnectable attempts, cancellation, and
+  explicit retry. The older `POST /api/chat` route remains available only as a
+  stateless compatibility path for already-integrated callers.
+- `POST /api/auth/logout` revokes the browser session in the configured session
+  store.
 
 For the standalone Login Widget, configure the domain once in BotFather for
 `@aurix_outline_vpn_bot` with `/setdomain ai.aurix-mart.tech`. Mini App login
@@ -99,6 +103,7 @@ Request:
 ```json
 {
   "mode": "translate",
+  "direction": "en_to_lisu",
   "model_id": "gemini-3.7-flash-high",
   "message": "Translate this sentence.",
   "history": []
