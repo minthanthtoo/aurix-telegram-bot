@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -219,13 +220,32 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                         (now.isoformat(),),
                     )
                 registry = EndpointRegistry(database, Fernet.generate_key())
-                assignment = registry.ensure_subscription_assignment(
-                    "source-sub",
-                    "basic_50gb",
-                    50 * 1024**3,
-                    protocol="outline",
-                    now=now,
-                )
+                def allocate_same_subscription(_attempt: int):
+                    return registry.ensure_subscription_assignment(
+                        "source-sub",
+                        "basic_50gb",
+                        50 * 1024**3,
+                        protocol="outline",
+                        now=now,
+                    )
+
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    assignments = list(executor.map(allocate_same_subscription, range(8)))
+                self.assertEqual({item.id for item in assignments}, {assignments[0].id})
+                assignment = assignments[0]
+                with database.connect() as connection:
+                    assignment_count = connection.execute(
+                        "SELECT COUNT(*) AS n FROM endpoint_assignments WHERE subscription_id = ?",
+                        ("source-sub",),
+                    ).fetchone()["n"]
+                    assignment_audits = connection.execute(
+                        """SELECT COUNT(*) AS n FROM audit_events
+                            WHERE action = 'endpoint_assignment_created'
+                              AND target_id = ?""",
+                        (assignment.id,),
+                    ).fetchone()["n"]
+                self.assertEqual(int(assignment_count), 1)
+                self.assertEqual(int(assignment_audits), 1)
                 self.assertEqual(assignment.endpoint_id, "legacy-default")
                 self.assertEqual(RouteFailoverService(database).decisions(limit=10), [])
                 self.assertEqual(IdentityService(database).generations_for_accounting(), [])

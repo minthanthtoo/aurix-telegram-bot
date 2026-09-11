@@ -1590,6 +1590,17 @@ class EndpointRegistry:
         timestamp = (now or datetime.now(UTC)).isoformat()
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            if isinstance(connection, _PostgresConnection):
+                # Lock the durable entitlement owner before checking for an
+                # assignment.  Without this parent-row lock, concurrent
+                # retries for the same subscription can both observe no
+                # assignment and one loses on the unique subscription index.
+                subscription = connection.execute(
+                    "SELECT id FROM subscriptions WHERE id = ? FOR UPDATE",
+                    (subscription_id,),
+                ).fetchone()
+                if subscription is None:
+                    raise ConnectivityError("subscription does not exist")
             existing = connection.execute(
                 "SELECT * FROM endpoint_assignments WHERE subscription_id = ?",
                 (subscription_id,),
