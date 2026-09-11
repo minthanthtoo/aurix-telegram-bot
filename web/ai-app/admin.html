@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101828">
+    <title>AuriX AI · Admin</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="admin-page">
+    <div class="admin-shell">
+      <header class="admin-topbar">
+        <a class="brand" href="/">AuriX <span>AI</span></a>
+        <nav class="app-nav" aria-label="AuriX AI navigation">
+          <a class="app-nav-link" href="/">Assistant</a>
+          <a class="app-nav-link active" href="/admin" aria-current="page">API console</a>
+          <a class="app-nav-link" href="/docs/ai-api">Developer guide</a>
+        </nav>
+        <div class="admin-session">
+          <span id="admin-user" class="admin-user" hidden></span>
+          <button id="admin-logout" class="button-quiet" type="button" hidden>Sign out</button>
+        </div>
+      </header>
+
+      <section id="admin-auth" class="panel admin-auth" aria-labelledby="admin-auth-title">
+        <p class="eyebrow">Private workspace</p>
+        <h1 id="admin-auth-title">Sign in to manage AI access</h1>
+        <p id="admin-auth-copy" class="hint">Sign in with any Telegram account to manage AuriX AI access.</p>
+        <div id="admin-telegram-login"></div>
+        <div id="admin-auth-error" class="admin-error" role="alert" hidden></div>
+      </section>
+
+      <main id="admin-app" hidden>
+        <div class="admin-layout">
+          <aside class="admin-sidebar" aria-label="Admin navigation">
+            <p class="eyebrow">Workspace</p>
+            <h1>Admin console</h1>
+            <p class="sidebar-copy">Keep partner access visible, bounded, and easy to rotate.</p>
+            <nav class="admin-nav">
+              <a class="admin-nav-link active" href="#overview">Overview</a>
+              <a class="admin-nav-link" href="#sites">Partner sites</a>
+              <a class="admin-nav-link" href="#activity">Activity</a>
+              <a class="admin-nav-link" href="#guide">Integration guide</a>
+            </nav>
+            <div class="sidebar-note">
+              <span class="status-dot"></span>
+              <span>Keys are shown once at creation.</span>
+            </div>
+          </aside>
+
+          <section class="admin-main">
+            <header class="admin-heading">
+              <div>
+                <p class="eyebrow">API access</p>
+                <h2>Partner keys</h2>
+                <p class="admin-lede">Create and rotate server-to-server access for trusted websites.</p>
+              </div>
+              <button id="create-account" type="button">Create site key</button>
+            </header>
+
+            <div id="admin-flash" class="admin-flash" role="status" hidden></div>
+
+            <section id="overview" class="metric-grid" aria-label="Usage overview">
+              <article class="metric-card">
+                <span class="metric-label">Active sites</span>
+                <strong id="metric-sites">—</strong>
+                <span class="metric-detail">partner accounts</span>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Active keys</span>
+                <strong id="metric-keys">—</strong>
+                <span class="metric-detail">revocable credentials</span>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Requests</span>
+                <strong id="metric-requests">—</strong>
+                <span id="metric-period" class="metric-detail">current period</span>
+              </article>
+              <article class="metric-card accent-metric">
+                <span class="metric-label">Total tokens</span>
+                <strong id="metric-tokens">—</strong>
+                <span class="metric-detail">reported by providers</span>
+              </article>
+            </section>
+
+            <section id="sites" class="panel admin-section">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Access inventory</p>
+                  <h3>Connected sites</h3>
+                  <p class="hint">Inspect metadata and revoke credentials without exposing old secret values.</p>
+                </div>
+                <button id="refresh-accounts" class="button-quiet" type="button">Refresh</button>
+              </div>
+              <div class="inventory-toolbar" aria-label="Filter connected sites">
+                <label class="inventory-filter" for="account-filter">View
+                  <select id="account-filter">
+                    <option value="active">Active accounts</option>
+                    <option value="all">All accounts</option>
+                    <option value="revoked">Revoked history</option>
+                  </select>
+                </label>
+                <label class="inventory-search" for="account-search">Search
+                  <input id="account-search" type="search" autocomplete="off" placeholder="Site name or account ID">
+                </label>
+                <span id="account-count" class="inventory-count" role="status"></span>
+              </div>
+              <div id="accounts-list" class="accounts-list" aria-live="polite"></div>
+            </section>
+
+            <section id="activity" class="panel admin-section">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Prompt-free request records</p>
+                  <h3>Recent activity</h3>
+                  <p class="hint">Request IDs, models, outcomes, and nullable token usage. Content is never shown here.</p>
+                </div>
+                <button id="refresh-activity" class="button-quiet" type="button">Refresh</button>
+              </div>
+              <div class="inventory-toolbar activity-toolbar" aria-label="Filter request activity">
+                <label class="inventory-filter" for="activity-account-filter">Account
+                  <select id="activity-account-filter">
+                    <option value="">All accounts</option>
+                  </select>
+                </label>
+                <label class="inventory-filter" for="activity-status-filter">Status
+                  <select id="activity-status-filter">
+                    <option value="">All outcomes</option>
+                    <option value="completed">Completed</option>
+                    <option value="failed">Failed</option>
+                  </select>
+                </label>
+                <label class="inventory-search" for="activity-model-filter">Model
+                  <input id="activity-model-filter" type="search" autocomplete="off" placeholder="Model ID">
+                </label>
+                <label class="inventory-search" for="activity-endpoint-filter">Endpoint
+                  <input id="activity-endpoint-filter" type="search" autocomplete="off" placeholder="/v1/chat/completions">
+                </label>
+                <label class="inventory-search" for="activity-key-filter">Key ID
+                  <input id="activity-key-filter" type="search" autocomplete="off" placeholder="key_…">
+                </label>
+                <label class="inventory-search" for="activity-user-filter">User ID
+                  <input id="activity-user-filter" type="search" autocomplete="off" placeholder="Optional site user">
+                </label>
+                <button id="activity-clear-filters" class="button-quiet" type="button">Clear</button>
+              </div>
+              <div class="activity-pagination">
+                <span id="activity-page-label" class="hint">Latest activity</span>
+                <div>
+                  <button id="activity-previous" class="button-quiet" type="button" disabled>Previous</button>
+                  <button id="activity-next" class="button-quiet" type="button" disabled>Next</button>
+                </div>
+              </div>
+              <div id="activity-list" class="activity-list" aria-live="polite"></div>
+            </section>
+
+            <section id="guide" class="panel guide-card">
+              <div class="guide-icon" aria-hidden="true">↗</div>
+              <div>
+                <p class="eyebrow">For the partner's coding agent</p>
+                <h3>Complete AuriX integration guide</h3>
+                <p class="hint">The guide covers standard chat, streaming, tools, images, embeddings, audio, context, quotas, and retries.</p>
+                <a class="guide-link" href="/docs/ai-api" target="_blank" rel="noopener">Open the integration guide in your browser ↗</a>
+              </div>
+            </section>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <dialog id="account-dialog" class="admin-dialog">
+      <form id="account-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">New partner</p>
+            <h2>Create site access</h2>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog="account-dialog" aria-label="Close">×</button>
+        </div>
+        <p class="hint">This creates an all-capability partner account and issues its first key.</p>
+        <label>Site name
+          <input id="account-name" name="name" required maxlength="160" placeholder="Example website">
+        </label>
+        <label>Requests per minute
+          <input id="account-rpm" name="requests_per_minute" type="number" min="1" max="600" value="60" required>
+        </label>
+        <label>Initial key label
+          <input id="account-key-label" name="key_label" required maxlength="160" value="production">
+        </label>
+        <label>Key lifetime
+          <select id="account-expiry" name="expires_in_days">
+            <option value="90">90 days</option>
+            <option value="365">1 year</option>
+            <option value="null">No expiry</option>
+          </select>
+        </label>
+        <p id="account-form-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button class="button-quiet" type="button" data-close-dialog="account-dialog">Cancel</button>
+          <button id="account-submit" type="submit">Create and show key</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="issue-dialog" class="admin-dialog">
+      <form id="issue-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Key rotation</p>
+            <h2>Issue another key</h2>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog="issue-dialog" aria-label="Close">×</button>
+        </div>
+        <p id="issue-account-copy" class="hint"></p>
+        <input id="issue-account-id" type="hidden">
+        <label>Key label
+          <input id="issue-label" required maxlength="160" value="rotation">
+        </label>
+        <label>Key lifetime
+          <select id="issue-expiry">
+            <option value="90">90 days</option>
+            <option value="365">1 year</option>
+            <option value="null">No expiry</option>
+          </select>
+        </label>
+        <p id="issue-form-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button class="button-quiet" type="button" data-close-dialog="issue-dialog">Cancel</button>
+          <button id="issue-submit" type="submit">Issue key</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="secret-dialog" class="admin-dialog secret-dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">One-time reveal</p>
+          <h2>Copy this key now</h2>
+        </div>
+        <button class="dialog-close" type="button" data-close-dialog="secret-dialog" aria-label="Close">×</button>
+      </div>
+      <p id="secret-copy" class="hint">This value cannot be recovered after this window is closed.</p>
+      <div class="secret-value-row">
+        <code id="secret-value"></code>
+        <button id="copy-secret" type="button">Copy</button>
+      </div>
+      <p class="secret-warning">Store it immediately in the partner site's backend secret manager. Never put it in browser code or Git.</p>
+      <div class="dialog-actions">
+        <button class="button-quiet" type="button" data-close-dialog="secret-dialog">I saved it</button>
+      </div>
+    </dialog>
+
+    <script src="https://telegram.org/js/telegram-widget.js?22"></script>
+    <script src="/shared.js"></script>
+    <script src="/admin.js" defer></script>
+  </body>
+</html>

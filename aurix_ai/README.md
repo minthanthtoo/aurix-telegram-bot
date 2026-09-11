@@ -44,6 +44,12 @@ was interrupted. It reuses the server-frozen source and context snapshot, so a
 changed browser draft cannot alter a retry; completed attempts require a new
 turn instead.
 
+The API console reads the same account ledger without exposing bearer secrets.
+Usage summaries can be filtered by account, key, model, endpoint, outcome, and
+site user; request rows are paginated independently of the full-data summary.
+Administrator account/key mutations write non-secret audit events containing
+the actor, target, outcome, timestamp, and HTTP request correlation ID.
+
 The root `ai_router.py`, `ai_api_keys.py`, and `ai_web_api.py` files are
 compatibility shims for existing scripts and imports. New code should import
 from `aurix_ai.router`, `aurix_ai.api_keys`, and `aurix_ai.web_api` directly.

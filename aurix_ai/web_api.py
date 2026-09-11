@@ -1348,15 +1348,36 @@ class AuriXAIApplication:
         start_at: str,
         end_at: str,
         limit: int,
+        offset: int = 0,
+        key_id: str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
         accounts = self.api_keys.list_accounts()
         summaries = self.api_keys.usage_summary(
-            account_id=account_id, start_at=start_at, end_at=end_at
+            account_id=account_id,
+            start_at=start_at,
+            end_at=end_at,
+            key_id=key_id,
+            model_id=model_id,
+            endpoint=endpoint,
+            status=status,
         )
-        events = self.api_keys.usage_events(
-            account_id=account_id, start_at=start_at, end_at=end_at, limit=limit
+        event_page = self.api_keys.usage_event_page(
+            account_id=account_id,
+            start_at=start_at,
+            end_at=end_at,
+            limit=limit,
+            offset=offset,
+            key_id=key_id,
+            model_id=model_id,
+            endpoint=endpoint,
+            status=status,
+            user_id=user_id,
         )
         summary_by_id = {item["account_id"]: item for item in summaries}
         keys_by_account: dict[str, list[dict[str, Any]]] = {}
@@ -1391,7 +1412,37 @@ class AuriXAIApplication:
             "accounts": accounts if account_id is None else [
                 account for account in accounts if account["id"] == account_id
             ],
-            "requests": events,
+            "requests": event_page["items"],
+            "pagination": {
+                key: event_page[key]
+                for key in ("offset", "limit", "has_more", "next_offset")
+            },
+            "filters": {
+                key: value
+                for key, value in {
+                    "account_id": account_id,
+                    "key_id": key_id,
+                    "model_id": model_id,
+                    "endpoint": endpoint,
+                    "status": status,
+                    "user_id": user_id,
+                }.items()
+                if value
+            },
+        }
+
+    @staticmethod
+    def _admin_audit_context(
+        actor: VerifiedTelegramUser | None,
+        *,
+        action: str,
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "action": action,
+            "actor_type": "telegram_user" if actor is not None else "operator_token",
+            "actor_id": str(actor.telegram_id) if actor is not None else None,
+            "request_id": request_id,
         }
 
     def admin_create_account(
@@ -1399,6 +1450,7 @@ class AuriXAIApplication:
         body: dict[str, Any],
         authorization: str | None,
         cookie_header: str | None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         """Create an all-capability external account and issue its first key."""
 
@@ -1418,13 +1470,31 @@ class AuriXAIApplication:
             requests_per_minute=requests_per_minute,
             owner_type=owner_type,
             owner_id=owner_id,
+            audit_context=self._admin_audit_context(
+                actor, action="account.create", request_id=request_id
+            ),
         )
         try:
             issued = self.api_keys.issue_key(
-                account["id"], label=label, expires_at=expires_at
+                account["id"],
+                label=label,
+                expires_at=expires_at,
+                audit_context=self._admin_audit_context(
+                    actor, action="key.issue", request_id=request_id
+                ),
             )
         except Exception:
             self.api_keys.revoke_account(account["id"])
+            self.api_keys.record_audit_event(
+                action="key.issue",
+                actor_type="telegram_user" if actor is not None else "operator_token",
+                actor_id=str(actor.telegram_id) if actor is not None else None,
+                target_type="account",
+                target_id=account["id"],
+                outcome="failure",
+                request_id=request_id,
+                metadata={"reason": "initial_key_issue_failed"},
+            )
             raise
         return {
             "account": account,
@@ -1436,18 +1506,35 @@ class AuriXAIApplication:
         body: dict[str, Any],
         authorization: str | None,
         cookie_header: str | None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
-        self.authenticate_admin(authorization, cookie_header)
+        actor = self.authenticate_admin(authorization, cookie_header)
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
         account_id = _text(body.get("account_id"), name="account_id", maximum=80)
         label = _text(body.get("label", "rotation"), name="label", maximum=160)
         expires_at = _expires_at(body.get("expires_in_days", 90))
-        issued = self.api_keys.issue_key(
-            account_id,
-            label=label,
-            expires_at=expires_at,
-        )
+        try:
+            issued = self.api_keys.issue_key(
+                account_id,
+                label=label,
+                expires_at=expires_at,
+                audit_context=self._admin_audit_context(
+                    actor, action="key.issue", request_id=request_id
+                ),
+            )
+        except Exception:
+            self.api_keys.record_audit_event(
+                action="key.issue",
+                actor_type="telegram_user" if actor is not None else "operator_token",
+                actor_id=str(actor.telegram_id) if actor is not None else None,
+                target_type="account",
+                target_id=account_id,
+                outcome="failure",
+                request_id=request_id,
+                metadata={"label": label},
+            )
+            raise
         return {"key": _issued_key_payload(issued)}
 
     def admin_revoke_key(
@@ -1455,13 +1542,29 @@ class AuriXAIApplication:
         key_id: str,
         authorization: str | None,
         cookie_header: str | None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
-        self.authenticate_admin(authorization, cookie_header)
+        actor = self.authenticate_admin(authorization, cookie_header)
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
         clean_key_id = _text(key_id, name="key_id", maximum=80)
-        revoked = self.api_keys.revoke_key(clean_key_id)
+        revoked = self.api_keys.revoke_key(
+            clean_key_id,
+            audit_context=self._admin_audit_context(
+                actor, action="key.revoke", request_id=request_id
+            ),
+        )
         if not revoked:
+            self.api_keys.record_audit_event(
+                action="key.revoke",
+                actor_type="telegram_user" if actor is not None else "operator_token",
+                actor_id=str(actor.telegram_id) if actor is not None else None,
+                target_type="key",
+                target_id=clean_key_id,
+                outcome="failure",
+                request_id=request_id,
+                metadata={"reason": "active_key_not_found"},
+            )
             raise APIKeyStoreError("active API key not found")
         return {"revoked": True, "key_id": clean_key_id}
 
@@ -1472,6 +1575,11 @@ class AuriXAIApplication:
         start_at: str,
         end_at: str,
         limit: int,
+        key_id: str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
@@ -1484,6 +1592,11 @@ class AuriXAIApplication:
                 start_at=start_at,
                 end_at=end_at,
                 limit=limit,
+                key_id=key_id,
+                model_id=model_id,
+                endpoint=endpoint,
+                status=status,
+                user_id=user_id,
             ),
         }
 
@@ -1978,6 +2091,28 @@ def _usage_period(query: str) -> tuple[str, str, str | None, int]:
     except ValueError as exc:
         raise ValueError("limit must be an integer") from exc
     return start_at, end_at, account_id, max(1, min(limit, 1_000))
+
+
+def _usage_filters(query: str) -> dict[str, Any]:
+    values = parse_qs(query, keep_blank_values=False)
+    filters: dict[str, Any] = {}
+    for name in ("key_id", "model_id", "endpoint", "status", "user_id"):
+        value = values.get(name, [None])[0]
+        if value:
+            clean = str(value).strip()
+            if len(clean) > 200:
+                raise ValueError(f"{name} is too long")
+            filters[name] = clean
+        else:
+            filters[name] = None
+    if filters["status"] is not None and filters["status"] not in {"completed", "failed"}:
+        raise ValueError("status must be completed or failed")
+    try:
+        offset = int(values.get("offset", ["0"])[0])
+    except ValueError as exc:
+        raise ValueError("offset must be an integer") from exc
+    filters["offset"] = max(0, offset)
+    return filters
 
 
 def _request_context(body: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -2487,6 +2622,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     self._read_json(),
                     self.headers.get("Authorization"),
                     self.headers.get("Cookie"),
+                    request_id=self._request_id,
                 )
                 self._write(201, payload, request_id=self._request_id)
                 return
@@ -2496,6 +2632,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     self._read_json(),
                     self.headers.get("Authorization"),
                     self.headers.get("Cookie"),
+                    request_id=self._request_id,
                 )
                 self._write(201, payload, request_id=self._request_id)
                 return
@@ -2506,6 +2643,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     key_id,
                     self.headers.get("Authorization"),
                     self.headers.get("Cookie"),
+                    request_id=self._request_id,
                 )
                 self._write(200, payload, request_id=self._request_id)
                 return
@@ -2514,6 +2652,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     self.headers.get("Authorization"), self.headers.get("Cookie")
                 )
                 start_at, end_at, account_id, limit = _usage_period(query)
+                filters = _usage_filters(query)
                 requested_format = parse_qs(query, keep_blank_values=False).get(
                     "format", ["summary"]
                 )[0].lower()
@@ -2525,6 +2664,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                             start_at=start_at,
                             end_at=end_at,
                             limit=limit,
+                            **{key: value for key, value in filters.items() if key != "offset"},
                         ),
                     )
                     return
@@ -2533,6 +2673,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     start_at=start_at,
                     end_at=end_at,
                     limit=limit,
+                    **filters,
                 )
                 if path == "/api/admin/accounts":
                     self._write(

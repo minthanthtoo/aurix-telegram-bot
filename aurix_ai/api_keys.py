@@ -17,7 +17,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from migrations import Migration, apply_migrations
 from persistence import open_sqlite_connection
@@ -411,6 +411,42 @@ API_KEY_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS api_usage_account_user_time ON api_usage(account_id, user_id, created_at)",
         ),
     ),
+    Migration(
+        6,
+        "administrator_audit_events",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS api_admin_audit (
+                   id TEXT PRIMARY KEY,
+                   action TEXT NOT NULL,
+                   actor_type TEXT NOT NULL,
+                   actor_id TEXT,
+                   target_type TEXT NOT NULL,
+                   target_id TEXT,
+                   outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure')),
+                   request_id TEXT,
+                   metadata_json TEXT,
+                   created_at TEXT NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS api_admin_audit_target_time ON api_admin_audit(target_type, target_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS api_admin_audit_actor_time ON api_admin_audit(actor_type, actor_id, created_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS api_admin_audit (
+                   id TEXT PRIMARY KEY,
+                   action TEXT NOT NULL,
+                   actor_type TEXT NOT NULL,
+                   actor_id TEXT,
+                   target_type TEXT NOT NULL,
+                   target_id TEXT,
+                   outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure')),
+                   request_id TEXT,
+                   metadata_json TEXT,
+                   created_at TEXT NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS api_admin_audit_target_time ON api_admin_audit(target_type, target_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS api_admin_audit_actor_time ON api_admin_audit(actor_type, actor_id, created_at)",
+        ),
+    ),
 )
 
 
@@ -479,6 +515,107 @@ class APIKeyStore:
         if pool is not None:
             pool.close()
 
+    @staticmethod
+    def _audit_id() -> str:
+        return f"audit_{secrets.token_hex(12)}"
+
+    @staticmethod
+    def _insert_audit(
+        connection: Any,
+        *,
+        action: str,
+        actor_type: str,
+        actor_id: str | None,
+        target_type: str,
+        target_id: str | None,
+        outcome: str,
+        request_id: str | None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        if outcome not in {"success", "failure"}:
+            raise APIKeyStoreError("audit outcome is invalid")
+        connection.execute(
+            """INSERT INTO api_admin_audit
+               (id, action, actor_type, actor_id, target_type, target_id,
+                outcome, request_id, metadata_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                APIKeyStore._audit_id(),
+                str(action),
+                str(actor_type),
+                str(actor_id) if actor_id is not None else None,
+                str(target_type),
+                str(target_id) if target_id is not None else None,
+                outcome,
+                str(request_id) if request_id else None,
+                json.dumps(dict(metadata), ensure_ascii=False) if isinstance(metadata, Mapping) else None,
+                _now(),
+            ),
+        )
+
+    def record_audit_event(
+        self,
+        *,
+        action: str,
+        actor_type: str,
+        actor_id: str | None,
+        target_type: str,
+        target_id: str | None,
+        outcome: str,
+        request_id: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Record non-secret administrator activity for support and review."""
+        with self.connect() as connection:
+            self._insert_audit(
+                connection,
+                action=action,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                target_type=target_type,
+                target_id=target_id,
+                outcome=outcome,
+                request_id=request_id,
+                metadata=metadata,
+            )
+
+    def audit_events(
+        self,
+        *,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        bounded_limit = max(1, min(int(limit), 1_000))
+        filters: list[str] = []
+        params: list[Any] = []
+        if target_type:
+            filters.append("target_type = ?")
+            params.append(str(target_type).strip())
+        if target_id:
+            filters.append("target_id = ?")
+            params.append(str(target_id).strip())
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        params.append(bounded_limit)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT id, action, actor_type, actor_id, target_type, target_id,
+                          outcome, request_id, metadata_json, created_at
+                   FROM api_admin_audit {where}
+                   ORDER BY created_at DESC, id DESC LIMIT ?""",
+                params,
+            ).fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            raw_metadata = item.pop("metadata_json", None)
+            try:
+                item["metadata"] = json.loads(raw_metadata) if raw_metadata else None
+            except (TypeError, ValueError, json.JSONDecodeError):
+                item["metadata"] = None
+            events.append(item)
+        return events
+
     def create_account(
         self,
         name: str,
@@ -489,6 +626,7 @@ class APIKeyStore:
         requests_per_minute: int = 60,
         owner_type: str = "external_site",
         owner_id: str | None = None,
+        audit_context: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         clean_name = str(name).strip()
         if not clean_name or len(clean_name) > 160:
@@ -532,6 +670,18 @@ class APIKeyStore:
                 )
             except sqlite3.IntegrityError as exc:
                 raise APIKeyStoreError("account_id already exists") from exc
+            if audit_context is not None:
+                self._insert_audit(
+                    connection,
+                    action=str(audit_context.get("action", "account.create")),
+                    actor_type=str(audit_context.get("actor_type", "operator")),
+                    actor_id=audit_context.get("actor_id"),
+                    target_type="account",
+                    target_id=resolved_id,
+                    outcome=str(audit_context.get("outcome", "success")),
+                    request_id=audit_context.get("request_id"),
+                    metadata={"name": clean_name, "owner_type": clean_owner_type},
+                )
         return {
             "id": resolved_id,
             "name": clean_name,
@@ -550,6 +700,7 @@ class APIKeyStore:
         *,
         label: str = "default",
         expires_at: str | None = None,
+        audit_context: Mapping[str, Any] | None = None,
     ) -> IssuedAPIKey:
         clean_account_id = str(account_id).strip()
         clean_label = str(label).strip()
@@ -590,6 +741,18 @@ class APIKeyStore:
                     expires_at,
                 ),
             )
+            if audit_context is not None:
+                self._insert_audit(
+                    connection,
+                    action=str(audit_context.get("action", "key.issue")),
+                    actor_type=str(audit_context.get("actor_type", "operator")),
+                    actor_id=audit_context.get("actor_id"),
+                    target_type="key",
+                    target_id=key_id,
+                    outcome=str(audit_context.get("outcome", "success")),
+                    request_id=audit_context.get("request_id"),
+                    metadata={"account_id": clean_account_id, "label": clean_label, "expires_at": expires_at},
+                )
         return IssuedAPIKey(clean_account_id, key_id, clean_label, token, token_prefix, expires_at)
 
     def authenticate(self, token: str | None) -> APIKeyPrincipal | None:
@@ -705,7 +868,12 @@ class APIKeyStore:
             )
         return next(account for account in self.list_accounts() if account["id"] == clean_account_id)
 
-    def revoke_key(self, key_id: str) -> bool:
+    def revoke_key(
+        self,
+        key_id: str,
+        *,
+        audit_context: Mapping[str, Any] | None = None,
+    ) -> bool:
         now = _now()
         with self.connect() as connection:
             result = connection.execute(
@@ -714,6 +882,18 @@ class APIKeyStore:
                    WHERE id = ? AND status = 'active'""",
                 (now, str(key_id).strip()),
             )
+            if result.rowcount == 1 and audit_context is not None:
+                self._insert_audit(
+                    connection,
+                    action=str(audit_context.get("action", "key.revoke")),
+                    actor_type=str(audit_context.get("actor_type", "operator")),
+                    actor_id=audit_context.get("actor_id"),
+                    target_type="key",
+                    target_id=str(key_id).strip(),
+                    outcome=str(audit_context.get("outcome", "success")),
+                    request_id=audit_context.get("request_id"),
+                    metadata=None,
+                )
         return result.rowcount == 1
 
     def revoke_account(self, account_id: str) -> bool:
@@ -803,6 +983,10 @@ class APIKeyStore:
         account_id: str | None = None,
         start_at: str | None = None,
         end_at: str | None = None,
+        key_id: str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        status: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return account-level request and token totals for a time window."""
 
@@ -819,6 +1003,15 @@ class APIKeyStore:
         if end_at:
             join_filters.append("u.created_at < ?")
             join_params.append(end_at)
+        for column, value in (
+            ("u.key_id", key_id),
+            ("u.model_id", model_id),
+            ("u.endpoint", endpoint),
+            ("u.status", status),
+        ):
+            if value:
+                join_filters.append(f"{column} = ?")
+                join_params.append(str(value).strip())
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         join = " AND ".join(join_filters)
         params = join_params + where_params
@@ -871,10 +1064,17 @@ class APIKeyStore:
         start_at: str | None = None,
         end_at: str | None = None,
         limit: int = 100,
+        offset: int = 0,
+        key_id: str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return prompt-free request records for support/admin inspection."""
 
         bounded_limit = max(1, min(int(limit), 1_000))
+        bounded_offset = max(0, int(offset))
         filters = []
         params: list[Any] = []
         if account_id:
@@ -886,8 +1086,19 @@ class APIKeyStore:
         if end_at:
             filters.append("u.created_at < ?")
             params.append(end_at)
+        for column, value in (
+            ("u.key_id", key_id),
+            ("u.model_id", model_id),
+            ("u.endpoint", endpoint),
+            ("u.status", status),
+            ("u.user_id", user_id),
+        ):
+            if value:
+                filters.append(f"{column} = ?")
+                params.append(str(value).strip())
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         params.append(bounded_limit)
+        params.append(bounded_offset)
         with self.connect() as connection:
             rows = connection.execute(
                 f"""SELECT u.request_id, u.account_id, a.name AS account_name,
@@ -901,7 +1112,7 @@ class APIKeyStore:
                    JOIN api_accounts AS a ON a.id = u.account_id
                    {where}
                    ORDER BY u.created_at DESC, u.request_id DESC
-                   LIMIT ?""",
+                   LIMIT ? OFFSET ?""",
                 params,
             ).fetchall()
         events = []
@@ -915,6 +1126,43 @@ class APIKeyStore:
             events.append(item)
         return events
 
+    def usage_event_page(
+        self,
+        *,
+        account_id: str | None = None,
+        start_at: str | None = None,
+        end_at: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        key_id: str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        bounded_limit = max(1, min(int(limit), 1_000))
+        bounded_offset = max(0, int(offset))
+        events = self.usage_events(
+            account_id=account_id,
+            start_at=start_at,
+            end_at=end_at,
+            limit=bounded_limit + 1,
+            offset=bounded_offset,
+            key_id=key_id,
+            model_id=model_id,
+            endpoint=endpoint,
+            status=status,
+            user_id=user_id,
+        )
+        has_more = len(events) > bounded_limit
+        return {
+            "items": events[:bounded_limit],
+            "offset": bounded_offset,
+            "limit": bounded_limit,
+            "has_more": has_more,
+            "next_offset": bounded_offset + bounded_limit if has_more else None,
+        }
+
     def usage_9router_events(
         self,
         *,
@@ -922,6 +1170,11 @@ class APIKeyStore:
         start_at: str | None = None,
         end_at: str | None = None,
         limit: int = 1_000,
+        key_id: str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Export prompt-free events using 9Router's usageHistory shape."""
 
@@ -930,6 +1183,11 @@ class APIKeyStore:
             start_at=start_at,
             end_at=end_at,
             limit=limit,
+            key_id=key_id,
+            model_id=model_id,
+            endpoint=endpoint,
+            status=status,
+            user_id=user_id,
         )
         return [
             {

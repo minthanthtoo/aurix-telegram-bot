@@ -11,7 +11,13 @@ from pathlib import Path
 
 from aurix_ai.api_keys import APIKeyStore, reconcile_usage_events
 from aurix_ai.router import AIChatResult
-from aurix_ai.web_api import AuriXAIApplication, make_handler
+from aurix_ai.web_api import (
+    AISessionStore,
+    AuriXAIApplication,
+    _normalize_sse_event,
+    make_handler,
+)
+from telegram_web_app import VerifiedTelegramUser
 
 
 class _FakeRouter:
@@ -24,6 +30,55 @@ class _FakeRouter:
             returned_model="fake-provider-model",
             usage={"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9},
         )
+
+
+class _FeatureRouter:
+    model = "ag/gemini-3.7-flash-high"
+
+    def openai_chat(self, payload, **kwargs):
+        return {
+            "id": "upstream-chat-1",
+            "model": payload["model"],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
+        }
+
+    def request_json(self, path, payload, **kwargs):
+        self.last_embedding = (path, payload)
+        return {
+            "object": "list",
+            "model": payload["model"],
+            "data": [
+                {"object": "embedding", "index": index, "embedding": [0.1, 0.2]}
+                for index, _ in enumerate(
+                    payload["input"] if isinstance(payload["input"], list) else [payload["input"]]
+                )
+            ],
+            "usage": {"prompt_tokens": 4, "total_tokens": 4},
+        }
+
+    def request_raw(self, path, data, **kwargs):
+        self.last_audio = (path, data, kwargs)
+        return {"body": b"RIFF-audio", "content_type": "audio/wav", "usage": None}
+
+    def list_models(self, category=None):
+        return [{"id": f"{category or 'chat'}/test", "object": "model", "owned_by": "test"}]
 
 
 class APIKeyStoreTest(unittest.TestCase):
@@ -70,7 +125,7 @@ class APIKeyStoreTest(unittest.TestCase):
             versions = connection.execute(
                 "SELECT version FROM schema_migrations WHERE component = 'ai_api_keys' ORDER BY version"
             ).fetchall()
-        self.assertEqual([row[0] for row in versions], [1, 2, 3, 4, 5])
+        self.assertEqual([row[0] for row in versions], [1, 2, 3, 4, 5, 6])
 
     def test_account_policy_can_be_updated_without_rotating_key(self):
         account = self.store.create_account("Initial site", allowed_modes=["english"])
@@ -119,6 +174,31 @@ class APIKeyStoreTest(unittest.TestCase):
         self.assertEqual(updated.returncode, 0, updated.stderr)
         self.assertIn('"requests_per_minute": 15', updated.stdout)
 
+
+class AISessionStoreTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.path = Path(self.tempdir.name) / "sessions.db"
+        self.user = VerifiedTelegramUser(12345, "Auri", "X", "aurix", "en")
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_durable_session_survives_store_reinitialization_and_refreshes(self):
+        first = AISessionStore(3600, self.path)
+        token = first.issue(self.user)
+        self.assertEqual(first.get(token), self.user)
+
+        second = AISessionStore(3600, self.path)
+        self.assertEqual(second.get(token), self.user)
+        with second._connect() as connection:
+            row = connection.execute(
+                "SELECT expires_at, last_seen_at FROM ai_web_sessions"
+            ).fetchone()
+        self.assertGreaterEqual(row["expires_at"], row["last_seen_at"])
+        second.revoke(token)
+        self.assertIsNone(second.get(token))
+
     def test_container_includes_api_store_runtime_dependencies(self):
         dockerfile = (Path(__file__).resolve().parent / "deploy" / "aurix-ai.Dockerfile").read_text()
         self.assertIn("COPY aurix_ai /app/aurix_ai", dockerfile)
@@ -163,13 +243,13 @@ class ExternalAPIHTTPTest(unittest.TestCase):
             requests_per_minute=20,
         )
         self.key = self.store.issue_key(account["id"], label="production").token
-        application = AuriXAIApplication(
+        self.application = AuriXAIApplication(
             _FakeRouter(),
             access_token="legacy-only-test",
             api_keys=self.store,
             admin_token="admin-secret",
         )
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(application))
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.application))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.server.server_address[1]
@@ -191,16 +271,51 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         connection.close()
         return response.status, payload
 
-    def admin_request(self, path, token=None):
+    def admin_request(self, path, token=None, cookie=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
         headers = {}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        if cookie is not None:
+            headers["Cookie"] = f"aurix_ai_session={cookie}"
         connection.request("GET", path, headers=headers)
         response = connection.getresponse()
         payload = json.loads(response.read())
         connection.close()
         return response.status, payload
+
+    def admin_json_request(self, method, path, body):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer admin-secret",
+            "X-AuriX-Admin": "1",
+        }
+        connection.request(method, path, json.dumps(body).encode(), headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        connection.close()
+        return response.status, payload
+
+    def test_browser_readable_integration_guide_avoids_attachment_download(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request("GET", "/api/docs/external")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("Content-Type"), "text/plain; charset=utf-8")
+        self.assertIsNone(response.getheader("Content-Disposition"))
+        self.assertIn("AuriX AI API integration guide", body)
+        connection.close()
+
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request("GET", "/docs/ai-api")
+        response = connection.getresponse()
+        html = response.read().decode("utf-8")
+        self.assertEqual(response.status, 200)
+        self.assertIn("Build an assistant.", html)
+        self.assertIn("/api-guide.js", html)
+        connection.close()
 
     def test_external_api_uses_account_key_and_policy(self):
         status, payload = self.request({"mode": "translate", "message": "Hello"})
@@ -242,6 +357,14 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(export["events"][0]["promptTokens"], 4)
         self.assertEqual(export["events"][0]["completionTokens"], 5)
         self.assertIsNone(export["events"][0]["apiKey"])
+
+    def test_any_authenticated_telegram_user_can_open_admin_console(self):
+        session_token = self.application.sessions.issue(
+            VerifiedTelegramUser(987654321, "Regular", "User", "regular_user", "en")
+        )
+        status, report = self.admin_request("/api/admin/usage", cookie=session_token)
+        self.assertEqual(status, 200)
+        self.assertIn("accounts", report)
 
     def test_external_api_attributes_usage_to_site_user_and_conversation(self):
         status, payload = self.request(
@@ -310,6 +433,149 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertTrue(self.store.revoke_key(principal.key_id))
         status, _ = self.request({"mode": "translate", "message": "Hello"}, token=self.key)
         self.assertEqual(status, 401)
+
+    def test_admin_can_create_issue_list_and_revoke_partner_key(self):
+        status, created = self.admin_json_request(
+            "POST",
+            "/api/admin/accounts",
+            {
+                "name": "Admin-created site",
+                "requests_per_minute": 120,
+                "key_label": "production",
+                "expires_in_days": 90,
+            },
+        )
+        self.assertEqual(status, 201)
+        self.assertTrue(created["key"]["token"].startswith("ak_live_"))
+        account_id = created["account"]["id"]
+        key_id = created["key"]["key_id"]
+
+        status, report = self.admin_request("/api/admin/accounts", token="admin-secret")
+        self.assertEqual(status, 200)
+        account = next(item for item in report["accounts"] if item["id"] == account_id)
+        self.assertEqual(account["requests_per_minute"], 120)
+        self.assertEqual(account["keys"][0]["id"], key_id)
+        self.assertNotIn("token", account["keys"][0])
+
+        status, issued = self.admin_json_request(
+            "POST",
+            "/api/admin/keys",
+            {"account_id": account_id, "label": "staging", "expires_in_days": 30},
+        )
+        self.assertEqual(status, 201)
+        self.assertTrue(issued["key"]["token"].startswith("ak_live_"))
+
+        status, revoked = self.admin_json_request(
+            "POST",
+            f"/api/admin/keys/{key_id}/revoke",
+            {},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(revoked["revoked"])
+        self.assertIsNone(self.store.authenticate(created["key"]["token"]))
+
+    def test_admin_mutations_reject_cross_origin_and_missing_header(self):
+        for extra in ({}, {"X-AuriX-Admin": "1", "Origin": "https://untrusted.example"}):
+            connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+            connection.request("POST", "/api/admin/accounts", json.dumps({"name": "Blocked"}),
+                               {"Authorization": "Bearer admin-secret", "Content-Type": "application/json", **extra})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 403)
+            response.read()
+            connection.close()
+        self.assertFalse(any(a["name"] == "Blocked" for a in self.store.list_accounts()))
+
+    def test_admin_rejects_fractional_limits(self):
+        for fields in ({"requests_per_minute": 1.9}, {"expires_in_days": 1.9}):
+            status, _ = self.admin_json_request("POST", "/api/admin/accounts", {"name": "Invalid", **fields})
+            self.assertEqual(status, 400)
+
+
+class ExternalFeatureForwardingTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.store = APIKeyStore(Path(self.tempdir.name) / "api-keys.db")
+        self.store.initialize()
+        account = self.store.create_account(
+            "Feature site",
+            allowed_modes=["*"],
+            allowed_models=["*"],
+        )
+        self.key = self.store.issue_key(account["id"], label="feature").token
+        self.router = _FeatureRouter()
+        self.application = AuriXAIApplication(
+            self.router,
+            access_token="legacy-only-test",
+            api_keys=self.store,
+        )
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_tools_and_image_parts_are_forwarded_and_returned(self):
+        payload = self.application.external_chat_completions(
+            {
+                "model": "vision-tool-model",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Inspect this."},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "https://example.com/image.png"},
+                            },
+                        ],
+                    }
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {"name": "lookup", "parameters": {"type": "object"}},
+                    }
+                ],
+                "tool_choice": "required",
+            },
+            f"Bearer {self.key}",
+        )
+        self.assertEqual(payload["choices"][0]["finish_reason"], "tool_calls")
+        self.assertTrue(payload["choices"][0]["message"]["tool_calls"])
+
+    def test_embeddings_and_audio_use_openai_routes(self):
+        embedding = self.application.external_embeddings(
+            {"model": "embedding-model", "input": ["one", "two"]},
+            f"Bearer {self.key}",
+        )
+        self.assertEqual(len(embedding["data"]), 2)
+        self.assertEqual(self.router.last_embedding[0], "/embeddings")
+
+        audio = self.application.external_audio(
+            "/v1/audio/speech",
+            b"{}",
+            "application/json",
+            f"Bearer {self.key}",
+            model="tts-model",
+        )
+        self.assertEqual(audio["body"], b"RIFF-audio")
+        self.assertEqual(self.router.last_audio[0], "/audio/speech")
+
+    def test_sse_normalizer_rewrites_id_and_preserves_usage(self):
+        event = (
+            b'data: {"id":"upstream","model":"provider-model",'
+            b'"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}],'
+            b'"usage":{"prompt_tokens":2}}'
+        )
+        normalized, usage, provider_model, upstream_id, done = _normalize_sse_event(
+            event,
+            public_id="chatcmpl_public",
+            model_id="public-model",
+        )
+        self.assertIn(b'"id":"chatcmpl_public"', normalized)
+        self.assertIn(b'"model":"public-model"', normalized)
+        self.assertEqual(usage["prompt_tokens"], 2)
+        self.assertEqual(provider_model, "provider-model")
+        self.assertEqual(upstream_id, "upstream")
+        self.assertFalse(done)
 
 
 if __name__ == "__main__":
