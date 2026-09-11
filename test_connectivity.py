@@ -1307,6 +1307,60 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
                         certificate_sha256="0" * 64,
                     )
 
+    def test_endpoint_activation_records_verified_server_audit(self):
+        class Registry:
+            def __init__(self):
+                self.calls = []
+
+            def register_verified_endpoint(self, **kwargs):
+                self.calls.append(kwargs)
+                return {"id": kwargs["endpoint_id"], "state": "ACTIVE"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            registry = Registry()
+            controller = FleetController(database, registry=registry)
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            with database.connect() as connection:
+                connection.execute(
+                    """UPDATE infrastructure_jobs
+                          SET status = 'awaiting_verification', provider_resource_id = ?
+                        WHERE id = ?""",
+                    ("42", job),
+                )
+            with patch.dict(os.environ, {"AURIX_ENDPOINT_ACTIVATION_ENABLED": "1"}):
+                endpoint = controller.verify_and_activate(
+                    job,
+                    code="SGP-02",
+                    region="sgp1",
+                    api_url="https://outline.invalid:1234/secret",
+                    certificate_sha256="0" * 64,
+                    actor_id=7,
+                )
+            self.assertEqual(endpoint["id"], "do-42")
+            self.assertEqual(registry.calls[0]["provider_resource_id"], "42")
+            with database.connect() as connection:
+                job_row = connection.execute(
+                    "SELECT endpoint_id, status FROM infrastructure_jobs WHERE id = ?",
+                    (job,),
+                ).fetchone()
+                audit = connection.execute(
+                    """SELECT actor_type, actor_id, target_type, target_id, metadata_json
+                         FROM audit_events
+                        WHERE action = 'infrastructure_endpoint_verified'"""
+                ).fetchone()
+            self.assertEqual((job_row["endpoint_id"], job_row["status"]), ("do-42", "completed"))
+            self.assertEqual(
+                (audit["actor_type"], audit["actor_id"], audit["target_type"], audit["target_id"]),
+                ("admin", "7", "vpn_endpoint", "do-42"),
+            )
+            self.assertEqual(json.loads(audit["metadata_json"])["job_id"], job)
+
     def test_dedicated_infrastructure_pass_leaves_pending_when_mutations_are_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             database = initialized_database(Path(tmp) / "fleet.db")
