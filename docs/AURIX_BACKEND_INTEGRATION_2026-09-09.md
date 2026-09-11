@@ -267,6 +267,10 @@ observations remain ledger-idempotent and one provider/route failure is isolated
 as a partial sweep result. This controller-side path is committed as `d0b685d`
 (`Add protocol-neutral managed quota sweep`); it is not evidence of native
 provider hard-quota enforcement.
+The sweep is wired into scheduled maintenance only when the service is given
+an explicit route provider; existing Outline-only deployments therefore retain
+their prior behavior. This integration is committed as `f10edb2` (`Schedule
+managed quota enforcement`).
 
 ## Remaining gates and next action
 
