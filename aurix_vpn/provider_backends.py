@@ -15,6 +15,8 @@ import os
 import tempfile
 import urllib.error
 import urllib.request
+import fcntl
+from contextlib import contextmanager
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -250,6 +252,22 @@ class Hysteria2UserStore:
         self.path = Path(path)
         self._digest_key = hashlib.sha256(key).digest()
 
+    @contextmanager
+    def _mutation_lock(self):
+        lock_path = self.path.parent / f".{self.path.name}.lock"
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            with os.fdopen(descriptor, "a+") as handle:
+                os.fchmod(handle.fileno(), 0o600)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError as exc:
+            raise ProviderBackendError("Hysteria2 user-store mutation lock is unavailable") from exc
+
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
             return {"version": 1, "users": {}}
@@ -312,27 +330,29 @@ class Hysteria2UserStore:
         secret: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        value = self._load()
-        key = _identifier(external_id)
-        existing = value["users"].get(key)
-        if isinstance(existing, Mapping):
-            if not hmac.compare_digest(str(existing.get("auth_digest") or ""), self._digest(secret)):
-                raise ProviderBackendError("Hysteria2 external ID already belongs to another secret")
-            return self._record(key, existing, include_secret=True)
-        record = {
-            "name": str(name)[:128],
-            "auth_digest": self._digest(secret),
-            "secret_ciphertext": self.cipher.encrypt(str(secret).encode()).decode(),
-            "quota_bytes": (metadata or {}).get("quota_bytes"),
-        }
-        value["users"][key] = record
-        self._write(value)
-        return self._record(key, record, include_secret=True)
+        with self._mutation_lock():
+            value = self._load()
+            key = _identifier(external_id)
+            existing = value["users"].get(key)
+            if isinstance(existing, Mapping):
+                if not hmac.compare_digest(str(existing.get("auth_digest") or ""), self._digest(secret)):
+                    raise ProviderBackendError("Hysteria2 external ID already belongs to another secret")
+                return self._record(key, existing, include_secret=True)
+            record = {
+                "name": str(name)[:128],
+                "auth_digest": self._digest(secret),
+                "secret_ciphertext": self.cipher.encrypt(str(secret).encode()).decode(),
+                "quota_bytes": (metadata or {}).get("quota_bytes"),
+            }
+            value["users"][key] = record
+            self._write(value)
+            return self._record(key, record, include_secret=True)
 
     def delete_user(self, external_id: str) -> None:
-        value = self._load()
-        value["users"].pop(_identifier(external_id), None)
-        self._write(value)
+        with self._mutation_lock():
+            value = self._load()
+            value["users"].pop(_identifier(external_id), None)
+            self._write(value)
 
     def authenticate(self, presented: str) -> dict[str, Any]:
         digest = self._digest(presented)

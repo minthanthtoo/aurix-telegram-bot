@@ -1,6 +1,7 @@
 import io
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -210,6 +211,31 @@ class ProviderBackendsTest(unittest.TestCase):
             self.assertEqual(calls[-1][3]["Authorization"], "stats-secret")
             adapter.revoke_auth(grant)
             self.assertTrue(adapter.verify_auth_revoked(grant)["verified"])
+
+    def test_hysteria2_store_serializes_concurrent_read_modify_write_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Hysteria2UserStore(
+                Path(directory) / "users.json", encryption_key=Fernet.generate_key()
+            )
+            errors = []
+
+            def add_user(index):
+                try:
+                    store.create_user(f"user-{index}", f"Customer {index}", f"secret-{index}")
+                except Exception as exc:
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=add_user, args=(index,)) for index in range(16)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            self.assertEqual(errors, [])
+            self.assertEqual(
+                {item["external_id"] for item in store.list_users()},
+                {f"user-{index}" for index in range(16)},
+            )
 
     def test_hysteria2_quota_request_fails_before_user_creation_without_hard_cap(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -13,6 +13,8 @@ import os
 import tempfile
 import urllib.error
 import urllib.request
+import fcntl
+from contextlib import contextmanager
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -183,6 +185,23 @@ class XrayConfigWriter:
         self.path = Path(path)
         self.inbound_tag = str(inbound_tag)
 
+    @contextmanager
+    def _mutation_lock(self):
+        parent = self.path.parent
+        lock_path = parent / f".{self.path.name}.lock"
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            with os.fdopen(descriptor, "a+") as handle:
+                os.fchmod(handle.fileno(), 0o600)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError as exc:
+            raise NodeAgentError("Xray config mutation lock is unavailable") from exc
+
     def load(self) -> dict[str, Any]:
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"))
@@ -225,32 +244,34 @@ class XrayConfigWriter:
         intent: Mapping[str, Any] | None = None,
         write: bool = True,
     ) -> dict[str, Any]:
-        config = self.load()
-        changed = False
-        for clients in self._managed_client_lists(config):
-            existing = next((item for item in clients if str(item.get("id")) == str(external_id)), None)
-            rendered = self._client(external_id, name, intent)
-            if existing is None:
-                clients.append(rendered)
-                changed = True
-            elif existing != rendered:
-                existing.clear()
-                existing.update(rendered)
-                changed = True
-        if changed and write:
-            self.write(config)
-        return {"changed": changed, "external_id": str(external_id)}
+        with self._mutation_lock():
+            config = self.load()
+            changed = False
+            for clients in self._managed_client_lists(config):
+                existing = next((item for item in clients if str(item.get("id")) == str(external_id)), None)
+                rendered = self._client(external_id, name, intent)
+                if existing is None:
+                    clients.append(rendered)
+                    changed = True
+                elif existing != rendered:
+                    existing.clear()
+                    existing.update(rendered)
+                    changed = True
+            if changed and write:
+                self.write(config)
+            return {"changed": changed, "external_id": str(external_id)}
 
     def remove_user(self, external_id: str, *, write: bool = True) -> dict[str, Any]:
-        config = self.load()
-        changed = False
-        for clients in self._managed_client_lists(config):
-            retained = [item for item in clients if str(item.get("id")) != str(external_id)]
-            changed = changed or len(retained) != len(clients)
-            clients[:] = retained
-        if changed and write:
-            self.write(config)
-        return {"changed": changed, "external_id": str(external_id)}
+        with self._mutation_lock():
+            config = self.load()
+            changed = False
+            for clients in self._managed_client_lists(config):
+                retained = [item for item in clients if str(item.get("id")) != str(external_id)]
+                changed = changed or len(retained) != len(clients)
+                clients[:] = retained
+            if changed and write:
+                self.write(config)
+            return {"changed": changed, "external_id": str(external_id)}
 
     def list_users(self) -> list[dict[str, Any]]:
         """Return only users from the explicitly managed inbound(s)."""

@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -71,6 +72,36 @@ class NodeAgentTest(unittest.TestCase):
             path.write_text(json.dumps({"inbounds": []}), encoding="utf-8")
             with self.assertRaisesRegex(NodeAgentError, "not found"):
                 XrayConfigWriter(path).upsert_user("u", "name")
+
+    def test_xray_writer_serializes_concurrent_read_modify_write_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "xray.json"
+            path.write_text(
+                json.dumps(
+                    {"inbounds": [{"tag": "aurix-managed", "settings": {"clients": []}}]}
+                ),
+                encoding="utf-8",
+            )
+            writer = XrayConfigWriter(path)
+            errors = []
+
+            def add_user(index):
+                try:
+                    writer.upsert_user(f"user-{index}", f"Customer {index}")
+                except Exception as exc:
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=add_user, args=(index,)) for index in range(16)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            self.assertEqual(errors, [])
+            self.assertEqual(
+                {item["external_id"] for item in writer.list_users()},
+                {f"user-{index}" for index in range(16)},
+            )
 
 
 if __name__ == "__main__":
