@@ -33,6 +33,10 @@ class AmbiguousProviderOperation(ConnectivityError):
     """The provider response was lost after a request may have been accepted."""
 
 
+class ProvisionValidationError(ConnectivityError):
+    """A durable infrastructure intent cannot pass deterministic validation."""
+
+
 @dataclass(frozen=True)
 class EndpointAssignment:
     id: str
@@ -2015,7 +2019,7 @@ class FleetController:
             or size not in allowed_sizes
             or image not in allowed_images
         ):
-            raise ConnectivityError("Droplet specification is outside the configured allowlist")
+            raise ProvisionValidationError("Droplet specification is outside the configured allowlist")
         return {"region": region, "size": size, "image": image}
 
     def scale_out_recommendation(
@@ -2322,7 +2326,11 @@ class FleetController:
             raise ConnectivityError("Infrastructure mutations are disabled")
         if self.provider is None:
             raise ConnectivityError("DigitalOcean provider is not configured")
-        durable_specification = self._provision_specification(job_id)
+        try:
+            durable_specification = self._provision_specification(job_id)
+        except ProvisionValidationError as exc:
+            self._record_provision_validation_failure(job_id, exc)
+            raise
         maximum_budget = os.environ.get("AURIX_MAX_MONTHLY_INFRA_BUDGET_USD", "").strip()
         if maximum_budget:
             try:
@@ -2354,9 +2362,17 @@ class FleetController:
             supplied = str(specification.get(field) or "").strip()
             durable = durable_specification[field]
             if supplied and supplied != durable:
-                raise ConnectivityError("Provisioning specification does not match durable intent")
+                error = ProvisionValidationError(
+                    "Provisioning specification does not match durable intent"
+                )
+                self._record_provision_validation_failure(job_id, error)
+                raise error
             specification[field] = durable
-        placement = self._validate_provision_specification(specification)
+        try:
+            placement = self._validate_provision_specification(specification)
+        except ProvisionValidationError as exc:
+            self._record_provision_validation_failure(job_id, exc)
+            raise
         validator = getattr(self.provider, "validate_droplet_specification", None)
         if callable(validator):
             validator(placement)
@@ -2606,16 +2622,16 @@ class FleetController:
                 (job_id,),
             ).fetchone()
         if row is None:
-            raise ConnectivityError("Provisioning intent has no durable specification")
+            raise ProvisionValidationError("Provisioning intent has no durable specification")
         try:
             metadata = json.loads(str(row["metadata_json"] or "{}"))
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ConnectivityError("Provisioning intent specification is invalid") from exc
+            raise ProvisionValidationError("Provisioning intent specification is invalid") from exc
         if not isinstance(metadata, dict):
-            raise ConnectivityError("Provisioning intent specification is invalid")
+            raise ProvisionValidationError("Provisioning intent specification is invalid")
         required = {"region", "size", "image"}
         if any(not str(metadata.get(key) or "").strip() for key in required):
-            raise ConnectivityError("Provisioning intent specification is incomplete")
+            raise ProvisionValidationError("Provisioning intent specification is incomplete")
         return {
             "name": f"aurix-vpn-{str(job_id)[:12]}",
             "region": str(metadata["region"]).strip(),
@@ -2623,6 +2639,32 @@ class FleetController:
             "image": str(metadata["image"]).strip(),
             "tags": ["aurix-vpn-node", "aurix-env-production"],
         }
+
+    def _record_provision_validation_failure(
+        self, job_id: str, error: ProvisionValidationError
+    ) -> None:
+        timestamp = datetime.now(UTC).isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            updated = connection.execute(
+                """UPDATE infrastructure_jobs SET status = 'failed', locked_at = NULL,
+                          last_error = ?, next_attempt_at = ?
+                       WHERE id = ? AND operation = 'provision'
+                         AND status IN ('pending', 'running')""",
+                (
+                    f"{type(error).__name__}: {str(error)[:300]}",
+                    timestamp,
+                    str(job_id),
+                ),
+            )
+            if int(getattr(updated, "rowcount", 0) or 0) != 1:
+                return
+            connection.execute(
+                """INSERT INTO infrastructure_events
+                   (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                   VALUES (?, ?, 'provision_validation_failed', '{}', ?)""",
+                (uuid.uuid4().hex, str(job_id), timestamp),
+            )
 
     def process_infrastructure_once(self, now: datetime | None = None) -> dict[str, Any] | None:
         """Process one durable provider intent from a dedicated worker boundary.
@@ -2649,7 +2691,12 @@ class FleetController:
             return None
         job_id = str(row["id"])
         if str(row["status"]) == "pending":
-            return self.execute_provision(job_id, self._provision_specification(job_id))
+            try:
+                specification = self._provision_specification(job_id)
+                return self.execute_provision(job_id, specification)
+            except ProvisionValidationError as exc:
+                self._record_provision_validation_failure(job_id, exc)
+                raise
         return self.reconcile_provision(job_id)
 
     def verify_and_activate(

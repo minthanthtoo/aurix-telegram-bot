@@ -316,6 +316,10 @@ also validates the current region, size, image, availability, and size-region
 compatibility catalogs before a create; invalid placement fails closed without
 reaching the provider mutation call. This step is committed as `7f9701c`
 (`Validate VPN provider placement at execution`).
+Deterministic durable-intent validation failures now become terminal failed
+jobs with a redacted event, while provider/network errors remain retryable;
+this prevents malformed infrastructure work from repeatedly blocking the
+worker.
 
 The focused scale-control tests, Control Center/API tests, VPN-oriented
 regression set (220 tests), Ruff, Python compilation, JavaScript syntax, and

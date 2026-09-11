@@ -704,6 +704,18 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ConnectivityError, "outside the configured allowlist"):
                     controller.process_infrastructure_once()
+            with database.connect() as connection:
+                row = connection.execute(
+                    "SELECT status, last_error FROM infrastructure_jobs WHERE id = ?", (job,)
+                ).fetchone()
+                event = connection.execute(
+                    """SELECT COUNT(*) AS n FROM infrastructure_events
+                        WHERE infrastructure_job_id = ? AND event_type = 'provision_validation_failed'""",
+                    (job,),
+                ).fetchone()
+            self.assertEqual(row["status"], "failed")
+            self.assertIn("ProvisionValidationError", row["last_error"])
+            self.assertEqual(event["n"], 1)
 
     def test_provider_mutation_is_disabled_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -336,6 +336,9 @@ requeue that exact infrastructure job through the existing admin retry
 challenge. The worker records the retry request and performs a tag read-back
 before creating anything; an existing matching resource is reconciled instead
 of duplicated, while multiple matches fail closed.
+Deterministic durable-intent validation errors are recorded as terminal failed
+jobs so a malformed or tampered intent cannot livelock the worker; provider and
+network errors remain retryable operational failures.
 This recovery behavior is committed as `cd923f7` (`Make VPN infrastructure
 retries safe`), and the placement-catalog guard is committed as `7f9701c`
 (`Validate VPN provider placement at execution`).
