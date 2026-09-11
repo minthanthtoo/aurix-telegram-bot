@@ -277,6 +277,58 @@ class ControlCenterTest(unittest.TestCase):
         self.assertEqual(payload[0]["source_endpoint_id"], "sg-a")
         self.assertEqual(payload[0]["policy_version"], 3)
 
+    def test_failover_decision_explanation_is_redacted(self):
+        self.runtime.commerce.failover.decision_explanation = lambda _decision_id: {
+            "decision_id": "decision-1",
+            "entitlement_key": "entitlement-secret",
+            "source_endpoint_id": "sg-a",
+            "target_endpoint_id": "bkk-a",
+            "trigger": "automatic",
+            "network_bucket": "mmpt",
+            "state": "committed",
+            "attempts": 1,
+            "policy_version": 2,
+            "policy_enabled": True,
+            "policy_failure_threshold": 2,
+            "policy_recovery_threshold": 2,
+            "policy_cooldown_seconds": 300,
+            "policy_snapshot_available": True,
+        }
+        payload = AuriXVpnWebApplication(self.runtime).admin_failover_decision("decision-1")
+        self.assertEqual(payload["decision_id"], "decision-1")
+        self.assertEqual(payload["policy_failure_threshold"], 2)
+        self.assertNotIn("entitlement_key", payload)
+
+    def test_failover_decision_explanation_http_route_is_admin_only(self):
+        self.runtime.commerce.failover.decision_explanation = lambda _decision_id: {
+            "decision_id": "decision-1",
+            "source_endpoint_id": "sg-a",
+            "target_endpoint_id": "bkk-a",
+            "trigger": "automatic",
+            "state": "committed",
+            "policy_version": 2,
+            "policy_snapshot_available": True,
+            "policy_failure_threshold": 2,
+        }
+        with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
+            app = AuriXVpnWebApplication(self.runtime)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/admin/failover/decision-1",
+                headers={"X-Telegram-Init-Data": _init_data("bot-token")},
+            )
+            with urllib.request.urlopen(request, timeout=3) as response:
+                payload = json.load(response)
+            self.assertEqual(payload["decision"]["policy_version"], 2)
+            self.assertNotIn("entitlement_key", json.dumps(payload))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_admin_static_shell_is_available_without_api_data(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
             app = AuriXVpnWebApplication(self.runtime)

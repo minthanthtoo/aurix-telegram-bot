@@ -626,6 +626,35 @@ class AuriXVpnWebApplication:
             safe.append(item)
         return safe
 
+    def admin_failover_decision(self, decision_id: str) -> dict[str, Any] | None:
+        """Return one redacted, historically explainable failover decision."""
+        failover = getattr(self.runtime.commerce, "failover", None)
+        method = getattr(failover, "decision_explanation", None)
+        if not callable(method):
+            return None
+        decision = method(str(decision_id))
+        if not decision:
+            return None
+        allowed = {
+            "decision_id",
+            "source_endpoint_id",
+            "target_endpoint_id",
+            "trigger",
+            "network_bucket",
+            "state",
+            "attempts",
+            "policy_version",
+            "policy_enabled",
+            "policy_failure_threshold",
+            "policy_recovery_threshold",
+            "policy_cooldown_seconds",
+            "policy_standby_lease_bytes",
+            "policy_max_attempts",
+            "policy_created_at",
+            "policy_snapshot_available",
+        }
+        return {key: decision[key] for key in allowed if key in decision}
+
     def admin_operations(self, limit: int = 100) -> dict[str, Any]:
         commerce = self.runtime.commerce
         database = getattr(self.runtime, "commerce_database", None)
@@ -987,6 +1016,16 @@ def make_handler(
                 return
             if path == "/api/admin/failover":
                 self._write(200, {"decisions": application.admin_failover(limit)})
+                return
+            failover_prefix = "/api/admin/failover/"
+            if path.startswith(failover_prefix):
+                decision = application.admin_failover_decision(
+                    unquote(path[len(failover_prefix) :])
+                )
+                if decision is None:
+                    self._error(404, "Failover decision not found")
+                else:
+                    self._write(200, {"decision": decision})
                 return
             if path == "/api/admin/operations":
                 self._write(200, application.admin_operations(limit))

@@ -127,11 +127,30 @@
       const policy = d.policy_created_at
         ? `v${fmt(d.policy_version || 1)} · fail ${fmt(d.policy_failure_threshold)} / recover ${fmt(d.policy_recovery_threshold)} · cool ${fmt(d.policy_cooldown_seconds)}s`
         : `v${fmt(d.policy_version || 1)} · snapshot unavailable`;
-      return `<tr><td><strong>${esc(d.decision_id)}</strong><small>${esc(d.trigger || "—")}</small></td><td>${esc(d.source_endpoint_id)} → ${esc(d.target_endpoint_id)}</td><td>${badge(d.state, d.state === "committed" ? "good" : d.state === "failed" ? "warn" : "neutral")}</td><td>${esc(policy)}</td><td>${fmt(d.attempts)}</td><td>${esc(d.error_type || "—")}</td></tr>`;
+      return `<tr><td><button class="link-button decision-link" data-decision="${esc(d.decision_id)}">${esc(d.decision_id)}</button><small>${esc(d.trigger || "—")}</small></td><td>${esc(d.source_endpoint_id)} → ${esc(d.target_endpoint_id)}</td><td>${badge(d.state, d.state === "committed" ? "good" : d.state === "failed" ? "warn" : "neutral")}</td><td>${esc(policy)}</td><td>${fmt(d.attempts)}</td><td>${esc(d.error_type || "—")}</td></tr>`;
     });
     const safetyControls = (data.safety_controls || []).map((c) => `<tr><td><strong>${esc(c.scope)}</strong><small>${esc(c.scope_key)}</small></td><td>${badge(c.paused ? "paused" : "armed", c.paused ? "warn" : "good")}</td><td>${fmt(c.max_migrations_per_window)} / ${fmt(c.window_seconds)}s</td><td>${fmt(c.migration_count)}</td><td>${fmt(c.remaining_migrations)}</td><td>${esc(c.window_start || "—")}</td></tr>`);
     const events = (data.events || []).map((e) => `<tr><td><strong>${esc(e.action)}</strong><small>${esc(e.created_at)}</small></td><td>${esc(e.actor_type)}:${esc(e.actor_id)}</td><td>${esc(e.target_type)}:${esc(e.target_id)}</td></tr>`);
-    $("view-operations").innerHTML = `<div class="section-intro"><div><p class="eyebrow">DURABLE WORK</p><h2>Operations</h2><p>Queue, infrastructure intents, failover, audit, and safety-control visibility. Actions remain in the existing Telegram-admin safety boundary.</p></div><span class="read-only">NO MUTATIONS</span></div><div class="grid two"><article class="panel"><div class="panel-head"><h2>Customer provisioning jobs</h2></div>${table(["Job", "Plan", "State", "Attempts", "Last error"], jobs)}</article><article class="panel"><div class="panel-head"><h2>Infrastructure intents</h2></div>${table(["Intent", "Endpoint", "State", "Attempts", "Error type", "Created"], infrastructureJobs)}</article><article class="panel"><div class="panel-head"><h2>Pending orders</h2></div>${table(["Order", "Plan", "State", "Stage"], orders)}</article><article class="panel"><div class="panel-head"><h2>Failover decisions</h2></div>${table(["Decision", "Route", "State", "Policy", "Attempts", "Last error"], decisions)}</article><article class="panel"><div class="panel-head"><h2>Failover safety controls</h2></div>${table(["Scope", "State", "Budget / window", "Used", "Remaining", "Window start"], safetyControls)}</article><article class="panel"><div class="panel-head"><h2>Recent audit events</h2></div>${table(["Action", "Actor", "Target"], events)}</article></div>`;
+    $("view-operations").innerHTML = `<div class="section-intro"><div><p class="eyebrow">DURABLE WORK</p><h2>Operations</h2><p>Queue, infrastructure intents, failover, audit, and safety-control visibility. Actions remain in the existing Telegram-admin safety boundary.</p></div><span class="read-only">NO MUTATIONS</span></div><div class="grid two"><article class="panel"><div class="panel-head"><h2>Customer provisioning jobs</h2></div>${table(["Job", "Plan", "State", "Attempts", "Last error"], jobs)}</article><article class="panel"><div class="panel-head"><h2>Infrastructure intents</h2></div>${table(["Intent", "Endpoint", "State", "Attempts", "Error type", "Created"], infrastructureJobs)}</article><article class="panel"><div class="panel-head"><h2>Pending orders</h2></div>${table(["Order", "Plan", "State", "Stage"], orders)}</article><article class="panel"><div class="panel-head"><h2>Failover decisions</h2></div>${table(["Decision", "Route", "State", "Policy", "Attempts", "Error type"], decisions)}</article><article class="panel"><div class="panel-head"><h2>Failover safety controls</h2></div>${table(["Scope", "State", "Budget / window", "Used", "Remaining", "Window start"], safetyControls)}</article><article class="panel"><div class="panel-head"><h2>Recent audit events</h2></div>${table(["Action", "Actor", "Target"], events)}</article></div><div id="failover-detail"></div>`;
+    document.querySelectorAll(".decision-link").forEach((button) => button.addEventListener("click", () => loadDecisionDetail(button.dataset.decision)));
+  }
+
+  function renderDecisionDetail(data) {
+    const decision = data.decision || {};
+    const snapshot = decision.policy_snapshot_available
+      ? `v${fmt(decision.policy_version)} · fail ${fmt(decision.policy_failure_threshold)} / recover ${fmt(decision.policy_recovery_threshold)} · cool ${fmt(decision.policy_cooldown_seconds)}s · max attempts ${fmt(decision.policy_max_attempts)}`
+      : `v${fmt(decision.policy_version)} · historical snapshot unavailable`;
+    $("failover-detail").innerHTML = `<article class="panel detail-block"><div class="panel-head"><div><p class="eyebrow">DECISION EXPLANATION</p><h2>${esc(decision.decision_id)}</h2><p class="muted">${esc(decision.source_endpoint_id)} → ${esc(decision.target_endpoint_id)} · ${esc(decision.state)}</p></div><span class="read-only">READ ONLY</span></div><div class="check-grid"><div><span>Trigger</span><strong>${esc(decision.trigger || "—")}</strong></div><div><span>Network bucket</span><strong>${esc(decision.network_bucket || "—")}</strong></div><div><span>Attempts</span><strong>${fmt(decision.attempts)}</strong></div><div><span>Policy snapshot</span><strong>${esc(snapshot)}</strong></div></div></article>`;
+  }
+
+  async function loadDecisionDetail(decisionId) {
+    if (!decisionId) return;
+    try {
+      renderDecisionDetail(await api(`/api/admin/failover/${encodeURIComponent(decisionId)}`));
+    } catch (error) {
+      $("notice").textContent = error.message;
+      $("notice").classList.remove("hidden");
+    }
   }
 
   async function load(view, suffix) {
