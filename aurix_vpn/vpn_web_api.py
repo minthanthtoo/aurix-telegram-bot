@@ -991,6 +991,11 @@ def make_handler(
                 self._error(403, str(exc))
             except CommerceError as exc:
                 self._error(400, str(exc))
+            except ConnectivityError as exc:
+                # Customer endpoint validation is performed by the shared
+                # connectivity registry. Treat rejected/stale selections as
+                # client-visible VPN errors instead of leaking them as 500s.
+                self._error(400, str(exc))
             except OutlineError:
                 self._error(503, "VPN provisioning is temporarily unavailable; try again shortly")
             except ValueError as exc:

@@ -1,10 +1,15 @@
 import time
 import unittest
 from datetime import UTC, datetime, timedelta
+from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+import threading
 
+from connectivity import ConnectivityError
 from test_telegram_web_app import _init_data
-from vpn_web_api import AuriXVpnWebApplication
+from vpn_web_api import AuriXVpnWebApplication, make_handler
 
 
 class _Outline:
@@ -85,6 +90,9 @@ class _Commerce:
     def user_vpns(self, telegram_id):
         return []
 
+    def create_order(self, *args, **kwargs):
+        raise ConnectivityError("That VPN server is not currently available for this plan")
+
 
 class _Registry:
     def list_customer_endpoints(self, plan_code=None):
@@ -161,6 +169,28 @@ class VpnWebApplicationTest(unittest.TestCase):
         user = self.application.authenticate(_init_data("bot-token", auth_date=int(time.time())))
         with self.assertRaisesRegex(Exception, "paid VPN access is active"):
             self.application.claim_daily(user)
+
+    def test_endpoint_selection_error_is_a_client_error_not_server_error(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.application))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            request = Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/orders",
+                data=b'{"plan_code":"basic","endpoint_id":"bkk-a"}',
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Telegram-Init-Data": _init_data("bot-token"),
+                },
+            )
+            with self.assertRaises(HTTPError) as raised:
+                urlopen(request, timeout=3)
+            self.assertEqual(raised.exception.code, 400)
+            self.assertIn("not currently available", raised.exception.read().decode())
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":
