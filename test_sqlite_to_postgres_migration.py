@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.fernet import Fernet
-from commerce import CommerceDatabase, PostgresCommerceDatabase
+from commerce import CommerceDatabase, CommerceService, PostgresCommerceDatabase
 from deploy.migrate_sqlite_to_postgres import dependency_order, migrate, sqlite_manifest
 from connectivity import EndpointRegistry
 from identity import IdentityService
@@ -229,6 +229,26 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                 self.assertEqual(assignment.endpoint_id, "legacy-default")
                 self.assertEqual(RouteFailoverService(database).decisions(limit=10), [])
                 self.assertEqual(IdentityService(database).generations_for_accounting(), [])
+                with database.connect() as connection:
+                    connection.execute(
+                        """INSERT INTO provisioning_jobs
+                           (id, subscription_id, operation, status, next_attempt_at,
+                            created_at, attempts)
+                           VALUES ('postgres-retry-job', 'source-sub', 'provision',
+                                   'failed', ?, ?, 4)""",
+                        (now.isoformat(), now.isoformat()),
+                    )
+                service = CommerceService(database, None, Fernet.generate_key())
+                self.assertEqual(
+                    service.retry_failed_job("source-order", 777, now=now),
+                    "provision",
+                )
+                with database.connect() as connection:
+                    retry_status = connection.execute(
+                        "SELECT status, attempts FROM provisioning_jobs WHERE id = ?",
+                        ("postgres-retry-job",),
+                    ).fetchone()
+                self.assertEqual(dict(retry_status), {"status": "pending", "attempts": 0})
 
                 # Continue the rehearsal through the protocol-neutral
                 # failover path. This stays inside the disposable database:
