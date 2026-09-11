@@ -1398,15 +1398,42 @@ class CommerceWorkerMixin:
         if not callable(method):
             raise CommerceError("Protocol profile readiness is not available")
         try:
-            return method(
-                endpoint_id,
-                protocol,
-                required_signals=required_signals,
-                required_capabilities=required_capabilities,
-                now=now,
+            result = dict(
+                method(
+                    endpoint_id,
+                    protocol,
+                    required_signals=required_signals,
+                    required_capabilities=required_capabilities,
+                    now=now,
+                )
             )
         except ConnectivityError as exc:
             raise CommerceError(str(exc)) from exc
+        if not self._protocol_adapter_registered(protocol):
+            result["adapter_registered"] = False
+            reasons = list(result.get("reasons") or [])
+            reasons.append("protocol adapter is not registered")
+            result["reasons"] = reasons
+            result["promotable"] = False
+        else:
+            result["adapter_registered"] = True
+        return result
+
+    def _protocol_adapter_registered(self, protocol: str) -> bool:
+        """Require an installed adapter before the commerce boundary can enable it."""
+        normalized = str(protocol or "").strip().lower()
+        registry = getattr(self, "adapter_registry", None) or ConnectivityAdapterRegistry()
+        catalog = getattr(registry, "protocol_catalog", None)
+        if not callable(catalog):
+            return False
+        try:
+            return any(
+                str(item.get("protocol") or "").strip().lower() == normalized
+                for item in catalog()
+                if isinstance(item, dict)
+            )
+        except Exception:
+            return False
 
     def promote_protocol_profile(
         self,
@@ -1421,6 +1448,8 @@ class CommerceWorkerMixin:
         """Apply an explicit, audited protocol promotion decision."""
         if self.connectivity is None:
             raise CommerceError("Protocol profile management is not configured")
+        if not self._protocol_adapter_registered(protocol):
+            raise CommerceError("protocol adapter is not registered")
         method = getattr(self.connectivity, "promote_protocol_profile", None)
         if not callable(method):
             raise CommerceError("Protocol profile promotion is not available")

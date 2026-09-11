@@ -137,6 +137,9 @@ load test, or speed test was changed or performed.
   capabilities before an operator attempts the state-changing decision.
   The commerce worker exposes both readiness and promotion through the existing
   administrator authorization boundary; the web Control Center remains read-only.
+  The commerce boundary also requires the corresponding adapter to be registered
+  before a profile can become enabled, so healthy evidence cannot activate an
+  unimplemented or unavailable protocol.
   Telegram admins can request the same bounded readiness preview with
   `/protocolreadiness` and can invoke `/promoteprotocol` only through a
   state-bound, one-time confirmation that rechecks the evidence before commit.

@@ -19,6 +19,7 @@ from commerce import (
     _PostgresConnection,
 )
 from connectivity import EndpointRegistry
+from connectivity_adapters import XrayConnectivityAdapter
 from persistence import open_sqlite_connection
 
 
@@ -510,6 +511,27 @@ class CommerceServiceTest(unittest.TestCase):
             source="admin-test",
             now=self.now,
         )
+        preview = self.service.protocol_profile_promotion_readiness(
+            "legacy-default",
+            "xray",
+            required_signals=("management",),
+            required_capabilities=("usage",),
+            now=self.now,
+        )
+        self.assertFalse(preview["promotable"])
+        self.assertFalse(preview["adapter_registered"])
+        self.assertIn("protocol adapter is not registered", preview["reasons"])
+        with self.assertRaisesRegex(CommerceError, "protocol adapter is not registered"):
+            self.service.promote_protocol_profile(
+                "legacy-default",
+                "xray",
+                999,
+                required_signals=("management",),
+                required_capabilities=("usage",),
+                now=self.now,
+            )
+
+        self.service.adapter_registry.register("xray", XrayConnectivityAdapter)
         preview = self.service.protocol_profile_promotion_readiness(
             "legacy-default",
             "xray",

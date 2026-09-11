@@ -187,6 +187,8 @@ preview and promotion call; the browser Control Center does not perform this
 mutation. Telegram exposes `/protocolreadiness` for a redacted operator
 preview and `/promoteprotocol` for the same promotion only after a five-minute,
 single-use confirmation whose state fingerprint is rechecked before execution.
+The commerce boundary also rejects promotion when the matching adapter is not
+registered, even if the profile's evidence and declared capabilities are ready.
 
 ### `endpoint_plan_limits`
 

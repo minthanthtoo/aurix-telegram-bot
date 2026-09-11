@@ -18,6 +18,7 @@ from cryptography.x509.oid import NameOID
 from app import ClaimService, Database, OutlineClient, OutlineError, TelegramBot
 from commerce import CommerceDatabase, CommerceService
 from connectivity import EndpointRegistry
+from connectivity_adapters import XrayConnectivityAdapter
 from persistence import open_sqlite_connection
 from telegram_transport import TelegramAPIError
 
@@ -1402,6 +1403,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             now=now,
         )
         self.commerce.connectivity = registry
+        self.commerce.adapter_registry.register("xray", XrayConnectivityAdapter)
 
         self.bot.handle(self.message(999, "/protocolreadiness legacy-default xray management usage"))
         self.assertIn("READY", self.bot.sent[-1][1])
