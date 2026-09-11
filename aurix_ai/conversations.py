@@ -522,6 +522,109 @@ class AIConversationStore:
             **self._attempt_payload(value),
         }
 
+    def retry_attempt(
+        self,
+        owner_telegram_id: int,
+        attempt_id: str,
+        *,
+        model_id: str | None = None,
+        request_id: str | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, str]]]:
+        """Create a new attempt for the same immutable turn snapshot.
+
+        Only the latest terminal failure may be retried.  A completed attempt
+        is intentionally not retryable through this operation: callers that
+        want a second answer should submit a new turn, while a retry means
+        recovering a failed provider operation without changing its source or
+        context.
+        """
+        owner = self._owner(owner_telegram_id)
+        clean_id = self._attempt_id(attempt_id)
+        clean_model = (
+            _text(model_id, name="model_id", maximum=200)
+            if model_id is not None
+            else None
+        )
+        clean_request_id = (
+            _text(request_id, name="request_id", maximum=160)
+            if request_id
+            else _id("req")
+        )
+        now = _now()
+        with self.connect() as connection:
+            if self.dialect == "sqlite":
+                connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT a.id, a.turn_id, a.conversation_id, a.model_id, a.status,
+                          t.mode, t.direction, t.submitted_source, t.context_json,
+                          t.owner_telegram_id
+                   FROM ai_attempts AS a
+                   JOIN ai_turns AS t ON t.id = a.turn_id
+                   JOIN ai_conversations AS c ON c.id = a.conversation_id
+                   WHERE a.id = ? AND a.owner_telegram_id = ? AND c.status = 'active'""",
+                (clean_id, owner),
+            ).fetchone()
+            if row is None:
+                raise ConversationNotFoundError("attempt not found")
+            value = _row_dict(row)
+            if self.dialect == "postgres":
+                connection.execute(
+                    "SELECT id FROM ai_turns WHERE id = ? FOR UPDATE",
+                    (value["turn_id"],),
+                ).fetchone()
+            latest = connection.execute(
+                """SELECT id, status
+                   FROM ai_attempts
+                   WHERE turn_id = ? AND owner_telegram_id = ?
+                   ORDER BY created_at DESC, id DESC LIMIT 1""",
+                (value["turn_id"], owner),
+            ).fetchone()
+            latest_value = _row_dict(latest) if latest is not None else {}
+            if str(latest_value.get("id")) != clean_id:
+                raise ConversationStoreError("only the latest attempt can be retried")
+            if str(value["status"]) not in {"failed", "cancelled", "interrupted"}:
+                raise ConversationStoreError(
+                    "only failed, cancelled, or interrupted attempts can be retried"
+                )
+            try:
+                parsed_context = json.loads(str(value["context_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ConversationStoreError("stored conversation context is invalid") from exc
+            if not isinstance(parsed_context, list):
+                raise ConversationStoreError("stored conversation context is invalid")
+            context: list[dict[str, str]] = []
+            for item in parsed_context:
+                if not isinstance(item, Mapping):
+                    raise ConversationStoreError("stored conversation context is invalid")
+                role = item.get("role")
+                content = item.get("content")
+                if not isinstance(role, str) or not isinstance(content, str):
+                    raise ConversationStoreError("stored conversation context is invalid")
+                context.append({"role": role, "content": content})
+            new_attempt_id = _id("attempt")
+            selected_model = clean_model or str(value["model_id"])
+            connection.execute(
+                """INSERT INTO ai_attempts
+                   (id, turn_id, conversation_id, owner_telegram_id, model_id,
+                    status, request_id, created_at, started_at)
+                   VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)""",
+                (
+                    new_attempt_id,
+                    value["turn_id"],
+                    value["conversation_id"],
+                    owner,
+                    selected_model,
+                    clean_request_id,
+                    now,
+                    now,
+                ),
+            )
+            connection.execute(
+                "UPDATE ai_conversations SET updated_at = ? WHERE id = ? AND owner_telegram_id = ?",
+                (now, value["conversation_id"], owner),
+            )
+        return self.attempt(owner, new_attempt_id), context
+
     def complete_attempt(
         self,
         owner_telegram_id: int,

@@ -39,13 +39,13 @@ class _ConversationRouter:
 class AIConversationHTTPTest(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
-        store = AIConversationStore(Path(self.tempdir.name) / "conversations.db")
-        store.initialize()
+        self.store = AIConversationStore(Path(self.tempdir.name) / "conversations.db")
+        self.store.initialize()
         self.router = _ConversationRouter()
         self.application = AuriXAIApplication(
             self.router,
             access_token="legacy-test",
-            conversation_store=store,
+            conversation_store=self.store,
         )
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.application))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -190,6 +190,43 @@ class AIConversationHTTPTest(unittest.TestCase):
             time.sleep(0.02)
         self.assertEqual(polled["attempt"]["status"], "cancelled")
         self.assertIsNone(polled["attempt"]["output_text"])
+
+    def test_retry_route_reuses_turn_and_runs_from_server_snapshot(self):
+        conversation = self.store.create_conversation(101, title="Retry")
+        first, _ = self.store.create_turn(
+            101,
+            conversation["id"],
+            source="Frozen source",
+            mode="english",
+            direction=None,
+            model_id="gemini-test",
+            context=[{"role": "user", "content": "Frozen context"}],
+        )
+        self.store.fail_attempt(101, first["id"], error_code="upstream_error")
+        status, retried = self.request(
+            "POST",
+            f"/api/conversations/{conversation['id']}/attempts/{first['id']}/retry",
+            {},
+            self.cookie,
+        )
+        self.assertEqual(status, 202)
+        self.assertEqual(retried["attempt"]["turn_id"], first["turn_id"])
+        retry_id = retried["attempt"]["id"]
+        for _ in range(30):
+            _status, polled = self.request(
+                "GET",
+                f"/api/conversations/{conversation['id']}/attempts/{retry_id}",
+                cookie=self.cookie,
+            )
+            if polled["attempt"]["status"] == "completed":
+                break
+            time.sleep(0.02)
+        self.assertEqual(polled["attempt"]["status"], "completed")
+        self.assertEqual(polled["attempt"]["output_text"], "reply:Frozen source")
+        self.assertEqual(len(self.router.calls), 1)
+        self.assertEqual(self.router.calls[0]["history"], [{
+            "role": "user", "content": "Frozen context"
+        }])
 
     def test_delete_hides_conversation_and_unauthenticated_requests_fail(self):
         status, _ = self.request("GET", "/api/conversations")

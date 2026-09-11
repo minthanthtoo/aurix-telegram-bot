@@ -802,6 +802,58 @@ class AuriXAIApplication:
             "mode_result": attempt["status"],
         }
 
+    def durable_attempt_retry(
+        self,
+        user: VerifiedTelegramUser,
+        conversation_id: str,
+        attempt_id: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Retry a failed durable attempt without creating another user turn."""
+        if self.conversations is None or self.conversation_jobs is None:
+            raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+        previous = self.conversations.attempt(user.telegram_id, attempt_id)
+        if previous["conversation_id"] != conversation_id:
+            raise ConversationNotFoundError("attempt not found")
+        requested_model = body.get("model_id")
+        if requested_model is not None and not isinstance(requested_model, str):
+            raise ValueError("model_id must be text")
+        if requested_model:
+            model_route, model_id = resolve_model_id(
+                requested_model, default_route=self.router.model
+            )
+        else:
+            model_route, model_id = self.router.model, previous["model_id"]
+        attempt, context = self.conversations.retry_attempt(
+            user.telegram_id,
+            attempt_id,
+            model_id=model_id,
+        )
+        try:
+            self.conversation_jobs.submit(
+                attempt["id"],
+                lambda stop_event: self._run_durable_attempt(
+                    user,
+                    attempt,
+                    mode=previous["mode"],
+                    message=previous["submitted_source"],
+                    history=context,
+                    model_route=model_route,
+                    direction=previous["direction"],
+                    stop_event=stop_event,
+                ),
+            )
+        except Exception:
+            attempt = self.conversations.fail_attempt(
+                user.telegram_id, attempt["id"], error_code="worker_unavailable"
+            )
+        return {
+            "conversation_id": conversation_id,
+            "turn_id": attempt["turn_id"],
+            "attempt": self._public_attempt(attempt),
+            "mode_result": attempt["status"],
+        }
+
     def external_chat(
         self,
         body: dict[str, Any],
@@ -2407,6 +2459,25 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         user.telegram_id, conversation_parts[4]
                     )
                     self._write(200, {"attempt": application._public_attempt(cancelled)})
+                    return
+                if (
+                    len(conversation_parts) == 6
+                    and conversation_parts[3] == "attempts"
+                    and conversation_parts[5] == "retry"
+                    and method == "POST"
+                ):
+                    identity = f"telegram:{user.telegram_id}"
+                    if not application.rate_limiter.allow(identity):
+                        self._error(429, "AI request rate limit reached", retry_after=60)
+                        return
+                    payload = application.durable_attempt_retry(
+                        user,
+                        conversation_id,
+                        conversation_parts[4],
+                        self._read_json(),
+                    )
+                    status = 202 if payload.get("attempt", {}).get("status") == "running" else 200
+                    self._write(status, payload)
                     return
                 self._error(404, "Not found")
                 return

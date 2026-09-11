@@ -38,6 +38,11 @@ reconnectable SSE view of partial output, and the cancel endpoint makes a
 running attempt terminal without allowing a late provider result to overwrite
 it. The bounded worker is process-local by design; startup marks abandoned
 attempts as interrupted instead of resending them.
+`POST /api/conversations/{id}/attempts/{id}/retry` creates a fresh attempt for
+the same submitted turn only when the latest attempt failed, was cancelled, or
+was interrupted. It reuses the server-frozen source and context snapshot, so a
+changed browser draft cannot alter a retry; completed attempts require a new
+turn instead.
 
 The root `ai_router.py`, `ai_api_keys.py`, and `ai_web_api.py` files are
 compatibility shims for existing scripts and imports. New code should import

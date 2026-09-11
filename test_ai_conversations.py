@@ -170,6 +170,31 @@ class AIConversationStoreTest(unittest.TestCase):
         restarted.initialize()
         self.assertEqual(restarted.attempt(101, attempt["id"])["status"], "interrupted")
 
+    def test_retry_creates_attempt_for_same_turn_and_frozen_context(self):
+        conversation = self.store.create_conversation(101)
+        first, _ = self.store.create_turn(
+            101,
+            conversation["id"],
+            source="Original source",
+            mode="translate",
+            direction="en_to_lisu",
+            model_id="gemini-test",
+            context=[{"role": "user", "content": "Earlier"}],
+        )
+        self.store.fail_attempt(101, first["id"], error_code="upstream_error")
+        retried, context = self.store.retry_attempt(
+            101, first["id"], model_id="other-model", request_id="retry-request"
+        )
+        self.assertEqual(retried["turn_id"], first["turn_id"])
+        self.assertNotEqual(retried["id"], first["id"])
+        self.assertEqual(retried["model_id"], "other-model")
+        self.assertEqual(retried["submitted_source"], "Original source")
+        self.assertEqual(context, [{"role": "user", "content": "Earlier"}])
+        with self.assertRaisesRegex(ConversationStoreError, "latest attempt"):
+            self.store.retry_attempt(101, first["id"])
+        with self.assertRaisesRegex(ConversationStoreError, "only failed"):
+            self.store.retry_attempt(101, retried["id"])
+
     def test_delete_hides_transcript_and_cancels_running_attempt(self):
         conversation = self.store.create_conversation(101)
         attempt, _ = self.store.create_turn(
