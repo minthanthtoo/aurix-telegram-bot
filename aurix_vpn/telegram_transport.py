@@ -81,6 +81,7 @@ class TelegramBot(
             "/receipts",
             "/capacity",
             "/drain",
+            "/provisionnode",
             "/disableprotocol",
             "/protocolreadiness",
             "/promoteprotocol",
@@ -114,6 +115,7 @@ class TelegramBot(
             "/stoppromo",
             "/resumepromo",
             "/drain",
+            "/provisionnode",
             "/disableprotocol",
             "/promoteprotocol",
         }
@@ -813,6 +815,7 @@ class TelegramBot(
         admin_commands = customer_commands + [
             {"command": "admin", "description": "Open the admin panel"},
             {"command": "promo", "description": "View and configure promo campaign"},
+            {"command": "provisionnode", "description": "Queue a guarded VPN node intent"},
         ]
         for admin_id in self.admin_ids:
             scope = {"type": "chat", "chat_id": admin_id}

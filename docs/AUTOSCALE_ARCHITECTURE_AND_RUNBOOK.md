@@ -554,6 +554,7 @@ server while keeping real provider mutation off:
 
 ```text
 AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=0
+AURIX_INFRASTRUCTURE_INTENTS_ENABLED=0
 AURIX_ENDPOINT_ACTIVATION_ENABLED=0
 DIGITALOCEAN_API_TOKEN absent on the bot host where possible
 no automatic destruction path

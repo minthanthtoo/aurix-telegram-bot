@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import tempfile
 import threading
 import time
@@ -1322,6 +1323,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "/receipts",
             "/capacity",
             "/drain sg-a bkk-a 2",
+            "/provisionnode sgp1 s-1vcpu-1gb ubuntu-24-04-x64",
             "/protocolreadiness sg-a xray management usage",
             "/promoteprotocol sg-a xray management usage",
             "/disableprotocol sg-a xray",
@@ -1418,6 +1420,44 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(request_calls[0][0:2], ("sg-a", 999))
         self.assertEqual(request_calls[0][2]["target_endpoint_id"], "bkk-a")
         self.assertEqual(request_calls[0][2]["limit"], 2)
+
+    def test_admin_node_intent_is_confirmation_bound_and_default_off(self):
+        self.bot.handle(self.message(999, "/provisionnode sgp1 s-1vcpu-1gb ubuntu-24-04-x64"))
+        self.assertIn("disabled", self.bot.sent[-1][1].lower())
+
+        calls = []
+
+        class Controller:
+            def queue_provision(self, **kwargs):
+                calls.append(kwargs)
+                return "infra-job-1"
+
+        self.commerce.fleet_controller = Controller()
+        with patch.dict(os.environ, {"AURIX_INFRASTRUCTURE_INTENTS_ENABLED": "1"}):
+            self.bot.handle(self.message(999, "/provisionnode sgp1 s-1vcpu-1gb ubuntu-24-04-x64"))
+            self.assertIn("No provider request runs", self.bot.sent[-1][1])
+            confirm = next(
+                button
+                for row in self.bot.markups[-1]["inline_keyboard"]
+                for button in row
+                if button["callback_data"].startswith("a:k:")
+            )
+            self.bot.request = lambda _method, _payload: True
+            self.bot.handle_callback(
+                {
+                    "id": "callback-provisionnode",
+                    "from": {"id": 999, "first_name": "Admin"},
+                    "message": {"chat": {"id": 999, "type": "private"}},
+                    "data": confirm["callback_data"],
+                }
+            )
+        self.assertEqual(calls, [{
+            "region": "sgp1",
+            "size": "s-1vcpu-1gb",
+            "image": "ubuntu-24-04-x64",
+            "requested_by": 999,
+        }])
+        self.assertIn("infra-job-1", self.bot.sent[-1][1])
 
     def test_admin_protocol_readiness_and_promotion_are_confirmation_bound(self):
         registry = EndpointRegistry(self.commerce.database, Fernet.generate_key())
@@ -2058,6 +2098,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "help",
                 "admin",
                 "promo",
+                "provisionnode",
             },
         )
 

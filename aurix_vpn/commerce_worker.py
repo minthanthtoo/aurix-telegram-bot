@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
@@ -28,6 +29,37 @@ from .route_failover import FailoverError
 
 class CommerceWorkerMixin:
     """Reliable-worker operations sharing the service transaction boundary."""
+
+    def queue_infrastructure_provision(
+        self,
+        region: str,
+        size: str,
+        image: str,
+        admin_id: int,
+    ) -> str:
+        """Record an owner-approved node intent without contacting the provider."""
+        enabled = os.environ.get("AURIX_INFRASTRUCTURE_INTENTS_ENABLED", "0").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not enabled:
+            raise CommerceError("Infrastructure intent creation is disabled")
+        controller = getattr(self, "fleet_controller", None)
+        if controller is None or not callable(getattr(controller, "queue_provision", None)):
+            raise CommerceError("Infrastructure controller is not configured")
+        try:
+            return str(
+                controller.queue_provision(
+                    region=str(region),
+                    size=str(size),
+                    image=str(image),
+                    requested_by=int(admin_id),
+                )
+            )
+        except ConnectivityError as exc:
+            raise CommerceError(str(exc)) from exc
 
     @staticmethod
     def _usage_map(metrics: dict[str, Any] | None, endpoint_id: str) -> dict[str, Any]:

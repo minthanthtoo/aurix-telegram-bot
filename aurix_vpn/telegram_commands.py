@@ -209,6 +209,19 @@ class TelegramCommandMixin:
                     "Usage: /drain <source-endpoint> [target-endpoint] [limit 1-200]",
                 )
                 return
+        if command == "/provisionnode":
+            try:
+                self._infrastructure_provision_args(args)
+            except ValueError as exc:
+                self.send(chat["id"], str(exc))
+                return
+            if not confirmed and not self._infrastructure_intents_enabled():
+                self.send(
+                    chat["id"],
+                    "Infrastructure intent creation is disabled until the owner enables the guarded workflow.",
+                    self._admin_keyboard(telegram_id),
+                )
+                return
         if command == "/disableprotocol":
             try:
                 endpoint, protocol = self._protocol_profile_args(args)
@@ -319,6 +332,8 @@ class TelegramCommandMixin:
                 pass
             elif command == "/disableprotocol" and len(args) != 2:
                 pass
+            elif command == "/provisionnode" and len(args) != 3:
+                pass
             else:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
@@ -341,6 +356,9 @@ class TelegramCommandMixin:
                 "/disableprotocol": lambda: (
                     f"Disable new assignments for protocol {args[1]} on endpoint {args[0]}?"
                 ),
+                "/provisionnode": lambda: (
+                    f"Queue a guarded VPN node intent for {args[0]} / {args[1]} / {args[2]}?"
+                ),
             }[command]()
                 self._queue_admin_confirmation(
                     chat["id"],
@@ -361,6 +379,7 @@ class TelegramCommandMixin:
                         "/drain": "🚧 Confirm Drain",
                         "/promoteprotocol": "🛡 Confirm Promotion",
                         "/disableprotocol": "⛔ Confirm Disable",
+                        "/provisionnode": "🧱 Confirm Node Intent",
                     }[command],
                 )
                 return
@@ -1174,6 +1193,26 @@ class TelegramCommandMixin:
                     f"Endpoint {result['source_endpoint_id']} is paused. "
                     f"Queued {result['queued']} migration(s) to {result['target_endpoint_id']}; "
                     "maintenance will provision and probe each target before commit.",
+                    self._admin_keyboard(telegram_id),
+                )
+        elif command == "/provisionnode":
+            try:
+                region, size, image = self._infrastructure_provision_args(args)
+                job_id = self._admin_call(
+                    telegram_id,
+                    "queue_infrastructure_provision",
+                    region,
+                    size,
+                    image,
+                    telegram_id,
+                )
+            except (CommerceError, ValueError) as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                self.send(
+                    chat["id"],
+                    f"VPN infrastructure intent {job_id} queued. "
+                    "The dedicated worker must submit and reconcile it; endpoint activation still requires a separate verified probe.",
                     self._admin_keyboard(telegram_id),
                 )
         elif command == "/retry":

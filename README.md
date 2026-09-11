@@ -115,6 +115,7 @@ Optional:
   while migrating old clients that still send `AURIX_AI_ACCESS_TOKEN`.
 - `AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS` — maximum health age accepted by allocation (default `900`).
 - `DIGITALOCEAN_API_TOKEN` — optional infrastructure-worker credential; leave absent on the bot/VPN host where possible.
+- `AURIX_INFRASTRUCTURE_INTENTS_ENABLED` — defaults to `0`; owner-confirmed Telegram node intents stay disabled until the fleet gates are reviewed.
 - `AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED` — defaults to `0`; provider creation stays disabled until the autoscale runbook gates are met.
 - `AURIX_ENDPOINT_ACTIVATION_ENABLED` — separate default-off gate preventing an unaccepted new node from becoming allocatable.
 - `AURIX_ALLOWED_REGIONS`, `AURIX_ALLOWED_DROPLET_SIZES`, `AURIX_ALLOWED_DROPLET_IMAGES`, `AURIX_MAX_VPN_NODES`, `AURIX_MAX_NODE_CREATIONS_PER_DAY`, `AURIX_NODE_CREATION_COOLDOWN_SECONDS` — hard provider allowlists, ceilings, and rate guards.

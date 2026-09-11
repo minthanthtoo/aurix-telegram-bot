@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import sys
@@ -14,6 +15,7 @@ from typing import Any
 UTC = timezone.utc
 ADMIN_CONFIRMATION_TTL = timedelta(minutes=5)
 _PROTOCOL_TOKEN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_INFRA_TOKEN = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 
 
 class TelegramAdminMixin:
@@ -51,6 +53,24 @@ class TelegramAdminMixin:
         if not _PROTOCOL_TOKEN.fullmatch(endpoint) or not _PROTOCOL_TOKEN.fullmatch(protocol):
             raise ValueError("Endpoint and protocol names are invalid")
         return endpoint, protocol
+
+    @staticmethod
+    def _infrastructure_provision_args(args: list[str]) -> tuple[str, str, str]:
+        if len(args) != 3:
+            raise ValueError("Usage: /provisionnode <region> <size> <image>")
+        values = tuple(str(value).strip().lower() for value in args)
+        if any(not _INFRA_TOKEN.fullmatch(value) for value in values):
+            raise ValueError("Region, size, and image must be simple allowlisted names")
+        return values
+
+    @staticmethod
+    def _infrastructure_intents_enabled() -> bool:
+        return os.environ.get("AURIX_INFRASTRUCTURE_INTENTS_ENABLED", "0").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     def _new_panel(self, chat_id: int, telegram_id: int, view: str) -> str:
         token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
@@ -261,6 +281,26 @@ class TelegramAdminMixin:
             except Exception as exc:
                 snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
             return snapshot
+        if command == "/provisionnode":
+            try:
+                region, size, image = self._infrastructure_provision_args(args)
+                controller = getattr(self.commerce, "fleet_controller", None)
+                snapshot.update(
+                    {
+                        "state": (
+                            "present"
+                            if self._infrastructure_intents_enabled()
+                            and callable(getattr(controller, "queue_provision", None))
+                            else "unavailable"
+                        ),
+                        "region": region,
+                        "size": size,
+                        "image": image,
+                    }
+                )
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
         if command == "/disableprotocol":
             try:
                 endpoint, protocol = self._protocol_profile_args(args)
@@ -465,6 +505,16 @@ class TelegramAdminMixin:
                     f"Cohort limit: {snapshot.get('limit') or 50}",
                     "Result: pause new assignments on the source and queue verified migrations.",
                     "Existing credentials are not revoked until a target is provisioned and probed.",
+                ]
+            )
+        if command == "/provisionnode":
+            return "\n".join(
+                [
+                    f"Region: {snapshot.get('region') or args[0]}",
+                    f"Size: {snapshot.get('size') or args[1]}",
+                    f"Image: {snapshot.get('image') or args[2]}",
+                    "Result: record one guarded infrastructure intent for the dedicated worker.",
+                    "No provider request runs in this Telegram confirmation.",
                 ]
             )
         if command in {"/protocolreadiness", "/promoteprotocol"}:
