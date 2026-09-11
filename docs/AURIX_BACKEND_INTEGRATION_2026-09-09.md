@@ -60,6 +60,8 @@ load test, or speed test was changed or performed.
   credits zero, advances the observed baseline, and does not re-credit aged-out
   traffic. Explicitly migrated credentials still require their operator-supplied
   baseline before either mode can account usage.
+- Provider-reported usage counters are parsed as untrusted input; boolean values are
+  rejected rather than being coerced to `0`/`1` bytes.
 - Local lease expiry is an operational horizon only. Active reservations remain held
   after `expires_at` until remote revocation/expiry is proven; this prevents a second
   generation from reusing capacity while the first credential may still work.
@@ -226,7 +228,7 @@ capabilities, and evidence timestamps while ignoring only the preview's
 volatile `checked_at` timestamp; the promotion method rechecks all evidence
 before enabling the profile. Customer identities cannot reach either command.
 
-The complete suite now passes `347` tests (`Ran 347 tests ... OK`) with
+The complete suite now passes `348` tests (`Ran 348 tests ... OK`) with
 `PYTHONWARNINGS=error::ResourceWarning`; focused Telegram authorization and
 promotion/disable tests, Python compilation, Ruff, and `git diff --check` also
 pass.
