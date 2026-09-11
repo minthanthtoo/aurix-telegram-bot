@@ -393,6 +393,8 @@ allocation, failover decision commit, one lease and assignment transfer, and
 post-failover usage/recovery authorization. The selector repair is committed
 as `9518069` (`Fix PostgreSQL VPN selector compatibility`), and the durable
 failover regression as `ac6f655` (`Cover PostgreSQL VPN failover flow`).
+The same regression now covers the optional failed-provision retry filter,
+committed as `f75c49e` (`Cover PostgreSQL VPN worker retry`).
 The VPN-only regression selection remains green at 324 tests. This evidence is
 local and disposable; it does not validate the hosted database, live provider
 state, Myanmar client paths, load/speed behavior, or production cutover.
