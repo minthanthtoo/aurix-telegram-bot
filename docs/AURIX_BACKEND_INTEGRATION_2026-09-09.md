@@ -347,7 +347,7 @@ remain local-only; this milestone is committed as `31054f7` (`Serialize VPN
 provider state mutations`).
 
 The focused scale-control tests, Control Center/API tests, VPN-oriented
-regression set (227 tests), Ruff, Python compilation, JavaScript syntax, and
+regression set (230 tests), Ruff, Python compilation, JavaScript syntax, and
 `git diff --check` pass locally. No live server, customer credential,
 provider/database deployment, load test, speed test, or automatic scale action
 was performed. The remaining action is still the separately authorized
