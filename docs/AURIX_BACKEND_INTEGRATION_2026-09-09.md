@@ -336,6 +336,10 @@ silently accepted. The policy is empty by default because actual Outline,
 worker-SSH, and management CIDRs must be selected from deployment evidence.
 This local implementation and fake-provider coverage are committed as the
 VPN-only commit `a6a8683` (`Add guarded VPN cloud firewall stage`).
+Managed node-agent bindings now require HTTPS for remote agents, allow plain
+HTTP only for loopback-local agents, and reject URL userinfo/query/fragment
+decorations that could expose bearer credentials. This boundary hardening is
+committed as `bd4c59b` (`Harden VPN node-agent transport bindings`).
 
 The focused scale-control tests, Control Center/API tests, VPN-oriented
 regression set (227 tests), Ruff, Python compilation, JavaScript syntax, and
