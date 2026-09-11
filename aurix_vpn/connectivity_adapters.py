@@ -259,9 +259,11 @@ def _provider_usage(record: Any) -> int:
         direct = record.get("bytes_transferred")
         if direct is not None:
             return _provider_counter(direct)
+        tx = record["tx_bytes"] if "tx_bytes" in record else record.get("tx", 0)
+        rx = record["rx_bytes"] if "rx_bytes" in record else record.get("rx", 0)
         return _provider_counter(
-            record.get("tx_bytes") or record.get("tx") or 0
-        ) + _provider_counter(record.get("rx_bytes") or record.get("rx") or 0)
+            tx
+        ) + _provider_counter(rx)
     return _provider_counter(record)
 
 

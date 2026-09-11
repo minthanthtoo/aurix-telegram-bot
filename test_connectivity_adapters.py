@@ -160,15 +160,19 @@ class ConnectivityAdapterTest(unittest.TestCase):
 
     def test_provider_usage_rejects_boolean_counters(self):
         client = _ProtocolClient()
-        client.get_user_usage = lambda _external_id: {"tx_bytes": True, "rx_bytes": 0}
         adapter = XrayConnectivityAdapter(client)
-        with self.assertRaisesRegex(ConnectivityAdapterError, "provider usage is not an integer"):
-            adapter.read_usage(
-                {
-                    "external_id": "uuid-a",
-                    "access_url": "vless://uuid-a@example.com:18443",
-                }
-            )
+        for counters in ({"tx_bytes": True, "rx_bytes": 0}, {"tx_bytes": False, "tx": 10}):
+            with self.subTest(counters=counters):
+                client.get_user_usage = lambda _external_id, value=counters: value
+                with self.assertRaisesRegex(
+                    ConnectivityAdapterError, "provider usage is not an integer"
+                ):
+                    adapter.read_usage(
+                        {
+                            "external_id": "uuid-a",
+                            "access_url": "vless://uuid-a@example.com:18443",
+                        }
+                    )
 
     @staticmethod
     def _xray_route():
