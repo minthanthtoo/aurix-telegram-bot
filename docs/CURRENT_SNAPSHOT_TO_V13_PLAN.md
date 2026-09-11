@@ -113,6 +113,13 @@ Important remaining facts:
 - Endpoint capacity observations now use bounded failure/recovery hysteresis and
   audit actual `ACTIVE`/`DEGRADED` transitions; normal failover/drain target
   selection excludes degraded endpoints.
+- Failover safety controls now provide a durable global pause switch plus
+  optional region/endpoint pause and migration budgets. Automatic failover and
+  operator drains reserve all applicable budgets transactionally before intent
+  creation, so a regional or endpoint incident cannot create an unbounded
+  migration storm; automatic blocks keep the health observation and add a
+  redacted audit event. The read-only Operations view exposes current usage and
+  remaining budget, while web access remains mutation-free.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
 - The application/refactor baseline is now in the `codex/aurix-vpn-portal` history; unrelated AI/UI and pay-monitor work remains intentionally outside the VPN commits.
 

@@ -591,6 +591,7 @@ class AuriXVpnWebApplication:
     def admin_operations(self, limit: int = 100) -> dict[str, Any]:
         commerce = self.runtime.commerce
         database = getattr(self.runtime, "commerce_database", None)
+        failover = getattr(commerce, "failover", None)
         jobs = (
             commerce.failed_jobs(limit=limit, include_nonterminal=True)
             if callable(getattr(commerce, "failed_jobs", None))
@@ -616,6 +617,10 @@ class AuriXVpnWebApplication:
             for item in pending
         ]
         infrastructure_jobs: list[dict[str, Any]] = []
+        safety_controls = []
+        controls_method = getattr(failover, "safety_controls", None)
+        if database is not None and callable(controls_method):
+            safety_controls = controls_method()
         if database is not None:
             with database.connect() as connection:
                 rows = connection.execute(
@@ -649,6 +654,7 @@ class AuriXVpnWebApplication:
             "jobs": jobs,
             "infrastructure_jobs": infrastructure_jobs,
             "pending_orders": pending_safe,
+            "safety_controls": safety_controls,
             "consistency": commerce.consistency_report(),
         }
 

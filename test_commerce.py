@@ -824,7 +824,7 @@ def postgres_schema_contract(statements):
             columns = set()
             for line in body.splitlines():
                 token = line.strip().split(None, 1)[0].rstrip(",") if line.strip() else ""
-                if token.upper() in {"CHECK", "CONSTRAINT", "FOREIGN", "PRIMARY", "UNIQUE"}:
+                if token.upper() in {"CHECK", "CONSTRAINT", "FOREIGN", "PRIMARY", "REFERENCES", "UNIQUE"}:
                     continue
                 if re.fullmatch(r"[a-z_][a-z0-9_]*", token, re.IGNORECASE):
                     columns.add(token.lower())
@@ -990,15 +990,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "90db96deb5796faa5361864b4a2ebbde4e32f474c342d4c6bbe89b9673d32a2e",
+            "31e86b1a4d84d28bfd68d913cfb1c661f52bb4410c7939d29838e4097f8c51dc",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "137244ce01e7391433a07d51e5bffbcb1977f2399fdf90a35dd6dbea2ce749a2",
+            "83939ce634a59593be7e3dc4200f41fd310bec8915895e5eb836203f493b23e4",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "e2a79471e120c62d21f0243001dd29ac0b4a6c01f04b00c3d632647721456aac",
+            "7f4c0329c9fa50b8489c307a771bbaf9b0c0e330728cdaaa69e548fcae4f0230",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

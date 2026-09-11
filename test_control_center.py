@@ -12,6 +12,7 @@ from unittest.mock import patch
 from commerce import CommerceDatabase
 from connectivity_adapters import ConnectivityAdapterRegistry, XrayConnectivityAdapter
 from identity import IdentityService
+from route_failover import RouteFailoverService
 from test_telegram_web_app import _init_data
 from vpn_web_api import AuriXVpnWebApplication, make_handler
 from http.server import ThreadingHTTPServer
@@ -24,11 +25,12 @@ class ControlCenterTest(unittest.TestCase):
         self.database.initialize()
         identity = IdentityService(self.database)
         identity.ensure_account(12345)
+        failover = RouteFailoverService(self.database)
         commerce = SimpleNamespace(
             identity=identity,
             adapter_registry=ConnectivityAdapterRegistry(),
             consistency_report=lambda: {"failed_jobs": 0, "pending_receipts": 0},
-            failover=SimpleNamespace(decisions=lambda limit=100: []),
+            failover=failover,
             failed_jobs=lambda limit=100, include_nonterminal=True: [],
             list_pending_orders=lambda limit=100: [],
             endpoint_plan_capacity=lambda endpoint_id: [
@@ -233,6 +235,8 @@ class ControlCenterTest(unittest.TestCase):
         operations = AuriXVpnWebApplication(self.runtime).admin_operations()
         self.assertEqual(operations["infrastructure_jobs"][0]["job_id"], "infra-job-1")
         self.assertEqual(operations["infrastructure_jobs"][0]["error_type"], "ConnectivityError")
+        self.assertEqual(operations["safety_controls"][0]["scope"], "global")
+        self.assertEqual(operations["safety_controls"][0]["remaining_migrations"], 100)
         payload = json.dumps(operations)
         self.assertNotIn("do-12345", payload)
         self.assertNotIn("do-action-99", payload)

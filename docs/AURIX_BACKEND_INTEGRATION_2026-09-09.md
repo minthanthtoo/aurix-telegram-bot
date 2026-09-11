@@ -429,3 +429,22 @@ retries`). The VPN-only regression selection remains green at 328 tests. This
 evidence is local and disposable; it does not validate the hosted database,
 live provider state, Myanmar client paths, load/speed behavior, or production
 cutover.
+
+## Continuation checkpoint — 2026-09-12
+
+Commerce migration 11 adds durable failover safety controls. The seeded global
+control allows 100 new migration decisions per 300 seconds; operators can add
+global, region, or endpoint pause/budget overrides. Automatic failover and
+operator drains reserve every applicable scope in one transaction, and repeated
+idempotent drains do not consume the budget twice. A paused or exhausted
+automatic path still records the route observation and writes a redacted audit
+event. The read-only VPN Operations view exposes each control's current-window
+usage and remaining budget; it does not expose a mutation path.
+
+Focused failover, migration, Control Center, VPN web API, and render checks pass;
+the non-PostgreSQL VPN regression passes `327` tests, and the two non-PostgreSQL
+migration-manifest checks also pass. The optional PostgreSQL end-to-end rehearsal
+was not re-run at this checkpoint because the host filesystem has only about
+`308 MiB` available and the disposable PostgreSQL cluster exhausted that space
+before the SQLite source snapshot could be initialized. No live server, provider,
+customer credential, database, load test, or speed test was changed or run.

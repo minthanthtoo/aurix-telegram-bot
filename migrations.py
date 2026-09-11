@@ -1207,6 +1207,70 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS endpoint_protocol_observations_lookup ON endpoint_protocol_observations(endpoint_id, protocol, signal, observed_at)",
         ),
     ),
+    Migration(
+        11,
+        "failover_safety_controls",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS route_failover_controls (
+                   scope TEXT NOT NULL CHECK (scope IN ('global', 'region', 'endpoint')),
+                   scope_key TEXT NOT NULL,
+                   paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)),
+                   max_migrations_per_window INTEGER NOT NULL CHECK (max_migrations_per_window > 0),
+                   window_seconds INTEGER NOT NULL CHECK (window_seconds > 0),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (scope, scope_key)
+               )""",
+            """INSERT INTO route_failover_controls
+               (scope, scope_key, paused, max_migrations_per_window, window_seconds,
+                created_at, updated_at)
+               VALUES ('global', 'global', 0, 100, 300,
+                       '2026-09-01T00:00:00+00:00', '2026-09-01T00:00:00+00:00')
+               ON CONFLICT(scope, scope_key) DO NOTHING""",
+            """CREATE TABLE IF NOT EXISTS route_failover_control_windows (
+                   scope TEXT NOT NULL,
+                   scope_key TEXT NOT NULL,
+                   window_start TEXT NOT NULL,
+                   migration_count INTEGER NOT NULL DEFAULT 0 CHECK (migration_count >= 0),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   PRIMARY KEY (scope, scope_key, window_start),
+                   FOREIGN KEY (scope, scope_key)
+                       REFERENCES route_failover_controls(scope, scope_key)
+               )""",
+            "CREATE INDEX IF NOT EXISTS route_failover_control_windows_lookup ON route_failover_control_windows(updated_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS route_failover_controls (
+                   scope TEXT NOT NULL CHECK (scope IN ('global', 'region', 'endpoint')),
+                   scope_key TEXT NOT NULL,
+                   paused BOOLEAN NOT NULL DEFAULT FALSE,
+                   max_migrations_per_window INTEGER NOT NULL CHECK (max_migrations_per_window > 0),
+                   window_seconds INTEGER NOT NULL CHECK (window_seconds > 0),
+                   created_at TIMESTAMPTZ NOT NULL,
+                   updated_at TIMESTAMPTZ NOT NULL,
+                   PRIMARY KEY (scope, scope_key)
+               )""",
+            """INSERT INTO route_failover_controls
+               (scope, scope_key, paused, max_migrations_per_window, window_seconds,
+                created_at, updated_at)
+               VALUES ('global', 'global', FALSE, 100, 300,
+                       '2026-09-01T00:00:00+00:00', '2026-09-01T00:00:00+00:00')
+               ON CONFLICT(scope, scope_key) DO NOTHING""",
+            """CREATE TABLE IF NOT EXISTS route_failover_control_windows (
+                   scope TEXT NOT NULL,
+                   scope_key TEXT NOT NULL,
+                   window_start TIMESTAMPTZ NOT NULL,
+                   migration_count BIGINT NOT NULL DEFAULT 0 CHECK (migration_count >= 0),
+                   created_at TIMESTAMPTZ NOT NULL,
+                   updated_at TIMESTAMPTZ NOT NULL,
+                   PRIMARY KEY (scope, scope_key, window_start),
+                   FOREIGN KEY (scope, scope_key)
+                       REFERENCES route_failover_controls(scope, scope_key)
+               )""",
+            "CREATE INDEX IF NOT EXISTS route_failover_control_windows_lookup ON route_failover_control_windows(updated_at)",
+        ),
+    ),
 )
 
 

@@ -32,7 +32,10 @@ EXCLUDED_TABLES = {"schema_migrations", "sqlite_sequence"}
 # These tables are populated by the PostgreSQL initializer before a migration
 # copy.  They are catalog/bootstrap state, not evidence that the destination
 # already contains an operational customer or infrastructure workload.
-SEEDED_TABLES = {"plans", "vpn_endpoints"}
+# The PostgreSQL initializer creates these rows before a source snapshot is
+# copied. Failover controls are still copied from the source, so an operator's
+# pause/budget configuration is preserved rather than treated as a conflict.
+SEEDED_TABLES = {"plans", "vpn_endpoints", "route_failover_controls"}
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 

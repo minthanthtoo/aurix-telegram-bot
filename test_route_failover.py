@@ -112,6 +112,97 @@ class RouteFailoverTest(unittest.TestCase):
         self.assertEqual(reclaimed["state"], "creating")
         self.assertEqual(reclaimed["attempts"], 1)
 
+    def test_global_safety_pause_blocks_failover_but_keeps_health_evidence(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
+        source = self.identity.create_generation(
+            entitlement, "sg-a", external_id="source-key", usage_baseline_provenance="new"
+        )
+        self.failover.configure_policy(entitlement, enabled=True, failure_threshold=1, now=self.now)
+        configured = self.failover.configure_safety_control(
+            "global", paused=True, actor_id=999, now=self.now
+        )
+        self.assertTrue(bool(configured["paused"]))
+
+        blocked = self.failover.observe(source, outcome="failure", observed_at=self.now)
+        self.assertIsNone(blocked["decision_id"])
+        self.assertTrue(blocked["failover_blocked"])
+        self.assertIn("global:global", blocked["failover_block_reason"])
+        with self.database.connect() as connection:
+            observation = connection.execute(
+                "SELECT COUNT(*) AS n FROM route_observations WHERE generation_id = ?",
+                (source,),
+            ).fetchone()
+            audit = connection.execute(
+                """SELECT COUNT(*) AS n FROM audit_events
+                    WHERE action = 'failover_blocked_by_safety_control'"""
+            ).fetchone()
+        self.assertEqual(int(observation["n"]), 1)
+        self.assertEqual(int(audit["n"]), 1)
+
+        self.failover.configure_safety_control("global", paused=False, now=self.now)
+        resumed = self.failover.observe(
+            source, outcome="failure", observed_at=self.now + timedelta(minutes=1)
+        )
+        self.assertIsNotNone(resumed["decision_id"])
+        self.assertFalse(resumed["failover_blocked"])
+
+    def test_region_budget_blocks_new_failover_decisions_and_is_observable(self):
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (456, 'Second', ?)",
+                (self.now.isoformat(),),
+            )
+            connection.execute(
+                """INSERT INTO orders
+                   (id, telegram_id, plan_code, amount_minor, currency, status, created_at)
+                   VALUES ('order-2', 456, 'basic_50gb', 1, 'MMK', 'approved', ?)""",
+                (self.now.isoformat(),),
+            )
+            connection.execute(
+                """INSERT INTO subscriptions
+                   (id, order_id, telegram_id, plan_code, starts_at, expires_at,
+                    quota_bytes, duration_days, status)
+                   VALUES ('sub-2', 'order-2', 456, 'basic_50gb', ?, ?, 1000, 30, 'active')""",
+                (self.now.isoformat(), (self.now + timedelta(days=30)).isoformat()),
+            )
+        first_entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
+        second_entitlement = self.identity.ensure_subscription_entitlement(456, "sub-2")
+        first = self.identity.create_generation(
+            first_entitlement, "sg-a", external_id="first-key", usage_baseline_provenance="new"
+        )
+        second = self.identity.create_generation(
+            second_entitlement, "sg-a", external_id="second-key", usage_baseline_provenance="new"
+        )
+        for entitlement, generation in ((first_entitlement, first), (second_entitlement, second)):
+            self.identity.ensure_generation_lease(
+                entitlement,
+                generation,
+                "sg-a",
+                1000,
+                (self.now + timedelta(days=30)).isoformat(),
+                now=self.now,
+            )
+            self.failover.configure_policy(
+                entitlement, enabled=True, failure_threshold=1, now=self.now
+            )
+        self.failover.configure_safety_control(
+            "region", "sgp1", max_migrations_per_window=1, now=self.now
+        )
+
+        first_result = self.failover.observe(first, outcome="failure", observed_at=self.now)
+        second_result = self.failover.observe(
+            second, outcome="failure", observed_at=self.now + timedelta(minutes=1)
+        )
+        self.assertIsNotNone(first_result["decision_id"])
+        self.assertIsNone(second_result["decision_id"])
+        self.assertTrue(second_result["failover_blocked"])
+        self.assertIn("region:sgp1", second_result["failover_block_reason"])
+
+        controls = self.failover.safety_controls(now=self.now + timedelta(minutes=1))
+        region = next(item for item in controls if item["scope"] == "region")
+        self.assertEqual(region["migration_count"], 1)
+        self.assertEqual(region["remaining_migrations"], 0)
+
     def test_operator_drain_pauses_source_and_queues_idempotent_cohort(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
         source = self.identity.create_generation(
@@ -144,6 +235,9 @@ class RouteFailoverTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(endpoint["state"], "DRAINING")
         self.assertFalse(bool(endpoint["accepts_new_assignments"]))
+        controls = self.failover.safety_controls(now=self.now)
+        global_control = next(item for item in controls if item["scope"] == "global")
+        self.assertEqual(global_control["migration_count"], 1)
         decision = self.failover.claim(now=self.now)
         self.assertEqual(decision["decision_id"], result["decision_ids"][0])
 

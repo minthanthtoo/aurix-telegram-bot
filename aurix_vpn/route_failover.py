@@ -88,6 +88,268 @@ class RouteFailoverService:
         return dict(row) if row is not None else {}
 
     @staticmethod
+    def _safety_scope(scope: str, scope_key: str | None) -> tuple[str, str]:
+        normalized_scope = str(scope or "").strip().lower()
+        if normalized_scope not in {"global", "region", "endpoint"}:
+            raise FailoverError("safety control scope is invalid")
+        normalized_key = "global" if normalized_scope == "global" else str(scope_key or "").strip()
+        if not normalized_key or len(normalized_key) > 128:
+            raise FailoverError("safety control scope key is invalid")
+        return normalized_scope, normalized_key
+
+    @staticmethod
+    def _safety_window_start(timestamp: str | datetime, window_seconds: int) -> str:
+        epoch = int(_time(timestamp).timestamp())
+        start = epoch - (epoch % int(window_seconds))
+        return datetime.fromtimestamp(start, tz=UTC).isoformat()
+
+    def configure_safety_control(
+        self,
+        scope: str = "global",
+        scope_key: str | None = None,
+        *,
+        paused: bool = False,
+        max_migrations_per_window: int = 100,
+        window_seconds: int = 300,
+        actor_id: int | None = None,
+        now: str | datetime | None = None,
+    ) -> dict[str, Any]:
+        """Configure a durable failover kill switch or migration budget.
+
+        The seeded global control is intentionally bounded. Region and endpoint
+        controls are optional overrides, and a paused control always wins over
+        every lower-level scope.
+        """
+        normalized_scope, normalized_key = self._safety_scope(scope, scope_key)
+        if not 1 <= int(max_migrations_per_window) <= 100_000:
+            raise FailoverError("migration budget is invalid")
+        if not 1 <= int(window_seconds) <= 86_400:
+            raise FailoverError("migration budget window is invalid")
+        timestamp = _text(now)
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """INSERT INTO route_failover_controls
+                   (scope, scope_key, paused, max_migrations_per_window,
+                    window_seconds, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(scope, scope_key) DO UPDATE SET
+                     paused = excluded.paused,
+                     max_migrations_per_window = excluded.max_migrations_per_window,
+                     window_seconds = excluded.window_seconds,
+                     updated_at = excluded.updated_at""",
+                (
+                    normalized_scope,
+                    normalized_key,
+                    bool(paused),
+                    int(max_migrations_per_window),
+                    int(window_seconds),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                """INSERT INTO audit_events
+                   (actor_type, actor_id, action, target_type, target_id,
+                    metadata_json, created_at)
+                   VALUES (?, ?, 'failover_safety_control_configured', ?, ?, ?, ?)""",
+                (
+                    "admin" if actor_id is not None else "system",
+                    str(actor_id) if actor_id is not None else None,
+                    "route_failover_control",
+                    f"{normalized_scope}:{normalized_key}",
+                    json.dumps(
+                        {
+                            "paused": bool(paused),
+                            "max_migrations_per_window": int(max_migrations_per_window),
+                            "window_seconds": int(window_seconds),
+                        },
+                        sort_keys=True,
+                    ),
+                    timestamp,
+                ),
+            )
+            row = connection.execute(
+                """SELECT scope, scope_key, paused, max_migrations_per_window,
+                          window_seconds, created_at, updated_at
+                     FROM route_failover_controls
+                    WHERE scope = ? AND scope_key = ?""",
+                (normalized_scope, normalized_key),
+            ).fetchone()
+        return dict(row) if row is not None else {}
+
+    def safety_controls(self, *, now: str | datetime | None = None) -> list[dict[str, Any]]:
+        """Return controls and current-window usage for read-only operations views."""
+        timestamp = _text(now)
+        with self.database.connect() as connection:
+            controls = connection.execute(
+                """SELECT scope, scope_key, paused, max_migrations_per_window,
+                          window_seconds, created_at, updated_at
+                     FROM route_failover_controls
+                    ORDER BY CASE scope WHEN 'global' THEN 0 WHEN 'region' THEN 1 ELSE 2 END,
+                             scope_key"""
+            ).fetchall()
+            result: list[dict[str, Any]] = []
+            for control in controls:
+                item = dict(control)
+                window_start = self._safety_window_start(timestamp, int(item["window_seconds"]))
+                usage = connection.execute(
+                    """SELECT migration_count FROM route_failover_control_windows
+                        WHERE scope = ? AND scope_key = ? AND window_start = ?""",
+                    (item["scope"], item["scope_key"], window_start),
+                ).fetchone()
+                used = int(usage["migration_count"] or 0) if usage else 0
+                item["window_start"] = window_start
+                item["migration_count"] = used
+                item["remaining_migrations"] = max(
+                    0, int(item["max_migrations_per_window"]) - used
+                )
+                result.append(item)
+        return result
+
+    def _safety_controls_for_endpoint(
+        self,
+        connection: Any,
+        endpoint_id: str,
+        *,
+        region: str | None = None,
+        lock: bool = False,
+    ) -> list[dict[str, Any]]:
+        if region is None:
+            endpoint = connection.execute(
+                "SELECT region FROM vpn_endpoints WHERE id = ?", (str(endpoint_id),)
+            ).fetchone()
+            region = str(endpoint["region"] or "") if endpoint is not None else ""
+        lock_suffix = " FOR UPDATE" if lock and isinstance(connection, _PostgresConnection) else ""
+        rows = connection.execute(
+            f"""SELECT scope, scope_key, paused, max_migrations_per_window, window_seconds
+                 FROM route_failover_controls
+                WHERE (scope = 'global' AND scope_key = 'global')
+                   OR (scope = 'region' AND scope_key = ?)
+                   OR (scope = 'endpoint' AND scope_key = ?)
+                ORDER BY CASE scope WHEN 'global' THEN 0 WHEN 'region' THEN 1 ELSE 2 END{lock_suffix}""",
+            (str(region), str(endpoint_id)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _reserve_safety_budget(
+        self,
+        connection: Any,
+        endpoint_id: str,
+        count: int,
+        timestamp: str,
+        *,
+        region: str | None = None,
+    ) -> dict[str, Any]:
+        requested = int(count)
+        if requested < 1:
+            return {"allowed": True, "reserved": 0}
+        controls = self._safety_controls_for_endpoint(
+            connection, endpoint_id, region=region, lock=True
+        )
+        for control in controls:
+            if bool(control["paused"]):
+                return {
+                    "allowed": False,
+                    "scope": str(control["scope"]),
+                    "scope_key": str(control["scope_key"]),
+                    "reason": (
+                        "failover safety control is paused for "
+                        f"{control['scope']}:{control['scope_key']}"
+                    ),
+                }
+        lock = " FOR UPDATE" if isinstance(connection, _PostgresConnection) else ""
+        buckets: list[tuple[dict[str, Any], str, int]] = []
+        for control in controls:
+            window_start = self._safety_window_start(
+                timestamp, int(control["window_seconds"])
+            )
+            connection.execute(
+                """INSERT INTO route_failover_control_windows
+                   (scope, scope_key, window_start, migration_count, created_at, updated_at)
+                   VALUES (?, ?, ?, 0, ?, ?)
+                   ON CONFLICT(scope, scope_key, window_start) DO NOTHING""",
+                (
+                    control["scope"],
+                    control["scope_key"],
+                    window_start,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            bucket = connection.execute(
+                f"""SELECT migration_count FROM route_failover_control_windows
+                       WHERE scope = ? AND scope_key = ? AND window_start = ?{lock}""",
+                (control["scope"], control["scope_key"], window_start),
+            ).fetchone()
+            used = int(bucket["migration_count"] or 0) if bucket else 0
+            if used + requested > int(control["max_migrations_per_window"]):
+                return {
+                    "allowed": False,
+                    "scope": str(control["scope"]),
+                    "scope_key": str(control["scope_key"]),
+                    "reason": (
+                        "failover migration budget exhausted for "
+                        f"{control['scope']}:{control['scope_key']}"
+                    ),
+                    "window_start": window_start,
+                    "migration_count": used,
+                    "remaining": max(
+                        0, int(control["max_migrations_per_window"]) - used
+                    ),
+                }
+            buckets.append((control, window_start, used))
+        for control, window_start, _ in buckets:
+            connection.execute(
+                """UPDATE route_failover_control_windows
+                      SET migration_count = migration_count + ?, updated_at = ?
+                    WHERE scope = ? AND scope_key = ? AND window_start = ?""",
+                (
+                    requested,
+                    timestamp,
+                    control["scope"],
+                    control["scope_key"],
+                    window_start,
+                ),
+            )
+        return {
+            "allowed": True,
+            "reserved": requested,
+            "scopes": [
+                f"{control['scope']}:{control['scope_key']}" for control, _, _ in buckets
+            ],
+        }
+
+    @staticmethod
+    def _record_safety_block(
+        connection: Any,
+        endpoint_id: str,
+        budget: dict[str, Any],
+        timestamp: str,
+    ) -> None:
+        connection.execute(
+            """INSERT INTO audit_events
+               (actor_type, actor_id, action, target_type, target_id,
+                metadata_json, created_at)
+               VALUES ('system', NULL, 'failover_blocked_by_safety_control',
+                       'vpn_endpoint', ?, ?, ?)""",
+            (
+                str(endpoint_id),
+                json.dumps(
+                    {
+                        "scope": budget.get("scope"),
+                        "scope_key": budget.get("scope_key"),
+                        "reason": budget.get("reason"),
+                        "window_start": budget.get("window_start"),
+                        "remaining": budget.get("remaining"),
+                    },
+                    sort_keys=True,
+                ),
+                timestamp,
+            ),
+        )
+
+    @staticmethod
     def _target_endpoint(
         connection: Any,
         source_endpoint_id: str,
@@ -248,8 +510,9 @@ class RouteFailoverService:
         normalized_reason = str(reason or "operator-drain").strip()[:256] or "operator-drain"
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            source_lock = " FOR UPDATE" if isinstance(connection, _PostgresConnection) else ""
             source = connection.execute(
-                "SELECT id, code, state FROM vpn_endpoints WHERE id = ?",
+                f"SELECT id, code, state, region FROM vpn_endpoints WHERE id = ?{source_lock}",
                 (source_id,),
             ).fetchone()
             if source is None:
@@ -291,6 +554,27 @@ class RouteFailoverService:
                 if target is None:
                     raise FailoverError("no eligible drain target endpoint exists")
                 targets["outline"] = target
+            new_decision_count = 0
+            for generation in generations:
+                target = targets[str(generation["protocol"] or "outline").strip().lower()]
+                idempotency = (
+                    f"operator-drain:{source_id}:{generation['generation_id']}:{target['id']}"
+                )
+                existing = connection.execute(
+                    "SELECT 1 FROM failover_decisions WHERE idempotency_key = ?",
+                    (idempotency,),
+                ).fetchone()
+                if existing is None:
+                    new_decision_count += 1
+            budget = self._reserve_safety_budget(
+                connection,
+                source_id,
+                new_decision_count,
+                timestamp,
+                region=str(source["region"] or ""),
+            )
+            if not budget["allowed"]:
+                raise FailoverError(str(budget["reason"]))
             decision_ids: list[str] = []
             existing_count = 0
             for generation in generations:
@@ -438,6 +722,8 @@ class RouteFailoverService:
                     "failure_streak": int(state["failure_streak"] or 0) if state else 0,
                     "success_streak": int(state["success_streak"] or 0) if state else 0,
                     "decision_id": None,
+                    "failover_blocked": False,
+                    "failover_block_reason": None,
                 }
             failure_streak = int(state["failure_streak"] or 0) if state else 0
             success_streak = int(state["success_streak"] or 0) if state else 0
@@ -467,6 +753,8 @@ class RouteFailoverService:
             ).fetchone()
             decision_id = None
             target_id = None
+            failover_blocked = False
+            failover_block_reason = None
             if policy is not None and bool(policy["enabled"]) and normalized == "failure" and failure_streak >= int(policy["failure_threshold"]):
                 if not cooldown_until or _time(cooldown_until) <= _time(timestamp):
                     target = self._target_endpoint(
@@ -477,30 +765,55 @@ class RouteFailoverService:
                     if target is not None:
                         target_id = str(target["id"])
                         idem = f"failover:{generation['entitlement_key']}:{generation_id}:{target_id}:{bucket}:{failure_streak}"
-                        candidate = f"failover-{_new_id()}"
-                        inserted_decision = connection.execute(
-                            """INSERT INTO failover_decisions
-                               (decision_id, idempotency_key, entitlement_key, source_generation_id,
-                                source_endpoint_id, target_endpoint_id, trigger, network_bucket,
-                                state, next_attempt_at, created_at, updated_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
-                               ON CONFLICT(idempotency_key) DO NOTHING""",
-                            (candidate, idem, str(generation["entitlement_key"]), str(generation_id),
-                             str(generation["endpoint_id"]), target_id, str(reason or "route_failure_threshold")[:256],
-                             bucket, timestamp, timestamp, timestamp),
-                        )
-                        if int(getattr(inserted_decision, "rowcount", 0) or 0) == 1:
-                            decision_id = candidate
-                            cooldown = _time(timestamp) + timedelta(seconds=int(policy["cooldown_seconds"]))
-                            connection.execute(
-                                "UPDATE route_failover_state SET cooldown_until = ?, updated_at = ? WHERE generation_id = ?",
-                                (cooldown.isoformat(), timestamp, str(generation_id)),
-                            )
+                        existing = connection.execute(
+                            "SELECT decision_id FROM failover_decisions WHERE idempotency_key = ?",
+                            (idem,),
+                        ).fetchone()
+                        if existing is not None:
+                            decision_id = str(existing["decision_id"])
                         else:
-                            existing = connection.execute(
-                                "SELECT decision_id FROM failover_decisions WHERE idempotency_key = ?", (idem,)
-                            ).fetchone()
-                            decision_id = str(existing["decision_id"]) if existing else None
+                            budget = self._reserve_safety_budget(
+                                connection,
+                                str(generation["endpoint_id"]),
+                                1,
+                                timestamp,
+                            )
+                            if not budget["allowed"]:
+                                failover_blocked = True
+                                failover_block_reason = str(budget["reason"])
+                                self._record_safety_block(
+                                    connection,
+                                    str(generation["endpoint_id"]),
+                                    budget,
+                                    timestamp,
+                                )
+                            else:
+                                candidate = f"failover-{_new_id()}"
+                                inserted_decision = connection.execute(
+                                    """INSERT INTO failover_decisions
+                                       (decision_id, idempotency_key, entitlement_key, source_generation_id,
+                                        source_endpoint_id, target_endpoint_id, trigger, network_bucket,
+                                        state, next_attempt_at, created_at, updated_at)
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                                       ON CONFLICT(idempotency_key) DO NOTHING""",
+                                    (candidate, idem, str(generation["entitlement_key"]), str(generation_id),
+                                     str(generation["endpoint_id"]), target_id,
+                                     str(reason or "route_failure_threshold")[:256],
+                                     bucket, timestamp, timestamp, timestamp),
+                                )
+                                if int(getattr(inserted_decision, "rowcount", 0) or 0) == 1:
+                                    decision_id = candidate
+                                    cooldown = _time(timestamp) + timedelta(seconds=int(policy["cooldown_seconds"]))
+                                    connection.execute(
+                                        "UPDATE route_failover_state SET cooldown_until = ?, updated_at = ? WHERE generation_id = ?",
+                                        (cooldown.isoformat(), timestamp, str(generation_id)),
+                                    )
+                                else:
+                                    existing = connection.execute(
+                                        "SELECT decision_id FROM failover_decisions WHERE idempotency_key = ?",
+                                        (idem,),
+                                    ).fetchone()
+                                    decision_id = str(existing["decision_id"]) if existing else None
             return {
                 "generation_id": str(generation_id),
                 "duplicate": False,
@@ -508,6 +821,8 @@ class RouteFailoverService:
                 "success_streak": success_streak,
                 "decision_id": decision_id,
                 "target_endpoint_id": target_id,
+                "failover_blocked": failover_blocked,
+                "failover_block_reason": failover_block_reason,
             }
 
     def claim(self, *, now: str | datetime | None = None) -> dict[str, Any] | None:
