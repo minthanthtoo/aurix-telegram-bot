@@ -47,8 +47,8 @@ paths:
       description: >-
         OpenAI-compatible text chat for server-to-server integrations. The
         consuming site owns conversation history; conversation_id is optional.
-        Supports SSE streaming, tool calls, and image message parts when the
-        selected model advertises those capabilities.
+        Supports SSE streaming, tool calls, and image message parts. The
+        selected upstream model must accept the requested optional feature.
       security:
         - aurixApiKey: []
       requestBody:
@@ -212,6 +212,12 @@ paths:
         - $ref: '#/components/parameters/To'
         - $ref: '#/components/parameters/AccountId'
         - $ref: '#/components/parameters/UsageFormat'
+        - $ref: '#/components/parameters/KeyId'
+        - $ref: '#/components/parameters/ModelId'
+        - $ref: '#/components/parameters/Endpoint'
+        - $ref: '#/components/parameters/UsageStatus'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/Offset'
         - name: limit
           in: query
           schema:
@@ -266,6 +272,39 @@ components:
         type: string
         enum: [summary, 9router]
         default: summary
+    KeyId:
+      name: key_id
+      in: query
+      schema:
+        type: string
+    ModelId:
+      name: model_id
+      in: query
+      schema:
+        type: string
+    Endpoint:
+      name: endpoint
+      in: query
+      schema:
+        type: string
+    UsageStatus:
+      name: status
+      in: query
+      schema:
+        type: string
+        enum: [completed, failed]
+    UserId:
+      name: user_id
+      in: query
+      schema:
+        type: string
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
   headers:
     RequestId:
       description: Support correlation identifier.
@@ -491,13 +530,18 @@ components:
                 type: integer
               message:
                 type: object
-                required: [role, content]
+                required: [role]
                 properties:
                   role:
                     type: string
                     enum: [assistant]
                   content:
-                    type: string
+                    type: [string, 'null']
+                  tool_calls:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
               finish_reason:
                 type: string
                 nullable: true
@@ -634,7 +678,7 @@ components:
             $ref: '#/components/schemas/AccountUsage'
     AdminUsageResponse:
       type: object
-      required: [period, accounts, requests]
+      required: [period, accounts, requests, pagination, filters]
       properties:
         period:
           $ref: '#/components/schemas/Period'
@@ -647,6 +691,23 @@ components:
           items:
             type: object
             additionalProperties: true
+        pagination:
+          $ref: '#/components/schemas/UsagePagination'
+        filters:
+          type: object
+          additionalProperties: true
+    UsagePagination:
+      type: object
+      required: [offset, limit, has_more]
+      properties:
+        offset:
+          type: integer
+        limit:
+          type: integer
+        has_more:
+          type: boolean
+        next_offset:
+          type: [integer, 'null']
     Period:
       type: object
       required: [start_at, end_at]

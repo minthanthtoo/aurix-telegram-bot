@@ -127,8 +127,10 @@ Authorization: Bearer ak_live_...
 route uses `model` and `messages[]`, does not require `conversation_id`, and
 returns an OpenAI-style `chat.completion` response. It supports SSE streaming,
 tool/function-call messages, image message parts, embeddings, and
-OpenAI-compatible audio routes when the selected 9Router model advertises the
-capability. AuriX never executes tools or stores audio bytes.
+OpenAI-compatible audio routes. The model catalog advertises chat, embedding,
+and audio categories; tools and image parts are passed through and may be
+rejected by an upstream model that lacks them. AuriX never executes tools or
+stores audio bytes.
 
 Native request body:
 
@@ -158,8 +160,11 @@ newest complete user/assistant turns that fit its 48 KiB bounded working
 context, reports trimming in the response `context` object, and treats all
 site-provided history and summaries as untrusted data.
 
-There is deliberately no public self-registration or browser key-management
-endpoint in this patch. Provision accounts from the host/container:
+There is no public self-registration. The authenticated Telegram console at
+`/admin` is available to every signed-in Telegram user and provides
+browser-based account creation, one-time key reveal, key rotation, masked key
+inventory, and revocation. The same operations remain available from the
+operator CLI:
 
 ```sh
 python /app/aurix_ai_keys.py create-account "Example site" \
@@ -200,20 +205,36 @@ return usage, the request is still counted and `usage_reported_requests` shows
 that token data was unavailable.
 
 With `AURIX_AI_ADMIN_TOKEN` configured, an operator can query the current UTC
-month's account totals. When `ADMIN_TELEGRAM_IDS` is configured, the same
-admin routes also accept an authenticated Telegram session for those existing
-AuriX admin IDs; the bearer token remains useful for automation.
+month's account totals from automation. The same admin routes accept any
+authenticated Telegram session; the bearer token remains useful for
+automation. The admin console is served at
+`https://ai.aurix-mart.tech/admin` and includes the downloadable standalone
+partner integration guide.
 
 ```text
 GET /api/admin/accounts
 GET /api/admin/usage?account_id=acct_...
+POST /api/admin/accounts
+POST /api/admin/keys
+POST /api/admin/keys/{key_id}/revoke
 Authorization: Bearer <admin-token>
 ```
 
+The mutating admin routes return a newly issued bearer key only at creation or
+rotation time. Existing keys can show metadata and a masked prefix, but their
+full value cannot be recovered because the database stores only a hash. Key
+revocation is intentionally a soft delete so usage and audit history remain.
+
 The usage report includes requests, successful/failed requests, input tokens,
 output tokens, cached tokens, provider model, optional cost, and recent
-prompt-free request records. Optional `from`, `to`, and `limit` query
-parameters support an ISO-8601 time window and up to 1,000 recent records.
+prompt-free request records. Optional `from`, `to`, `limit`, and `offset` query
+parameters support an ISO-8601 time window and independent event pagination.
+Activity can additionally be scoped with `account_id`, `key_id`, `model_id`,
+`endpoint`, `status` (`completed` or `failed`), and `user_id`. Account totals
+are calculated over the complete filtered window and are not derived from the
+visible event page. Administrator account/key mutations are recorded with a
+non-secret actor, target, outcome, timestamp, metadata, and `request_id`; the
+plaintext bearer token is never written to the audit ledger.
 `GET /api/admin/usage?format=9router` and the CLI `--format 9router` produce a
 read-only `9router.usageHistory.v1` export. It omits bearer keys and never
 writes to 9Router's database. The admin token is separate from every
@@ -283,8 +304,9 @@ compatibility alias and is not used in customer documentation.
 | `AURIX_AI_MODEL` | Exact verified model route; required, no default alias |
 | `TELEGRAM_BOT_TOKEN` | Server-only bot credential used to verify Telegram signatures |
 | `AURIX_TELEGRAM_BOT_USERNAME` | Public bot username used by the Login Widget |
-| `ADMIN_TELEGRAM_IDS` | Comma-separated existing AuriX Telegram admin IDs allowed to view AI reports |
-| `AURIX_AI_SESSION_MAX_AGE_SECONDS` | Maximum age of Telegram-authenticated sessions |
+| `ADMIN_TELEGRAM_IDS` | Legacy compatibility setting; browser AI administration now requires any authenticated Telegram session |
+| `AURIX_AI_SESSION_MAX_AGE_SECONDS` | Rolling lifetime of Telegram-authenticated browser sessions; production default is 30 days |
+| `AURIX_AI_SESSION_DB_PATH` | Durable SQLite session store; keep it on the persistent AuriX data volume |
 | `AURIX_AI_LEGACY_TOKEN_ENABLED` | Default `0`; temporary migration fallback for the old header |
 | `AURIX_AI_ACCESS_TOKEN` | Legacy migration token; not used by the browser when the fallback is disabled |
 | `AURIX_AI_ALLOW_ANONYMOUS` | Must remain `0` for production |
