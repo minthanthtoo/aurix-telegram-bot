@@ -32,3 +32,17 @@ sustainable capacity measurements.
 - The next live action still requires explicit target/credential review and
   approval for any production mutation or load generation.
 
+## Read-only recheck — 2026-09-11
+
+A second batch-mode check was performed without reading secrets or changing
+remote state. The documented DigitalOcean key still received `Permission
+denied (publickey)` from sg-a; sg-b did not complete SSH within the bounded
+timeout. BKK-A remained reachable and reported approximately 309 MiB available
+memory, 859 MiB free swap, and 62% root-filesystem use. `shadowbox` remained up
+for eight days and `watchtower` was healthy; TCP/UDP `443` and management TCP
+`61603` were present. No Xray or Hysteria2 listener was observed on BKK-A.
+
+This recheck does not establish customer data-path compatibility, quota,
+accounting, restart persistence, or sustainable capacity. It leaves BKK-A
+Outline-only and keeps Singapore inspection and all protocol experiments behind
+the existing access and approval gates.
