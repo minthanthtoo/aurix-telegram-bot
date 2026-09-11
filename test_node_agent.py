@@ -28,8 +28,10 @@ class NodeAgentTest(unittest.TestCase):
         self.assertEqual(calls[2][1], "/v1/users/u-2/quota")
 
     def test_invalid_user_quota_fails_closed(self):
-        with self.assertRaises(NodeAgentError):
-            NodeAgentClient(requester=lambda *_: {}).set_user_quota("u", 0)
+        client = NodeAgentClient(requester=lambda *_: {})
+        for value in (0, True, None, "not-a-number"):
+            with self.subTest(value=value), self.assertRaises(NodeAgentError):
+                client.set_user_quota("u", value)
 
     def test_xray_writer_is_idempotent_and_preserves_unknown_users(self):
         with tempfile.TemporaryDirectory() as directory:
