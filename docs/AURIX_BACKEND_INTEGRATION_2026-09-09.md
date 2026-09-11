@@ -251,7 +251,12 @@ before usage is credited; this step is committed as `38d558d` (`Reject
 fractional provider counters`).
 Grant lifecycle operations reject a credential grant whose declared protocol
 does not match the adapter; this isolation step is committed as `d16efcd`
-(`Enforce protocol-bound credential grants`).
+(`Enforce protocol-bound credential grants`). Hysteria2 route metadata now
+accepts `insecure` only as a real boolean, so a string such as `"false"` cannot
+silently enable insecure TLS. Managed adapters also render-validate route fields
+before provider-side creation, preventing malformed route metadata from leaving
+an orphaned remote user. This step is committed as `f58a27c` (`Reject malformed
+Hysteria2 route flags`).
 
 ## Remaining gates and next action
 

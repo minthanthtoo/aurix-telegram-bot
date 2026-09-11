@@ -1199,7 +1199,9 @@ values, and malformed values before a provider user is created. Adapter
 operations reject a route whose declared protocol does not match the adapter;
 provider usage counters reject fractional values before accounting, and grant
 lifecycle operations reject a grant whose declared protocol does not match the
-adapter.
+adapter. Hysteria2 `insecure` route metadata is now type-checked, and managed
+adapters validate route rendering before provider creation so malformed route
+metadata cannot create an orphaned remote user (`f58a27c`).
 Remaining release gates are unchanged: approved
 canary-only node-agent binding, Hysteria2 isolation, Myanmar client paths,
 PostgreSQL concurrency/restore, live staged 2/5/expected-load tests, 24–48 hour
