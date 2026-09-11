@@ -36,8 +36,10 @@ class AdminOperations:
             "endpoint_plan_capacity",
             "endpoint_drain_preview",
             "request_endpoint_drain",
+            "protocol_profile_status",
             "protocol_profile_promotion_readiness",
             "promote_protocol_profile",
+            "disable_protocol_profile",
             "wallet_balance",
             "wallet_history",
         }

@@ -166,6 +166,22 @@ class EndpointRegistryTest(unittest.TestCase):
                 self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray"),
                 "legacy-default",
             )
+        disabled = self.registry.disable_protocol_profile(
+            "legacy-default", "xray", actor_id=7, now=now
+        )
+        self.assertEqual(disabled["status"], "disabled")
+        with self.database.connect() as connection:
+            with self.assertRaisesRegex(ConnectivityError, "capacity"):
+                self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray")
+            audit = connection.execute(
+                """SELECT action, actor_id, target_id
+                     FROM audit_events
+                    WHERE action = 'protocol_profile_disabled'
+                    ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
+        self.assertEqual(audit["action"], "protocol_profile_disabled")
+        self.assertEqual(audit["actor_id"], "7")
+        self.assertEqual(audit["target_id"], "xray:legacy-default")
 
     def test_protocol_profile_promotion_requires_fresh_evidence_and_declared_capabilities(self):
         now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)

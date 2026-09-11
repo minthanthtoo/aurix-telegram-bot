@@ -81,6 +81,7 @@ class TelegramBot(
             "/receipts",
             "/capacity",
             "/drain",
+            "/disableprotocol",
             "/protocolreadiness",
             "/promoteprotocol",
             "/reconcile",
@@ -113,6 +114,7 @@ class TelegramBot(
             "/stoppromo",
             "/resumepromo",
             "/drain",
+            "/disableprotocol",
             "/promoteprotocol",
         }
     )

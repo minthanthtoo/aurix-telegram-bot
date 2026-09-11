@@ -145,6 +145,9 @@ load test, or speed test was changed or performed.
   Telegram admins can request the same bounded readiness preview with
   `/protocolreadiness` and can invoke `/promoteprotocol` only through a
   state-bound, one-time confirmation that rechecks the evidence before commit.
+  They can also use `/disableprotocol` through the same confirmation boundary
+  to stop new allocation without revoking existing credentials; the action is
+  audited and reversible through the normal profile-promotion workflow.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates

@@ -189,6 +189,10 @@ preview and `/promoteprotocol` for the same promotion only after a five-minute,
 single-use confirmation whose state fingerprint is rechecked before execution.
 The commerce boundary also rejects promotion when the matching adapter is not
 registered, even if the profile's evidence and declared capabilities are ready.
+Telegram `/disableprotocol` provides the corresponding confirmed safety action:
+it marks the profile disabled, blocks new allocation, preserves existing
+credentials, and records the operator action without performing provider
+revocation.
 
 ### `endpoint_plan_limits`
 

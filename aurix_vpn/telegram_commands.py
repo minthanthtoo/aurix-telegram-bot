@@ -209,6 +209,32 @@ class TelegramCommandMixin:
                     "Usage: /drain <source-endpoint> [target-endpoint] [limit 1-200]",
                 )
                 return
+        if command == "/disableprotocol":
+            try:
+                endpoint, protocol = self._protocol_profile_args(args)
+            except ValueError as exc:
+                self.send(chat["id"], str(exc))
+                return
+            if not confirmed:
+                try:
+                    profile = dict(
+                        self._admin_call(
+                            telegram_id,
+                            "protocol_profile_status",
+                            endpoint,
+                            protocol,
+                        )
+                    )
+                except CommerceError as exc:
+                    self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+                    return
+                if profile.get("status") != "enabled":
+                    self.send(
+                        chat["id"],
+                        f"Protocol profile {protocol} on {endpoint} is not enabled; no change was made.",
+                        self._admin_keyboard(telegram_id),
+                    )
+                    return
         if command in {"/protocolreadiness", "/promoteprotocol"}:
             try:
                 endpoint, protocol, signals, capabilities = self._protocol_promotion_args(args)
@@ -291,6 +317,8 @@ class TelegramCommandMixin:
                 pass
             elif command == "/promoteprotocol" and len(args) not in {3, 4}:
                 pass
+            elif command == "/disableprotocol" and len(args) != 2:
+                pass
             else:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
@@ -309,6 +337,9 @@ class TelegramCommandMixin:
                 ),
                 "/promoteprotocol": lambda: (
                     f"Promote protocol {args[1]} on endpoint {args[0]} after rechecking evidence?"
+                ),
+                "/disableprotocol": lambda: (
+                    f"Disable new assignments for protocol {args[1]} on endpoint {args[0]}?"
                 ),
             }[command]()
                 self._queue_admin_confirmation(
@@ -329,6 +360,7 @@ class TelegramCommandMixin:
                         "/resumepromo": "▶ Confirm Resume",
                         "/drain": "🚧 Confirm Drain",
                         "/promoteprotocol": "🛡 Confirm Promotion",
+                        "/disableprotocol": "⛔ Confirm Disable",
                     }[command],
                 )
                 return
@@ -1081,6 +1113,25 @@ class TelegramCommandMixin:
                     )
                 else:
                     self._open_admin_panel(chat["id"], telegram_id, "failed")
+        elif command == "/disableprotocol":
+            try:
+                endpoint, protocol = self._protocol_profile_args(args)
+                result = self._admin_call(
+                    telegram_id,
+                    "disable_protocol_profile",
+                    endpoint,
+                    protocol,
+                    telegram_id,
+                )
+            except (CommerceError, ValueError) as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                self.send(
+                    chat["id"],
+                    f"Protocol profile {result['protocol']} on {result['endpoint_id']} is disabled. "
+                    "New assignments are blocked; existing credentials were not revoked.",
+                    self._admin_keyboard(telegram_id),
+                )
         elif command == "/promoteprotocol":
             try:
                 endpoint, protocol, signals, capabilities = self._protocol_promotion_args(args)

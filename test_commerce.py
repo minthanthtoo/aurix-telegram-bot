@@ -549,6 +549,12 @@ class CommerceServiceTest(unittest.TestCase):
             now=self.now,
         )
         self.assertEqual(promoted["status"], "enabled")
+        self.assertEqual(
+            self.service.protocol_profile_status("legacy-default", "xray")["status"],
+            "enabled",
+        )
+        disabled = self.service.disable_protocol_profile("legacy-default", "xray", 999, now=self.now)
+        self.assertEqual(disabled["status"], "disabled")
 
     def test_unavailable_endpoint_metrics_do_not_reset_last_paid_usage(self):
         order = self._paid_order(128)

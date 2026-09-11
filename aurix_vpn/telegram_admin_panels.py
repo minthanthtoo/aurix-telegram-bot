@@ -42,6 +42,16 @@ class TelegramAdminMixin:
         capabilities = tokens(args[3], required=False) if len(args) == 4 else ()
         return endpoint, protocol, signals, capabilities
 
+    @staticmethod
+    def _protocol_profile_args(args: list[str]) -> tuple[str, str]:
+        """Parse the bounded operator syntax for profile state changes."""
+        if len(args) != 2:
+            raise ValueError("Usage: /disableprotocol <endpoint> <protocol>")
+        endpoint, protocol = (str(value).strip().lower() for value in args)
+        if not _PROTOCOL_TOKEN.fullmatch(endpoint) or not _PROTOCOL_TOKEN.fullmatch(protocol):
+            raise ValueError("Endpoint and protocol names are invalid")
+        return endpoint, protocol
+
     def _new_panel(self, chat_id: int, telegram_id: int, view: str) -> str:
         token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
         with self._panel_lock:
@@ -248,6 +258,21 @@ class TelegramAdminMixin:
                     )
                 )
                 snapshot["state"] = "present" if snapshot.get("profile_exists") else "missing"
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
+        if command == "/disableprotocol":
+            try:
+                endpoint, protocol = self._protocol_profile_args(args)
+                snapshot.update(
+                    self._admin_call(
+                        telegram_id,
+                        "protocol_profile_status",
+                        endpoint,
+                        protocol,
+                    )
+                )
+                snapshot["state"] = "present" if snapshot.get("status") == "enabled" else "missing"
             except Exception as exc:
                 snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
             return snapshot
@@ -463,6 +488,16 @@ class TelegramAdminMixin:
             elif snapshot.get("reasons"):
                 lines.append("Reasons: " + "; ".join(str(item) for item in snapshot["reasons"]))
             return "\n".join(lines)
+        if command == "/disableprotocol":
+            return "\n".join(
+                [
+                    f"Endpoint: {snapshot.get('endpoint_id') or (args[0] if args else '-')}",
+                    f"Protocol: {snapshot.get('protocol') or (args[1] if len(args) > 1 else '-')}",
+                    f"Profile: {snapshot.get('status') or 'missing'}",
+                    "Result: block new assignments for this profile.",
+                    "Existing credentials remain unchanged and are not revoked.",
+                ]
+            )
         if command == "/retryjob":
             return "\n".join(
                 [

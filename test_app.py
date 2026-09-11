@@ -1289,6 +1289,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "/drain sg-a bkk-a 2",
             "/protocolreadiness sg-a xray management usage",
             "/promoteprotocol sg-a xray management usage",
+            "/disableprotocol sg-a xray",
             "/reconcile",
             "/enforcement",
             "/failed",
@@ -1430,6 +1431,32 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(
             registry.list_protocol_profiles("legacy-default", enabled_only=True)[1]["protocol"],
             "xray",
+        )
+
+        self.bot.handle(self.message(999, "/disableprotocol legacy-default xray"))
+        self.assertIn("expires in 5 minutes", self.bot.sent[-1][1])
+        disable_confirm = next(
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["callback_data"].startswith("a:k:")
+        )
+        self.bot.handle_callback(
+            {
+                "id": "callback-disable-promote",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": disable_confirm["callback_data"],
+            }
+        )
+        self.assertIn("existing credentials were not revoked", self.bot.sent[-1][1])
+        self.assertEqual(
+            next(
+                item
+                for item in registry.list_protocol_profiles("legacy-default")
+                if item["protocol"] == "xray"
+            )["status"],
+            "disabled",
         )
 
     def test_admin_button_labels_are_separate_and_customer_menu_is_side_effect_free(self):

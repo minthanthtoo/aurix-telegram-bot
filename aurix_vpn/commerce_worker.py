@@ -1419,6 +1419,18 @@ class CommerceWorkerMixin:
             result["adapter_registered"] = True
         return result
 
+    def protocol_profile_status(self, endpoint_id: str, protocol: str) -> dict[str, Any]:
+        """Return one redacted protocol profile through the commerce boundary."""
+        if self.connectivity is None:
+            raise CommerceError("Protocol profile management is not configured")
+        method = getattr(self.connectivity, "protocol_profile_status", None)
+        if not callable(method):
+            raise CommerceError("Protocol profile status is not available")
+        try:
+            return method(endpoint_id, protocol)
+        except ConnectivityError as exc:
+            raise CommerceError(str(exc)) from exc
+
     def _protocol_adapter_registered(self, protocol: str) -> bool:
         """Require an installed adapter before the commerce boundary can enable it."""
         normalized = str(protocol or "").strip().lower()
@@ -1468,6 +1480,25 @@ class CommerceWorkerMixin:
                 actor_id=admin_id,
                 now=now,
             )
+        except ConnectivityError as exc:
+            raise CommerceError(str(exc)) from exc
+
+    def disable_protocol_profile(
+        self,
+        endpoint_id: str,
+        protocol: str,
+        admin_id: int,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Disable new allocation without revoking existing credentials."""
+        if self.connectivity is None:
+            raise CommerceError("Protocol profile management is not configured")
+        method = getattr(self.connectivity, "disable_protocol_profile", None)
+        if not callable(method):
+            raise CommerceError("Protocol profile disable is not available")
+        try:
+            return method(endpoint_id, protocol, actor_id=admin_id, now=now)
         except ConnectivityError as exc:
             raise CommerceError(str(exc)) from exc
 

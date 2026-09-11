@@ -198,6 +198,74 @@ class EndpointRegistry:
             result.append(item)
         return result
 
+    def protocol_profile_status(self, endpoint_id: str, protocol: str) -> dict[str, Any]:
+        """Return one non-secret profile for an operator state check."""
+        endpoint = str(endpoint_id or "").strip()
+        transport = str(protocol or "").strip().lower()
+        if not endpoint or len(endpoint) > 128:
+            raise ConnectivityError("endpoint ID is invalid")
+        if not transport or len(transport) > 64 or any(char.isspace() for char in transport):
+            raise ConnectivityError("protocol is invalid")
+        profile = next(
+            (item for item in self.list_protocol_profiles(endpoint) if item["protocol"] == transport),
+            None,
+        )
+        if profile is None:
+            raise ConnectivityError("protocol profile does not exist")
+        return profile
+
+    def disable_protocol_profile(
+        self,
+        endpoint_id: str,
+        protocol: str,
+        *,
+        actor_id: str | int | None = None,
+        now: datetime | str | None = None,
+    ) -> dict[str, Any]:
+        """Stop new allocation for a profile without revoking existing credentials."""
+        profile = self.protocol_profile_status(endpoint_id, protocol)
+        if profile["status"] == "retired":
+            raise ConnectivityError("retired protocol profile cannot be disabled")
+        timestamp = self._observation_time(now).isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            connection.execute(
+                """UPDATE endpoint_protocol_profiles
+                      SET status = 'disabled', retired_at = NULL
+                    WHERE profile_id = ?""",
+                (str(profile["profile_id"]),),
+            )
+            if isinstance(connection, _PostgresConnection):
+                audit_exists = connection.execute(
+                    "SELECT to_regclass(?) AS table_name", ("public.audit_events",)
+                ).fetchone()
+                has_audit_events = bool(audit_exists and audit_exists["table_name"])
+            else:
+                audit_exists = connection.execute(
+                    """SELECT 1 FROM sqlite_master
+                        WHERE type = 'table' AND name = 'audit_events'"""
+                ).fetchone()
+                has_audit_events = audit_exists is not None
+            if has_audit_events:
+                connection.execute(
+                    """INSERT INTO audit_events
+                       (actor_type, actor_id, action, target_type, target_id,
+                        metadata_json, created_at)
+                       VALUES ('admin', ?, 'protocol_profile_disabled',
+                               'endpoint_protocol_profile', ?, ?, ?)""",
+                    (
+                        None if actor_id is None else str(actor_id)[:128],
+                        str(profile["profile_id"]),
+                        json.dumps(
+                            {"previous_status": profile["status"]},
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        timestamp,
+                    ),
+                )
+        return self.protocol_profile_status(profile["endpoint_id"], profile["protocol"])
+
     @classmethod
     def _safe_protocol_observation_details(
         cls, details: dict[str, Any] | None
