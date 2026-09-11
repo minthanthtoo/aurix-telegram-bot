@@ -56,3 +56,11 @@ and `watchtower` was healthy for two days. Outline continued to own TCP/UDP
 443, while management TCP `61603` remained present; no Xray or Hysteria2
 listener was observed. This is a point-in-time observation and does not alter
 the existing capacity or protocol gate.
+
+## Read-only Singapore access spot check — 2026-09-11 03:37 UTC
+
+Using the documented DigitalOcean key in batch mode, sg-a
+`157.245.63.95` still returned `Permission denied (publickey)`. sg-b
+`139.59.122.170` still timed out on TCP/22. No remote command was executed on
+either Singapore host, and no access key, firewall rule, service, or customer
+state was changed.
