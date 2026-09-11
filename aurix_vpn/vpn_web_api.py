@@ -8,7 +8,7 @@ import mimetypes
 import os
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -360,6 +360,20 @@ class AuriXVpnWebApplication:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _endpoint_health_is_fresh(value: Any) -> bool:
+        """Match the connectivity registry's bounded health freshness rule."""
+        try:
+            max_age = max(
+                30, int(os.environ.get("AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS", "900"))
+            )
+            observed_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=UTC)
+            return observed_at.astimezone(UTC) >= datetime.now(UTC) - timedelta(seconds=max_age)
+        except (TypeError, ValueError, OverflowError):
+            return False
+
     def admin_fleet(self) -> list[dict[str, Any]]:
         """Return operator-safe endpoint metadata without probing providers."""
         registry = getattr(self.runtime, "connectivity", None)
@@ -380,6 +394,7 @@ class AuriXVpnWebApplication:
                     "reserved_transfer_bytes": item.get("reserved_transfer_bytes"),
                     "active_assignments": item.get("active_assignments", 0),
                     "last_healthy_at": item.get("last_healthy_at"),
+                    "healthy": self._endpoint_health_is_fresh(item.get("last_healthy_at")),
                     "protocols": item.get("protocols", []),
                 }
             )
@@ -485,7 +500,7 @@ class AuriXVpnWebApplication:
             "protocol_readiness": readiness,
             "fleet": {
                 "endpoints": len(fleet),
-                "healthy": sum(1 for item in fleet if item.get("state") == "ACTIVE"),
+                "healthy": sum(1 for item in fleet if item.get("healthy")),
             },
             "safety": {
                 "provider_mutations_from_web": False,

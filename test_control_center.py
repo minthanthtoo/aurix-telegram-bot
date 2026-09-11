@@ -79,7 +79,11 @@ class ControlCenterTest(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_summary_and_fleet_are_read_only_and_redacted(self):
-        with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {"ADMIN_TELEGRAM_IDS": "12345", "AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS": "30"},
+            clear=False,
+        ):
             app = AuriXVpnWebApplication(self.runtime)
             summary = app.admin_summary()
             fleet = app.admin_fleet()
@@ -90,6 +94,8 @@ class ControlCenterTest(unittest.TestCase):
         self.assertEqual(readiness["xray"]["status"], "candidate")
         self.assertEqual(readiness["wireguard"]["status"], "unimplemented")
         self.assertEqual(fleet[0]["code"], "BKK-A")
+        self.assertFalse(fleet[0]["healthy"])
+        self.assertEqual(summary["fleet"], {"endpoints": 1, "healthy": 0})
         self.assertNotIn("public_address", json.dumps(fleet))
         self.assertNotIn("management_url", json.dumps(fleet))
         self.assertNotIn("provider_resource_id", json.dumps(fleet))
