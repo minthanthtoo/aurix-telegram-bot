@@ -453,6 +453,24 @@ class AuriXVpnWebApplication:
                     (str(endpoint_id),),
                 ).fetchall()
             assignments = [dict(row) for row in rows]
+        capacity_by_plan: list[dict[str, Any]] = []
+        capacity_method = getattr(self.runtime.commerce, "endpoint_plan_capacity", None)
+        if callable(capacity_method):
+            try:
+                capacity_by_plan = [
+                    {
+                        key: item.get(key)
+                        for key in (
+                            "plan_code", "enabled", "max_active_assignments",
+                            "active_assignments",
+                        )
+                        if key in item
+                    }
+                    for item in capacity_method(str(endpoint_id))
+                    if isinstance(item, dict)
+                ]
+            except CommerceError:
+                capacity_by_plan = []
         identity = getattr(self.runtime.commerce, "identity", None)
         generations = []
         method = getattr(identity, "admin_generations", None)
@@ -465,6 +483,7 @@ class AuriXVpnWebApplication:
         return {
             "endpoint": safe_endpoint,
             "assignments": assignments,
+            "capacity_by_plan": capacity_by_plan,
             "credentials": generations,
             "protocol_observations": observations,
         }

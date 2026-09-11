@@ -31,6 +31,15 @@ class ControlCenterTest(unittest.TestCase):
             failover=SimpleNamespace(decisions=lambda limit=100: []),
             failed_jobs=lambda limit=100, include_nonterminal=True: [],
             list_pending_orders=lambda limit=100: [],
+            endpoint_plan_capacity=lambda endpoint_id: [
+                {
+                    "plan_code": "basic",
+                    "enabled": True,
+                    "max_active_assignments": 10,
+                    "active_assignments": 2,
+                    "reserved_quota_bytes": 999,
+                }
+            ],
         )
         connectivity = SimpleNamespace(
             endpoint=lambda endpoint_id: {
@@ -108,6 +117,8 @@ class ControlCenterTest(unittest.TestCase):
         self.assertNotIn("management_url_ciphertext", json.dumps(detail))
         self.assertNotIn("must-not-leak", json.dumps(detail))
         self.assertEqual(detail["endpoint"]["protocols"][0]["protocol"], "outline")
+        self.assertEqual(detail["capacity_by_plan"][0]["plan_code"], "basic")
+        self.assertNotIn("reserved_quota_bytes", json.dumps(detail["capacity_by_plan"]))
         self.assertEqual(detail["protocol_observations"][0]["protocol"], "outline")
 
     def test_registered_non_outline_adapter_remains_evidence_gated_in_summary(self):
