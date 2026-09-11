@@ -30,7 +30,7 @@ class ProviderBackendError(NodeAgentError):
 
 
 def _int_value(value: Any, *, field: str) -> int:
-    if isinstance(value, bool):
+    if isinstance(value, (bool, float)):
         raise ProviderBackendError(f"{field} is not an integer")
     try:
         return max(0, int(value or 0))

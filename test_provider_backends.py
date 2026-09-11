@@ -93,6 +93,8 @@ class ProviderBackendsTest(unittest.TestCase):
             XrayStatsParser.parse({"stat": "not-a-list"}, "user")
         with self.assertRaises(ProviderBackendError):
             XrayStatsParser.parse({"stat": [{"name": "user>>>u>>>traffic>>>uplink", "value": True}]}, "u")
+        with self.assertRaises(ProviderBackendError):
+            XrayStatsParser.parse({"stat": [{"name": "user>>>u>>>traffic>>>uplink", "value": 1.2}]}, "u")
         parsed = XrayStatsParser.parse(
             json.dumps({"stat": [{"name": "user>>>u>>>traffic>>>uplink", "value": "3"}]}), "u"
         )
@@ -193,6 +195,26 @@ class ProviderBackendsTest(unittest.TestCase):
             self.assertEqual(calls[-1][3]["Authorization"], "stats-secret")
             adapter.revoke_auth(grant)
             self.assertTrue(adapter.verify_auth_revoked(grant)["verified"])
+
+    def test_hysteria2_usage_rejects_non_integer_counter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Hysteria2UserStore(
+                Path(directory) / "users.json", encryption_key=Fernet.generate_key()
+            )
+
+            def requester(_method, path, _body, _headers):
+                if path == "/traffic":
+                    return {"h2-1": {"tx": 1.2, "rx": 0}}
+                raise AssertionError(path)
+
+            provider = Hysteria2Provider(
+                store,
+                Hysteria2TrafficStatsClient(
+                    "http://127.0.0.1:19000", "stats-secret", requester=requester
+                ),
+            )
+            with self.assertRaisesRegex(ProviderBackendError, "not an integer"):
+                provider.get_user_usage("h2-1")
 
     def test_concrete_backends_round_trip_through_authenticated_node_agent(self):
         with tempfile.TemporaryDirectory() as directory:
