@@ -46,3 +46,13 @@ This recheck does not establish customer data-path compatibility, quota,
 accounting, restart persistence, or sustainable capacity. It leaves BKK-A
 Outline-only and keeps Singapore inspection and all protocol experiments behind
 the existing access and approval gates.
+
+## Read-only BKK-A spot check — 2026-09-11 03:36 UTC
+
+A fresh batch-mode SSH check using the existing BKK-A read-only access confirmed
+hostname `VM-BKK1-H3P8W5SFMA`. The host reported approximately 295 MiB
+available memory and 850 MiB free swap. `shadowbox` remained up for eight days
+and `watchtower` was healthy for two days. Outline continued to own TCP/UDP
+443, while management TCP `61603` remained present; no Xray or Hysteria2
+listener was observed. This is a point-in-time observation and does not alter
+the existing capacity or protocol gate.
