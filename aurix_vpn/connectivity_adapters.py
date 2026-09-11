@@ -80,6 +80,7 @@ class OutlineConnectivityAdapter:
         }
 
     def provision(self, route: dict[str, Any], credential_intent: dict[str, Any]) -> dict[str, Any]:
+        _assert_route_protocol(route, protocol=self.protocol)
         name = str(credential_intent.get("name") or "AuriX route")[:128]
         limit = credential_intent.get("quota_bytes")
         limit_bytes = None if limit is None else _positive_quota(limit, protocol=self.protocol)
@@ -205,6 +206,7 @@ class OutlineConnectivityAdapter:
         }
 
     def probe_management(self, route: dict[str, Any]) -> dict[str, Any]:
+        _assert_route_protocol(route, protocol=self.protocol)
         try:
             payload = self.client.server_info()
             return {"status": "healthy", "protocol": self.protocol, "server": payload}
@@ -212,6 +214,7 @@ class OutlineConnectivityAdapter:
             return {"status": "failed", "protocol": self.protocol, "error": type(exc).__name__}
 
     def probe_data_plane(self, route: dict[str, Any]) -> dict[str, Any]:
+        _assert_route_protocol(route, protocol=self.protocol)
         return {
             "status": "unsupported",
             "protocol": self.protocol,
@@ -219,6 +222,7 @@ class OutlineConnectivityAdapter:
         }
 
     def reconcile(self, route: dict[str, Any]) -> dict[str, Any]:
+        _assert_route_protocol(route, protocol=self.protocol)
         payload = self.client.list_keys()
         keys = payload.get("accessKeys", []) if isinstance(payload, dict) else []
         if not isinstance(keys, list):
@@ -275,6 +279,16 @@ def _positive_quota(value: Any, *, protocol: str) -> int:
     if normalized <= 0:
         raise ConnectivityAdapterError(f"{protocol} quota is not a positive integer")
     return normalized
+
+
+def _assert_route_protocol(route: Mapping[str, Any], *, protocol: str) -> None:
+    if not isinstance(route, Mapping):
+        raise ConnectivityAdapterError(f"{protocol} route is not an object")
+    declared = str(route.get("protocol") or "").strip().lower()
+    if declared and declared != protocol:
+        raise ConnectivityAdapterError(
+            f"{protocol} adapter cannot handle {declared} route"
+        )
 
 
 class _ManagedCredentialAdapter:
@@ -410,6 +424,7 @@ class _ManagedCredentialAdapter:
         }
 
     def provision(self, route: dict[str, Any], credential_intent: dict[str, Any]) -> dict[str, Any]:
+        _assert_route_protocol(route, protocol=self.protocol)
         credential_intent = dict(credential_intent)
         limit = credential_intent.get("quota_bytes")
         if limit is not None:
@@ -562,6 +577,7 @@ class _ManagedCredentialAdapter:
         return {"supported": True, "terminated": terminated, **details}
 
     def probe_management(self, route: dict[str, Any]) -> dict[str, Any]:
+        _assert_route_protocol(route, protocol=self.protocol)
         method = _provider_method(self.client, ("server_info",))
         if method is None:
             return {"status": "failed", "protocol": self.protocol, "error": "missing_server_info"}
@@ -571,6 +587,7 @@ class _ManagedCredentialAdapter:
             return {"status": "failed", "protocol": self.protocol, "error": type(exc).__name__}
 
     def probe_data_plane(self, route: dict[str, Any]) -> dict[str, Any]:
+        _assert_route_protocol(route, protocol=self.protocol)
         method = _provider_method(self.client, ("probe_data_plane",))
         if method is None:
             return {"status": "unsupported", "protocol": self.protocol, "reason": "no authenticated probe"}
@@ -586,6 +603,7 @@ class _ManagedCredentialAdapter:
             return {"status": "failed", "protocol": self.protocol, "error": type(exc).__name__}
 
     def reconcile(self, route: dict[str, Any]) -> dict[str, Any]:
+        _assert_route_protocol(route, protocol=self.protocol)
         records = self._inventory()
         return {
             "protocol": self.protocol,
@@ -603,6 +621,7 @@ class _ManagedCredentialAdapter:
         AuriX generation store are recreated.  A create timeout is recovered by
         read-back through the same ambiguity boundary as normal provisioning.
         """
+        _assert_route_protocol(route, protocol=self.protocol)
         records = self._inventory()
         present = {
             _provider_id(record, "")
