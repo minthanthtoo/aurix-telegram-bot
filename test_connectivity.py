@@ -131,6 +131,24 @@ class EndpointRegistryTest(unittest.TestCase):
             "legacy-default", "retired", actor_id=99, now=now
         )
         self.assertFalse(repeated["changed"])
+        with self.database.connect() as connection:
+            lifecycle_audits = connection.execute(
+                """SELECT action, actor_id, metadata_json
+                     FROM audit_events
+                    WHERE action = 'endpoint_lifecycle_changed'
+                      AND target_id = 'legacy-default'
+                    ORDER BY id"""
+            ).fetchall()
+        self.assertEqual(len(lifecycle_audits), 2)
+        self.assertEqual([row["actor_id"] for row in lifecycle_audits], ["99", "99"])
+        self.assertEqual(
+            json.loads(lifecycle_audits[0]["metadata_json"])["requested_state"],
+            "DRAINING",
+        )
+        self.assertEqual(
+            json.loads(lifecycle_audits[1]["metadata_json"])["requested_state"],
+            "RETIRED",
+        )
         with self.assertRaisesRegex(ConnectivityError, "terminal"):
             self.registry.set_endpoint_lifecycle("legacy-default", "active", actor_id=99, now=now)
 
@@ -671,6 +689,16 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
                     connection.execute("SELECT COUNT(*) AS n FROM infrastructure_jobs").fetchone()["n"],
                     1,
                 )
+                audit = connection.execute(
+                    """SELECT action, actor_type, actor_id, target_type, target_id, metadata_json
+                         FROM audit_events
+                        WHERE action = 'infrastructure_provision_requested'"""
+                ).fetchone()
+            self.assertEqual(audit["actor_type"], "admin")
+            self.assertEqual(audit["actor_id"], "1")
+            self.assertEqual(audit["target_type"], "infrastructure_job")
+            self.assertEqual(audit["target_id"], first)
+            self.assertEqual(json.loads(audit["metadata_json"])["region"], "sgp1")
             with patch.dict(
                 os.environ,
                 {**environment, "AURIX_ALLOWED_REGIONS": "sgp1,bkk1"},

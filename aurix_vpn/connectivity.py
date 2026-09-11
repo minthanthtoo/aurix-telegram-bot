@@ -1296,6 +1296,21 @@ class EndpointRegistry:
                     timestamp,
                 ),
             )
+            self._record_audit_event(
+                connection,
+                actor_type="admin",
+                actor_id=actor_id,
+                action="endpoint_lifecycle_changed",
+                target_type="vpn_endpoint",
+                target_id=normalized_id,
+                metadata={
+                    "previous_state": current,
+                    "requested_state": desired,
+                    "reason": clean_reason,
+                    "counts": counts,
+                },
+                created_at=timestamp,
+            )
         return self.endpoint_lifecycle_preview(normalized_id, desired) | {
             "changed": True,
             "changed_at": timestamp,
@@ -2663,6 +2678,16 @@ class FleetController:
                     timestamp,
                 ),
             )
+            EndpointRegistry._record_audit_event(
+                connection,
+                actor_type="admin",
+                actor_id=requested_by,
+                action="infrastructure_provision_requested",
+                target_type="infrastructure_job",
+                target_id=job_id,
+                metadata={"region": region, "size": size, "image": image},
+                created_at=timestamp,
+            )
         return job_id
 
     def execute_provision(self, job_id: str, specification: dict[str, Any]) -> dict[str, Any]:
@@ -3091,6 +3116,7 @@ class FleetController:
         api_url: str,
         certificate_sha256: str,
         max_active_keys: int | None = None,
+        actor_id: int | None = None,
     ) -> dict[str, Any]:
         """Register an Outline endpoint only after a real management-API probe."""
         if os.environ.get("AURIX_ENDPOINT_ACTIVATION_ENABLED", "0").lower() not in {
@@ -3137,5 +3163,19 @@ class FleetController:
                    (id, infrastructure_job_id, endpoint_id, event_type, metadata_json, created_at)
                    VALUES (?, ?, ?, 'endpoint_verified', '{}', ?)""",
                 (uuid.uuid4().hex, job_id, endpoint_id, timestamp),
+            )
+            EndpointRegistry._record_audit_event(
+                connection,
+                actor_type="admin" if actor_id is not None else "system",
+                actor_id=actor_id,
+                action="infrastructure_endpoint_verified",
+                target_type="vpn_endpoint",
+                target_id=endpoint_id,
+                metadata={
+                    "job_id": str(job_id),
+                    "region": str(region).strip(),
+                    "provider_resource_id": str(row["provider_resource_id"]),
+                },
+                created_at=timestamp,
             )
         return endpoint
