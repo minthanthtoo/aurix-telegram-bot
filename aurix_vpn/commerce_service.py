@@ -413,13 +413,25 @@ class CommerceService(CommerceWorkerMixin):
         now: datetime | None = None,
         username: str | None = None,
         requested_endpoint_id: str | None = None,
+        requested_protocol: str | None = None,
     ) -> OrderResult:
         plan = self.get_plan(plan_code)
         requested_endpoint_id = str(requested_endpoint_id or "").strip() or None
+        requested_protocol = str(requested_protocol or "").strip().lower() or None
+        if requested_protocol and (
+            len(requested_protocol) > 64
+            or any(char.isspace() for char in requested_protocol)
+        ):
+            raise CommerceError("Choose a valid VPN protocol")
+        if requested_protocol and requested_protocol != "outline" and self.connectivity is None:
+            raise CommerceError("This VPN protocol is not configured")
         if requested_endpoint_id and self.connectivity is not None:
             validator = getattr(self.connectivity, "validate_customer_endpoint", None)
             if callable(validator):
-                validator(requested_endpoint_id, plan.code)
+                if requested_protocol and requested_protocol != "outline":
+                    validator(requested_endpoint_id, plan.code, requested_protocol)
+                else:
+                    validator(requested_endpoint_id, plan.code)
         order_id = _new_id()
         created_at = _now_text(now)
         with self.database.connect() as connection:
@@ -441,7 +453,10 @@ class CommerceService(CommerceWorkerMixin):
             ).fetchone()
             if existing is not None:
                 existing_endpoint_id = existing["requested_endpoint_id"]
-                if requested_endpoint_id and existing_endpoint_id != requested_endpoint_id:
+                existing_protocol = str(existing["requested_protocol"] or "").strip().lower() or None
+                endpoint_changed = requested_endpoint_id and existing_endpoint_id != requested_endpoint_id
+                protocol_changed = requested_protocol and existing_protocol != requested_protocol
+                if endpoint_changed or protocol_changed:
                     payment_count = connection.execute(
                         "SELECT COUNT(*) AS n FROM payments WHERE order_id = ?",
                         (existing["id"],),
@@ -455,8 +470,11 @@ class CommerceService(CommerceWorkerMixin):
                             "This order already has payment activity; server selection cannot be changed"
                         )
                     connection.execute(
-                        "UPDATE orders SET requested_endpoint_id = ? WHERE id = ?",
-                        (requested_endpoint_id, existing["id"]),
+                        """UPDATE orders
+                              SET requested_endpoint_id = COALESCE(?, requested_endpoint_id),
+                                  requested_protocol = COALESCE(?, requested_protocol)
+                            WHERE id = ?""",
+                        (requested_endpoint_id, requested_protocol, existing["id"]),
                     )
                 existing_plan = Plan(
                     code=str(existing["plan_code"]),
@@ -481,8 +499,8 @@ class CommerceService(CommerceWorkerMixin):
                 """INSERT INTO orders
                    (id, telegram_id, plan_code, amount_minor, currency, plan_name,
                     quota_bytes_snapshot, duration_days_snapshot, status, created_at,
-                    requested_endpoint_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?, ?)""",
+                    requested_endpoint_id, requested_protocol)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?, ?, ?)""",
                 (
                     order_id,
                     telegram_id,
@@ -494,6 +512,7 @@ class CommerceService(CommerceWorkerMixin):
                     plan.duration_days,
                     created_at,
                     requested_endpoint_id,
+                    requested_protocol,
                 ),
             )
             self._audit(
@@ -507,6 +526,7 @@ class CommerceService(CommerceWorkerMixin):
                     "plan_code": plan.code,
                     "amount_minor": plan.price_minor,
                     "requested_endpoint_id": requested_endpoint_id,
+                    "requested_protocol": requested_protocol,
                 },
             )
         return OrderResult(order_id, plan, "awaiting_payment")
@@ -575,8 +595,9 @@ class CommerceService(CommerceWorkerMixin):
             connection.execute(
                 """INSERT INTO orders
                    (id, telegram_id, plan_code, amount_minor, currency, plan_name,
-                    quota_bytes_snapshot, duration_days_snapshot, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?)""",
+                    quota_bytes_snapshot, duration_days_snapshot, status, created_at,
+                    requested_endpoint_id, requested_protocol)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?, ?, ?)""",
                 (
                     new_order_id,
                     telegram_id,
@@ -587,6 +608,8 @@ class CommerceService(CommerceWorkerMixin):
                     plan.quota_bytes,
                     plan.duration_days,
                     created_at,
+                    existing["requested_endpoint_id"],
+                    existing["requested_protocol"],
                 ),
             )
             self._audit(
@@ -798,6 +821,7 @@ class CommerceService(CommerceWorkerMixin):
                 """SELECT o.id, o.plan_code, o.plan_name, o.amount_minor, o.currency,
                           o.status, o.refund_status, o.created_at, o.order_type,
                           o.selected_payment_provider, o.requested_endpoint_id,
+                          o.requested_protocol,
                           (SELECT p.status FROM payments p WHERE p.order_id = o.id
                            ORDER BY p.submitted_at DESC LIMIT 1) AS payment_status,
                           (SELECT e.review_status FROM payment_evidence e WHERE e.order_id = o.id
@@ -2083,8 +2107,9 @@ class CommerceService(CommerceWorkerMixin):
             connection.execute(
                 """INSERT INTO subscriptions
                    (id, order_id, telegram_id, plan_code, starts_at, expires_at,
-                    plan_name, quota_bytes, duration_days, status, preferred_endpoint_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                    plan_name, quota_bytes, duration_days, status,
+                    preferred_endpoint_id, preferred_protocol)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                 (
                     subscription_id,
                     order_id,
@@ -2096,6 +2121,7 @@ class CommerceService(CommerceWorkerMixin):
                     quota_bytes,
                     duration_days,
                     order["requested_endpoint_id"],
+                    order["requested_protocol"],
                 ),
             )
             # Record money movement as immutable ledger events. External
@@ -2490,8 +2516,10 @@ class CommerceService(CommerceWorkerMixin):
         """Return paid key usage belonging to one Telegram user."""
         with self.database.connect() as connection:
             rows = connection.execute(
-                """SELECT s.plan_code, s.plan_name, s.status AS subscription_status, s.expires_at, s.starts_at,
+                """SELECT s.plan_code, s.plan_name, s.preferred_protocol,
+                          s.status AS subscription_status, s.expires_at, s.starts_at,
                           k.outline_key_id, k.endpoint_id, k.quota_bytes, k.status,
+                          s.consumed_bytes,
                           k.last_usage_bytes, k.quota_reason, k.created_at,
                           (SELECT j.status FROM provisioning_jobs j WHERE j.subscription_id = s.id
                            AND j.operation = 'revoke' LIMIT 1) AS revocation_status
@@ -2509,6 +2537,9 @@ class CommerceService(CommerceWorkerMixin):
             endpoint_usage = self._usage_map(usage_by_key, endpoint_id)
             observed = key_id in endpoint_usage
             raw_used = endpoint_usage.get(key_id, row["last_usage_bytes"] or 0)
+            if row["preferred_protocol"] and str(row["preferred_protocol"]).lower() != "outline" and not observed:
+                raw_used = max(int(row["consumed_bytes"] or 0), int(row["last_usage_bytes"] or 0))
+                observed = int(row["consumed_bytes"] or 0) > 0
             try:
                 used = max(0, int(raw_used or 0))
             except (TypeError, ValueError):
@@ -2520,6 +2551,7 @@ class CommerceService(CommerceWorkerMixin):
             result.append(
                 {
                     "outline_key_id": key_id,
+                    "protocol": row["preferred_protocol"] or "outline",
                     "endpoint_id": endpoint_id,
                     "tier": row["plan_name"] or row["plan_code"],
                     "used_bytes": used,
@@ -2556,7 +2588,8 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
-                          s.expires_at, s.starts_at, k.outline_key_id, k.endpoint_id, k.access_url,
+                          s.expires_at, s.starts_at, s.preferred_protocol,
+                          k.outline_key_id, k.endpoint_id, k.access_url,
                           COALESCE(k.quota_bytes, s.quota_bytes) AS quota_bytes,
                           k.status AS key_status, k.created_at, k.quota_reason
                    FROM subscriptions s LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id

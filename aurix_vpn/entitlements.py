@@ -1838,6 +1838,7 @@ class ClaimService:
             result.append(
                 {
                     "outline_key_id": key_id,
+                    "protocol": "outline",
                     "endpoint_id": endpoint_id,
                     "key_type": row["key_type"],
                     "tier": (

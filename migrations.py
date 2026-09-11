@@ -1344,6 +1344,20 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS route_failover_policy_versions_lookup ON route_failover_policy_versions(created_at)",
         ),
     ),
+    Migration(
+        15,
+        "protocol_aware_paid_assignments",
+        sqlite_statements=(
+            "ALTER TABLE orders ADD COLUMN requested_protocol TEXT",
+            "ALTER TABLE subscriptions ADD COLUMN preferred_protocol TEXT",
+            "ALTER TABLE endpoint_assignments ADD COLUMN protocol TEXT NOT NULL DEFAULT 'outline' CHECK (length(protocol) > 0)",
+        ),
+        postgres_statements=(
+            "ALTER TABLE orders ADD COLUMN IF NOT EXISTS requested_protocol TEXT",
+            "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS preferred_protocol TEXT",
+            "ALTER TABLE endpoint_assignments ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT 'outline' CHECK (char_length(protocol) > 0)",
+        ),
+    ),
 )
 
 

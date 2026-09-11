@@ -455,6 +455,15 @@ that explanation without entitlement, generation, idempotency, or provider
 error material. This closes the gap where a decision had a version number but
 the old policy values were otherwise lost.
 
+Commerce migration 15 persists an explicit protocol preference on paid orders
+and subscriptions and records the selected protocol on endpoint assignments.
+Outline remains the default. An Xray or Hysteria2 order is accepted only when
+the requested endpoint/protocol profile is enabled, and provisioning then
+requires the matching deployment-owned managed route and adapter. The worker
+stores the resulting generation with its real protocol, while the customer
+portal exposes only the protocol label and an authenticated active config URL.
+No candidate protocol is enabled by this migration alone.
+
 Failover target selection now treats pending/creating/verified decisions as
 destination reservations alongside active assignments. This prevents concurrent
 failover cohorts from consuming the same endpoint headroom before their
@@ -482,9 +491,10 @@ route mutation. Example forms are `/setsafety global pause 5 60` and
 `/setsafety region sgp1 resume 20 300`.
 
 Focused failover, migration, Control Center, VPN web API, and render checks pass;
-the non-PostgreSQL VPN regression passes `335` tests, including a migration-14
+the non-PostgreSQL VPN regression passes `338` tests, including a migration-14
 upgrade regression that backfills historical failover policy snapshots from an
-existing v13 policy table. The two non-PostgreSQL migration-manifest checks also
+existing v13 policy table and managed Xray provisioning/assignment coverage.
+The two non-PostgreSQL migration-manifest checks also
 pass. The optional PostgreSQL end-to-end rehearsal
 was not re-run at this checkpoint because the host filesystem has only about
 `308 MiB` available and the disposable PostgreSQL cluster exhausted that space

@@ -64,6 +64,7 @@ def _safe_order(order: dict[str, Any]) -> dict[str, Any]:
         "wallet_reservation_status",
         "stage",
         "requested_endpoint_id",
+        "requested_protocol",
     }
     return {key: order[key] for key in allowed if key in order}
 
@@ -71,6 +72,7 @@ def _safe_order(order: dict[str, Any]) -> dict[str, Any]:
 def _safe_key(entry: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "outline_key_id",
+        "protocol",
         "endpoint_id",
         "key_type",
         "tier",
@@ -89,7 +91,7 @@ def _safe_key(entry: dict[str, Any]) -> dict[str, Any]:
     access_url = entry.get("access_url")
     if entry.get("status") == "active" and isinstance(access_url, str):
         scheme = urlsplit(access_url).scheme.lower()
-        if scheme in {"ss", "ssconf"}:
+        if scheme in {"ss", "ssconf", "vless", "hysteria2", "hy2", "trojan", "vmess", "wireguard", "wg"}:
             result["access_url"] = access_url
     return result
 
@@ -108,6 +110,7 @@ def _safe_subscription(item: dict[str, Any]) -> dict[str, Any]:
         "key_status",
         "created_at",
         "quota_reason",
+        "preferred_protocol",
     }
     return {key: item[key] for key in allowed if key in item}
 
@@ -283,16 +286,26 @@ class AuriXVpnWebApplication:
             },
         }
 
-    def servers_payload(self, plan_code: str | None = None) -> dict[str, Any]:
+    def servers_payload(
+        self, plan_code: str | None = None, protocol: str = "outline"
+    ) -> dict[str, Any]:
         registry = getattr(self.runtime, "connectivity", None)
         directory = []
         if registry is not None:
             list_customer_endpoints = getattr(registry, "list_customer_endpoints", None)
             if callable(list_customer_endpoints):
-                directory = [_safe_endpoint(item) for item in list_customer_endpoints(plan_code)]
+                try:
+                    endpoint_rows = list_customer_endpoints(plan_code, protocol)
+                except TypeError:
+                    # Keep compatibility with a pre-protocol registry injected
+                    # by an older embedding application. Such a registry can
+                    # only serve the default Outline directory.
+                    endpoint_rows = list_customer_endpoints(plan_code)
+                directory = [_safe_endpoint(item) for item in endpoint_rows]
         return {
             "servers": directory,
             "plan_code": str(plan_code or "").strip() or None,
+            "protocol": str(protocol or "outline").strip().lower(),
             "selection_policy": "A selected server is rechecked at payment approval and provisioning.",
             "latency_note": "Displayed latency is the latest Outline control-plane check, not a user-device ping.",
         }
@@ -802,6 +815,7 @@ class AuriXVpnWebApplication:
         user: VerifiedTelegramUser,
         plan_code: str,
         requested_endpoint_id: str | None = None,
+        requested_protocol: str | None = None,
     ) -> dict[str, Any]:
         if not isinstance(plan_code, str) or len(plan_code) > 64:
             raise CommerceError("Choose a valid plan")
@@ -811,6 +825,7 @@ class AuriXVpnWebApplication:
             plan_code.strip(),
             username=user.username,
             requested_endpoint_id=requested_endpoint_id,
+            requested_protocol=requested_protocol,
         )
         order = self.runtime.commerce.order_detail(result.order_id, user.telegram_id)
         return {
@@ -1051,7 +1066,9 @@ def make_handler(
                 query = parse_qs(urlsplit(self.path).query)
                 plan_values = query.get("plan_code") or []
                 plan_code = str(plan_values[0])[:64] if plan_values else None
-                self._write(200, application.servers_payload(plan_code))
+                protocol_values = query.get("protocol") or []
+                protocol = str(protocol_values[0])[:64] if protocol_values else "outline"
+                self._write(200, application.servers_payload(plan_code, protocol))
                 return
             if path in ("/api/me", "/api/dashboard") and method == "GET":
                 self._write(200, application.dashboard(user))
@@ -1066,6 +1083,7 @@ def make_handler(
                     user,
                     str(body.get("plan_code") or ""),
                     str(body.get("endpoint_id") or "").strip() or None,
+                    str(body.get("protocol") or "").strip() or None,
                 )
                 self._write(
                     201 if payload["created"] else 200,

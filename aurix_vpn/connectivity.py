@@ -45,6 +45,7 @@ class EndpointAssignment:
     subscription_id: str | None
     free_key_id: int | None
     plan_code: str
+    protocol: str
     status: str
     reserved_quota_bytes: int | None
 
@@ -1045,13 +1046,24 @@ class EndpointRegistry:
             result.append(item)
         return result
 
-    def validate_customer_endpoint(self, endpoint_id: str, plan_code: str) -> dict[str, Any]:
+    def validate_customer_endpoint(
+        self, endpoint_id: str, plan_code: str, protocol: str = "outline"
+    ) -> dict[str, Any]:
         """Validate one customer-selectable endpoint without exposing secrets."""
         requested = str(endpoint_id or "").strip()
         if not requested or len(requested) > 128:
             raise ConnectivityError("Choose a valid VPN server")
+        selected_protocol = str(protocol or "").strip().lower()
+        if not selected_protocol or len(selected_protocol) > 64 or any(
+            char.isspace() for char in selected_protocol
+        ):
+            raise ConnectivityError("Choose a valid VPN protocol")
         endpoint = next(
-            (item for item in self.list_customer_endpoints(plan_code) if item["id"] == requested),
+            (
+                item
+                for item in self.list_customer_endpoints(plan_code, selected_protocol)
+                if item["id"] == requested
+            ),
             None,
         )
         if endpoint is None or not endpoint.get("eligible"):
@@ -1580,6 +1592,7 @@ class EndpointRegistry:
             subscription_id=row["subscription_id"],
             free_key_id=row["free_key_id"],
             plan_code=str(row["plan_code"]),
+            protocol=str(row["protocol"] or "outline").strip().lower(),
             status=str(row["status"]),
             reserved_quota_bytes=(
                 int(row["reserved_quota_bytes"])
@@ -1637,8 +1650,8 @@ class EndpointRegistry:
             connection.execute(
                 """INSERT INTO endpoint_assignments
                    (id, endpoint_id, subscription_id, free_key_id, plan_code, status,
-                    reason, reserved_quota_bytes, assigned_at)
-                   VALUES (?, ?, ?, NULL, ?, 'active', ?, ?, ?)""",
+                    reason, reserved_quota_bytes, assigned_at, protocol)
+                   VALUES (?, ?, ?, NULL, ?, 'active', ?, ?, ?, ?)""",
                 (
                     assignment_id,
                     endpoint_id,
@@ -1647,6 +1660,7 @@ class EndpointRegistry:
                     reason[:128],
                     quota_bytes,
                     timestamp,
+                    str(protocol or "outline").strip().lower(),
                 ),
             )
             self._record_audit_event(

@@ -62,6 +62,7 @@
   };
   const activeKeys = () => (state.dashboard && state.dashboard.keys || []).filter((key) => key.status === "active");
   const keyIdentity = (key) => `${key.endpoint_id || "legacy-default"}:${key.outline_key_id || ""}`;
+  const keyProtocol = (key) => String((key && key.protocol) || "outline").toLowerCase();
   const selectedKey = () => {
     const keys = activeKeys();
     return keys.find((key) => keyIdentity(key) === state.selectedKeyId) || keys[0];
@@ -134,8 +135,11 @@
     secret.hidden = true;
     secret.textContent = "";
     if (key && key.access_url) {
-      actions.innerHTML = `<button class="button button--primary" id="open-key" type="button">Add to Outline</button><button class="button button--quiet" id="copy-key" type="button">Copy key</button><button class="text-button" id="reveal-key" type="button">Reveal</button>`;
-      $("#open-key").addEventListener("click", () => { if (/^ss(?:conf)?:\/\//i.test(key.access_url)) window.location.href = key.access_url; });
+      const protocol = keyProtocol(key);
+      const outlineImport = /^ss(?:conf)?:\/\//i.test(key.access_url);
+      const openAction = outlineImport ? `<button class="button button--primary" id="open-key" type="button">Add to Outline</button>` : "";
+      actions.innerHTML = `${openAction}<button class="button ${outlineImport ? "button--quiet" : "button--primary"}" id="copy-key" type="button">Copy ${escapeHtml(protocol)} config</button><button class="text-button" id="reveal-key" type="button">Reveal</button>`;
+      if (outlineImport) $("#open-key").addEventListener("click", () => { window.location.href = key.access_url; });
       $("#copy-key").addEventListener("click", async () => { if (navigator.clipboard) { await navigator.clipboard.writeText(key.access_url); $("#copy-key").textContent = "Copied"; setTimeout(() => { $("#copy-key").textContent = "Copy key"; }, 1400); } });
       $("#reveal-key").addEventListener("click", () => { secret.hidden = !secret.hidden; secret.textContent = secret.hidden ? "" : key.access_url; $("#reveal-key").textContent = secret.hidden ? "Reveal" : "Hide"; });
     } else if (key) {
@@ -145,7 +149,7 @@
   const renderPackagesSummary = () => {
     const subscriptions = (state.dashboard && state.dashboard.subscriptions || []).filter((item) => ["active", "pending"].includes(item.status) || item.key_status === "active");
     $("#package-count").textContent = `${subscriptions.length} package${subscriptions.length === 1 ? "" : "s"}`;
-    $("#package-summary-list").innerHTML = subscriptions.length ? subscriptions.slice(0, 3).map((item) => `<div class="summary-row"><div><strong>${escapeHtml(item.plan_name || item.plan_code || "AuriX VPN")}</strong><span>${escapeHtml(serverLabel(serverFor(item.endpoint_id)))} · ${escapeHtml(titleCase(item.status))}</span></div><span>${escapeHtml(formatDate(item.expires_at))}</span></div>`).join("") : `<div class="empty-state">No active package yet. Choose a location and package to start.</div>`;
+    $("#package-summary-list").innerHTML = subscriptions.length ? subscriptions.slice(0, 3).map((item) => `<div class="summary-row"><div><strong>${escapeHtml(item.plan_name || item.plan_code || "AuriX VPN")}</strong><span>${escapeHtml(serverLabel(serverFor(item.endpoint_id)))} · ${escapeHtml(titleCase(item.preferred_protocol || "outline"))} · ${escapeHtml(titleCase(item.status))}</span></div><span>${escapeHtml(formatDate(item.expires_at))}</span></div>`).join("") : `<div class="empty-state">No active package yet. Choose a location and package to start.</div>`;
   };
   const renderHome = () => { renderIdentity(); renderCurrentServer(); renderUsage(); renderPackagesSummary(); };
   const renderServers = () => {

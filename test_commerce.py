@@ -327,6 +327,119 @@ class CommerceServiceTest(unittest.TestCase):
             ).fetchone()["preferred_endpoint_id"]
         self.assertEqual(preferred, "sgp-02")
 
+    def test_customer_protocol_preference_flows_into_subscription(self):
+        observed = []
+        self.service.connectivity = SimpleNamespace(
+            validate_customer_endpoint=lambda endpoint_id, plan_code, protocol="outline": (
+                observed.append((endpoint_id, plan_code, protocol))
+                or {"id": endpoint_id, "protocol": protocol, "eligible": True}
+            )
+        )
+        order = self.service.create_order(
+            123,
+            "Min",
+            "basic_50gb",
+            self.now,
+            requested_endpoint_id="xray-sgp-a",
+            requested_protocol="xray",
+        )
+        self.assertEqual(observed, [("xray-sgp-a", "basic_50gb", "xray")])
+        with self.database.connect() as connection:
+            requested = connection.execute(
+                "SELECT requested_protocol FROM orders WHERE id = ?",
+                (order.order_id,),
+            ).fetchone()["requested_protocol"]
+        self.assertEqual(requested, "xray")
+        self.service.submit_payment(123, order.order_id, "manual", "protocol-pref", self.now)
+        self.service.approve_order(order.order_id, 999, self.now)
+        with self.database.connect() as connection:
+            preferred = connection.execute(
+                "SELECT preferred_protocol FROM subscriptions WHERE order_id = ?",
+                (order.order_id,),
+            ).fetchone()["preferred_protocol"]
+        self.assertEqual(preferred, "xray")
+
+    def test_managed_protocol_provisioning_uses_assignment_route_and_generation(self):
+        class ManagedClient:
+            def __init__(self):
+                self.users = {}
+                self.quotas = {}
+
+            def get_user(self, external_id):
+                value = self.users.get(str(external_id))
+                return dict(value) if value else None
+
+            def create_user(self, external_id, name, _route, intent):
+                record = {
+                    "external_id": str(external_id),
+                    "name": name,
+                    "secret": str(intent["secret"]),
+                }
+                self.users[str(external_id)] = record
+                return dict(record)
+
+            def set_user_quota(self, external_id, limit):
+                self.quotas[str(external_id)] = int(limit)
+
+            def list_users(self):
+                return list(self.users.values())
+
+            def server_info(self):
+                return {"version": "fake-xray"}
+
+        managed_client = ManagedClient()
+        assignment = SimpleNamespace(id="assignment-xray", endpoint_id="xray-sgp-a", protocol="xray")
+        self.service.connectivity = SimpleNamespace(
+            validate_customer_endpoint=lambda endpoint_id, plan_code, protocol="outline": {
+                "id": endpoint_id,
+                "protocol": protocol,
+                "eligible": True,
+            },
+            ensure_subscription_assignment=lambda *args, **kwargs: assignment,
+            attach_job=lambda job_id, assignment_id: None,
+        )
+        self.service.managed_route_provider = lambda endpoint_id, protocol: {
+            "route_id": f"{protocol}:{endpoint_id}",
+            "endpoint_id": endpoint_id,
+            "protocol": protocol,
+            "public_address": "198.51.100.10",
+            "port": 18443,
+            "public_key": "test-public-key",
+            "server_name": "edge.example.com",
+            "short_id": "0123456789abcdef",
+        }
+        self.service.managed_adapter_provider = lambda _route: XrayConnectivityAdapter(managed_client)
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, provider, region, state, accepts_new_assignments, created_at)
+                   VALUES (?, ?, 'managed-test', 'sgp1', 'ACTIVE', 1, ?)""",
+                ("xray-sgp-a", "XRAY-SGP-A", self.now.isoformat()),
+            )
+        order = self.service.create_order(
+            123,
+            "Min",
+            "basic_50gb",
+            self.now,
+            requested_endpoint_id="xray-sgp-a",
+            requested_protocol="xray",
+        )
+        self.service.submit_payment(123, order.order_id, "manual", "managed-protocol", self.now)
+        self.service.approve_order(order.order_id, 999, self.now)
+
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.assertEqual(len(managed_client.users), 1)
+        self.assertEqual(len(managed_client.quotas), 1)
+        with self.database.connect() as connection:
+            generation = connection.execute(
+                "SELECT protocol, endpoint_id FROM credential_generations WHERE source_type = 'paid'"
+            ).fetchone()
+        self.assertIsNotNone(generation)
+        self.assertEqual(tuple(generation), ("xray", "xray-sgp-a"))
+        vpn = self.service.user_vpns(123)[0]
+        self.assertEqual(vpn["preferred_protocol"], "xray")
+        self.assertTrue(vpn["access_url"].startswith("vless://"))
+
     def test_plan_replacement_is_blocked_after_payment_activity(self):
         first = self.service.create_order(124, "Min", "basic_50gb", self.now)
         self.service.submit_payment(124, first.order_id, "manual", "replace-block", self.now)
@@ -990,15 +1103,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "61cefb79861160b9d2c7cf7bdd8b84cbe350ac356e19e7010f6191a7fbb5741a",
+            "4983420e4b7047b5ef3f72788fce7b10f8542f9f407e34bf7c02b2cdb613827d",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "69b83ee8fc0ea0f73532752a81129798ed30a099ba446ef9889d1f98b06c884e",
+            "52eb85081593b60b6fcc5fd7fa64e3a12f0febd2cde042b6863ff7bd785ff969",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "2d8aa3665e225cfce4a52df380fd614b9970c1f3b04ce4a08b1e066270086c2c",
+            "f368d0e4686adeddfac61d3debbd7b18806db45261ce1a82cec8f61c19cb283e",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

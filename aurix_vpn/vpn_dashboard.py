@@ -97,6 +97,7 @@ def collect_customer_vpn_state(
                 {
                     "outline_key_id": key_id,
                     "endpoint_id": item.get("endpoint_id"),
+                    "protocol": item.get("preferred_protocol") or "outline",
                     "key_type": "paid",
                     "tier": item.get("plan_name") or item.get("plan_code") or "Paid VPN",
                     "plan_code": item.get("plan_code"),

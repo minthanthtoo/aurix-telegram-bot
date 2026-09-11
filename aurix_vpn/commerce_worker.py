@@ -306,7 +306,12 @@ class CommerceWorkerMixin:
         }
 
     def _ensure_paid_generation(
-        self, key: Any, subscription: Any, now: datetime, grant: dict[str, Any] | None = None
+        self,
+        key: Any,
+        subscription: Any,
+        now: datetime,
+        grant: dict[str, Any] | None = None,
+        protocol: str | None = None,
     ) -> str:
         """Project one paid key into generation-level aggregate accounting."""
         identity = getattr(self, "identity", None)
@@ -314,6 +319,16 @@ class CommerceWorkerMixin:
             return ""
         endpoint_id = str(key["endpoint_id"] or "legacy-default")
         external_id = str(key["outline_key_id"])
+        protocol = str(
+            protocol
+            or (grant or {}).get("protocol")
+            or (key["protocol"] if "protocol" in key.keys() else "")
+            or "outline"
+        ).strip().lower()
+        access_url_ciphertext = str(
+            (key["access_url"] if "access_url" in key.keys() else "")
+            or (grant or {}).get("access_url_ciphertext")
+        )
         key_id = key["id"] if "id" in key.keys() else None
         ownership = str(
             (grant or {}).get("ownership")
@@ -326,8 +341,8 @@ class CommerceWorkerMixin:
             endpoint_id,
             credential_id=f"paid-key:{key_id or external_id}",
             external_id=external_id,
-            protocol="outline",
-            access_url_ciphertext=str(key["access_url"]),
+            protocol=protocol,
+            access_url_ciphertext=access_url_ciphertext,
             status="active" if str(key["status"]) == "active" else "unknown",
             remote_state=remote_state,
             intent_key=(grant or {}).get("intent_key"),
@@ -943,6 +958,8 @@ class CommerceWorkerMixin:
         desired_plan_name = subscription["plan_name"] or subscription["catalog_plan_name"]
         outline = self.outline
         endpoint_id = "legacy-default"
+        requested_protocol = str(subscription["preferred_protocol"] or "outline").strip().lower()
+        protocol = requested_protocol or "outline"
         connectivity = getattr(self, "connectivity", None)
         if connectivity is not None:
             assignment = connectivity.ensure_subscription_assignment(
@@ -950,11 +967,27 @@ class CommerceWorkerMixin:
                 str(subscription["plan_code"]),
                 int(desired_quota) if desired_quota is not None else None,
                 preferred_endpoint_id=subscription["preferred_endpoint_id"],
+                protocol=protocol,
                 now=now,
             )
             connectivity.attach_job(str(job["id"]), assignment.id)
             endpoint_id = assignment.endpoint_id
-            outline = connectivity.client(endpoint_id)
+            protocol = str(assignment.protocol or protocol).strip().lower()
+            if protocol == "outline":
+                outline = connectivity.client(endpoint_id)
+        if protocol != "outline":
+            managed_route = getattr(self, "managed_route_provider", None)
+            if not callable(managed_route):
+                raise CommerceError(f"managed {protocol} route is not configured")
+            route = dict(managed_route(endpoint_id, protocol))
+            route_protocol = str(route.get("protocol") or "").strip().lower()
+            route_endpoint = str(route.get("endpoint_id") or "").strip()
+            if route_protocol != protocol or route_endpoint != endpoint_id:
+                raise CommerceError("managed provisioning route does not match assignment")
+            adapter = self._adapter_for_route(route)
+        else:
+            route = self._route_for_endpoint(endpoint_id)
+            adapter = self._adapter_for_endpoint(endpoint_id, outline)
         current_dt = (now or datetime.now(UTC)).astimezone(UTC)
         starts_dt = datetime.fromisoformat(subscription["starts_at"])
         expires_dt = datetime.fromisoformat(subscription["expires_at"])
@@ -995,29 +1028,28 @@ class CommerceWorkerMixin:
                 )
             return
         if existing is not None:
-            self._ensure_paid_generation(existing, subscription, now)
+            self._ensure_paid_generation(existing, subscription, now, protocol=protocol)
             self._job_done(job["id"])
             return
         key_name = _paid_outline_key_name(subscription)
-        route = self._route_for_endpoint(endpoint_id)
-        adapter = self._adapter_for_endpoint(endpoint_id, outline)
         key = None
         deterministic_id = f"aurix-{subscription['id']}"
-        getter = getattr(outline, "get_key", None)
-        if callable(getter):
-            try:
-                key = getter(deterministic_id)
-            except Exception:
-                key = None
-        if key is None:
-            key = self._find_key(key_name, outline)
-        if key is None:
-            legacy_key = self._find_key(f"aurix-sub-{subscription['id']}", outline)
-            if legacy_key is not None:
-                key = legacy_key
-                rename = getattr(outline, "rename_key", None)
-                if callable(rename):
-                    rename(str(key["id"]), key_name)
+        if protocol == "outline":
+            getter = getattr(outline, "get_key", None)
+            if callable(getter):
+                try:
+                    key = getter(deterministic_id)
+                except Exception:
+                    key = None
+            if key is None:
+                key = self._find_key(key_name, outline)
+            if key is None:
+                legacy_key = self._find_key(f"aurix-sub-{subscription['id']}", outline)
+                if legacy_key is not None:
+                    key = legacy_key
+                    rename = getattr(outline, "rename_key", None)
+                    if callable(rename):
+                        rename(str(key["id"]), key_name)
         if key is None:
             # The adapter owns deterministic create/read-back semantics.  A
             # recovered timeout is returned as ownership=uncertain and is
@@ -1038,7 +1070,7 @@ class CommerceWorkerMixin:
             if desired_quota is not None:
                 adapter.apply_quota_cap(grant, int(desired_quota))
         if not isinstance(key, dict) or not key.get("id") or not key.get("accessUrl"):
-            raise CommerceError("Outline key response lacks id or accessUrl")
+            raise CommerceError(f"{protocol} credential response lacks id or access URL")
         ownership = str(grant.get("ownership") or "unknown")
         remote_state = "unknown" if ownership in {"unknown", "uncertain"} else "observed"
         with self.database.connect() as connection:

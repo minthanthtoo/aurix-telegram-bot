@@ -104,6 +104,23 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(audit_rows[0]["action"], "endpoint_assignment_created")
         self.assertEqual(json.loads(audit_rows[0]["metadata_json"])["protocol"], "outline")
 
+    def test_assignment_persists_explicit_protocol(self):
+        self.registry.register_protocol_profile("legacy-default", "xray", status="candidate")
+        self.registry.record_protocol_observation(
+            "legacy-default", "xray", signal="management", status="healthy"
+        )
+        self.registry.promote_protocol_profile(
+            "legacy-default", "xray", required_signals=("management",)
+        )
+        assignment = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000, protocol="xray"
+        )
+        self.assertEqual(assignment.protocol, "xray")
+        self.assertEqual(
+            self.registry.assignment_for_subscription("sub-1").protocol,
+            "xray",
+        )
+
     def test_endpoint_lifecycle_is_drain_then_terminal_retirement(self):
         now = datetime.now(UTC)
         preview = self.registry.endpoint_lifecycle_preview("legacy-default", "retired")
