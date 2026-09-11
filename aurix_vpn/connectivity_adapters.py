@@ -135,6 +135,7 @@ class OutlineConnectivityAdapter:
         return grant
 
     def render_managed_config(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, access_url = _checked_grant(grant)
         return {
             "protocol": self.protocol,
@@ -144,15 +145,18 @@ class OutlineConnectivityAdapter:
         }
 
     def render_manual_export(self, grant: dict[str, Any]) -> str:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         _external_id, access_url = _checked_grant(grant)
         return access_url
 
     def apply_quota_cap(self, grant: dict[str, Any], absolute_limit: int) -> None:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, _access_url = _checked_grant(grant)
         value = _positive_quota(absolute_limit, protocol=self.protocol)
         self.client.set_data_limit(external_id, value)
 
     def read_usage(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, _access_url = _checked_grant(grant)
         payload = self.client.transfer_metrics()
         by_key = payload.get("bytesTransferredByUserId", {}) if isinstance(payload, dict) else {}
@@ -171,6 +175,7 @@ class OutlineConnectivityAdapter:
         }
 
     def rotate(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         intent = grant.get("credential_intent")
         if not isinstance(intent, dict):
             intent = {
@@ -182,10 +187,12 @@ class OutlineConnectivityAdapter:
         return self.provision(route, intent)
 
     def revoke_auth(self, grant: dict[str, Any]) -> None:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, _access_url = _checked_grant(grant)
         self.client.delete_key(external_id)
 
     def verify_auth_revoked(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, _access_url = _checked_grant(grant)
         getter = getattr(self.client, "get_key", None)
         if not callable(getter):
@@ -198,6 +205,7 @@ class OutlineConnectivityAdapter:
         }
 
     def terminate_sessions(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         _checked_grant(grant)
         return {
             "supported": False,
@@ -288,6 +296,16 @@ def _assert_route_protocol(route: Mapping[str, Any], *, protocol: str) -> None:
     if declared and declared != protocol:
         raise ConnectivityAdapterError(
             f"{protocol} adapter cannot handle {declared} route"
+        )
+
+
+def _assert_grant_protocol(grant: Mapping[str, Any], *, protocol: str) -> None:
+    if not isinstance(grant, Mapping):
+        raise ConnectivityAdapterError(f"{protocol} credential grant is not an object")
+    declared = str(grant.get("protocol") or "").strip().lower()
+    if declared and declared != protocol:
+        raise ConnectivityAdapterError(
+            f"{protocol} adapter cannot handle {declared} grant"
         )
 
 
@@ -473,6 +491,7 @@ class _ManagedCredentialAdapter:
         return grant
 
     def render_managed_config(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, access_url = _checked_grant(grant)
         return {
             "protocol": self.protocol,
@@ -482,10 +501,12 @@ class _ManagedCredentialAdapter:
         }
 
     def render_manual_export(self, grant: dict[str, Any]) -> str:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         _external_id, access_url = _checked_grant(grant)
         return access_url
 
     def apply_quota_cap(self, grant: dict[str, Any], absolute_limit: int) -> None:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, _access_url = _checked_grant(grant)
         value = _positive_quota(absolute_limit, protocol=self.protocol)
         method = _provider_method(self.client, ("set_user_quota",))
@@ -494,6 +515,7 @@ class _ManagedCredentialAdapter:
         method(external_id, value)
 
     def read_usage(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, _access_url = _checked_grant(grant)
         method = _provider_method(self.client, ("get_user_usage", "user_usage"))
         if method is None:
@@ -507,6 +529,7 @@ class _ManagedCredentialAdapter:
         }
 
     def rotate(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         intent = grant.get("credential_intent")
         if not isinstance(intent, dict):
             intent = {
@@ -530,6 +553,7 @@ class _ManagedCredentialAdapter:
         return self.provision(route, intent)
 
     def revoke_auth(self, grant: dict[str, Any]) -> None:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, _access_url = _checked_grant(grant)
         method = _provider_method(self.client, ("delete_user", "remove_user"))
         if method is None:
@@ -537,6 +561,7 @@ class _ManagedCredentialAdapter:
         method(external_id)
 
     def verify_auth_revoked(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, _access_url = _checked_grant(grant)
         getter = _provider_method(self.client, ("get_user", "get_client"))
         if getter is None:
@@ -549,6 +574,7 @@ class _ManagedCredentialAdapter:
         }
 
     def terminate_sessions(self, grant: dict[str, Any]) -> dict[str, Any]:
+        _assert_grant_protocol(grant, protocol=self.protocol)
         external_id, _access_url = _checked_grant(grant)
         method = _provider_method(self.client, ("terminate_user_sessions", "disconnect_user"))
         if method is None:
@@ -634,6 +660,7 @@ class _ManagedCredentialAdapter:
         skipped = 0
         for grant in expected_grants:
             try:
+                _assert_grant_protocol(grant, protocol=self.protocol)
                 external_id, _access_url = _checked_grant(grant)
             except ConnectivityAdapterError:
                 skipped += 1

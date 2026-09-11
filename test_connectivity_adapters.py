@@ -200,6 +200,16 @@ class ConnectivityAdapterTest(unittest.TestCase):
             )
         self.assertEqual(client.users, {})
 
+    def test_adapter_rejects_a_grant_for_another_protocol(self):
+        client = _ProtocolClient()
+        grant = XrayConnectivityAdapter(client).provision(
+            self._xray_route(), {"external_id": "uuid-a", "name": "customer-a"}
+        )
+        with self.assertRaisesRegex(
+            ConnectivityAdapterError, "cannot handle xray grant"
+        ):
+            Hysteria2ConnectivityAdapter(client).read_usage(grant)
+
     @staticmethod
     def _xray_route():
         return {
