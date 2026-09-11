@@ -149,6 +149,32 @@ class FailoverWorkerTest(unittest.TestCase):
         self.assertEqual(len(adapter.revoked), 1)
         self.assertEqual(self.failover.decisions()[0]["state"], "rolled_back")
 
+    def test_protocol_aware_route_provider_receives_source_protocol(self):
+        adapter = _Adapter()
+        calls = []
+
+        def route_provider(endpoint_id, protocol):
+            calls.append((endpoint_id, protocol))
+            return {
+                "endpoint_id": endpoint_id,
+                "protocol": protocol,
+                "route_id": f"{protocol}:{endpoint_id}",
+                "public_address": "198.51.100.10",
+            }
+
+        result = RouteFailoverExecutor(
+            self.database,
+            identity=self.identity,
+            failover=self.failover,
+            route_provider=route_provider,
+            adapter_provider=lambda _route: adapter,
+            access_url_encryptor=lambda value: f"enc:{value}",
+            clock=lambda: self.now,
+            require_data_plane_probe=True,
+        ).run_once(now=self.now)
+        self.assertEqual(result["status"], "committed")
+        self.assertEqual(calls, [("bkk-a", "xray")])
+
 
 if __name__ == "__main__":
     unittest.main()

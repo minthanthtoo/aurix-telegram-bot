@@ -18,6 +18,7 @@ from .connectivity import DigitalOceanClient, EndpointRegistry, FleetController
 from .entitlements import PUBLIC_LIMIT_BYTES, ClaimService, OutlineError
 from .free_repository import Database
 from .outline_adapter import OutlineClient
+from .node_agent_bindings import ManagedNodeAgentBindings, NodeAgentBindingError
 from supabase_storage import NullReceiptStorage, SupabaseReceiptStorage
 from .telegram_transport import DEFAULT_MAINTENANCE_INTERVAL_SECONDS, TelegramBot
 
@@ -136,6 +137,20 @@ def build_runtime_services(
         receipt_storage_required=receipt_storage_required,
         connectivity=connectivity,
     )
+    try:
+        managed_bindings = ManagedNodeAgentBindings.from_json(
+            os.environ.get("AURIX_MANAGED_NODE_AGENTS_JSON"),
+            adapter_registry=getattr(commerce, "adapter_registry", None),
+        )
+    except NodeAgentBindingError as exc:
+        raise SystemExit(f"Invalid AURIX_MANAGED_NODE_AGENTS_JSON: {exc}") from exc
+    if managed_bindings.configured:
+        # Explicit bindings are opt-in. Registering their adapter contracts
+        # keeps them visible as candidates; endpoint protocol profiles still
+        # require fresh evidence and explicit promotion before allocation.
+        commerce.managed_route_provider = managed_bindings.route_for
+        commerce.managed_adapter_provider = managed_bindings.adapter_for
+        commerce.managed_route_bindings = managed_bindings
     digitalocean_token = os.environ.get("DIGITALOCEAN_API_TOKEN", "").strip()
     commerce.fleet_controller = FleetController(
         commerce_database,

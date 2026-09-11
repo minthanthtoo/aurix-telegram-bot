@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -60,12 +61,15 @@ class _Outline:
 
 
 class _Commerce:
+    instances = []
+
     def __init__(self, database, outline, access_key, **kwargs):
         self.database = database
         self.outline = outline
         self.access_key = access_key
         self.kwargs = kwargs
         self.initialized = False
+        self.__class__.instances.append(self)
 
     def initialize(self):
         self.initialized = True
@@ -113,6 +117,7 @@ class RuntimeCompositionTest(unittest.TestCase):
     def setUp(self):
         _Bot.instances = []
         _EndpointRegistry.instances = []
+        _Commerce.instances = []
 
     def test_app_main_remains_the_runtime_entrypoint(self):
         self.assertIs(app.main, runtime.main)
@@ -200,6 +205,49 @@ class RuntimeCompositionTest(unittest.TestCase):
             )
 
         self.assertIsNone(_EndpointRegistry.instances[0].bootstrap)
+
+    def test_managed_node_agent_bindings_are_explicitly_wired_when_configured(self):
+        environment = {
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "OUTLINE_API_URL": "https://outline.invalid/secret",
+            "OUTLINE_CERT_SHA256": "0" * 64,
+            "AURIX_ACCESS_URL_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+            "DATABASE_PATH": "/tmp/aurix-runtime-test.db",
+            "AURIX_MANAGED_NODE_AGENTS_JSON": json.dumps([
+                {
+                    "endpoint_id": "sg-a",
+                    "protocol": "xray",
+                    "base_url": "https://127.0.0.1:18001",
+                    "token": "agent-token",
+                    "route": {
+                        "public_address": "198.51.100.10",
+                        "port": 18443,
+                        "public_key": "public-key",
+                        "server_name": "example.com",
+                        "short_id": "abcd",
+                    },
+                }
+            ]),
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("runtime.Database", _Database),
+            patch("runtime.CommerceDatabase", _CommerceDatabase),
+            patch("runtime.OutlineClient", _Outline),
+            patch("runtime.EndpointRegistry", _EndpointRegistry),
+            patch("runtime.CommerceService", _Commerce),
+            patch("runtime.ClaimService", _ClaimService),
+        ):
+            runtime.build_runtime_services(
+                validate_telegram=False,
+                check_outline=False,
+                reconcile=False,
+                configure_bootstrap=False,
+            )
+
+        commerce = _Commerce.instances[-1]
+        self.assertEqual(commerce.managed_route_provider("sg-a", "xray")["route_id"], "xray:sg-a")
+        self.assertTrue(callable(commerce.managed_adapter_provider))
 
 
 if __name__ == "__main__":

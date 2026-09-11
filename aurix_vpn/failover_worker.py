@@ -8,6 +8,7 @@ commit the decision. Ambiguous provider operations are left for reconciliation.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -30,7 +31,7 @@ class RouteFailoverExecutor:
         *,
         identity: IdentityService,
         failover: RouteFailoverService | None = None,
-        route_provider: Callable[[str], Mapping[str, Any]] | None = None,
+        route_provider: Callable[..., Mapping[str, Any]] | None = None,
         adapter_provider: Callable[[Mapping[str, Any]], Any] | None = None,
         assignment_transfer: Callable[[str, str, str], Mapping[str, Any] | None] | None = None,
         access_url_encryptor: Callable[[str], str] | None = None,
@@ -50,6 +51,34 @@ class RouteFailoverExecutor:
     @staticmethod
     def _default_route(endpoint_id: str) -> Mapping[str, Any]:
         return {"endpoint_id": str(endpoint_id), "route_id": str(endpoint_id)}
+
+    def _target_route(self, endpoint_id: str, protocol: str) -> Mapping[str, Any]:
+        """Call legacy one-arg or protocol-aware route providers safely."""
+        provider = self.route_provider
+        try:
+            parameters = inspect.signature(provider).parameters.values()
+            accepts_two = any(
+                parameter.kind is inspect.Parameter.VAR_POSITIONAL
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            ) or len(
+                [
+                    parameter
+                    for parameter in parameters
+                    if parameter.kind
+                    in (
+                        inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    )
+                ]
+            ) >= 2
+        except (TypeError, ValueError):
+            accepts_two = False
+        return (
+            provider(endpoint_id, protocol)
+            if accepts_two
+            else provider(endpoint_id)
+        )
 
     def _generation(self, generation_id: str) -> dict[str, Any]:
         with self.database.connect() as connection:
@@ -93,9 +122,9 @@ class RouteFailoverExecutor:
                     f"source generation is not recoverable: {authorization.get('reason', 'unknown')}"
                 )
             target_endpoint = str(decision["target_endpoint_id"])
-            target_route = dict(self.route_provider(target_endpoint))
-            target_route.setdefault("endpoint_id", target_endpoint)
             source_protocol = str(source.get("protocol") or "outline").strip().lower()
+            target_route = dict(self._target_route(target_endpoint, source_protocol))
+            target_route.setdefault("endpoint_id", target_endpoint)
             target_route.setdefault("protocol", source_protocol)
             target_protocol = str(target_route.get("protocol") or "").strip().lower()
             if target_protocol != source_protocol:

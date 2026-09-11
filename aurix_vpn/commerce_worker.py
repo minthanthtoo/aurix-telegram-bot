@@ -69,6 +69,9 @@ class CommerceWorkerMixin:
         if not protocol or not endpoint_id:
             raise CommerceError("managed route requires protocol and endpoint_id")
         normalized.setdefault("route_id", f"{protocol}:{endpoint_id}")
+        managed_adapter = getattr(self, "managed_adapter_provider", None)
+        if protocol != "outline" and client is None and callable(managed_adapter):
+            return managed_adapter(normalized)
         registry = getattr(self, "adapter_registry", None) or ConnectivityAdapterRegistry()
         gateway = client
         if gateway is None:
@@ -215,9 +218,23 @@ class CommerceWorkerMixin:
         if route_provider is None:
             if connectivity is None:
                 raise CommerceError("connectivity registry is required for failover")
-            route_provider = lambda endpoint_id: connectivity.endpoint(str(endpoint_id))
+            managed_route = getattr(self, "managed_route_provider", None)
+            if callable(managed_route):
+                def route_for_failover(endpoint_id: str, protocol: str) -> Mapping[str, Any]:
+                    normalized_protocol = str(protocol or "").strip().lower()
+                    if normalized_protocol != "outline":
+                        return managed_route(str(endpoint_id), normalized_protocol)
+                    return connectivity.endpoint(str(endpoint_id))
+
+                route_provider = route_for_failover
+            else:
+                route_provider = lambda endpoint_id: connectivity.endpoint(str(endpoint_id))
         if adapter_provider is None:
             def default_adapter(route: dict[str, Any]) -> Any:
+                managed_adapter = getattr(self, "managed_adapter_provider", None)
+                protocol = str(route.get("protocol") or "").strip().lower()
+                if protocol != "outline" and callable(managed_adapter):
+                    return managed_adapter(route)
                 endpoint_id = str(route.get("endpoint_id") or "")
                 gateway = connectivity.client(endpoint_id) if connectivity is not None else self.outline
                 return self._adapter_for_route(route, gateway)
@@ -411,6 +428,9 @@ class CommerceWorkerMixin:
         def default_adapter(route: Mapping[str, Any]) -> Any:
             protocol = str(route.get("protocol") or "").strip().lower()
             endpoint_id = str(route.get("endpoint_id") or "").strip()
+            managed_adapter = getattr(self, "managed_adapter_provider", None)
+            if protocol != "outline" and callable(managed_adapter):
+                return managed_adapter(route)
             connectivity = getattr(self, "connectivity", None)
             if connectivity is None and protocol != "outline":
                 raise CommerceError(
@@ -1081,14 +1101,22 @@ class CommerceWorkerMixin:
         for generation in identity.generations_for_accounting(entitlement_key):
             endpoint_id = str(generation["endpoint_id"])
             protocol = str(generation.get("protocol") or "outline").strip().lower()
-            client = self.outline
-            if self.connectivity is not None:
-                client = self.connectivity.client(endpoint_id)
             route = {
                 "protocol": protocol,
                 "route_id": f"{protocol}:{endpoint_id}",
                 "endpoint_id": endpoint_id,
             }
+            managed_route = getattr(self, "managed_route_provider", None)
+            if protocol != "outline" and callable(managed_route):
+                route = dict(managed_route(endpoint_id, protocol))
+                route.setdefault("protocol", protocol)
+                route.setdefault("endpoint_id", endpoint_id)
+                route.setdefault("route_id", f"{protocol}:{endpoint_id}")
+            client = None
+            if protocol == "outline":
+                client = self.outline
+                if self.connectivity is not None:
+                    client = self.connectivity.client(endpoint_id)
             adapter = self._adapter_for_route(route, client)
             grant = {
                 **route,
