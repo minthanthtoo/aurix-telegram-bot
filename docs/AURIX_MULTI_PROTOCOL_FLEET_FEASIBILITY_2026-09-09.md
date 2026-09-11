@@ -1276,3 +1276,6 @@ The binding contract remains local evidence only. A production value still
 requires approved protected transport, fresh protocol evidence, restart and
 reconciliation validation, per-customer accounting/quota/client-path tests,
 rollback ownership, and explicit authorization before any live mutation.
+The latest complete local discovery run passes `363` tests in `26.581s`; this
+refreshes the verification count after the binding, failover, and Control
+Center changes without implying live protocol compatibility.
