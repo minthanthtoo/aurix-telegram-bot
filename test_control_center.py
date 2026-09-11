@@ -102,6 +102,7 @@ class ControlCenterTest(unittest.TestCase):
 
         detail = app.admin_endpoint("bkk-a")
         self.assertEqual(detail["endpoint"]["code"], "BKK-A")
+        self.assertFalse(detail["endpoint"]["healthy"])
         self.assertNotIn("public_address", json.dumps(detail))
         self.assertNotIn("provider_resource_id", json.dumps(detail))
         self.assertNotIn("management_url_ciphertext", json.dumps(detail))

@@ -427,6 +427,7 @@ class AuriXVpnWebApplication:
             )
             if key in raw
         }
+        safe_endpoint["healthy"] = self._endpoint_health_is_fresh(raw.get("last_healthy_at"))
         profile_method = getattr(registry, "list_protocol_profiles", None)
         if callable(profile_method):
             safe_endpoint["protocols"] = profile_method(str(endpoint_id))
