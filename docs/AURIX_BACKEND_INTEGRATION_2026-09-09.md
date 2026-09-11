@@ -462,8 +462,18 @@ redacted lifecycle events into `audit_events`. The durable decision row remains
 the state source of truth; the append-only events provide an operator timeline
 without copying access URLs, provider identifiers, or credential material.
 
+The existing Telegram administrator boundary now exposes the failover safety
+controls without widening the browser surface. `/failsafety` is read-only and
+shows current pause state, window usage, and remaining budget. `/setsafety`
+requires explicit global, region, or endpoint scope values, presents the
+current state, and applies only after the existing one-time state-bound
+confirmation. The commerce wrapper writes the existing audited control change;
+the command performs no provider call, credential revocation, or customer
+route mutation. Example forms are `/setsafety global pause 5 60` and
+`/setsafety region sgp1 resume 20 300`.
+
 Focused failover, migration, Control Center, VPN web API, and render checks pass;
-the non-PostgreSQL VPN regression passes `327` tests, and the two non-PostgreSQL
+the non-PostgreSQL VPN regression passes `331` tests, and the two non-PostgreSQL
 migration-manifest checks also pass. The optional PostgreSQL end-to-end rehearsal
 was not re-run at this checkpoint because the host filesystem has only about
 `308 MiB` available and the disposable PostgreSQL cluster exhausted that space

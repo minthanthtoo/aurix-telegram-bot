@@ -69,6 +69,46 @@ class TelegramAdminMixin:
         return endpoint, state
 
     @staticmethod
+    def _failover_safety_args(
+        args: list[str],
+    ) -> tuple[str, str, bool, int, int]:
+        """Parse deterministic failover pause/budget settings."""
+        if len(args) not in {4, 5}:
+            raise ValueError(
+                "Usage: /setsafety <global> <pause|resume> <max-migrations> <window-seconds> "
+                "or /setsafety <region|endpoint> <key> <pause|resume> "
+                "<max-migrations> <window-seconds>"
+            )
+        scope = str(args[0]).strip().lower()
+        if scope not in {"global", "region", "endpoint"}:
+            raise ValueError("Safety scope must be global, region, or endpoint")
+        if scope == "global":
+            if len(args) != 4:
+                raise ValueError("Global safety controls do not take a scope key")
+            scope_key = "global"
+            action, maximum, window = args[1:]
+        else:
+            if len(args) != 5:
+                raise ValueError("Regional and endpoint safety controls require a scope key")
+            scope_key = str(args[1]).strip().lower()
+            if not _PROTOCOL_TOKEN.fullmatch(scope_key):
+                raise ValueError("Safety scope key is invalid")
+            action, maximum, window = args[2:]
+        action = str(action).strip().lower()
+        if action not in {"pause", "resume"}:
+            raise ValueError("Safety action must be pause or resume")
+        try:
+            max_migrations = int(maximum)
+            window_seconds = int(window)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Migration budget and window must be integers") from exc
+        if not 1 <= max_migrations <= 100_000:
+            raise ValueError("Migration budget must be between 1 and 100000")
+        if not 1 <= window_seconds <= 86_400:
+            raise ValueError("Migration window must be between 1 and 86400 seconds")
+        return scope, scope_key, action == "pause", max_migrations, window_seconds
+
+    @staticmethod
     def _infrastructure_provision_args(args: list[str]) -> tuple[str, str, str]:
         if len(args) != 3:
             raise ValueError("Usage: /provisionnode <region> <size> <image>")
@@ -365,6 +405,33 @@ class TelegramAdminMixin:
             except Exception as exc:
                 snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
             return snapshot
+        if command == "/setsafety":
+            try:
+                scope, scope_key, paused, maximum, window = self._failover_safety_args(args)
+                controls = self._admin_call(telegram_id, "failover_safety_controls")
+                current = next(
+                    (
+                        item
+                        for item in controls
+                        if str(item.get("scope")) == scope
+                        and str(item.get("scope_key")) == scope_key
+                    ),
+                    None,
+                )
+                snapshot.update(
+                    {
+                        "state": "present",
+                        "scope": scope,
+                        "scope_key": scope_key,
+                        "current": current or {},
+                        "paused": paused,
+                        "max_migrations_per_window": maximum,
+                        "window_seconds": window,
+                    }
+                )
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
         if self.commerce is None or not target_id:
             snapshot["state"] = "missing"
             return snapshot
@@ -534,6 +601,27 @@ class TelegramAdminMixin:
                     f"Cohort limit: {snapshot.get('limit') or 50}",
                     "Result: pause new assignments on the source and queue verified migrations.",
                     "Existing credentials are not revoked until a target is provisioned and probed.",
+                ]
+            )
+        if command == "/setsafety":
+            current = snapshot.get("current") or {}
+            old_state = "not configured"
+            if current:
+                old_state = "paused" if bool(current.get("paused")) else "open"
+                old_state += (
+                    f", {current.get('migration_count', 0)}/"
+                    f"{current.get('max_migrations_per_window', 0)} used"
+                )
+            new_state = "paused" if snapshot.get("paused") else "open"
+            return "\n".join(
+                [
+                    f"Scope: {snapshot.get('scope')}:{snapshot.get('scope_key')}",
+                    f"Current: {old_state}",
+                    f"New state: {new_state}",
+                    f"New budget: {snapshot.get('max_migrations_per_window')} migrations per "
+                    f"{snapshot.get('window_seconds')} seconds",
+                    "Result: update the local failover admission guard and write an audit event.",
+                    "No provider call, credential revocation, or customer route mutation occurs here.",
                 ]
             )
         if command == "/provisionnode":

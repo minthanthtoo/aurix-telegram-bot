@@ -1871,6 +1871,42 @@ class CommerceWorkerMixin:
         except FailoverError as exc:
             raise CommerceError(str(exc)) from exc
 
+    def failover_safety_controls(self) -> list[dict[str, Any]]:
+        """Return redacted failover safety controls for operator views."""
+        if self.failover is None:
+            raise CommerceError("Failover safety controls are not configured")
+        try:
+            return self.failover.safety_controls()
+        except FailoverError as exc:
+            raise CommerceError(str(exc)) from exc
+
+    def configure_failover_safety(
+        self,
+        scope: str,
+        scope_key: str | None,
+        admin_id: int,
+        *,
+        paused: bool,
+        max_migrations_per_window: int,
+        window_seconds: int,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Apply one audited failover pause/budget control through Telegram admin."""
+        if self.failover is None:
+            raise CommerceError("Failover safety controls are not configured")
+        try:
+            return self.failover.configure_safety_control(
+                scope,
+                scope_key,
+                paused=paused,
+                max_migrations_per_window=max_migrations_per_window,
+                window_seconds=window_seconds,
+                actor_id=admin_id,
+                now=now,
+            )
+        except FailoverError as exc:
+            raise CommerceError(str(exc)) from exc
+
     def endpoint_lifecycle_preview(
         self,
         endpoint_id: str,

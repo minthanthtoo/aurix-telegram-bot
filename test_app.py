@@ -1422,6 +1422,46 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(request_calls[0][2]["target_endpoint_id"], "bkk-a")
         self.assertEqual(request_calls[0][2]["limit"], 2)
 
+    def test_admin_failover_safety_controls_are_confirmation_bound(self):
+        self.bot.handle(self.message(999, "/failsafety"))
+        self.assertIn("global:global", self.bot.sent[-1][1])
+        self.assertIn("0/100", self.bot.sent[-1][1])
+
+        self.bot.handle(self.message(999, "/setsafety global pause 5 60"))
+        self.assertIn("Current: open", self.bot.sent[-1][1])
+        self.assertIn("New budget: 5 migrations per 60 seconds", self.bot.sent[-1][1])
+        confirm = next(
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["callback_data"].startswith("a:k:")
+        )
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "callback-safety-confirm",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": confirm["callback_data"],
+            }
+        )
+        self.assertIn("global:global is paused", self.bot.sent[-1][1])
+        control = next(
+            item
+            for item in self.commerce.failover_safety_controls()
+            if item["scope"] == "global"
+        )
+        self.assertTrue(bool(control["paused"]))
+        self.assertEqual(control["max_migrations_per_window"], 5)
+        with self.commerce.database.connect() as connection:
+            audit = connection.execute(
+                """SELECT actor_id, action FROM audit_events
+                   WHERE action = 'failover_safety_control_configured'
+                   ORDER BY created_at DESC LIMIT 1"""
+            ).fetchone()
+        self.assertEqual(audit["actor_id"], "999")
+        self.assertEqual(audit["action"], "failover_safety_control_configured")
+
     def test_admin_endpoint_lifecycle_is_confirmation_bound_and_guarded(self):
         preview_calls = []
         lifecycle_calls = []

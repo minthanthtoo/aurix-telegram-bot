@@ -36,6 +36,8 @@ class AdminOperations:
             "endpoint_plan_capacity",
             "endpoint_drain_preview",
             "request_endpoint_drain",
+            "failover_safety_controls",
+            "configure_failover_safety",
             "endpoint_lifecycle_preview",
             "set_endpoint_lifecycle",
             "queue_infrastructure_provision",

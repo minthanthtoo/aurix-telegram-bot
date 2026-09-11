@@ -229,6 +229,12 @@ class TelegramCommandMixin:
                 except CommerceError as exc:
                     self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
                     return
+        if command == "/setsafety":
+            try:
+                self._failover_safety_args(args)
+            except ValueError as exc:
+                self.send(chat["id"], str(exc))
+                return
         if command == "/provisionnode":
             try:
                 self._infrastructure_provision_args(args)
@@ -382,6 +388,11 @@ class TelegramCommandMixin:
                 "/provisionnode": lambda: (
                     f"Queue a guarded VPN node intent for {args[0]} / {args[1]} / {args[2]}?"
                 ),
+                "/setsafety": lambda: (
+                    f"Apply the explicit failover safety setting for {args[0]}"
+                    + (f":{args[1]}" if args[0].lower() != "global" else ":global")
+                    + "?"
+                ),
             }[command]()
                 self._queue_admin_confirmation(
                     chat["id"],
@@ -404,6 +415,7 @@ class TelegramCommandMixin:
                         "/promoteprotocol": "🛡 Confirm Promotion",
                         "/disableprotocol": "⛔ Confirm Disable",
                         "/provisionnode": "🧱 Confirm Node Intent",
+                        "/setsafety": "🛡 Confirm Failover Safety",
                     }[command],
                 )
                 return
@@ -1097,6 +1109,25 @@ class TelegramCommandMixin:
                 self.send(chat["id"], "Commerce is not configured.")
             else:
                 self._show_capacity(chat["id"], telegram_id)
+        elif command == "/failsafety":
+            try:
+                controls = self._admin_call(telegram_id, "failover_safety_controls")
+            except CommerceError as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                lines = ["AuriX failover safety controls"]
+                for control in controls:
+                    state = "PAUSED" if bool(control.get("paused")) else "OPEN"
+                    lines.append(
+                        f"{control['scope']}:{control['scope_key']} · {state} · "
+                        f"{control['migration_count']}/{control['max_migrations_per_window']} "
+                        f"migrations per {control['window_seconds']}s · "
+                        f"{control['remaining_migrations']} remaining"
+                    )
+                if len(lines) == 1:
+                    lines.append("No failover safety controls are configured.")
+                lines.append("Use /setsafety with explicit values to change one control.")
+                self.send(chat["id"], "\n".join(lines), self._admin_keyboard(telegram_id))
         elif command == "/reconcile":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -1156,6 +1187,31 @@ class TelegramCommandMixin:
                     )
                 else:
                     self._open_admin_panel(chat["id"], telegram_id, "failed")
+        elif command == "/setsafety":
+            try:
+                scope, scope_key, paused, maximum, window = self._failover_safety_args(args)
+                result = self._admin_call(
+                    telegram_id,
+                    "configure_failover_safety",
+                    scope,
+                    scope_key,
+                    telegram_id,
+                    paused=paused,
+                    max_migrations_per_window=maximum,
+                    window_seconds=window,
+                )
+            except (CommerceError, ValueError) as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                state = "paused" if bool(result.get("paused")) else "open"
+                self.send(
+                    chat["id"],
+                    f"Failover safety control {result['scope']}:{result['scope_key']} is {state}; "
+                    f"budget is {result['max_migrations_per_window']} migrations per "
+                    f"{result['window_seconds']} seconds.\n"
+                    "This changes failover admission only; it does not revoke credentials or call a provider.",
+                    self._admin_keyboard(telegram_id),
+                )
         elif command == "/disableprotocol":
             try:
                 endpoint, protocol = self._protocol_profile_args(args)
