@@ -228,10 +228,16 @@ before enabling the profile. Customer identities cannot reach either command.
 
 The complete suite now passes `346` tests (`Ran 346 tests ... OK`) with
 `PYTHONWARNINGS=error::ResourceWarning`; focused Telegram authorization and
-promotion tests, Python compilation, Ruff, and `git diff --check` also pass.
+promotion/disable tests, Python compilation, Ruff, and `git diff --check` also
+pass.
 This verification is local only: no server, database, credential, customer,
 load-test, or speed-test state was changed. The implementation is committed as
-`610e3fa` (`Add confirmed protocol promotion workflow`).
+`610e3fa` (`Add confirmed protocol promotion workflow`), `ffc2da3` (`Add
+confirmed protocol disable workflow`), and `10a0270` (`Serialize protocol
+disable state transition`). The disable transition re-reads the profile inside
+the write transaction, rejects a concurrently retired profile, blocks new
+allocation, preserves existing credentials, and records the actual prior state
+in the audit event.
 
 ## Remaining gates and next action
 
