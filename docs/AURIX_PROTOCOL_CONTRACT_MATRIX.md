@@ -45,6 +45,8 @@ signal and matching declared capabilities, and records the operator decision in
 the commerce audit log when available; observation ingestion never auto-enables
 a protocol. Direct profile registration also cannot mark Xray or Hysteria2
 enabled; those transports must pass the explicit promotion method.
+The registry also exposes a non-mutating readiness preview so operators can
+see missing fresh signals and capabilities before attempting promotion.
 
 Those external gates remain ordered: validate one disposable canary per protocol,
 then run staged 2/5/expected concurrency and speed/soak measurements on approved

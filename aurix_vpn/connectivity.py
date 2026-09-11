@@ -378,6 +378,141 @@ class EndpointRegistry:
             result.append(item)
         return result
 
+    def protocol_profile_promotion_readiness(
+        self,
+        endpoint_id: str,
+        protocol: str,
+        *,
+        required_signals: tuple[str, ...] | list[str],
+        required_capabilities: tuple[str, ...] | list[str] = (),
+        now: datetime | str | None = None,
+    ) -> dict[str, Any]:
+        """Return a non-mutating, redacted promotion decision preview.
+
+        The preview deliberately does not change profile state or contact a
+        provider. It lets an operator see whether the explicitly selected
+        evidence and capability requirements are satisfied before calling the
+        state-changing promotion method.
+        """
+        endpoint = str(endpoint_id or "").strip()
+        transport = str(protocol or "").strip().lower()
+        if isinstance(required_signals, str) or isinstance(required_capabilities, str):
+            raise ConnectivityError("protocol evidence requirements must be a sequence")
+        signals = tuple(
+            sorted(
+                {
+                    str(value or "").strip().lower()
+                    for value in required_signals
+                    if str(value or "").strip()
+                }
+            )
+        )
+        capabilities = tuple(
+            sorted(
+                {
+                    str(value or "").strip().lower()
+                    for value in required_capabilities
+                    if str(value or "").strip()
+                }
+            )
+        )
+        if not endpoint or len(endpoint) > 128:
+            raise ConnectivityError("endpoint ID is invalid")
+        if not transport or len(transport) > 64 or any(char.isspace() for char in transport):
+            raise ConnectivityError("protocol is invalid")
+        if not signals:
+            raise ConnectivityError("at least one protocol evidence signal is required")
+        if any(len(value) > 64 or any(char.isspace() for char in value) for value in signals):
+            raise ConnectivityError("protocol evidence signal is invalid")
+        if any(len(value) > 64 or any(char.isspace() for char in value) for value in capabilities):
+            raise ConnectivityError("protocol capability is invalid")
+        checked_at = self._observation_time(now)
+        with self.database.connect() as connection:
+            profile = connection.execute(
+                """SELECT profile_id, status, capabilities_json
+                     FROM endpoint_protocol_profiles
+                    WHERE endpoint_id = ? AND protocol = ?""",
+                (endpoint, transport),
+            ).fetchone()
+            base = {
+                "endpoint_id": endpoint,
+                "protocol": transport,
+                "required_signals": list(signals),
+                "required_capabilities": list(capabilities),
+                "checked_at": checked_at.isoformat(),
+                "profile_exists": profile is not None,
+                "profile_id": None if profile is None else str(profile["profile_id"]),
+                "profile_status": None if profile is None else str(profile["status"] or "").lower(),
+                "declared_capabilities": {},
+                "fresh_healthy_signals": [],
+                "missing_signals": list(signals),
+                "missing_capabilities": list(capabilities),
+                "latest_healthy_at": None,
+                "reasons": [],
+                "promotable": False,
+            }
+            if profile is None:
+                base["reasons"] = ["protocol profile does not exist"]
+                return base
+            try:
+                declared = json.loads(str(profile["capabilities_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                declared = {}
+            if not isinstance(declared, dict):
+                declared = {}
+            declared = {str(key): value is True for key, value in declared.items()}
+            missing_capabilities = [
+                name for name in capabilities if declared.get(name) is not True
+            ]
+            observations = connection.execute(
+                """SELECT signal, observed_at, expires_at
+                     FROM endpoint_protocol_observations
+                    WHERE profile_id = ? AND status = 'healthy'""",
+                (str(profile["profile_id"]),),
+            ).fetchall()
+            fresh_signals: set[str] = set()
+            latest_healthy: datetime | None = None
+            for observation in observations:
+                try:
+                    observed = self._observation_time(observation["observed_at"])
+                    expires = (
+                        self._observation_time(observation["expires_at"])
+                        if observation["expires_at"]
+                        else None
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if observed > checked_at or (expires is not None and expires <= checked_at):
+                    continue
+                fresh_signals.add(str(observation["signal"]).strip().lower())
+                if latest_healthy is None or observed > latest_healthy:
+                    latest_healthy = observed
+            missing_signals = [name for name in signals if name not in fresh_signals]
+            reasons: list[str] = []
+            if str(profile["status"] or "").lower() == "retired":
+                reasons.append("retired protocol profile cannot be promoted")
+            if missing_capabilities:
+                reasons.append(
+                    "protocol profile lacks required capabilities: "
+                    + ", ".join(missing_capabilities)
+                )
+            if missing_signals:
+                reasons.append(
+                    "protocol profile evidence is incomplete: " + ", ".join(missing_signals)
+                )
+            base.update(
+                {
+                    "declared_capabilities": declared,
+                    "fresh_healthy_signals": sorted(fresh_signals),
+                    "missing_signals": missing_signals,
+                    "missing_capabilities": missing_capabilities,
+                    "latest_healthy_at": latest_healthy.isoformat() if latest_healthy else None,
+                    "reasons": reasons,
+                    "promotable": not reasons,
+                }
+            )
+            return base
+
     def promote_protocol_profile(
         self,
         endpoint_id: str,

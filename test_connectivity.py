@@ -117,6 +117,16 @@ class EndpointRegistryTest(unittest.TestCase):
             self.registry.register_protocol_profile(
                 "legacy-default", "xray", status="enabled"
             )
+        readiness = self.registry.protocol_profile_promotion_readiness(
+            "legacy-default",
+            "xray",
+            required_signals=("management",),
+            required_capabilities=("usage",),
+            now=datetime(2026, 9, 11, 0, 0, tzinfo=UTC),
+        )
+        self.assertFalse(readiness["promotable"])
+        self.assertEqual(readiness["missing_signals"], ["management"])
+        self.assertEqual(readiness["missing_capabilities"], [])
         with self.database.connect() as connection:
             with self.assertRaisesRegex(ConnectivityError, "capacity"):
                 self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray")
@@ -245,6 +255,15 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["status"], "degraded")
         self.assertEqual(listed[0]["details"]["client_path"], "udp-timeout")
+        readiness = self.registry.protocol_profile_promotion_readiness(
+            "legacy-default",
+            "xray",
+            required_signals=("client_path",),
+            now=now,
+        )
+        self.assertFalse(readiness["promotable"])
+        self.assertEqual(readiness["fresh_healthy_signals"], [])
+        self.assertEqual(readiness["reasons"], ["protocol profile evidence is incomplete: client_path"])
         with self.assertRaisesRegex(ConnectivityError, "profile does not exist"):
             self.registry.record_protocol_observation(
                 "legacy-default", "hysteria2", now=now
