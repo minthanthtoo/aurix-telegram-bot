@@ -379,15 +379,22 @@ class RouteFailoverService:
             values.append(normalized_protocol)
         row = connection.execute(
             f"""SELECT e.id, e.code, e.state, e.accepts_new_assignments,
-                             e.max_active_keys, COUNT(a.id) AS active_count FROM vpn_endpoints e
+                             e.max_active_keys,
+                             COUNT(DISTINCT a.id) AS active_count,
+                             COUNT(DISTINCT d.decision_id) AS reserved_failover_count
+                        FROM vpn_endpoints e
                     LEFT JOIN endpoint_assignments a
                       ON a.endpoint_id = e.id AND a.status = 'active'
+                    LEFT JOIN failover_decisions d
+                      ON d.target_endpoint_id = e.id
+                     AND d.state IN ('pending', 'creating', 'verified')
                    WHERE e.id <> ? AND UPPER(e.state) = 'ACTIVE'
                      AND e.accepts_new_assignments = {true}
                      {target_filter}
                      {protocol_filter}
                    GROUP BY e.id, e.code, e.state, e.accepts_new_assignments, e.max_active_keys
-                   HAVING e.max_active_keys IS NULL OR COUNT(a.id) < e.max_active_keys
+                   HAVING e.max_active_keys IS NULL
+                       OR COUNT(DISTINCT a.id) + COUNT(DISTINCT d.decision_id) < e.max_active_keys
                    ORDER BY e.code, e.id LIMIT 1""",
             tuple(values),
         ).fetchone()

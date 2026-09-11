@@ -169,6 +169,38 @@ class RouteFailoverTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(decision["policy_version"], 2)
 
+    def test_failover_target_reservation_counts_queued_decisions(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
+        first = self.identity.create_generation(
+            entitlement, "sg-a", external_id="first-key", usage_baseline_provenance="new"
+        )
+        second = self.identity.create_generation(
+            entitlement, "sg-a", external_id="second-key", usage_baseline_provenance="new"
+        )
+        self.failover.configure_policy(entitlement, enabled=True, failure_threshold=1, now=self.now)
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE vpn_endpoints SET max_active_keys = 1 WHERE id = 'bkk-a'"
+            )
+            connection.execute(
+                "UPDATE vpn_endpoints SET state = 'RETIRED', accepts_new_assignments = 0 WHERE id = 'legacy-default'"
+            )
+
+        first_result = self.failover.observe(first, outcome="failure", observed_at=self.now)
+        second_result = self.failover.observe(
+            second, outcome="failure", observed_at=self.now + timedelta(minutes=1)
+        )
+        self.assertIsNotNone(first_result["decision_id"])
+        self.assertIsNone(second_result["decision_id"])
+        self.assertIsNone(second_result["target_endpoint_id"])
+        with self.database.connect() as connection:
+            reserved = connection.execute(
+                """SELECT COUNT(*) AS n FROM failover_decisions
+                    WHERE target_endpoint_id = 'bkk-a'
+                      AND state IN ('pending', 'creating', 'verified')"""
+            ).fetchone()
+        self.assertEqual(reserved["n"], 1)
+
     def test_region_budget_blocks_new_failover_decisions_and_is_observable(self):
         with self.database.connect() as connection:
             connection.execute(

@@ -446,6 +446,11 @@ copies that version onto each automatic or operator-created decision. The
 Operations view shows the captured version, making later policy changes
 replayable against the durable decision history without exposing route secrets.
 
+Failover target selection now treats pending/creating/verified decisions as
+destination reservations alongside active assignments. This prevents concurrent
+failover cohorts from consuming the same endpoint headroom before their
+assignments are committed.
+
 Focused failover, migration, Control Center, VPN web API, and render checks pass;
 the non-PostgreSQL VPN regression passes `327` tests, and the two non-PostgreSQL
 migration-manifest checks also pass. The optional PostgreSQL end-to-end rehearsal
