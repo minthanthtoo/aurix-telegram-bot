@@ -228,7 +228,7 @@ capabilities, and evidence timestamps while ignoring only the preview's
 volatile `checked_at` timestamp; the promotion method rechecks all evidence
 before enabling the profile. Customer identities cannot reach either command.
 
-The complete suite now passes `351` tests (`Ran 351 tests ... OK`) with
+The complete suite now passes `352` tests (`Ran 352 tests ... OK`) with
 `PYTHONWARNINGS=error::ResourceWarning`; focused Telegram authorization and
 promotion/disable tests, Python compilation, Ruff, and `git diff --check` also
 pass.
@@ -249,6 +249,9 @@ the adapter, including provisioning, probing, reconciliation, and recovery.
 Concrete Xray and Hysteria2 provider counters also reject fractional values
 before usage is credited; this step is committed as `38d558d` (`Reject
 fractional provider counters`).
+Grant lifecycle operations reject a credential grant whose declared protocol
+does not match the adapter; this isolation step is committed as `d16efcd`
+(`Enforce protocol-bound credential grants`).
 
 ## Remaining gates and next action
 
