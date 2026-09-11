@@ -158,6 +158,18 @@ class ConnectivityAdapterTest(unittest.TestCase):
         with self.assertRaises(ConnectivityAdapterError):
             adapter.render_manual_export({"external_id": "key-a"})
 
+    def test_provider_usage_rejects_boolean_counters(self):
+        client = _ProtocolClient()
+        client.get_user_usage = lambda _external_id: {"tx_bytes": True, "rx_bytes": 0}
+        adapter = XrayConnectivityAdapter(client)
+        with self.assertRaisesRegex(ConnectivityAdapterError, "provider usage is not an integer"):
+            adapter.read_usage(
+                {
+                    "external_id": "uuid-a",
+                    "access_url": "vless://uuid-a@example.com:18443",
+                }
+            )
+
     @staticmethod
     def _xray_route():
         return {

@@ -245,21 +245,24 @@ def _provider_id(record: Mapping[str, Any], fallback: str) -> str:
     return str(value or fallback).strip()
 
 
-def _provider_usage(record: Any) -> int:
-    if isinstance(record, Mapping):
-        direct = record.get("bytes_transferred")
-        if direct is not None:
-            value = direct
-        else:
-            value = int(record.get("tx_bytes") or record.get("tx") or 0) + int(
-                record.get("rx_bytes") or record.get("rx") or 0
-            )
-    else:
-        value = record
+def _provider_counter(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ConnectivityAdapterError("provider usage is not an integer")
     try:
         return max(0, int(value or 0))
     except (TypeError, ValueError) as exc:
         raise ConnectivityAdapterError("provider usage is not an integer") from exc
+
+
+def _provider_usage(record: Any) -> int:
+    if isinstance(record, Mapping):
+        direct = record.get("bytes_transferred")
+        if direct is not None:
+            return _provider_counter(direct)
+        return _provider_counter(
+            record.get("tx_bytes") or record.get("tx") or 0
+        ) + _provider_counter(record.get("rx_bytes") or record.get("rx") or 0)
+    return _provider_counter(record)
 
 
 class _ManagedCredentialAdapter:
