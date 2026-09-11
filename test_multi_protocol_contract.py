@@ -1,8 +1,12 @@
 import io
 import json
+import subprocess
+import sys
+import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from connectivity_adapters import Hysteria2ConnectivityAdapter, XrayConnectivityAdapter
 from node_agent import NodeAgentClient, NodeAgentError
@@ -166,6 +170,28 @@ class MultiProtocolContractTest(unittest.TestCase):
                     "xray": customers_per_protocol,
                     "hysteria2": customers_per_protocol,
                 })
+
+    def test_matrix_script_runs_from_outside_repository_root(self):
+        script = Path(__file__).resolve().parent / "scripts" / "aurix_protocol_matrix.py"
+        with tempfile.TemporaryDirectory() as working_directory:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--customers-per-protocol",
+                    "1",
+                    "--workers",
+                    "1",
+                ],
+                cwd=working_directory,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        report = json.loads(completed.stdout)
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["total_customers"], 2)
+        self.assertEqual(report["revoked"], 2)
 
 
 if __name__ == "__main__":
