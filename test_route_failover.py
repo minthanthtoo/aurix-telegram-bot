@@ -179,6 +179,14 @@ class RouteFailoverTest(unittest.TestCase):
                 (observed["decision_id"],),
             ).fetchone()
         self.assertEqual(decision["policy_version"], 2)
+        versions = self.failover.policy_versions(entitlement)
+        self.assertEqual([item["policy_version"] for item in versions], [2, 1])
+        self.assertEqual(versions[0]["cooldown_seconds"], 600)
+        explanation = self.failover.decision_explanation(observed["decision_id"])
+        self.assertTrue(bool(explanation["policy_snapshot_available"]))
+        self.assertEqual(explanation["policy_version"], 2)
+        self.assertEqual(explanation["policy_failure_threshold"], 1)
+        self.assertEqual(explanation["policy_cooldown_seconds"], 600)
 
     def test_failover_target_reservation_counts_queued_decisions(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")

@@ -1293,6 +1293,57 @@ COMMERCE_MIGRATIONS = (
             "ALTER TABLE vpn_endpoints ADD COLUMN IF NOT EXISTS health_state_changed_at TIMESTAMPTZ",
         ),
     ),
+    Migration(
+        14,
+        "failover_policy_history",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS route_failover_policy_versions (
+                   entitlement_key TEXT NOT NULL,
+                   policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+                   enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+                   failure_threshold INTEGER NOT NULL CHECK (failure_threshold > 0),
+                   recovery_threshold INTEGER NOT NULL CHECK (recovery_threshold > 0),
+                   cooldown_seconds INTEGER NOT NULL CHECK (cooldown_seconds >= 0),
+                   standby_lease_bytes INTEGER NOT NULL CHECK (standby_lease_bytes > 0),
+                   max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
+                   created_at TEXT NOT NULL,
+                   PRIMARY KEY (entitlement_key, policy_version)
+               )""",
+            """INSERT OR IGNORE INTO route_failover_policy_versions
+                   (entitlement_key, policy_version, enabled, failure_threshold,
+                    recovery_threshold, cooldown_seconds, standby_lease_bytes,
+                    max_attempts, created_at)
+                SELECT entitlement_key, policy_version, enabled, failure_threshold,
+                       recovery_threshold, cooldown_seconds, standby_lease_bytes,
+                       max_attempts, updated_at
+                  FROM route_failover_policies""",
+            "CREATE INDEX IF NOT EXISTS route_failover_policy_versions_lookup ON route_failover_policy_versions(created_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS route_failover_policy_versions (
+                   entitlement_key TEXT NOT NULL,
+                   policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+                   enabled BOOLEAN NOT NULL,
+                   failure_threshold INTEGER NOT NULL CHECK (failure_threshold > 0),
+                   recovery_threshold INTEGER NOT NULL CHECK (recovery_threshold > 0),
+                   cooldown_seconds INTEGER NOT NULL CHECK (cooldown_seconds >= 0),
+                   standby_lease_bytes BIGINT NOT NULL CHECK (standby_lease_bytes > 0),
+                   max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
+                   created_at TIMESTAMPTZ NOT NULL,
+                   PRIMARY KEY (entitlement_key, policy_version)
+               )""",
+            """INSERT INTO route_failover_policy_versions
+                   (entitlement_key, policy_version, enabled, failure_threshold,
+                    recovery_threshold, cooldown_seconds, standby_lease_bytes,
+                    max_attempts, created_at)
+                SELECT entitlement_key, policy_version, enabled, failure_threshold,
+                       recovery_threshold, cooldown_seconds, standby_lease_bytes,
+                       max_attempts, updated_at
+                  FROM route_failover_policies
+                 ON CONFLICT (entitlement_key, policy_version) DO NOTHING""",
+            "CREATE INDEX IF NOT EXISTS route_failover_policy_versions_lookup ON route_failover_policy_versions(created_at)",
+        ),
+    ),
 )
 
 

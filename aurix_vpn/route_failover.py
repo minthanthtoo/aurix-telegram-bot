@@ -87,6 +87,26 @@ class RouteFailoverService:
             row = connection.execute(
                 "SELECT * FROM route_failover_policies WHERE entitlement_key = ?", (str(entitlement_key),)
             ).fetchone()
+            if row is not None:
+                connection.execute(
+                    """INSERT INTO route_failover_policy_versions
+                       (entitlement_key, policy_version, enabled, failure_threshold,
+                        recovery_threshold, cooldown_seconds, standby_lease_bytes,
+                        max_attempts, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(entitlement_key, policy_version) DO NOTHING""",
+                    (
+                        str(row["entitlement_key"]),
+                        int(row["policy_version"]),
+                        bool(row["enabled"]),
+                        int(row["failure_threshold"]),
+                        int(row["recovery_threshold"]),
+                        int(row["cooldown_seconds"]),
+                        int(row["standby_lease_bytes"]),
+                        int(row["max_attempts"]),
+                        str(row["updated_at"]),
+                    ),
+                )
         return dict(row) if row is not None else {}
 
     @staticmethod
@@ -1034,9 +1054,63 @@ class RouteFailoverService:
     def decisions(self, *, entitlement_key: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                """SELECT * FROM failover_decisions
-                    WHERE (CAST(? AS TEXT) IS NULL OR entitlement_key = ?)
-                    ORDER BY created_at DESC LIMIT ?""",
+                """SELECT d.*,
+                          p.enabled AS policy_enabled,
+                          p.failure_threshold AS policy_failure_threshold,
+                          p.recovery_threshold AS policy_recovery_threshold,
+                          p.cooldown_seconds AS policy_cooldown_seconds,
+                          p.standby_lease_bytes AS policy_standby_lease_bytes,
+                          p.max_attempts AS policy_max_attempts,
+                          p.created_at AS policy_created_at
+                     FROM failover_decisions d
+                     LEFT JOIN route_failover_policy_versions p
+                       ON p.entitlement_key = d.entitlement_key
+                      AND p.policy_version = d.policy_version
+                    WHERE (CAST(? AS TEXT) IS NULL OR d.entitlement_key = ?)
+                    ORDER BY d.created_at DESC LIMIT ?""",
                 (entitlement_key, entitlement_key, max(1, min(200, int(limit)))),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def policy_versions(
+        self, entitlement_key: str, *, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Return immutable policy snapshots for deterministic decision replay."""
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT entitlement_key, policy_version, enabled,
+                          failure_threshold, recovery_threshold, cooldown_seconds,
+                          standby_lease_bytes, max_attempts, created_at
+                     FROM route_failover_policy_versions
+                    WHERE entitlement_key = ?
+                    ORDER BY policy_version DESC LIMIT ?""",
+                (str(entitlement_key), max(1, min(200, int(limit)))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def decision_explanation(self, decision_id: str) -> dict[str, Any] | None:
+        """Explain one decision using the exact policy snapshot it captured."""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT d.decision_id, d.entitlement_key, d.source_endpoint_id,
+                          d.target_endpoint_id, d.trigger, d.network_bucket, d.state,
+                          d.attempts, d.policy_version,
+                          p.enabled AS policy_enabled,
+                          p.failure_threshold AS policy_failure_threshold,
+                          p.recovery_threshold AS policy_recovery_threshold,
+                          p.cooldown_seconds AS policy_cooldown_seconds,
+                          p.standby_lease_bytes AS policy_standby_lease_bytes,
+                          p.max_attempts AS policy_max_attempts,
+                          p.created_at AS policy_created_at
+                     FROM failover_decisions d
+                     LEFT JOIN route_failover_policy_versions p
+                       ON p.entitlement_key = d.entitlement_key
+                      AND p.policy_version = d.policy_version
+                    WHERE d.decision_id = ?""",
+                (str(decision_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["policy_snapshot_available"] = result.get("policy_created_at") is not None
+        return result

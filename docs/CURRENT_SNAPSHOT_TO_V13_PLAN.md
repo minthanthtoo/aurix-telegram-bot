@@ -125,6 +125,9 @@ Important remaining facts:
 - Failover decisions now capture a monotonic entitlement policy version, so an
   operator can distinguish decisions made before and after a policy change and
   replay the durable history deterministically.
+- Failover policy versions now have immutable snapshots, and decision reads can
+  join the exact thresholds/cooldown/retry values captured at decision time;
+  missing history is reported rather than reconstructed from current policy.
 - Failover target selection also counts queued destination decisions as
   reservations, preventing concurrent migration cohorts from exceeding an
   endpoint's active-key cap before commit.

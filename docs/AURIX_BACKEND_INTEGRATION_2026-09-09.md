@@ -446,6 +446,12 @@ copies that version onto each automatic or operator-created decision. The
 Operations view shows the captured version, making later policy changes
 replayable against the durable decision history without exposing route secrets.
 
+Commerce migration 14 now stores an immutable policy snapshot for every version.
+Decision listing joins the captured version to its exact thresholds, cooldown,
+standby lease, and retry budget; the failover service also exposes read-only
+policy-history and decision-explanation methods. This closes the gap where a
+decision had a version number but the old policy values were otherwise lost.
+
 Failover target selection now treats pending/creating/verified decisions as
 destination reservations alongside active assignments. This prevents concurrent
 failover cohorts from consuming the same endpoint headroom before their
