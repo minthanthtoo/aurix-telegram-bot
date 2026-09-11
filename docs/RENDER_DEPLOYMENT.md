@@ -180,6 +180,7 @@ Required environment values:
 | `OUTLINE_API_URL` | Full secret HTTPS management URL |
 | `OUTLINE_CERT_SHA256` | 64 hexadecimal characters |
 | `AURIX_ACCESS_URL_KEY` | One persistent Fernet key |
+| `AURIX_MANAGED_NODE_AGENTS_JSON` | Keep blank; only set for an approved isolated node-agent canary |
 | `DATABASE_PATH` | Keep Blueprint value `/var/data/bot.db` |
 | `SUPABASE_URL` | HTTPS URL of the Singapore Supabase project |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only service-role secret; never publish it |
@@ -196,6 +197,15 @@ Keep these Blueprint defaults:
 | `RECEIPT_STORAGE_REQUIRED` | `1` |
 | `ALLOW_TEXT_PAYMENT_REFERENCES` | `0` |
 | `RECEIPT_LLM_*` | all configured, or all blank |
+
+`AURIX_MANAGED_NODE_AGENTS_JSON` is intentionally blank in the Blueprint. It is
+not a protocol promotion switch and must not be populated for customer traffic
+until the node-agent transport, restart/reconciliation, accounting, quota,
+client-path, and rollback gates are accepted. If a canary is approved, treat
+the value as a deployment secret because each binding contains an agent token;
+use the bounded JSON shape documented in
+`docs/AURIX_NODE_AGENT_PROTOCOL.md`. BKK-A is not a target for this opt-in
+binding under the current capacity evidence.
 
 Do not add `PORT`; a background worker does not serve HTTP. Do not remove the
 disk merely to use a free plan: doing so loses claims, order state, wallets,

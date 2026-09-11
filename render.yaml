@@ -31,6 +31,10 @@ services:
         sync: false
       - key: AURIX_ACCESS_URL_KEY
         sync: false
+      # Keep blank. Populate only for an approved, isolated node-agent canary;
+      # configured Xray/Hysteria2 profiles remain evidence-gated candidates.
+      - key: AURIX_MANAGED_NODE_AGENTS_JSON
+        value: ""
       - key: COMMERCE_DATABASE_URL
         value: ""
       - key: SUPABASE_URL

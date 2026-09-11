@@ -65,6 +65,8 @@ TRIAL_TELEGRAM_IDS=
 OUTLINE_API_URL=replace-with-installer-output
 OUTLINE_CERT_SHA256=replace-with-installer-output
 AURIX_ACCESS_URL_KEY=replace-with-a-persistent-fernet-key
+# Keep blank. Set only for an approved, isolated Xray/Hysteria2 node-agent canary.
+AURIX_MANAGED_NODE_AGENTS_JSON=
 DATABASE_PATH=/var/lib/aurix-bot/bot.db
 # Optional: set a reachable PostgreSQL URL for hosted commercial state.
 COMMERCE_DATABASE_URL=
@@ -110,6 +112,16 @@ separate PostgreSQL service is already provisioned and its resource budget is
 known. When set, the free-claim SQLite database remains at `DATABASE_PATH`,
 while orders, payments, subscriptions, jobs, notifications, and audit state use
 PostgreSQL.
+
+Keep `AURIX_MANAGED_NODE_AGENTS_JSON` empty for the normal Outline-only service.
+It is an explicit, bounded binding for a reviewed node-agent canary, not a
+protocol enable switch. Before setting it, record the endpoint's approved
+protocol evidence, protect the agent transport, and confirm rollback ownership.
+The binding value contains node-agent tokens and must remain root-owned or a
+deployment secret; never put it in Git or ordinary logs. See
+`docs/AURIX_NODE_AGENT_PROTOCOL.md` for the accepted JSON shape and safety
+limits. BKK-A remains Outline-only unless a separate capacity decision approves
+otherwise.
 
 ## 4. Firewall and service checks
 
