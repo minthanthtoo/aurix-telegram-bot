@@ -388,6 +388,14 @@ tokens, management URLs, certificates, or credential material. This server
 management hardening is committed as `f339884` (`Audit VPN infrastructure
 control transitions`).
 
+Endpoint health state changes now use bounded hysteresis: two consecutive
+failed capacity observations enter `DEGRADED` and two consecutive healthy
+observations recover to `ACTIVE` by default, with validated environment
+thresholds for deliberate tuning. Operator `DRAINING` and `RETIRED` states
+are preserved, automatic transitions are audited, and normal failover/drain
+target selection rejects degraded endpoints. This V4 safety step is committed
+as `3094da5` (`Add VPN endpoint health hysteresis`).
+
 ## Remaining gates and next action
 
 The local provider backend, node-agent contract, bounded mixed-protocol test
@@ -417,7 +425,7 @@ The disposable PostgreSQL rehearsal now also runs eight concurrent allocation
 retries for one subscription and proves one durable assignment plus one audit
 event; the parent subscription row is locked before the idempotency check.
 This race fix is committed as `dd4673d` (`Serialize PostgreSQL VPN assignment
-retries`). The VPN-only regression selection remains green at 325 tests. This
+retries`). The VPN-only regression selection remains green at 328 tests. This
 evidence is local and disposable; it does not validate the hosted database,
 live provider state, Myanmar client paths, load/speed behavior, or production
 cutover.

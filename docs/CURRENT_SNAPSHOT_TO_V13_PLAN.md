@@ -110,6 +110,9 @@ Important remaining facts:
   required signal, declared capabilities, and an audit record when commerce is
   available; automatic health observations cannot promote a profile.
 - Startup degrades cleanly when the one Outline management endpoint is unavailable; provisioning remains fail-closed until health returns.
+- Endpoint capacity observations now use bounded failure/recovery hysteresis and
+  audit actual `ACTIVE`/`DEGRADED` transitions; normal failover/drain target
+  selection excludes degraded endpoints.
 - Long polling, one application process, and one maintenance scheduler remain the deployment model.
 - The application/refactor baseline is now in the `codex/aurix-vpn-portal` history; unrelated AI/UI and pay-monitor work remains intentionally outside the VPN commits.
 
