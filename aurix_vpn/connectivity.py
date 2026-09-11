@@ -29,6 +29,10 @@ class ConnectivityError(RuntimeError):
     pass
 
 
+class AmbiguousProviderOperation(ConnectivityError):
+    """The provider response was lost after a request may have been accepted."""
+
+
 @dataclass(frozen=True)
 class EndpointAssignment:
     id: str
@@ -1574,7 +1578,7 @@ class DigitalOceanClient:
         except urllib.error.HTTPError as exc:
             raise ConnectivityError(f"DigitalOcean returned HTTP {exc.code}") from exc
         except urllib.error.URLError as exc:
-            raise ConnectivityError("DigitalOcean request failed") from exc
+            raise AmbiguousProviderOperation("DigitalOcean request outcome is uncertain") from exc
         return json.loads(raw) if raw else {}
 
     def create_droplet(self, specification: dict[str, Any]) -> dict[str, Any]:
@@ -1754,7 +1758,13 @@ class FleetController:
         if any(name in user_data for name in forbidden):
             raise ConnectivityError("Permanent credentials are forbidden in Droplet user data")
         tags = {str(item) for item in specification.get("tags", [])}
-        tags.update({"aurix-vpn-node", "aurix-env-production"})
+        tags.update(
+            {
+                "aurix-vpn-node",
+                "aurix-env-production",
+                f"aurix-provision-job-{job_id}",
+            }
+        )
         specification["tags"] = sorted(tags)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
@@ -1774,6 +1784,25 @@ class FleetController:
                 raise ConnectivityError("Provisioning job is no longer pending")
         try:
             droplet = self.provider.create_droplet(specification)
+        except AmbiguousProviderOperation as exc:
+            timestamp = datetime.now(UTC).isoformat()
+            with self.database.connect() as connection:
+                connection.execute(
+                    """UPDATE infrastructure_jobs SET status = 'running', locked_at = NULL,
+                              last_error = ?, next_attempt_at = ? WHERE id = ?""",
+                    (
+                        "AmbiguousProviderOperation: provider create outcome is uncertain",
+                        timestamp,
+                        job_id,
+                    ),
+                )
+                connection.execute(
+                    """INSERT INTO infrastructure_events
+                       (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                       VALUES (?, ?, 'provider_create_ambiguous', '{}', ?)""",
+                    (uuid.uuid4().hex, job_id, timestamp),
+                )
+            raise exc
         except Exception as exc:
             timestamp = datetime.now(UTC).isoformat()
             with self.database.connect() as connection:
@@ -1793,7 +1822,7 @@ class FleetController:
         with self.database.connect() as connection:
             connection.execute(
                 """UPDATE infrastructure_jobs SET provider_resource_id = ?,
-                          provider_action_id = ?, status = 'running'
+                          provider_action_id = ?, status = 'running', locked_at = NULL
                    WHERE id = ?""",
                 (
                     str(droplet["id"]),
@@ -1820,7 +1849,52 @@ class FleetController:
             # Verification is an explicit operator step after bootstrap. Do
             # not keep polling or append duplicate events while it is pending.
             return {"job_id": job_id, "status": "awaiting_verification"}
+        resource_id = row["provider_resource_id"]
         action_id = row["provider_action_id"]
+        if not resource_id:
+            list_by_tag = getattr(self.provider, "list_by_tag", None)
+            if not callable(list_by_tag):
+                raise ConnectivityError("provider cannot reconcile an unrecorded resource")
+            candidates = list_by_tag(f"aurix-provision-job-{job_id}")
+            if len(candidates) != 1:
+                if len(candidates) > 1:
+                    timestamp = datetime.now(UTC).isoformat()
+                    with self.database.connect() as connection:
+                        connection.execute(
+                            """UPDATE infrastructure_jobs
+                                  SET status = 'failed', locked_at = NULL,
+                                      last_error = 'ambiguous provider resources'
+                                WHERE id = ? AND status = 'running'""",
+                            (job_id,),
+                        )
+                        connection.execute(
+                            """INSERT INTO infrastructure_events
+                               (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                               VALUES (?, ?, 'provider_reconcile_ambiguous', ?, ?)""",
+                            (
+                                uuid.uuid4().hex,
+                                job_id,
+                                json.dumps({"candidate_count": len(candidates)}, sort_keys=True),
+                                timestamp,
+                            ),
+                        )
+                    return {"job_id": job_id, "status": "failed"}
+                return {"job_id": job_id, "status": "creating", "provider_status": "not_found"}
+            candidate_id = candidates[0].get("id") if isinstance(candidates[0], dict) else None
+            if not candidate_id:
+                raise ConnectivityError("provider recovery candidate has no resource ID")
+            candidate_actions = candidates[0].get("action_ids") or []
+            resource_id = str(candidate_id)
+            action_id = str(candidate_actions[0]) if candidate_actions else None
+            with self.database.connect() as connection:
+                self.database.begin_write(connection)
+                connection.execute(
+                    """UPDATE infrastructure_jobs
+                          SET provider_resource_id = ?, provider_action_id = ?
+                        WHERE id = ? AND status = 'running'
+                          AND provider_resource_id IS NULL""",
+                    (resource_id, action_id, job_id),
+                )
         if action_id:
             action = self.provider.action(str(action_id))
             action_status = str(action.get("status") or "unknown")
@@ -1835,7 +1909,7 @@ class FleetController:
                 return {"job_id": job_id, "status": "failed"}
             if action_status != "completed":
                 return {"job_id": job_id, "status": "creating", "provider_status": action_status}
-        droplet = self.provider.droplet(str(row["provider_resource_id"]))
+        droplet = self.provider.droplet(str(resource_id))
         if str(droplet.get("status")) != "active":
             return {
                 "job_id": job_id,

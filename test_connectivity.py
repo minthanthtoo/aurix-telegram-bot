@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet
 
 from commerce import CommerceDatabase
 from connectivity import (
+    AmbiguousProviderOperation,
     ConnectivityError,
     DigitalOceanClient,
     EndpointRegistry,
@@ -542,6 +543,50 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
             self.assertEqual(row["status"], "failed")
             self.assertNotIn("token", str(row["last_error"]).lower())
 
+    def test_ambiguous_provider_create_remains_recoverable(self):
+        class Provider:
+            def __init__(self):
+                self.created = 0
+
+            def create_droplet(self, specification):
+                self.created += 1
+                raise AmbiguousProviderOperation("request timeout")
+
+            def list_by_tag(self, tag):
+                return [{"id": 45, "status": "active"}]
+
+            def droplet(self, droplet_id):
+                return {
+                    "id": droplet_id,
+                    "status": "active",
+                    "networks": {"v4": [{"type": "public", "ip_address": "198.51.100.22"}]},
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            provider = Provider()
+            controller = FleetController(database, provider)
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            with patch.dict(os.environ, {"AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1"}):
+                with self.assertRaises(AmbiguousProviderOperation):
+                    controller.process_infrastructure_once()
+                with database.connect() as connection:
+                    row = connection.execute(
+                        "SELECT status, last_error FROM infrastructure_jobs WHERE id = ?", (job,)
+                    ).fetchone()
+                recovered = controller.process_infrastructure_once()
+            self.assertEqual(
+                (row["status"], row["last_error"]),
+                ("running", "AmbiguousProviderOperation: provider create outcome is uncertain"),
+            )
+            self.assertEqual(recovered["status"], "awaiting_verification")
+            self.assertEqual(provider.created, 1)
+
     def test_dedicated_infrastructure_pass_rebuilds_only_durable_intent(self):
         class Provider:
             def __init__(self):
@@ -590,7 +635,90 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
             self.assertEqual(repeated, {"job_id": job, "status": "awaiting_verification"})
             self.assertEqual(len(provider.created), 1)
             self.assertEqual(provider.created[0]["name"], f"aurix-vpn-{job[:12]}")
+            self.assertIn(f"aurix-provision-job-{job}", provider.created[0]["tags"])
             self.assertEqual(provider.reconciles, 2)
+
+    def test_reconcile_recovers_one_unrecorded_provider_resource_by_intent_tag(self):
+        class Provider:
+            def __init__(self):
+                self.listed_tags = []
+                self.droplet_ids = []
+
+            def list_by_tag(self, tag):
+                self.listed_tags.append(tag)
+                return [{
+                    "id": 43,
+                    "action_ids": [],
+                    "status": "active",
+                }]
+
+            def droplet(self, droplet_id):
+                self.droplet_ids.append(droplet_id)
+                return {
+                    "id": droplet_id,
+                    "status": "active",
+                    "networks": {"v4": [{"type": "public", "ip_address": "198.51.100.21"}]},
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            provider = Provider()
+            controller = FleetController(database, provider)
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+                now=datetime(2026, 9, 11, tzinfo=UTC),
+            )
+            with database.connect() as connection:
+                connection.execute(
+                    "UPDATE infrastructure_jobs SET status = 'running' WHERE id = ?", (job,)
+                )
+            result = controller.process_infrastructure_once(
+                datetime(2026, 9, 11, 0, 1, tzinfo=UTC)
+            )
+            self.assertEqual(result["status"], "awaiting_verification")
+            self.assertEqual(provider.listed_tags, [f"aurix-provision-job-{job}"])
+            self.assertEqual(provider.droplet_ids, ["43"])
+            with database.connect() as connection:
+                row = connection.execute(
+                    "SELECT provider_resource_id, status FROM infrastructure_jobs WHERE id = ?",
+                    (job,),
+                ).fetchone()
+            self.assertEqual(
+                (row["provider_resource_id"], row["status"]),
+                ("43", "awaiting_verification"),
+            )
+
+    def test_reconcile_fails_closed_when_intent_tag_matches_multiple_resources(self):
+        class Provider:
+            def list_by_tag(self, tag):
+                return [{"id": 43}, {"id": 44}]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            controller = FleetController(database, Provider())
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            with database.connect() as connection:
+                connection.execute(
+                    "UPDATE infrastructure_jobs SET status = 'running' WHERE id = ?", (job,)
+                )
+            result = controller.process_infrastructure_once()
+            self.assertEqual(result, {"job_id": job, "status": "failed"})
+            with database.connect() as connection:
+                row = connection.execute(
+                    "SELECT status, last_error FROM infrastructure_jobs WHERE id = ?", (job,)
+                ).fetchone()
+            self.assertEqual(
+                (row["status"], row["last_error"]),
+                ("failed", "ambiguous provider resources"),
+            )
 
     def test_dedicated_infrastructure_pass_leaves_pending_when_mutations_are_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
