@@ -9,6 +9,7 @@ from pathlib import Path
 
 from commerce import CommerceDatabase, PostgresCommerceDatabase
 from deploy.migrate_sqlite_to_postgres import dependency_order, migrate, sqlite_manifest
+from identity import IdentityService
 
 
 def _postgres_rehearsal_available() -> bool:
@@ -174,6 +175,35 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                 self.assertEqual(int(migrated_users), 1)
                 self.assertEqual(int(migrated_accounts), 1)
                 self.assertEqual(int(migrated_observations), 1)
+                identity = IdentityService(database)
+                account_id = identity.ensure_account(
+                    778, now="2026-09-12T00:00:00+00:00"
+                )
+                token = identity.create_pairing_token(
+                    778, now="2026-09-12T00:00:00+00:00"
+                )
+                paired = identity.consume_pairing_token(
+                    token,
+                    "k" * 32,
+                    label="PostgreSQL rehearsal device",
+                    now="2026-09-12T00:01:00+00:00",
+                )
+                self.assertEqual(paired["account_id"], account_id)
+                self.assertEqual(
+                    identity.device_auth_record(paired["device_id"])["status"],
+                    "active",
+                )
+                self.assertTrue(
+                    identity.revoke_device(
+                        778,
+                        paired["device_id"],
+                        now="2026-09-12T00:02:00+00:00",
+                    )
+                )
+                self.assertEqual(
+                    identity.device_auth_record(paired["device_id"])["status"],
+                    "revoked",
+                )
             finally:
                 database.close()
                 subprocess.run(

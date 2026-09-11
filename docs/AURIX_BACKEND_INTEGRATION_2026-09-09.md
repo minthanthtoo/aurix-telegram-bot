@@ -366,7 +366,9 @@ A disposable local PostgreSQL rehearsal also completed: an initialized SQLite
 snapshot containing account and protocol-observation timestamps migrated into a
 fresh PostgreSQL database with row-count reconciliation, and 16 concurrent
 provision requests collapsed to one durable regional intent. This rehearsal
-does not validate the hosted database, network latency, or production cutover.
+also exercised account creation, one-time device pairing, heartbeat, and
+revocation on the PostgreSQL repository. It does not validate the hosted
+database, network latency, or production cutover.
 
 ## Remaining gates and next action
 
