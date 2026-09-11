@@ -413,6 +413,11 @@ as `9518069` (`Fix PostgreSQL VPN selector compatibility`), and the durable
 failover regression as `ac6f655` (`Cover PostgreSQL VPN failover flow`).
 The same regression now covers the optional failed-provision retry filter,
 committed as `f75c49e` (`Cover PostgreSQL VPN worker retry`).
-The VPN-only regression selection remains green at 324 tests. This evidence is
-local and disposable; it does not validate the hosted database, live provider
-state, Myanmar client paths, load/speed behavior, or production cutover.
+The disposable PostgreSQL rehearsal now also runs eight concurrent allocation
+retries for one subscription and proves one durable assignment plus one audit
+event; the parent subscription row is locked before the idempotency check.
+This race fix is committed as `dd4673d` (`Serialize PostgreSQL VPN assignment
+retries`). The VPN-only regression selection remains green at 325 tests. This
+evidence is local and disposable; it does not validate the hosted database,
+live provider state, Myanmar client paths, load/speed behavior, or production
+cutover.
