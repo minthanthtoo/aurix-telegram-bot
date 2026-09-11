@@ -336,9 +336,9 @@ requeue that exact infrastructure job through the existing admin retry
 challenge. The worker records the retry request and performs a tag read-back
 before creating anything; an existing matching resource is reconciled instead
 of duplicated, while multiple matches fail closed.
-This recovery and execution-safety behavior is committed as `cd923f7`
-(`Make VPN infrastructure retries safe`) and the placement-catalog guard as
-the subsequent continuation milestone.
+This recovery behavior is committed as `cd923f7` (`Make VPN infrastructure
+retries safe`), and the placement-catalog guard is committed as `7f9701c`
+(`Validate VPN provider placement at execution`).
 
 User data remains available from the Droplet metadata service. It may contain
 public bootstrap configuration, package pins, and a short-lived one-time token,

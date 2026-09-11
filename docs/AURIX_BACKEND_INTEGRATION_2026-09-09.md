@@ -311,7 +311,8 @@ of truth, rejects conflicting caller-supplied region/size/image values, and
 rechecks the configured allowlists at execution time. The DigitalOcean client
 also validates the current region, size, image, availability, and size-region
 compatibility catalogs before a create; invalid placement fails closed without
-reaching the provider mutation call.
+reaching the provider mutation call. This step is committed as `7f9701c`
+(`Validate VPN provider placement at execution`).
 
 The focused scale-control tests, Control Center/API tests, VPN-oriented
 regression set (220 tests), Ruff, Python compilation, JavaScript syntax, and
