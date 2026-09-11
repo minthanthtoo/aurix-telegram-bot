@@ -304,6 +304,7 @@ surface and can be requeued through the existing owner confirmation path. A
 retry is marked durably and the dedicated worker reads back the stable
 provision tag before creating anything, recovering one matching provider
 resource and failing closed on multiple matches.
+This recovery step is committed as `cd923f7` (`Make VPN infrastructure retries safe`).
 
 The focused scale-control tests, Control Center/API tests, VPN-oriented
 regression set (218 tests), Ruff, Python compilation, JavaScript syntax, and
