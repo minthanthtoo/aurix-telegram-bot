@@ -265,6 +265,24 @@ class EndpointRegistryTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ConnectivityError, "retired protocol profile"):
             self.registry.disable_protocol_profile("legacy-default", "xray", actor_id=7, now=now)
+        with self.assertRaisesRegex(ConnectivityError, "terminal"):
+            self.registry.register_protocol_profile(
+                "legacy-default", "xray", status="candidate", now=now
+            )
+        retired_profile = self.registry.protocol_profile_status("legacy-default", "xray")
+        self.assertEqual(retired_profile["retired_at"], now.isoformat())
+
+    def test_retired_endpoint_rejects_new_protocol_profiles(self):
+        now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE vpn_endpoints SET state = 'RETIRED', accepts_new_assignments = 0, retired_at = ? WHERE id = 'legacy-default'",
+                (now.isoformat(),),
+            )
+        with self.assertRaisesRegex(ConnectivityError, "retired endpoint"):
+            self.registry.register_protocol_profile(
+                "legacy-default", "hysteria2", status="candidate", now=now
+            )
 
     def test_protocol_profile_promotion_requires_fresh_evidence_and_declared_capabilities(self):
         now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)

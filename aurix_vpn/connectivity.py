@@ -130,16 +130,25 @@ class EndpointRegistry:
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             exists = connection.execute(
-                "SELECT 1 FROM vpn_endpoints WHERE id = ?", (endpoint,)
+                "SELECT state FROM vpn_endpoints WHERE id = ?", (endpoint,)
             ).fetchone()
             if exists is None:
                 raise ConnectivityError("VPN endpoint does not exist")
+            if str(exists["state"] or "").upper() == "RETIRED" and profile_status != "retired":
+                raise ConnectivityError("retired endpoint cannot accept protocol profiles")
+            current = connection.execute(
+                "SELECT status FROM endpoint_protocol_profiles WHERE endpoint_id = ? AND protocol = ?",
+                (endpoint, transport),
+            ).fetchone()
+            if current is not None and str(current["status"] or "").lower() == "retired" and profile_status != "retired":
+                raise ConnectivityError("retired protocol profile is terminal")
+            retired_at = timestamp if profile_status == "retired" else None
             connection.execute(
                 """INSERT INTO endpoint_protocol_profiles
                    (profile_id, endpoint_id, protocol, adapter_type, status,
                     capabilities_json, verified_at, last_healthy_at, created_at,
                     retired_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(endpoint_id, protocol) DO UPDATE SET
                      adapter_type = excluded.adapter_type,
                      status = excluded.status,
@@ -149,7 +158,11 @@ class EndpointRegistry:
                      last_healthy_at = COALESCE(excluded.last_healthy_at,
                                                 endpoint_protocol_profiles.last_healthy_at),
                      retired_at = CASE WHEN excluded.status = 'retired'
-                                       THEN COALESCE(endpoint_protocol_profiles.retired_at, excluded.last_healthy_at, excluded.verified_at)
+                                       THEN COALESCE(endpoint_protocol_profiles.retired_at,
+                                                     excluded.retired_at,
+                                                     excluded.last_healthy_at,
+                                                     excluded.verified_at,
+                                                     excluded.created_at)
                                        ELSE NULL END""",
                 (
                     profile_id,
@@ -161,6 +174,7 @@ class EndpointRegistry:
                     verified_at.astimezone(UTC).isoformat() if verified_at else None,
                     last_healthy_at.astimezone(UTC).isoformat() if last_healthy_at else None,
                     timestamp,
+                    retired_at,
                 ),
             )
         return next(
