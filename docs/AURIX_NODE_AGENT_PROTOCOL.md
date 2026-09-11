@@ -119,6 +119,11 @@ operator browser payloads. Production use still requires a separately
 reviewed canary-only binding, protected transport, restart/reconciliation
 evidence, and approval for any live mutation.
 
+Binding validation now requires HTTPS for remote node agents and permits plain
+HTTP only for loopback-local agents (127.0.0.1, ::1, or localhost). URL
+userinfo, query strings, and fragments are rejected so bearer tokens cannot
+be sent alongside ambiguous or embedded endpoint credentials.
+
 ## Protocol scope
 
 The same lifecycle contract can back Xray/VLESS, VMess, Trojan, Shadowsocks,

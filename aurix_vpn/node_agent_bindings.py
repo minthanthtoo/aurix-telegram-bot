@@ -10,6 +10,7 @@ inside the route returned to the commerce layer.
 from __future__ import annotations
 
 import json
+import ipaddress
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -162,6 +163,17 @@ class ManagedNodeAgentBindings:
             parsed = urlsplit(base_url)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname:
                 raise NodeAgentBindingError("base_url must be an HTTP(S) URL")
+            if parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise NodeAgentBindingError("base_url must not contain credentials or URL decorations")
+            if parsed.scheme == "http":
+                try:
+                    loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+                except ValueError:
+                    loopback = parsed.hostname.lower() == "localhost"
+                if not loopback:
+                    raise NodeAgentBindingError(
+                        "base_url must use HTTPS unless the agent is loopback-local"
+                    )
             token = _text(item.get("token"), field="token", maximum=4096)
             bindings.append(
                 ManagedNodeAgentBinding(

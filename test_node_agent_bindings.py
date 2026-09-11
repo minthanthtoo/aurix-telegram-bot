@@ -79,6 +79,8 @@ class NodeAgentBindingsTest(unittest.TestCase):
     def test_binding_validation_rejects_unsafe_or_inconsistent_configuration(self):
         cases = [
             ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "ftp://agent", "token": "t", "route": {}}], r"HTTP\(S\)"),
+            ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "http://agent", "token": "t", "route": {}}], "HTTPS"),
+            ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "https://user:pass@agent", "token": "t", "route": {}}], "decorations"),
             ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "https://agent", "token": "t", "route": {"secret": "leak"}}], "not allowed"),
             ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "https://agent", "token": "t", "route": {"endpoint_id": "sg-b"}}], "does not match"),
             ([{"endpoint_id": "sg-a", "protocol": "wireguard", "base_url": "https://agent", "token": "t", "route": {}}], "unsupported"),
@@ -86,6 +88,13 @@ class NodeAgentBindingsTest(unittest.TestCase):
         for value, message in cases:
             with self.subTest(message=message), self.assertRaisesRegex(NodeAgentBindingError, message):
                 ManagedNodeAgentBindings.from_json(json.dumps(value))
+
+    def test_loopback_http_binding_is_allowed_for_local_agent(self):
+        bindings = ManagedNodeAgentBindings.from_json(
+            self._config().replace("https://127.0.0.1", "http://127.0.0.1")
+        )
+        route = bindings.route_for("sg-a", "xray")
+        self.assertEqual(bindings.client_for(route).base_url, "http://127.0.0.1:18001/")
 
     def test_route_cannot_be_substituted_for_another_binding(self):
         bindings = ManagedNodeAgentBindings.from_json(self._config(), adapter_registry=ConnectivityAdapterRegistry())
