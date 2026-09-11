@@ -113,6 +113,10 @@ class EndpointRegistryTest(unittest.TestCase):
             [item["protocol"] for item in self.registry.list_protocol_profiles(enabled_only=True)],
             ["outline"],
         )
+        with self.assertRaisesRegex(ConnectivityError, "require promote_protocol_profile"):
+            self.registry.register_protocol_profile(
+                "legacy-default", "xray", status="enabled"
+            )
         with self.database.connect() as connection:
             with self.assertRaisesRegex(ConnectivityError, "capacity"):
                 self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray")

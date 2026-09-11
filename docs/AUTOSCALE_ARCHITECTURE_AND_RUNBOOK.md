@@ -180,6 +180,8 @@ signals and capabilities; the method rejects missing, future, or expired
 healthy evidence and records the decision in `audit_events` when that table is
 available. A protocol must therefore remain a candidate until both the live
 evidence gate and the explicit operator decision are complete.
+The generic registration path rejects direct enablement for non-Outline
+protocols, so callers cannot skip that boundary accidentally.
 
 ### `endpoint_plan_limits`
 

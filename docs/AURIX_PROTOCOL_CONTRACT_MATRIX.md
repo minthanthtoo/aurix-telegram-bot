@@ -43,7 +43,8 @@ records are bounded and redacted before persistence. The explicit promotion
 boundary requires fresh, non-expired healthy observations for every required
 signal and matching declared capabilities, and records the operator decision in
 the commerce audit log when available; observation ingestion never auto-enables
-a protocol.
+a protocol. Direct profile registration also cannot mark Xray or Hysteria2
+enabled; those transports must pass the explicit promotion method.
 
 Those external gates remain ordered: validate one disposable canary per protocol,
 then run staged 2/5/expected concurrency and speed/soak measurements on approved

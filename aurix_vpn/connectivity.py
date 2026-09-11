@@ -109,6 +109,10 @@ class EndpointRegistry:
             raise ConnectivityError("protocol is invalid")
         if profile_status not in {"candidate", "enabled", "degraded", "disabled", "retired"}:
             raise ConnectivityError("protocol profile status is invalid")
+        if profile_status == "enabled" and transport != "outline":
+            raise ConnectivityError(
+                "non-Outline protocol profiles require promote_protocol_profile"
+            )
         adapter = str(adapter_type or transport).strip().lower()
         if not adapter or len(adapter) > 64 or any(char.isspace() for char in adapter):
             raise ConnectivityError("adapter type is invalid")

@@ -131,7 +131,8 @@ load test, or speed test was changed or performed.
   boundary: it requires fresh, non-expired healthy observations for every
   operator-selected signal and matching declared capabilities, then records an
   audit event when the commerce audit schema is available. Observations alone
-  do not enable a candidate profile or constitute live compatibility proof.
+  do not enable a candidate profile or constitute live compatibility proof;
+  direct registration cannot bypass this boundary for non-Outline protocols.
 - Failover executor: `RouteFailoverExecutor` now claims durable decisions,
   provisions a stable target identity, persists it before probing, requires
   management/data-plane evidence when requested, transfers rather than duplicates
