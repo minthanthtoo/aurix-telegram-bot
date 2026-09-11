@@ -82,6 +82,43 @@ encrypted secret-key operations, and the protocol-specific evidence gates in
 the fleet feasibility record. The default route registry remains Outline-only
 until those gates are passed.
 
+## Explicit controller bindings
+
+The controller can opt into reviewed node-agent routes with the
+`AURIX_MANAGED_NODE_AGENTS_JSON` environment variable. Its value is a bounded
+JSON list; each entry contains `endpoint_id`, `protocol`, `base_url`, `token`,
+and a scalar-only `route` object. Xray and Hysteria2 are currently the only
+accepted managed protocols. Example shape (with non-production placeholders):
+
+```json
+[
+  {
+    "endpoint_id": "sg-a",
+    "protocol": "xray",
+    "base_url": "https://127.0.0.1:18001",
+    "token": "<node-agent-token>",
+    "route": {
+      "public_address": "<canary-address>",
+      "port": 18443,
+      "public_key": "<reality-public-key>",
+      "server_name": "<sni>",
+      "short_id": "<short-id>"
+    }
+  }
+]
+```
+
+Runtime construction registers configured adapters as candidates and wires the
+route/adapter callbacks into managed quota, reconciliation, revocation, and
+protocol-aware failover. It does **not** promote an endpoint protocol profile;
+fresh evidence and the existing explicit operator promotion boundary remain
+required. An absent variable leaves the runtime unchanged, and malformed or
+unsafe bindings stop startup before a managed route can be used. Tokens are
+held only by the node-agent client and are never included in route metadata or
+operator browser payloads. Production use still requires a separately
+reviewed canary-only binding, protected transport, restart/reconciliation
+evidence, and approval for any live mutation.
+
 ## Protocol scope
 
 The same lifecycle contract can back Xray/VLESS, VMess, Trojan, Shadowsocks,

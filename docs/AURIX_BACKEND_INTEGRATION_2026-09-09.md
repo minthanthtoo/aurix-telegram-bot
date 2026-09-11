@@ -110,6 +110,12 @@ load test, or speed test was changed or performed.
   client. The Hysteria2 store encrypts customer secrets at rest and the Xray
   backend preserves unknown config users. These are node-local building blocks,
   not proof of live quota, restart, or client compatibility.
+- Explicit node-agent bindings: `aurix_vpn.node_agent_bindings` now validates
+  an opt-in `AURIX_MANAGED_NODE_AGENTS_JSON` list, constructs protocol-specific
+  authenticated agent clients, and injects route/adapter providers into runtime
+  maintenance and failover. The binding layer is bounded and fail-closed;
+  configured adapters remain evidence-gated candidates, and an absent variable
+  preserves the existing Outline-only runtime.
 - Read-only operator visibility: the Control Center now reports protocol
   readiness separately from the allocation registry. Outline is shown as
   enabled, Xray/Hysteria2 as evidence-gated candidates, and WireGuard as not
