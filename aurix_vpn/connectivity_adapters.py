@@ -761,20 +761,29 @@ class ConnectivityAdapterRegistry:
         return catalog
 
     def protocol_readiness(self) -> list[dict[str, Any]]:
-        """Expose enabled and evidence-gated protocols without enabling them.
+        """Expose adapter posture without confusing registration for activation.
 
         This is intentionally separate from :meth:`protocol_catalog`: callers
         use the catalog to construct adapters, while operator surfaces use this
-        view to explain why a roadmap protocol is not allocatable yet.
+        view to explain why a roadmap protocol is not allocatable yet. Outline
+        is the only default production transport; every other registered
+        protocol still needs endpoint evidence and explicit profile promotion.
         """
         registered = {item["protocol"]: item for item in self.protocol_catalog()}
         result: list[dict[str, Any]] = []
         for protocol, item in sorted(registered.items()):
+            is_outline = protocol == "outline"
+            activation_gate = self.CANDIDATE_PROTOCOLS.get(
+                protocol,
+                "Requires endpoint evidence and explicit operator promotion",
+            )
+            if not is_outline:
+                activation_gate += "; endpoint evidence and explicit promotion are still required"
             result.append({
                 **item,
                 "registered": True,
-                "status": "enabled",
-                "activation_gate": None,
+                "status": "enabled" if is_outline else "candidate",
+                "activation_gate": None if is_outline else activation_gate,
             })
         for protocol, gate in sorted(self.CANDIDATE_PROTOCOLS.items()):
             if protocol in registered:

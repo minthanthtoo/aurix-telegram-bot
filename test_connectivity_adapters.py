@@ -127,6 +127,14 @@ class ConnectivityAdapterTest(unittest.TestCase):
         self.assertEqual(by_protocol["xray"]["status"], "candidate")
         self.assertEqual(by_protocol["hysteria2"]["status"], "candidate")
         self.assertEqual(by_protocol["wireguard"]["status"], "unimplemented")
+
+        registered = ConnectivityAdapterRegistry({"xray": XrayConnectivityAdapter})
+        registered_xray = {
+            item["protocol"]: item for item in registered.protocol_readiness()
+        }["xray"]
+        self.assertTrue(registered_xray["registered"])
+        self.assertEqual(registered_xray["status"], "candidate")
+        self.assertIn("endpoint evidence", registered_xray["activation_gate"])
         self.assertFalse(by_protocol["xray"]["registered"])
 
     def test_ambiguous_readback_is_uncertain_and_not_owned(self):
