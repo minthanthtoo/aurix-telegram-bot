@@ -309,6 +309,15 @@ def _assert_grant_protocol(grant: Mapping[str, Any], *, protocol: str) -> None:
         )
 
 
+def _route_bool(route: Mapping[str, Any], field: str, *, default: bool = False) -> bool:
+    value = route.get(field)
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise ConnectivityAdapterError(f"route field {field} must be a boolean")
+    return value
+
+
 class _ManagedCredentialAdapter:
     """Shared lifecycle translation for adapters backed by an injected client.
 
@@ -452,6 +461,10 @@ class _ManagedCredentialAdapter:
         name = str(credential_intent.get("name") or f"AuriX {self.protocol} route")[:128]
         external_id = self._new_external_id(credential_intent)
         secret = self._new_secret(credential_intent)
+        # Validate every route field needed to render a credential before any
+        # provider-side create. Rendering is pure and prevents malformed route
+        # metadata from leaving an orphaned remote user behind.
+        self._render_access_url(route, external_id, secret, name)
         existing = self._lookup(external_id)
         if existing is not None:
             return self._grant(
@@ -780,7 +793,7 @@ class Hysteria2ConnectivityAdapter(_ManagedCredentialAdapter):
         sni = str(route.get("server_name") or route.get("sni") or "").strip()
         if sni:
             query["sni"] = sni
-        if bool(route.get("insecure")):
+        if _route_bool(route, "insecure"):
             query["insecure"] = "1"
         suffix = f"?{urlencode(query)}" if query else ""
         return f"hysteria2://{quote(secret, safe='')}@{self._host_port(host, port)}/{suffix}#{quote(name, safe='')}"

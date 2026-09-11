@@ -289,6 +289,11 @@ class ConnectivityAdapterTest(unittest.TestCase):
         self.assertTrue(grant["access_url"].startswith("hysteria2://"))
         self.assertIn("@198.51.100.10:8444/", grant["access_url"])
         self.assertNotIn("61604", grant["access_url"])
+        with self.assertRaisesRegex(ConnectivityAdapterError, "must be a boolean"):
+            adapter.provision(
+                {**route, "insecure": "false"},
+                {"external_id": "customer-b", "name": "customer-b"},
+            )
         self.assertEqual(adapter.read_usage(grant)["bytes_transferred"], 0)
         self.assertEqual(adapter.reconcile(route)["users"], 1)
         client.users.clear()
