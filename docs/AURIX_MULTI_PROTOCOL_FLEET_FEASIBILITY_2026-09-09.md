@@ -1243,3 +1243,20 @@ The concrete Hysteria2 backend also fails before remote user creation when a
 requested hard quota is unsupported, and restart reinitialization tests verify
 that encrypted H2 credentials and tagged Xray users persist safely; this guard
 is committed as `e3cdcf1` (`Harden Hysteria2 quota boundaries`).
+
+## 22. Control Center entitlement drill-down — 2026-09-11
+
+The read-only Control Center account detail now includes durable subscription
+and entitlement metadata alongside the existing device and active-route views.
+It shows plan, subscription state, assigned endpoint, credential state, and
+expiry without returning access URLs, provider IDs, public keys, or other
+credential material. This gives operators one safe customer → entitlement →
+route → device reconciliation view while keeping mutations in the existing
+Telegram-admin safety boundary. The implementation is committed as `7cd6802`
+(`Show subscription state in account control center`).
+
+The full local discovery suite passes `357` tests in `26.568s`, including the
+new account projection and authenticated redaction regression. This remains
+local evidence only; it does not promote Xray/Hysteria2, change BKK-A's
+Outline-only role, or replace live PostgreSQL, client-path, load, and soak
+acceptance.
