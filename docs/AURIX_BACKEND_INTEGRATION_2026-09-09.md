@@ -347,12 +347,20 @@ remain local-only; this milestone is committed as `31054f7` (`Serialize VPN
 provider state mutations`).
 
 The focused scale-control tests, Control Center/API tests, VPN-oriented
-regression set (230 tests), Ruff, Python compilation, JavaScript syntax, and
+regression set (323 tests), Ruff, Python compilation, JavaScript syntax, and
 `git diff --check` pass locally. No live server, customer credential,
 provider/database deployment, load test, speed test, or automatic scale action
 was performed. The remaining action is still the separately authorized
 canary/evidence sequence for real Xray/Hysteria2 behavior and second-node
 rollout gates.
+
+The latest bounded local mixed-protocol run also passed with 200 Xray and 200
+Hysteria2 customers, 64 workers, and no errors across provisioning,
+reconciliation, revocation, protocol isolation, quota, usage, and data-plane
+contract checks. Provision latency was mean 0.365 ms, p95 0.440 ms, p99 2.762
+ms, and max 30.107 ms in the local process. These are disposable in-memory
+harness timings only; they are not server capacity, customer speed, or live
+protocol-compatibility evidence.
 
 ## Remaining gates and next action
 
