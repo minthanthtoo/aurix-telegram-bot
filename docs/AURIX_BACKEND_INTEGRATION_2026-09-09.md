@@ -479,7 +479,7 @@ route mutation. Example forms are `/setsafety global pause 5 60` and
 `/setsafety region sgp1 resume 20 300`.
 
 Focused failover, migration, Control Center, VPN web API, and render checks pass;
-the non-PostgreSQL VPN regression passes `331` tests, and the two non-PostgreSQL
+the non-PostgreSQL VPN regression passes `332` tests, and the two non-PostgreSQL
 migration-manifest checks also pass. The optional PostgreSQL end-to-end rehearsal
 was not re-run at this checkpoint because the host filesystem has only about
 `308 MiB` available and the disposable PostgreSQL cluster exhausted that space
