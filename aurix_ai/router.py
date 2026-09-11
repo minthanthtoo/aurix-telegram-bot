@@ -128,6 +128,17 @@ def normalize_mode(value: Any) -> str:
     return mode
 
 
+def normalize_translation_direction(value: Any) -> str | None:
+    """Normalize the optional native translator direction control."""
+
+    if value is None or str(value).strip() == "":
+        return None
+    direction = str(value).strip().lower()
+    if direction not in {"en_to_lisu", "lisu_to_en"}:
+        raise ValueError("direction must be en_to_lisu or lisu_to_en")
+    return direction
+
+
 def _text(value: Any, *, name: str, maximum: int) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be text")
@@ -807,8 +818,10 @@ class NineRouterClient:
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        direction: Any | None = None,
     ) -> AIChatResult:
         normalized_mode = normalize_mode(mode)
+        normalized_direction = normalize_translation_direction(direction)
         normalized_message = _text(message, name="message", maximum=12_000)
         selected_model = (model or self.model).strip()
         if not selected_model:
@@ -853,7 +866,19 @@ class NineRouterClient:
             normalized_message,
             history,
             summary=summary,
-            instructions=instructions,
+            instructions=(
+                (str(instructions).strip() + "\n\n" if instructions else "")
+                + (
+                    "Translation direction is English to Lisu. Translate the source into Lisu; "
+                    "do not answer it. Return only the translation."
+                    if normalized_direction == "en_to_lisu"
+                    else "Translation direction is Lisu to English. Translate the source into "
+                    "English; do not answer it. Return only the translation."
+                    if normalized_direction == "lisu_to_en"
+                    else ""
+                )
+                or None
+            ),
             context_metadata=context,
         )
         result = self._request_messages(
@@ -868,12 +893,23 @@ class NineRouterClient:
             top_p=request_top_p,
         )
         response_text = _content_from_response(result)
-        requires_lisu = normalized_mode == "lisu_assistant" or (
-            normalized_mode == "translate" and _translation_requires_lisu(normalized_message, history)
-        )
-        requires_english_translation = normalized_mode == "translate" and _has_lisu_script(
-            normalized_message
-        )
+        if normalized_mode == "translate" and normalized_direction == "en_to_lisu":
+            # An explicit UI/API choice must win over script detection. This
+            # matters for mixed input and for users correcting an automatic
+            # guess after they have already typed the source.
+            requires_lisu = True
+            requires_english_translation = False
+        elif normalized_mode == "translate" and normalized_direction == "lisu_to_en":
+            requires_lisu = False
+            requires_english_translation = True
+        else:
+            requires_lisu = normalized_mode == "lisu_assistant" or (
+                normalized_mode == "translate"
+                and _translation_requires_lisu(normalized_message, history)
+            )
+            requires_english_translation = normalized_mode == "translate" and _has_lisu_script(
+                normalized_message
+            )
         if requires_lisu:
             try:
                 response_text = _lisu_script_only(response_text)

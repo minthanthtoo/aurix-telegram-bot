@@ -13,6 +13,7 @@ from aurix_ai.router import (
     _lisu_script_only,
     _english_translation_only,
     build_messages,
+    normalize_translation_direction,
 )
 from aurix_ai.web_api import AuriXAIApplication, make_handler
 
@@ -64,6 +65,13 @@ class AIRouterTest(unittest.TestCase):
         self.assertIn("complete natural sentence", english)
         self.assertIn("Use Lisu script", lisu)
         self.assertIn("Greetings, jokes", translate)
+
+    def test_translation_direction_is_explicitly_validated(self):
+        self.assertEqual(normalize_translation_direction("en_to_lisu"), "en_to_lisu")
+        self.assertEqual(normalize_translation_direction("lisu_to_en"), "lisu_to_en")
+        self.assertIsNone(normalize_translation_direction(None))
+        with self.assertRaisesRegex(ValueError, "direction"):
+            normalize_translation_direction("auto")
 
     def test_modes_protect_conversational_and_language_boundaries(self):
         english = build_messages("english", "j")[0]["content"]
@@ -275,6 +283,35 @@ class AIRouterTest(unittest.TestCase):
         self.assertEqual(result.text, "Are you well?")
         self.assertEqual(result.returned_model, "recovered")
 
+    def test_explicit_translation_direction_overrides_input_script_detection(self):
+        responses = iter(
+            [
+                _Response({"model": "weak", "choices": [{"message": {"content": "English fallback"}}]}),
+                _Response({"model": "recovered", "choices": [{"message": {"content": "ꓮ ꓓꓳ ꓡꓳ꓿"}}]}),
+            ]
+        )
+        with patch("urllib.request.urlopen", side_effect=lambda *_args, **_kwargs: next(responses)):
+            result = NineRouterClient(
+                base_url="http://router.invalid",
+                api_key="secret",
+                model="model",
+            ).chat(mode="translate", message="ꓮ ꓓꓳ ꓡꓳ꓿", direction="en_to_lisu")
+        self.assertEqual(result.text, "ꓮ ꓓꓳ ꓡꓳ꓿")
+
+        responses = iter(
+            [
+                _Response({"model": "weak", "choices": [{"message": {"content": "ꓮ ꓓꓳ ꓡꓳ꓿"}}]}),
+                _Response({"model": "recovered", "choices": [{"message": {"content": "Are you well?"}}]}),
+            ]
+        )
+        with patch("urllib.request.urlopen", side_effect=lambda *_args, **_kwargs: next(responses)):
+            result = NineRouterClient(
+                base_url="http://router.invalid",
+                api_key="secret",
+                model="model",
+            ).chat(mode="translate", message="Are you well?", direction="lisu_to_en")
+        self.assertEqual(result.text, "Are you well?")
+
     def test_router_rejects_invalid_upstream_response(self):
         with patch("urllib.request.urlopen", return_value=_Response({"choices": []})):
             with self.assertRaises(AIRouterError):
@@ -328,6 +365,11 @@ class AIWebTest(unittest.TestCase):
         status, payload = self.request("GET", "/api/models")
         self.assertEqual(status, 200)
         self.assertIn("gemini-3.7-flash-high", {item["id"] for item in payload["models"]})
+
+    def test_session_check_returns_signed_out_state_without_cookie(self):
+        status, payload = self.request("GET", "/api/session")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload, {"authenticated": True, "user": None})
 
     def test_chat_requires_separate_aurix_token(self):
         body = {"mode": "english", "message": "Hi"}

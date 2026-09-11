@@ -12,6 +12,7 @@ COPY aurix_ai /app/aurix_ai
 COPY migrations.py persistence.py telegram_web_app.py /app/
 COPY scripts/aurix_ai_keys.py scripts/aurix_ai_reconcile.py /app/
 COPY web/ai-app /app/web/ai-app
+COPY docs/AURIX_EXTERNAL_API.md /app/web/ai-app/AURIX_EXTERNAL_API.md
 
 # Optional shared AuriX PostgreSQL storage. SQLite remains the default when
 # AURIX_AI_DATABASE_URL is unset.
