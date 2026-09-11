@@ -675,6 +675,223 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
                 {"region": "sgp1", "size": "s-1vcpu-1gb", "image": "ubuntu-24-04-x64"}
             )
 
+    def test_api_client_firewall_methods_are_scoped_and_typed(self):
+        client = DigitalOceanClient("private-token")
+        responses = [
+            FakeResponse({"firewalls": [{"id": "fw-1", "tags": ["aurix-vpn-node"]}]}),
+            FakeResponse({"firewall": {"id": "fw-2", "tags": ["aurix-vpn-node"]}}),
+            FakeResponse({"firewall": {"id": "fw-2", "tags": ["aurix-vpn-node"]}}),
+            FakeResponse({"firewall": {"id": "fw-2", "tags": ["aurix-vpn-node"]}}),
+        ]
+        with patch("connectivity.urllib.request.urlopen", side_effect=responses) as request:
+            listed = client.list_firewalls_by_tag("aurix-provision-job/job-1")
+            created = client.create_firewall(
+                {"name": "aurix-firewall", "inbound_rules": [], "outbound_rules": [], "tags": []}
+            )
+            updated = client.update_firewall(
+                "fw-2", {"name": "aurix-firewall", "inbound_rules": [], "outbound_rules": [], "tags": []}
+            )
+            observed = client.firewall("fw-2")
+        self.assertEqual(listed[0]["id"], "fw-1")
+        self.assertEqual(created["id"], "fw-2")
+        self.assertEqual(updated["id"], "fw-2")
+        self.assertEqual(observed["id"], "fw-2")
+        self.assertEqual(request.call_count, 4)
+        self.assertNotIn("private-token", request.call_args.args[0].full_url)
+
+    def test_provision_applies_durable_firewall_before_endpoint_verification(self):
+        class Provider:
+            def __init__(self):
+                self.created = []
+                self.firewall_creates = []
+                self.firewalls = {}
+
+            def create_droplet(self, specification):
+                self.created.append(dict(specification))
+                return {"id": 42, "action_ids": [99]}
+
+            def action(self, action_id):
+                return {"id": action_id, "status": "completed"}
+
+            def droplet(self, droplet_id):
+                return {
+                    "id": droplet_id,
+                    "status": "active",
+                    "networks": {"v4": [{"type": "public", "ip_address": "198.51.100.20"}]},
+                }
+
+            def list_firewalls_by_tag(self, tag):
+                firewall = self.firewalls.get(tag)
+                return [] if firewall is None else [dict(firewall)]
+
+            def create_firewall(self, specification):
+                self.firewall_creates.append(dict(specification))
+                firewall = {"id": "fw-1", **dict(specification)}
+                self.firewalls[f"aurix-provision-job-{job}"] = firewall
+                return dict(firewall)
+
+            def update_firewall(self, firewall_id, specification):
+                for tag, firewall in self.firewalls.items():
+                    if firewall["id"] == str(firewall_id):
+                        self.firewalls[tag] = {"id": str(firewall_id), **dict(specification)}
+                        return dict(self.firewalls[tag])
+                raise AssertionError("firewall update missing")
+
+            def firewall(self, firewall_id):
+                for firewall in self.firewalls.values():
+                    if firewall["id"] == str(firewall_id):
+                        return dict(firewall)
+                raise AssertionError("firewall read-back missing")
+
+        policy = {
+            "inbound_rules": [
+                {"protocol": "tcp", "ports": "22", "sources_addresses": ["198.51.100.7/32"]},
+                {"protocol": "tcp", "ports": "45524", "sources_addresses": ["0.0.0.0/0", "::/0"]},
+            ],
+            "outbound_rules": [
+                {"protocol": "tcp", "ports": "all", "destinations_addresses": ["0.0.0.0/0", "::/0"]},
+                {"protocol": "udp", "ports": "all", "destinations_addresses": ["0.0.0.0/0", "::/0"]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            provider = Provider()
+            controller = FleetController(database, provider)
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+                    "AURIX_DIGITALOCEAN_FIREWALL_POLICY_JSON": json.dumps(policy),
+                },
+                clear=False,
+            ):
+                created = controller.process_infrastructure_once()
+                observed = controller.process_infrastructure_once()
+            self.assertEqual(created["status"], "creating")
+            self.assertEqual(observed["status"], "awaiting_verification")
+            self.assertEqual(len(provider.created), 1)
+            self.assertEqual(len(provider.firewall_creates), 1)
+            self.assertIn(f"aurix-provision-job-{job}", provider.firewall_creates[0]["tags"])
+            with database.connect() as connection:
+                events = {
+                    row["event_type"]: row["n"]
+                    for row in connection.execute(
+                        """SELECT event_type, COUNT(*) AS n FROM infrastructure_events
+                            WHERE infrastructure_job_id = ?
+                            GROUP BY event_type""",
+                        (job,),
+                    ).fetchall()
+                }
+            self.assertEqual(events["firewall_policy_requested"], 1)
+            self.assertEqual(events["firewall_applied"], 1)
+
+    def test_invalid_public_ssh_firewall_policy_fails_before_provider_create(self):
+        class Provider:
+            def __init__(self):
+                self.create_calls = 0
+
+            def create_droplet(self, specification):
+                self.create_calls += 1
+                raise AssertionError("invalid firewall policy must not reach provider")
+
+        policy = {
+            "inbound_rules": [
+                {"protocol": "tcp", "ports": "22", "sources_addresses": ["0.0.0.0/0"]},
+            ],
+            "outbound_rules": [
+                {"protocol": "tcp", "ports": "all", "destinations_addresses": ["0.0.0.0/0"]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            provider = Provider()
+            controller = FleetController(database, provider)
+            job = controller.queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1",
+                    "AURIX_DIGITALOCEAN_FIREWALL_POLICY_JSON": json.dumps(policy),
+                },
+                clear=False,
+            ), self.assertRaisesRegex(ConnectivityError, "must not be public"):
+                controller.process_infrastructure_once()
+            self.assertEqual(provider.create_calls, 0)
+            with database.connect() as connection:
+                row = connection.execute(
+                    "SELECT status, last_error FROM infrastructure_jobs WHERE id = ?", (job,)
+                ).fetchone()
+                event = connection.execute(
+                    """SELECT COUNT(*) AS n FROM infrastructure_events
+                        WHERE infrastructure_job_id = ? AND event_type = 'provision_validation_failed'""",
+                    (job,),
+                ).fetchone()
+            self.assertEqual(row["status"], "failed")
+            self.assertIn("firewall SSH access must not be public", row["last_error"])
+            self.assertEqual(event["n"], 1)
+
+    def test_firewall_reconciliation_updates_existing_drift(self):
+        class Provider:
+            def __init__(self):
+                self.firewall_resource = {
+                    "id": "fw-7",
+                    "name": "stale-firewall",
+                    "inbound_rules": [],
+                    "outbound_rules": [],
+                    "tags": [f"aurix-provision-job-{job}"],
+                }
+                self.updates = []
+
+            def list_firewalls_by_tag(self, tag):
+                return [dict(self.firewall_resource)]
+
+            def create_firewall(self, specification):
+                raise AssertionError("existing tagged firewall should be updated")
+
+            def update_firewall(self, firewall_id, specification):
+                self.updates.append(dict(specification))
+                self.firewall_resource = {"id": str(firewall_id), **dict(specification)}
+                return dict(self.firewall_resource)
+
+            def firewall(self, firewall_id):
+                return dict(self.firewall_resource)
+
+        policy = {
+            "name": "aurix-vpn-firewall",
+            "inbound_rules": [
+                {"protocol": "udp", "ports": "45524", "sources_addresses": ["0.0.0.0/0"]},
+            ],
+            "outbound_rules": [
+                {"protocol": "tcp", "ports": "all", "destinations_addresses": ["0.0.0.0/0"]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            database = initialized_database(Path(tmp) / "fleet.db")
+            job = FleetController(database).queue_provision(
+                region="sgp1",
+                size="s-1vcpu-1gb",
+                image="ubuntu-24-04-x64",
+                requested_by=1,
+            )
+            provider = Provider()
+            controller = FleetController(database, provider)
+            with patch.dict(os.environ, {"AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED": "1"}):
+                result = controller.apply_firewall(job, policy)
+            self.assertEqual(result, {"job_id": job, "firewall_id": "fw-7", "status": "applied"})
+            self.assertEqual(len(provider.updates), 1)
+            self.assertEqual(provider.updates[0]["name"], "aurix-vpn-firewall")
+
     def test_execute_provision_revalidates_durable_allowlist_before_provider(self):
         class Provider:
             def create_droplet(self, specification):

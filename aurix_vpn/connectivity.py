@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import time
@@ -1852,6 +1853,41 @@ class DigitalOceanClient:
             raise ConnectivityError("DigitalOcean response lacks Droplets")
         return [item for item in droplets if isinstance(item, dict)]
 
+    def list_firewalls_by_tag(self, tag: str) -> list[dict[str, Any]]:
+        encoded = urllib.parse.quote(tag, safe="")
+        result = self._request("GET", f"/firewalls?tag_name={encoded}&per_page=200")
+        firewalls = result.get("firewalls") if isinstance(result, dict) else None
+        if not isinstance(firewalls, list):
+            raise ConnectivityError("DigitalOcean response lacks firewalls")
+        return [item for item in firewalls if isinstance(item, dict)]
+
+    def create_firewall(self, specification: dict[str, Any]) -> dict[str, Any]:
+        result = self._request("POST", "/firewalls", specification)
+        firewall = result.get("firewall") if isinstance(result, dict) else None
+        if not isinstance(firewall, dict) or not firewall.get("id"):
+            raise ConnectivityError("DigitalOcean create response lacks a firewall ID")
+        return firewall
+
+    def update_firewall(
+        self, firewall_id: str, specification: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = self._request(
+            "PUT",
+            f"/firewalls/{urllib.parse.quote(str(firewall_id), safe='')}",
+            specification,
+        )
+        firewall = result.get("firewall") if isinstance(result, dict) else None
+        if not isinstance(firewall, dict) or not firewall.get("id"):
+            raise ConnectivityError("DigitalOcean update response lacks a firewall ID")
+        return firewall
+
+    def firewall(self, firewall_id: str) -> dict[str, Any]:
+        result = self._request("GET", f"/firewalls/{urllib.parse.quote(str(firewall_id), safe='')}")
+        firewall = result.get("firewall") if isinstance(result, dict) else None
+        if not isinstance(firewall, dict):
+            raise ConnectivityError("DigitalOcean response lacks a firewall")
+        return firewall
+
     def validate_droplet_specification(self, specification: dict[str, Any]) -> None:
         """Validate a placement against the provider's current catalog."""
         region = str(specification.get("region") or "").strip()
@@ -2021,6 +2057,258 @@ class FleetController:
         ):
             raise ProvisionValidationError("Droplet specification is outside the configured allowlist")
         return {"region": region, "size": size, "image": image}
+
+    @staticmethod
+    def _firewall_policy_from_environment() -> dict[str, Any] | None:
+        encoded = os.environ.get("AURIX_DIGITALOCEAN_FIREWALL_POLICY_JSON", "").strip()
+        if not encoded:
+            return None
+        try:
+            value = json.loads(encoded)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ProvisionValidationError("DigitalOcean firewall policy is invalid JSON") from exc
+        if not isinstance(value, dict):
+            raise ProvisionValidationError("DigitalOcean firewall policy must be an object")
+        return value
+
+    @staticmethod
+    def _firewall_ports(value: Any, *, protocol: str) -> str:
+        ports = str(value or "").strip().lower()
+        if protocol == "icmp":
+            if ports not in {"", "all"}:
+                raise ProvisionValidationError("ICMP firewall ports are invalid")
+            return "all"
+        if not ports or len(ports) > 128:
+            raise ProvisionValidationError("firewall ports are invalid")
+        if ports == "all":
+            return ports
+        for item in ports.split(","):
+            bounds = item.strip().split("-")
+            if len(bounds) not in {1, 2}:
+                raise ProvisionValidationError("firewall ports are invalid")
+            try:
+                start = int(bounds[0])
+                end = int(bounds[-1])
+            except (TypeError, ValueError) as exc:
+                raise ProvisionValidationError("firewall ports are invalid") from exc
+            if not 1 <= start <= end <= 65_535:
+                raise ProvisionValidationError("firewall ports are invalid")
+        return ports
+
+    @staticmethod
+    def _firewall_rule(value: Any, *, direction: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ProvisionValidationError("firewall rule is invalid")
+        protocol = str(value.get("protocol") or "").strip().lower()
+        if protocol not in {"tcp", "udp", "icmp"}:
+            raise ProvisionValidationError("firewall rule protocol is invalid")
+        address_key = "sources_addresses" if direction == "inbound" else "destinations_addresses"
+        raw_addresses = value.get(address_key)
+        if not isinstance(raw_addresses, list) or not 1 <= len(raw_addresses) <= 64:
+            raise ProvisionValidationError("firewall rule addresses are invalid")
+        addresses: list[str] = []
+        for raw_address in raw_addresses:
+            address = str(raw_address or "").strip()
+            try:
+                network = ipaddress.ip_network(address, strict=False)
+            except ValueError as exc:
+                raise ProvisionValidationError("firewall rule address is invalid") from exc
+            addresses.append(str(network))
+        ports = FleetController._firewall_ports(value.get("ports"), protocol=protocol)
+        if direction == "inbound" and protocol == "tcp" and FleetController._ports_include(
+            ports, 22
+        ) and any(address in {"0.0.0.0/0", "::/0"} for address in addresses):
+            raise ProvisionValidationError("firewall SSH access must not be public")
+        return {
+            "protocol": protocol,
+            "ports": ports,
+            address_key: addresses,
+        }
+
+    @staticmethod
+    def _ports_include(ports: str, target: int) -> bool:
+        if ports == "all":
+            return True
+        for item in ports.split(","):
+            bounds = item.strip().split("-")
+            try:
+                start = int(bounds[0])
+                end = int(bounds[-1])
+            except (TypeError, ValueError):
+                return False
+            if start <= target <= end:
+                return True
+        return False
+
+    @classmethod
+    def _validate_firewall_policy(
+        cls, specification: dict[str, Any], job_id: str
+    ) -> dict[str, Any]:
+        name = str(specification.get("name") or f"aurix-vpn-{str(job_id)[:12]}-firewall").strip()
+        if not name or len(name) > 128:
+            raise ProvisionValidationError("firewall name is invalid")
+        inbound = specification.get("inbound_rules")
+        outbound = specification.get("outbound_rules")
+        if not isinstance(inbound, list) or not 1 <= len(inbound) <= 32:
+            raise ProvisionValidationError("inbound firewall rules are invalid")
+        if not isinstance(outbound, list) or not 1 <= len(outbound) <= 32:
+            raise ProvisionValidationError("outbound firewall rules are invalid")
+        if "droplet_ids" in specification:
+            raise ProvisionValidationError("firewall policy must target stable tags")
+        tags = specification.get("tags") or []
+        if not isinstance(tags, list) or len(tags) > 32:
+            raise ProvisionValidationError("firewall tags are invalid")
+        normalized_tags: list[str] = []
+        for raw_tag in tags + [
+            "aurix-vpn-node",
+            "aurix-env-production",
+            f"aurix-provision-job-{job_id}",
+        ]:
+            tag = str(raw_tag or "").strip()
+            if not tag or len(tag) > 128:
+                raise ProvisionValidationError("firewall tag is invalid")
+            if tag not in normalized_tags:
+                normalized_tags.append(tag)
+        return {
+            "name": name,
+            "inbound_rules": [cls._firewall_rule(item, direction="inbound") for item in inbound],
+            "outbound_rules": [cls._firewall_rule(item, direction="outbound") for item in outbound],
+            "tags": normalized_tags,
+        }
+
+    def _durable_firewall_policy(self, job_id: str) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT metadata_json FROM infrastructure_events
+                     WHERE infrastructure_job_id = ? AND event_type = 'firewall_policy_requested'
+                     ORDER BY created_at ASC LIMIT 1""",
+                (str(job_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            value = json.loads(str(row["metadata_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ProvisionValidationError("durable firewall policy is invalid") from exc
+        if not isinstance(value, dict):
+            raise ProvisionValidationError("durable firewall policy is invalid")
+        return self._validate_firewall_policy(value, job_id)
+
+    @staticmethod
+    def _canonical_firewall_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                str(key): FleetController._canonical_firewall_value(item)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            }
+        if isinstance(value, list):
+            normalized = [FleetController._canonical_firewall_value(item) for item in value]
+            return sorted(
+                normalized,
+                key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+            )
+        return value
+
+    @classmethod
+    def _firewall_matches_policy(
+        cls, policy: dict[str, Any], observed: dict[str, Any]
+    ) -> bool:
+        if observed.get("droplet_ids") not in (None, []):
+            return False
+        fields = ("name", "inbound_rules", "outbound_rules", "tags")
+        return all(
+            cls._canonical_firewall_value(observed.get(field))
+            == cls._canonical_firewall_value(policy[field])
+            for field in fields
+        )
+
+    def apply_firewall(self, job_id: str, specification: dict[str, Any]) -> dict[str, Any]:
+        """Apply one stable-tag firewall and reconcile ambiguous creation safely."""
+        if not self._mutations_enabled():
+            raise ConnectivityError("Infrastructure mutations are disabled")
+        if self.provider is None:
+            raise ConnectivityError("DigitalOcean provider is not configured")
+        policy = self._validate_firewall_policy(specification, job_id)
+        list_firewalls = getattr(self.provider, "list_firewalls_by_tag", None)
+        create_firewall = getattr(self.provider, "create_firewall", None)
+        update_firewall = getattr(self.provider, "update_firewall", None)
+        read_firewall = getattr(self.provider, "firewall", None)
+        if (
+            not callable(list_firewalls)
+            or not callable(create_firewall)
+            or not callable(update_firewall)
+            or not callable(read_firewall)
+        ):
+            raise ConnectivityError("provider firewall controls are not configured")
+        tag = f"aurix-provision-job-{job_id}"
+        candidates = list_firewalls(tag)
+        if not isinstance(candidates, list):
+            raise ConnectivityError("provider firewall reconciliation returned an invalid response")
+        if len(candidates) > 1:
+            raise ConnectivityError("firewall tag matches multiple provider resources")
+        reconciled = bool(candidates)
+        if candidates:
+            firewall = candidates[0]
+        else:
+            try:
+                firewall = create_firewall(policy)
+            except AmbiguousProviderOperation:
+                candidates = list_firewalls(tag)
+                if not isinstance(candidates, list) or len(candidates) != 1:
+                    raise
+                firewall = candidates[0]
+                reconciled = True
+        if not isinstance(firewall, dict) or not firewall.get("id"):
+            raise ConnectivityError("provider firewall response lacks a resource ID")
+        firewall_id = str(firewall["id"])
+        observed = read_firewall(firewall_id)
+        if not isinstance(observed, dict):
+            raise ConnectivityError("provider firewall read-back is invalid")
+        observed_tags = {str(item) for item in observed.get("tags") or []}
+        if tag not in observed_tags:
+            raise ConnectivityError("provider firewall read-back lacks the stable job tag")
+        if not self._firewall_matches_policy(policy, observed):
+            try:
+                updated = update_firewall(firewall_id, policy)
+            except AmbiguousProviderOperation:
+                observed = read_firewall(firewall_id)
+                if not isinstance(observed, dict) or not self._firewall_matches_policy(
+                    policy, observed
+                ):
+                    raise
+            else:
+                if not isinstance(updated, dict) or str(updated.get("id")) != firewall_id:
+                    raise ConnectivityError("provider firewall update returned the wrong resource")
+                observed = read_firewall(firewall_id)
+                if not isinstance(observed, dict) or not self._firewall_matches_policy(
+                    policy, observed
+                ):
+                    raise ConnectivityError("provider firewall read-back does not match policy")
+        timestamp = datetime.now(UTC).isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            existing = connection.execute(
+                """SELECT 1 FROM infrastructure_events
+                     WHERE infrastructure_job_id = ? AND event_type = 'firewall_applied'
+                     LIMIT 1""",
+                (str(job_id),),
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    """INSERT INTO infrastructure_events
+                       (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                       VALUES (?, ?, 'firewall_applied', ?, ?)""",
+                    (
+                        uuid.uuid4().hex,
+                        str(job_id),
+                        json.dumps(
+                            {"firewall_id": firewall_id, "reconciled": reconciled},
+                            sort_keys=True,
+                        ),
+                        timestamp,
+                    ),
+                )
+        return {"job_id": str(job_id), "firewall_id": firewall_id, "status": "applied"}
 
     def scale_out_recommendation(
         self,
@@ -2376,6 +2664,11 @@ class FleetController:
         validator = getattr(self.provider, "validate_droplet_specification", None)
         if callable(validator):
             validator(placement)
+        try:
+            firewall_policy = self._durable_firewall_policy(job_id)
+        except ProvisionValidationError as exc:
+            self._record_provision_validation_failure(job_id, exc)
+            raise
         retry_requested = False
         with self.database.connect() as connection:
             pending = connection.execute(
@@ -2392,6 +2685,14 @@ class FleetController:
                      LIMIT 1""",
                 (job_id,),
             ).fetchone() is not None
+        if firewall_policy is None and not retry_requested:
+            try:
+                configured_policy = self._firewall_policy_from_environment()
+                if configured_policy is not None:
+                    firewall_policy = self._validate_firewall_policy(configured_policy, job_id)
+            except ProvisionValidationError as exc:
+                self._record_provision_validation_failure(job_id, exc)
+                raise
         if retry_requested:
             list_by_tag = getattr(self.provider, "list_by_tag", None)
             if not callable(list_by_tag):
@@ -2444,6 +2745,25 @@ class FleetController:
             )
             if getattr(updated, "rowcount", 1) != 1:
                 raise ConnectivityError("Provisioning job is no longer pending")
+            if firewall_policy is not None:
+                existing_policy = connection.execute(
+                    """SELECT 1 FROM infrastructure_events
+                         WHERE infrastructure_job_id = ? AND event_type = 'firewall_policy_requested'
+                         LIMIT 1""",
+                    (job_id,),
+                ).fetchone()
+                if existing_policy is None:
+                    connection.execute(
+                        """INSERT INTO infrastructure_events
+                           (id, infrastructure_job_id, event_type, metadata_json, created_at)
+                           VALUES (?, ?, 'firewall_policy_requested', ?, ?)""",
+                        (
+                            uuid.uuid4().hex,
+                            job_id,
+                            json.dumps(firewall_policy, sort_keys=True),
+                            datetime.now(UTC).isoformat(),
+                        ),
+                    )
         try:
             droplet = self.provider.create_droplet(specification)
         except AmbiguousProviderOperation as exc:
@@ -2586,6 +2906,13 @@ class FleetController:
             ),
             None,
         )
+        try:
+            firewall_policy = self._durable_firewall_policy(job_id)
+            if firewall_policy is not None:
+                self.apply_firewall(job_id, firewall_policy)
+        except ProvisionValidationError as exc:
+            self._record_provision_validation_failure(job_id, exc)
+            raise
         timestamp = datetime.now(UTC).isoformat()
         with self.database.connect() as connection:
             self.database.begin_write(connection)
