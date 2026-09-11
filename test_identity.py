@@ -108,6 +108,17 @@ class IdentityAccountingTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_admin_account_includes_safe_subscription_metadata(self):
+        account_id = self.identity.ensure_account(123, now=self.now)
+        account = self.identity.admin_account(account_id)
+        self.assertIsNotNone(account)
+        self.assertEqual(len(account["subscriptions"]), 1)
+        subscription = account["subscriptions"][0]
+        self.assertEqual(subscription["subscription_id"], "sub-1")
+        self.assertEqual(subscription["quota_bytes"], 1000)
+        self.assertEqual(subscription["status"], "active")
+        self.assertNotIn("access_url", subscription)
+
     def test_managed_quota_sweep_is_protocol_neutral_and_idempotent(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)
         generation = self.identity.ensure_generation_for_credential(

@@ -158,6 +158,7 @@ class ControlCenterTest(unittest.TestCase):
             with urllib.request.urlopen(account_request, timeout=3) as account_response:
                 account_payload = json.load(account_response)
             self.assertEqual(account_payload["account"]["account_id"], account_id)
+            self.assertEqual(account_payload["account"]["subscriptions"], [])
             self.assertNotIn("public_key", json.dumps(account_payload))
 
             endpoint_request = urllib.request.Request(

@@ -362,8 +362,26 @@ class IdentityService:
                      FROM devices WHERE account_id = ? ORDER BY created_at DESC""",
                 (account_id,),
             ).fetchall()
+            subscriptions = connection.execute(
+                """SELECT s.id AS subscription_id, s.plan_code, s.plan_name,
+                          s.status, s.starts_at, s.expires_at,
+                          s.quota_bytes, s.consumed_bytes, s.quota_exhausted_at,
+                          s.activated_at, k.endpoint_id,
+                          k.status AS key_status, k.created_at AS key_created_at
+                     FROM subscriptions s
+                     LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
+                    WHERE CAST(s.telegram_id AS TEXT) =
+                          (SELECT identity_value FROM account_identities
+                            WHERE account_id = ? AND identity_type = 'telegram'
+                            LIMIT 1)
+                    ORDER BY s.starts_at DESC, s.id DESC""",
+                (account_id,),
+            ).fetchall()
         result = dict(account)
         result["devices"] = [dict(row) for row in devices]
+        # This is entitlement metadata only. Access URLs, provider IDs, and
+        # credential material remain outside the operator browser payload.
+        result["subscriptions"] = [dict(row) for row in subscriptions]
         result["routes"] = self.routes_for_account(int(account["telegram_id"])) if account["telegram_id"] else []
         return result
 
