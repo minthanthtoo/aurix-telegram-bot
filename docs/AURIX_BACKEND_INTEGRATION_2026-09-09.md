@@ -340,6 +340,11 @@ Managed node-agent bindings now require HTTPS for remote agents, allow plain
 HTTP only for loopback-local agents, and reject URL userinfo/query/fragment
 decorations that could expose bearer credentials. This boundary hardening is
 committed as `bd4c59b` (`Harden VPN node-agent transport bindings`).
+Local Xray and Hysteria2 provider stores now serialize concurrent
+read-modify-write mutations with mode-0600 sidecar locks while retaining
+atomic replacement. The concurrency regression coverage and protocol matrix
+remain local-only; this milestone is committed as `31054f7` (`Serialize VPN
+provider state mutations`).
 
 The focused scale-control tests, Control Center/API tests, VPN-oriented
 regression set (227 tests), Ruff, Python compilation, JavaScript syntax, and

@@ -59,6 +59,11 @@ The writer is suitable for a lab or a deliberately minimal node agent. Before
 production use, validate Xray's actual statistics behavior, quota semantics,
 restart persistence, and force-disconnect behavior on an isolated server.
 
+The Xray writer serializes each read-modify-write mutation with a mode-0600
+sidecar lock while retaining same-directory atomic replacement. The Hysteria2
+encrypted user store uses the same mutation-lock pattern, so concurrent agent
+requests cannot silently discard another customer update.
+
 `XrayConfigProvider` is the concrete implementation of this conservative
 fallback. It combines the tagged writer with an injected, supervised reload
 callback and an injected StatsService query. It preserves unknown users and
