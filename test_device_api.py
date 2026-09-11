@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import os
 import tempfile
 import threading
 import time
@@ -9,6 +10,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -17,7 +19,7 @@ from cryptography.fernet import Fernet
 from commerce import CommerceDatabase
 from device_api import DeviceAPIService, ManifestSigner, create_device_wsgi_app, sign_device_request
 from identity import IdentityService
-from vpn_web_api import AuriXVpnWebApplication, make_handler
+from vpn_web_api import AuriXVpnWebApplication, build_device_api, make_handler
 
 
 def _public_key(private_key: Ed25519PrivateKey) -> str:
@@ -108,6 +110,25 @@ class DeviceAPITest(unittest.TestCase):
         )
         self.assertEqual(status, "401 Unauthorized")
         self.assertIn("not active", value["error"])
+
+    def test_shared_device_builder_applies_configured_cap(self):
+        runtime = SimpleNamespace(
+            commerce_database=self.database,
+            commerce=SimpleNamespace(
+                identity=self.identity,
+                _decrypt_access_url=lambda value: value,
+            ),
+        )
+        seed = base64.urlsafe_b64encode(b"device-builder-seed".ljust(32, b"!")).decode().rstrip("=")
+        with patch.dict(
+            os.environ,
+            {"AURIX_DEVICE_MANIFEST_PRIVATE_KEY": seed, "AURIX_DEVICE_MANIFEST_KEY_ID": "test-key"},
+            clear=False,
+        ):
+            service = build_device_api(runtime, max_active_devices=2)
+        self.assertIsNotNone(service)
+        self.assertEqual(service.max_active_devices, 2)
+        self.assertEqual(service.manifest_signer.key_id, "test-key")
 
     def test_pair_rejects_malformed_key_without_consuming_token(self):
         token = self.identity.create_pairing_token(123)
