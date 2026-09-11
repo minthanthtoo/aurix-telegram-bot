@@ -228,7 +228,7 @@ capabilities, and evidence timestamps while ignoring only the preview's
 volatile `checked_at` timestamp; the promotion method rechecks all evidence
 before enabling the profile. Customer identities cannot reach either command.
 
-The complete suite now passes `349` tests (`Ran 349 tests ... OK`) with
+The complete suite now passes `350` tests (`Ran 350 tests ... OK`) with
 `PYTHONWARNINGS=error::ResourceWarning`; focused Telegram authorization and
 promotion/disable tests, Python compilation, Ruff, and `git diff --check` also
 pass.
@@ -244,6 +244,8 @@ committed as `5dddbe0` (`Reject boolean node-agent quotas`), `5634df3`
 (`Normalize node-agent quota errors`), and `daa4565` (`Reject non-integer
 protocol quotas`); malformed boolean, floating-point, empty, and non-numeric
 quota values now fail before provider creation.
+Adapter operations also reject a route whose declared protocol differs from
+the adapter, including provisioning, probing, reconciliation, and recovery.
 
 ## Remaining gates and next action
 
