@@ -322,7 +322,12 @@ Provisioning is asynchronous and reconciled:
 5. Reconcile ambiguous responses by tag and creation window; quarantine duplicate
    candidates instead of selecting one silently.
 6. Wait for provider action completion and addresses.
-7. Apply a tag-based DigitalOcean Cloud Firewall.
+7. If `AURIX_DIGITALOCEAN_FIREWALL_POLICY_JSON` is configured, validate and
+   durably record the policy, then create or converge exactly one
+   tag-selected DigitalOcean Cloud Firewall and read it back. Invalid policy
+   fails the intent before provider creation; provider/network uncertainty
+   remains retryable. Do not advance to bootstrap or endpoint verification
+   until the firewall read-back matches.
 8. Bootstrap over SSH with a dedicated provisioning key, or use a short-lived,
    single-use enrollment token. Never place provider/API secrets in user data.
 9. Install a pinned Outline release and retrieve its management URL/pin through
@@ -342,6 +347,8 @@ network errors remain retryable operational failures.
 This recovery behavior is committed as `cd923f7` (`Make VPN infrastructure
 retries safe`), and the placement-catalog guard is committed as `7f9701c`
 (`Validate VPN provider placement at execution`).
+The guarded Cloud Firewall implementation is committed as `a6a8683`
+(`Add guarded VPN cloud firewall stage`).
 
 User data remains available from the Droplet metadata service. It may contain
 public bootstrap configuration, package pins, and a short-lived one-time token,
@@ -366,6 +373,16 @@ Inbound policy:
 Outbound policy must allow package installation, provider registration, DNS,
 time synchronization, and VPN customer traffic. Record firewall IDs and intended
 rules in infrastructure events. Probe external reachability after changes.
+
+The local controller accepts a JSON policy through the dedicated infrastructure
+worker only; the variable is intentionally empty by default until the actual
+Outline access ports, worker SSH CIDRs, and management CIDRs are known. A
+policy contains `inbound_rules`, `outbound_rules`, and optional `name`/`tags`,
+using DigitalOcean rule fields. The controller canonicalizes addresses, allows
+only TCP/UDP/ICMP, rejects public TCP/22, adds stable AuriX tags, rejects
+Droplet-ID targeting, and converges an existing same-tag firewall with `PUT`
+before read-back. Never enable this setting with placeholder or public SSH
+addresses.
 
 ## 13. Scale-out controller
 
@@ -606,11 +623,14 @@ no automatic destruction path
 ```
 
 The provider controller can record a guarded intent, submit an allowed Droplet,
-persist provider/action IDs, reconcile asynchronous activation, and require a
-real Outline probe before endpoint activation. It does not pretend that an
-installer, enrollment exchange, Cloud Firewall, budget policy, or second-node
-acceptance has occurred. Those are deployment gates, not facts established by
-unit tests. Keep provider mutations disabled until Gate 0–2 evidence is stored.
+persist provider/action IDs, reconcile asynchronous activation, apply an
+opt-in tag-based Cloud Firewall, and require a real Outline probe before
+endpoint activation. Local fake-provider tests cover firewall validation,
+creation, read-back, drift convergence, and the pre-verification gate. This
+does not establish that an installer, enrollment exchange, live Cloud Firewall,
+budget policy, or second-node acceptance has occurred. Those are deployment
+gates, not facts established by unit tests. Keep provider mutations disabled
+until Gate 0–2 evidence is stored.
 
 The dedicated provider boundary is `scripts/aurix_infrastructure_worker.py`.
 Run it as a bounded one-shot job on the infrastructure worker host after Gate

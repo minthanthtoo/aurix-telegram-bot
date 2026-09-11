@@ -325,8 +325,20 @@ jobs with a redacted event, while provider/network errors remain retryable;
 this prevents malformed infrastructure work from repeatedly blocking the
 worker.
 
+The VPN provisioning worker now has an opt-in Cloud Firewall stage. When
+`AURIX_DIGITALOCEAN_FIREWALL_POLICY_JSON` is configured, it validates the
+tag-based TCP/UDP/ICMP policy before Droplet creation, persists the normalized
+policy with the intent, creates or converges exactly one matching firewall,
+reads it back, and only then advances an active Droplet to
+`awaiting_verification`. Public SSH is rejected; ambiguous, missing, or
+non-matching provider state remains blocked for retry rather than being
+silently accepted. The policy is empty by default because actual Outline,
+worker-SSH, and management CIDRs must be selected from deployment evidence.
+This local implementation and fake-provider coverage are committed as the
+VPN-only commit `a6a8683` (`Add guarded VPN cloud firewall stage`).
+
 The focused scale-control tests, Control Center/API tests, VPN-oriented
-regression set (223 tests), Ruff, Python compilation, JavaScript syntax, and
+regression set (227 tests), Ruff, Python compilation, JavaScript syntax, and
 `git diff --check` pass locally. No live server, customer credential,
 provider/database deployment, load test, speed test, or automatic scale action
 was performed. The remaining action is still the separately authorized
