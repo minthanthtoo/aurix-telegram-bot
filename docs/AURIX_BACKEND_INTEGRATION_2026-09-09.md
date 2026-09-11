@@ -468,6 +468,8 @@ The Outline metrics, inventory, and customer snapshot collectors now skip
 active endpoints that have no enabled Outline profile. Protocol-only Xray or
 Hysteria2 nodes therefore do not become false Outline health failures; their
 usage and lifecycle remain owned by the managed node-agent maintenance path.
+Paid provisioning also rechecks the non-Outline profile at execution time and
+fails closed if an operator has disabled or retired it after assignment.
 
 Failover target selection now treats pending/creating/verified decisions as
 destination reservations alongside active assignments. This prevents concurrent
@@ -496,7 +498,7 @@ route mutation. Example forms are `/setsafety global pause 5 60` and
 `/setsafety region sgp1 resume 20 300`.
 
 Focused failover, migration, Control Center, VPN web API, and render checks pass;
-the non-PostgreSQL VPN regression passes `339` tests, including a migration-14
+the non-PostgreSQL VPN regression passes `340` tests, including a migration-14
 upgrade regression that backfills historical failover policy snapshots from an
 existing v13 policy table and managed Xray provisioning/assignment coverage.
 The two non-PostgreSQL migration-manifest checks also

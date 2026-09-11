@@ -397,6 +397,11 @@ class CommerceServiceTest(unittest.TestCase):
             },
             ensure_subscription_assignment=lambda *args, **kwargs: assignment,
             attach_job=lambda job_id, assignment_id: None,
+            protocol_profile_status=lambda endpoint_id, protocol: {
+                "endpoint_id": endpoint_id,
+                "protocol": protocol,
+                "status": "enabled",
+            },
         )
         self.service.managed_route_provider = lambda endpoint_id, protocol: {
             "route_id": f"{protocol}:{endpoint_id}",
@@ -439,6 +444,18 @@ class CommerceServiceTest(unittest.TestCase):
         vpn = self.service.user_vpns(123)[0]
         self.assertEqual(vpn["preferred_protocol"], "xray")
         self.assertTrue(vpn["access_url"].startswith("vless://"))
+
+    def test_managed_protocol_provisioning_fails_closed_when_profile_is_disabled(self):
+        with self.assertRaisesRegex(CommerceError, "protocol profile is not enabled"):
+            self.service._require_enabled_managed_profile(
+                SimpleNamespace(
+                    protocol_profile_status=lambda _endpoint_id, _protocol: {
+                        "status": "disabled"
+                    }
+                ),
+                "xray-sgp-a",
+                "xray",
+            )
 
     def test_plan_replacement_is_blocked_after_payment_activity(self):
         first = self.service.create_order(124, "Min", "basic_50gb", self.now)

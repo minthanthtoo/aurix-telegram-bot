@@ -94,6 +94,25 @@ class CommerceWorkerMixin:
             "protocol": "outline",
         }
 
+    @staticmethod
+    def _require_enabled_managed_profile(
+        connectivity: Any | None, endpoint_id: str, protocol: str
+    ) -> None:
+        """Fail closed when a non-Outline assignment lost its promotion gate."""
+        if protocol == "outline":
+            return
+        checker = getattr(connectivity, "protocol_profile_status", None)
+        if not callable(checker):
+            raise CommerceError("managed protocol profile status is unavailable")
+        try:
+            profile = checker(endpoint_id, protocol)
+        except Exception as exc:
+            raise CommerceError(
+                f"managed {protocol} protocol profile is unavailable"
+            ) from exc
+        if not isinstance(profile, Mapping) or str(profile.get("status") or "").lower() != "enabled":
+            raise CommerceError(f"managed {protocol} protocol profile is not enabled")
+
     def _adapter_for_route(self, route: dict[str, Any], client: Any | None = None) -> Any:
         normalized = dict(route)
         protocol = str(normalized.get("protocol") or "").strip().lower()
@@ -976,6 +995,7 @@ class CommerceWorkerMixin:
             if protocol == "outline":
                 outline = connectivity.client(endpoint_id)
         if protocol != "outline":
+            self._require_enabled_managed_profile(connectivity, endpoint_id, protocol)
             managed_route = getattr(self, "managed_route_provider", None)
             if not callable(managed_route):
                 raise CommerceError(f"managed {protocol} route is not configured")
