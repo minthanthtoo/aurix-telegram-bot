@@ -1138,6 +1138,27 @@ def _optional_positive_int(name: str, *, maximum: int = 1000) -> int | None:
     return result
 
 
+def build_device_api(
+    runtime: Any, *, max_active_devices: int | None = None
+) -> DeviceAPIService | None:
+    """Build the optional managed-device service for either web entrypoint."""
+    manifest_seed = os.environ.get("AURIX_DEVICE_MANIFEST_PRIVATE_KEY", "").strip()
+    if not manifest_seed:
+        return None
+    signer = ManifestSigner.from_base64_seed(
+        manifest_seed,
+        key_id=os.environ.get("AURIX_DEVICE_MANIFEST_KEY_ID", "aurix-manifest-1"),
+    )
+    return DeviceAPIService(
+        runtime.commerce_database,
+        identity=runtime.commerce.identity,
+        manifest_signer=signer,
+        route_provider=runtime.commerce.identity.routes_for_account,
+        secret_decryptor=runtime.commerce._decrypt_access_url,
+        max_active_devices=max_active_devices,
+    )
+
+
 def main() -> int:
     try:
         port = int(os.environ.get("PORT", "10000"))
@@ -1156,21 +1177,7 @@ def main() -> int:
             reconcile=False,
             configure_bootstrap=False,
         )
-        device_api = None
-        manifest_seed = os.environ.get("AURIX_DEVICE_MANIFEST_PRIVATE_KEY", "").strip()
-        if manifest_seed:
-            signer = ManifestSigner.from_base64_seed(
-                manifest_seed,
-                key_id=os.environ.get("AURIX_DEVICE_MANIFEST_KEY_ID", "aurix-manifest-1"),
-            )
-            device_api = DeviceAPIService(
-                runtime.commerce_database,
-                identity=runtime.commerce.identity,
-                manifest_signer=signer,
-                route_provider=runtime.commerce.identity.routes_for_account,
-                secret_decryptor=runtime.commerce._decrypt_access_url,
-                max_active_devices=max_active_devices,
-            )
+        device_api = build_device_api(runtime, max_active_devices=max_active_devices)
         application = AuriXVpnWebApplication(
             runtime,
             max_init_data_age=max_age,

@@ -21,7 +21,12 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from aurix_vpn.runtime import build_runtime_services
-from aurix_vpn.vpn_web_api import AuriXVpnWebApplication, create_server
+from aurix_vpn.vpn_web_api import (
+    AuriXVpnWebApplication,
+    _optional_positive_int,
+    build_device_api,
+    create_server,
+)
 
 
 def _stop_child(child: subprocess.Popen[Any] | None) -> None:
@@ -39,8 +44,12 @@ def main() -> int:
     try:
         port = int(os.environ.get("PORT", "10000"))
         max_age = int(os.environ.get("AURIX_WEB_APP_INIT_DATA_MAX_AGE", "86400"))
+        max_active_devices = _optional_positive_int("AURIX_MAX_ACTIVE_DEVICES")
     except ValueError:
-        print("PORT and AURIX_WEB_APP_INIT_DATA_MAX_AGE must be integers", file=sys.stderr)
+        print(
+            "PORT, AURIX_WEB_APP_INIT_DATA_MAX_AGE, and AURIX_MAX_ACTIVE_DEVICES must be valid integers",
+            file=sys.stderr,
+        )
         return 2
     if not 1 <= port <= 65_535:
         print("PORT must be between 1 and 65535", file=sys.stderr)
@@ -70,6 +79,7 @@ def main() -> int:
             runtime,
             max_init_data_age=max_age,
             telegram_url=os.environ.get("AURIX_TELEGRAM_URL", ""),
+            device_api=build_device_api(runtime, max_active_devices=max_active_devices),
         )
         server = create_server(application, port=port)
         server.timeout = 1

@@ -96,6 +96,33 @@ class RenderCombinedTest(unittest.TestCase):
         self.assertLess(events.index("build"), events.index("process"))
         self.assertLess(events.index("server"), events.index("process"))
 
+    def test_combined_entrypoint_passes_managed_device_service_to_portal(self):
+        runtime = SimpleNamespace(commerce_database=SimpleNamespace())
+        captured = {}
+
+        class _Server:
+            timeout = None
+
+            def server_close(self):
+                pass
+
+        def application(*_args, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+        with (
+            patch.dict("os.environ", {"PORT": "10000"}, clear=True),
+            patch.object(render_combined, "build_runtime_services", return_value=runtime),
+            patch.object(render_combined, "build_device_api", return_value="device-service"),
+            patch.object(render_combined, "AuriXVpnWebApplication", side_effect=application),
+            patch.object(render_combined, "create_server", return_value=_Server()),
+            patch.object(render_combined.subprocess, "Popen", return_value=_Child(status=1)),
+            patch.object(render_combined.signal, "signal"),
+        ):
+            self.assertEqual(render_combined.main(), 1)
+
+        self.assertEqual(captured["device_api"], "device-service")
+
 
 if __name__ == "__main__":
     unittest.main()
