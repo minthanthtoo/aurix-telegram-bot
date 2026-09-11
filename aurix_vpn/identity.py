@@ -188,12 +188,22 @@ class IdentityService:
         public_key: str,
         *,
         label: str = "",
+        max_active_devices: int | None = None,
         now: str | datetime | None = None,
     ) -> dict[str, Any]:
         token = str(token or "").strip()
         public_key = str(public_key or "").strip()
         if not 20 <= len(token) <= 256 or not 16 <= len(public_key) <= 4096:
             raise IdentityError("pairing token or public key is invalid")
+        if max_active_devices is not None:
+            if isinstance(max_active_devices, bool):
+                raise IdentityError("active device limit is invalid")
+            try:
+                max_active_devices = int(max_active_devices)
+            except (TypeError, ValueError) as exc:
+                raise IdentityError("active device limit is invalid") from exc
+            if not 1 <= max_active_devices <= 1000:
+                raise IdentityError("active device limit is invalid")
         timestamp = _now_text(now)
         with self.database.connect() as connection:
             self.database.begin_write(connection)
@@ -204,6 +214,20 @@ class IdentityService:
             ).fetchone()
             if row is None:
                 raise IdentityError("pairing token is invalid, expired, or already used")
+            if isinstance(connection, _PostgresConnection):
+                connection.execute(
+                    "SELECT account_id FROM accounts WHERE account_id = ? FOR UPDATE",
+                    (str(row["account_id"]),),
+                ).fetchone()
+            active_device_count = int(
+                connection.execute(
+                    """SELECT COUNT(*) AS n FROM devices
+                        WHERE account_id = ? AND status = 'active'""",
+                    (str(row["account_id"]),),
+                ).fetchone()["n"]
+            )
+            if max_active_devices is not None and active_device_count >= max_active_devices:
+                raise IdentityError("active managed device limit reached")
             existing = connection.execute(
                 "SELECT device_id FROM devices WHERE public_key = ?", (public_key,)
             ).fetchone()
@@ -231,6 +255,8 @@ class IdentityService:
             "device_id": device_id,
             "account_id": str(row["account_id"]),
             "status": "active",
+            "active_device_count": active_device_count + 1,
+            "max_active_devices": max_active_devices,
             "revocation_epoch": int(epoch["epoch"] or 0) if epoch is not None else 0,
         }
 

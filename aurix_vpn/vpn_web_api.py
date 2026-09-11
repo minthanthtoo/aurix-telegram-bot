@@ -1113,12 +1113,29 @@ def create_server(
     )
 
 
+def _optional_positive_int(name: str, *, maximum: int = 1000) -> int | None:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    try:
+        result = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if not 1 <= result <= maximum:
+        raise ValueError(f"{name} is outside the allowed range")
+    return result
+
+
 def main() -> int:
     try:
         port = int(os.environ.get("PORT", "10000"))
         max_age = int(os.environ.get("AURIX_WEB_APP_INIT_DATA_MAX_AGE", "86400"))
+        max_active_devices = _optional_positive_int("AURIX_MAX_ACTIVE_DEVICES")
     except ValueError:
-        print("PORT and AURIX_WEB_APP_INIT_DATA_MAX_AGE must be integers", file=sys.stderr)
+        print(
+            "PORT, AURIX_WEB_APP_INIT_DATA_MAX_AGE, and AURIX_MAX_ACTIVE_DEVICES must be valid integers",
+            file=sys.stderr,
+        )
         return 2
     try:
         runtime = build_runtime_services(
@@ -1140,6 +1157,7 @@ def main() -> int:
                 manifest_signer=signer,
                 route_provider=runtime.commerce.identity.routes_for_account,
                 secret_decryptor=runtime.commerce._decrypt_access_url,
+                max_active_devices=max_active_devices,
             )
         application = AuriXVpnWebApplication(
             runtime,

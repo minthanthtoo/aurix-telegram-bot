@@ -127,6 +127,28 @@ class DeviceAPITest(unittest.TestCase):
         self.assertEqual(status, "200 OK")
         self.assertTrue(paired["device_id"].startswith("device-"))
 
+    def test_pair_enforces_optional_active_device_limit_and_releases_on_revoke(self):
+        self.service.max_active_devices = 1
+        _, first = self.pair()
+        token = self.identity.create_pairing_token(123)
+        second_key = Ed25519PrivateKey.generate()
+        status, value = self.request(
+            "POST",
+            "/v1/devices/pair",
+            json.dumps({"token": token, "public_key": _public_key(second_key)}).encode(),
+        )
+        self.assertEqual(status, "409 Conflict")
+        self.assertIn("active managed device limit reached", value["error"])
+        self.assertTrue(self.identity.revoke_device(123, first["device_id"]))
+        status, paired = self.request(
+            "POST",
+            "/v1/devices/pair",
+            json.dumps({"token": token, "public_key": _public_key(second_key)}).encode(),
+        )
+        self.assertEqual(status, "200 OK")
+        self.assertEqual(paired["active_device_count"], 1)
+        self.assertEqual(paired["max_active_devices"], 1)
+
     def test_config_is_protocol_neutral_and_owned_by_the_account(self):
         timestamp = "2026-09-10T00:00:00+00:00"
         with self.database.connect() as connection:

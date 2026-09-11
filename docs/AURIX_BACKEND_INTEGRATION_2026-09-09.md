@@ -96,7 +96,10 @@ load test, or speed test was changed or performed.
   under the VPN portal when a durable Ed25519 manifest seed is configured. It
   delivers only account-owned, protocol-neutral route metadata/configuration and
   feeds signed connection observations into failover state. Telegram `/pair`,
-  `/devices`, and `/revoke_device` provide the customer control surface.
+  `/devices`, and `/revoke_device` provide the customer control surface. The
+  optional `AURIX_MAX_ACTIVE_DEVICES` setting is enforced inside the pairing
+  transaction, with an account row lock on PostgreSQL; it defaults to unlimited
+  so no device-count product promise is implied.
 - Node-agent boundary: `aurix_vpn.node_agent` provides a bounded authenticated
   client contract for Xray/Hysteria2-compatible agents plus an atomic, tagged
   `XrayConfigWriter`. `aurix_vpn.node_agent_app` now supplies the matching

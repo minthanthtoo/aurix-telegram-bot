@@ -147,7 +147,10 @@ query strings, headers, and user IDs.
 The same HTTPS service can expose the signed managed-device API when
 `AURIX_DEVICE_MANIFEST_PRIVATE_KEY` is configured. Pairing is initiated from
 Telegram with `/pair`; the one-time token is stored only as a hash. The device
-then uses:
+then uses the following API. An optional `AURIX_MAX_ACTIVE_DEVICES` setting
+enforces a bounded number of active devices per account during the pairing
+transaction; when the setting is absent, enrollment remains unlimited for
+compatibility.
 
 - `POST /v1/devices/pair` — consume a one-time token and register an Ed25519
   public key;
@@ -306,8 +309,9 @@ second Telegram account cannot see it.
   or create duplicate billable access. An explicit migration workflow would
   need its own quota-transfer and rollback model before being enabled.
 - A user is identified by verified Telegram account, not by an invented device
-  fingerprint. Device-count limits must be added deliberately to the commerce
-  model before being advertised.
+  fingerprint. The optional active-device ceiling is an account-level control,
+  not proof of physical-device identity; configure and price it per plan before
+  advertising a device-count promise.
 - Receipts are not accepted as arbitrary browser uploads in this version.
 - No product is hidden, cloaked, or routed through a misleading public surface.
 - The service is for lawful, authorized VPN access and customer support.

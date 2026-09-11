@@ -131,13 +131,24 @@ class DeviceAPIService:
         route_provider: Callable[[str], list[dict[str, Any]]],
         secret_decryptor: Callable[[str], str | None] | None = None,
         identity: IdentityService | None = None,
+        max_active_devices: int | None = None,
         clock: Callable[[], float] = time.time,
     ):
+        if max_active_devices is not None:
+            if isinstance(max_active_devices, bool):
+                raise ValueError("max_active_devices must be an integer")
+            try:
+                max_active_devices = int(max_active_devices)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("max_active_devices must be an integer") from exc
+            if not 1 <= max_active_devices <= 1000:
+                raise ValueError("max_active_devices is outside the allowed range")
         self.database = database
         self.identity = identity or IdentityService(database)
         self.manifest_signer = manifest_signer
         self.route_provider = route_provider
         self.secret_decryptor = secret_decryptor
+        self.max_active_devices = max_active_devices
         self.clock = clock
 
     def _authenticate(
@@ -183,12 +194,16 @@ class DeviceAPIService:
         except (ValueError, TypeError, binascii.Error) as exc:
             raise DeviceAPIError("public key is invalid") from exc
         try:
-            result = self.identity.consume_pairing_token(token, public_key, label=label)
+            pairing_options = {"label": label}
+            if self.max_active_devices is not None:
+                pairing_options["max_active_devices"] = self.max_active_devices
+            result = self.identity.consume_pairing_token(token, public_key, **pairing_options)
             result["manifest_signing_key_id"] = self.manifest_signer.key_id
             result["manifest_signing_public_key"] = self.manifest_signer.public_key
             return result
         except IdentityError as exc:
-            raise DeviceAPIError(str(exc)) from exc
+            status_code = 409 if str(exc) == "active managed device limit reached" else 400
+            raise DeviceAPIError(str(exc), status_code=status_code) from exc
 
     def manifest(self, device_id: str) -> dict[str, Any]:
         record = self.identity.device_auth_record(device_id)
@@ -315,7 +330,7 @@ def create_device_wsgi_app(
             status, headers, parts = _response("200 OK", result)
         except (DeviceAPIError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
             status_code = int(getattr(exc, "status_code", 400))
-            reason = {401: "Unauthorized", 404: "Not Found", 413: "Request Entity Too Large", 503: "Service Unavailable"}.get(
+            reason = {401: "Unauthorized", 404: "Not Found", 409: "Conflict", 413: "Request Entity Too Large", 503: "Service Unavailable"}.get(
                 status_code, "Bad Request"
             )
             status, headers, parts = _response(f"{status_code} {reason}", {"error": str(exc)[:240]})
