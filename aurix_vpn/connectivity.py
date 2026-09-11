@@ -2089,6 +2089,7 @@ class FleetController:
             except (TypeError, ValueError, OverflowError):
                 cooldown_clear = False
         guards = {
+            "region_allowlist": bool(selected_region and selected_region in allowed_regions),
             "node_cap": endpoint_count + active_total < max_total,
             "region_node_cap": regional_count + active_region < max_region,
             "daily_creation_cap": created_today < max_daily,

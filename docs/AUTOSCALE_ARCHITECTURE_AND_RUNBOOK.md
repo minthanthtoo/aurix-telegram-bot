@@ -2,7 +2,7 @@
 
 Status: canonical implementation and operating guide  
 Audience: future maintainers and AI agents  
-Last reviewed: 2026-09-02  
+Last reviewed: 2026-09-12  
 Scope: AuriX Telegram commerce control plane and independently managed Outline VPN Droplets
 
 ## 1. Non-negotiable decision
@@ -355,6 +355,18 @@ rules in infrastructure events. Probe external reachability after changes.
 
 The controller first runs in recommendation-only mode.
 
+The local implementation is `FleetController.scale_out_recommendation`. It is a
+read-only decision function: it evaluates fresh endpoint health, enabled
+protocol profiles, plan capacity, durable infrastructure intents, regional and
+global node caps, daily creation limits, cooldown state, and the configured
+region allowlist. It never queues a job or contacts DigitalOcean. The VPN
+Control Center displays this posture as an operator review signal.
+`AURIX_AUTOMATIC_SCALE_ENABLED` remains disabled by default and is not an
+authorization to create infrastructure. The worker still performs the
+provider-side monthly budget/billing check immediately before any provider
+mutation because the recommendation path deliberately has no live billing
+dependency.
+
 Trigger candidates:
 
 ```text
@@ -372,6 +384,14 @@ Mandatory guards:
 - approved size/image/region lists;
 - database lock and unique request fingerprint;
 - owner-confirmation mode until live evidence permits automation.
+
+The durable `FleetController.queue_provision` boundary rechecks these
+admission controls, counts active provision intents toward global and regional
+caps, fails closed on an active intent whose requested region cannot be
+recovered, serializes PostgreSQL provision requests, and uses a unique
+hour-scoped request fingerprint for safe retries. A recommendation is
+`ready_to_queue` only when its selected region is allowlisted and every local
+guard passes; provider mutation remains a separate worker gate.
 
 Scale-out never occurs inside a Telegram callback or payment transaction. The
 user request records durable intent; the worker performs the provider effect.
@@ -553,6 +573,7 @@ Implementation owners:
 | Free/trial/promo placement | `entitlements.ClaimService` |
 | Endpoint-scoped usage, inventory, quota, deletion | `connectivity.py`, `entitlements.py`, `commerce_worker.py` |
 | Guarded DigitalOcean intent/provider lifecycle | `connectivity.DigitalOceanClient`, `connectivity.FleetController` |
+| Recommendation-only scale posture and queue admission | `connectivity.FleetController.scale_out_recommendation`, `connectivity.FleetController.queue_provision` |
 | Admin fleet and per-plan slot controls | `/capacity`, `telegram_commands.py`, `telegram_callbacks.py` |
 | Degraded control-plane startup | `runtime.py` |
 | Regression and provider-fake coverage | `test_connectivity.py`, `test_app.py`, `test_commerce.py`, `test_runtime.py` |

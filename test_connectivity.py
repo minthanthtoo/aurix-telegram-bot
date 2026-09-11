@@ -610,6 +610,14 @@ class DigitalOceanAndFleetTest(unittest.TestCase):
             self.assertTrue(recommended["recommended"])
             self.assertEqual(recommended["trigger"], "no_eligible_endpoint_for_plan")
 
+            with patch.dict(os.environ, {"AURIX_SCALE_REGION": "unknown-region"}, clear=False):
+                blocked = controller.scale_out_recommendation(
+                    plan_code="basic", now=now
+                )
+            self.assertTrue(blocked["recommended"])
+            self.assertFalse(blocked["ready_to_queue"])
+            self.assertIn("region_allowlist", blocked["blocked_by"])
+
     def test_queue_provision_is_idempotent_and_limits_active_intents_by_region(self):
         with tempfile.TemporaryDirectory() as tmp:
             database = initialized_database(Path(tmp) / "fleet.db")
