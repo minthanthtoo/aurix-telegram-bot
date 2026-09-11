@@ -4,7 +4,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from scripts.aurix_ai_release_probe import REQUIRED_ASSETS, run_probe
+from scripts.aurix_ai_release_probe import REQUIRED_ASSETS, REQUIRED_DOCUMENTS, run_probe
 
 
 class _ProbeHandler(BaseHTTPRequestHandler):
@@ -27,6 +27,12 @@ class _ProbeHandler(BaseHTTPRequestHandler):
         if self.path == "/":
             body = self.local_root.joinpath("index.html").read_bytes()
             self._send(200, "text/html", body)
+            return
+        if self.path in {f"/{document}" for document in REQUIRED_DOCUMENTS}:
+            body = self.local_root.parent.parent.joinpath("docs", self.path.lstrip("/")).read_bytes()
+            if self.drift:
+                body += b"\n<!-- legacy guide marker -->\n"
+            self._send(200, "text/markdown", body)
             return
         asset = self.path.lstrip("/")
         if asset in REQUIRED_ASSETS:
@@ -76,6 +82,7 @@ class AuriXAIReleaseProbeTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         checks = {check["name"]: check for check in result["checks"]}
         self.assertFalse(checks["asset_parity"]["ok"])
+        self.assertFalse(checks["document_parity"]["ok"])
         self.assertFalse(checks["protected_route_presence"]["ok"])
 
 

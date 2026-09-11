@@ -31,6 +31,7 @@ REQUIRED_ASSETS = (
     "api-guide.css",
     "api-guide.js",
 )
+REQUIRED_DOCUMENTS = ("AURIX_EXTERNAL_API.md",)
 PROTECTED_ROUTES = ("/api/conversations", "/api/admin/usage")
 MAX_RESPONSE_BYTES = 256 * 1024
 
@@ -139,6 +140,32 @@ def run_probe(
             "name": "asset_parity",
             "ok": all(item["ok"] for item in asset_checks),
             "assets": asset_checks,
+        }
+    )
+
+    document_checks = []
+    for document in REQUIRED_DOCUMENTS:
+        # The image copies the guide beside the browser shell, while the
+        # repository source of truth remains under docs/.
+        local_path = local_root.parent.parent / "docs" / document
+        deployed = _fetch(base_url, "/" + document, timeout=timeout)
+        local_bytes = local_path.read_bytes() if local_path.is_file() else b""
+        document_checks.append(
+            {
+                "document": document,
+                "ok": deployed["status"] == 200
+                and local_path.is_file()
+                and _sha256(local_bytes) == _sha256(deployed.get("body", b"")),
+                "status": deployed["status"],
+                "local_sha256": _sha256(local_bytes),
+                "deployed_sha256": _sha256(deployed.get("body", b"")),
+            }
+        )
+    checks.append(
+        {
+            "name": "document_parity",
+            "ok": all(item["ok"] for item in document_checks),
+            "documents": document_checks,
         }
     )
 
