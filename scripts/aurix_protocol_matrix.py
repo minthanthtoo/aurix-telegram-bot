@@ -11,6 +11,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
+
+# Keep the documented ``python scripts/aurix_protocol_matrix.py`` invocation
+# equivalent to ``python -m`` when launched from the repository root or from a
+# different working directory.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from aurix_vpn.protocol_matrix import ProtocolMatrixRunner
 

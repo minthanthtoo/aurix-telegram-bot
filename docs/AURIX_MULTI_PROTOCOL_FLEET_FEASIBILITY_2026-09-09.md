@@ -1184,14 +1184,17 @@ a production activation decision.
 The read-only Control Center now shows safe fleet/node detail, Outline as enabled, Xray/Hysteria2 as
 evidence-gated candidates, and WireGuard as unimplemented. It does not register
 candidate protocols or expose secrets. The latest local verification passes all
-337 discovered tests after the reproducible Python environment installed OpenCV;
-the earlier 302/303 count is historical.
+346 discovered tests after the reproducible Python environment installed OpenCV;
+the earlier 302/303/337 counts are historical.
 
 The implementation commits are `151186f` (provider backends), `46b9b99`
 (readiness record), `60a9009` (operator readiness view), `890c165`
 (verification refresh), and `e9b978d` (authenticated node-agent integration
-coverage). The reproducible Python 3.13 environment now installs the previously
-missing OpenCV dependency, and complete local discovery passes with 337 tests.
+coverage). The later local control commits are `610e3fa` (confirmed protocol
+promotion), `ffc2da3` (confirmed protocol disable), and `10a0270` (serialized
+disable transition). The reproducible Python 3.13 environment now installs the
+previously missing OpenCV dependency, and complete local discovery passes with
+346 tests.
 Remaining release gates are unchanged: approved
 canary-only node-agent binding, Hysteria2 isolation, Myanmar client paths,
 PostgreSQL concurrency/restore, live staged 2/5/expected-load tests, 24–48 hour
@@ -1199,14 +1202,17 @@ soak, cost evidence, and explicit approval before any server mutation. The local
 operator drain queue/worker path is implemented and covered, but it does not
 replace the live two-node drain, reconnect, and support exercise.
 
-## 21. Local protocol promotion control update — 2026-09-11
+## 21. Local protocol promotion and disable control update — 2026-09-11
 
 The local control plane now exposes the evidence gate through an authorized
 Telegram operator workflow. `/protocolreadiness` is read-only and redacted;
 `/promoteprotocol` requires a five-minute, single-use, state-bound confirmation
-and rechecks fresh evidence at execution. The browser Control Center remains
-read-only, and customer Telegram identities are denied before any commerce
-operation is called.
+and rechecks fresh evidence at execution. `/disableprotocol` uses the same
+confirmation boundary, blocks new allocation without revoking existing
+credentials, and records an audit event. Its state transition re-reads the
+profile inside the write transaction so a concurrent retirement cannot be
+overwritten. The browser Control Center remains read-only, and customer
+Telegram identities are denied before any commerce operation is called.
 
 The complete local regression suite passes `346` tests. This does not change
 the release decision: Xray and Hysteria2 remain candidates until their live
