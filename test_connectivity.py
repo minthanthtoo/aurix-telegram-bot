@@ -182,6 +182,11 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(audit["action"], "protocol_profile_disabled")
         self.assertEqual(audit["actor_id"], "7")
         self.assertEqual(audit["target_id"], "xray:legacy-default")
+        self.registry.register_protocol_profile(
+            "legacy-default", "xray", status="retired", now=now
+        )
+        with self.assertRaisesRegex(ConnectivityError, "retired protocol profile"):
+            self.registry.disable_protocol_profile("legacy-default", "xray", actor_id=7, now=now)
 
     def test_protocol_profile_promotion_requires_fresh_evidence_and_declared_capabilities(self):
         now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)

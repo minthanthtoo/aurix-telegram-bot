@@ -229,6 +229,17 @@ class EndpointRegistry:
         timestamp = self._observation_time(now).isoformat()
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            current = connection.execute(
+                """SELECT profile_id, endpoint_id, protocol, status
+                     FROM endpoint_protocol_profiles
+                    WHERE profile_id = ?""",
+                (str(profile["profile_id"]),),
+            ).fetchone()
+            if current is None:
+                raise ConnectivityError("protocol profile does not exist")
+            current_status = str(current["status"] or "").lower()
+            if current_status == "retired":
+                raise ConnectivityError("retired protocol profile cannot be disabled")
             connection.execute(
                 """UPDATE endpoint_protocol_profiles
                       SET status = 'disabled', retired_at = NULL
@@ -257,7 +268,7 @@ class EndpointRegistry:
                         None if actor_id is None else str(actor_id)[:128],
                         str(profile["profile_id"]),
                         json.dumps(
-                            {"previous_status": profile["status"]},
+                            {"previous_status": current_status},
                             sort_keys=True,
                             separators=(",", ":"),
                         ),
