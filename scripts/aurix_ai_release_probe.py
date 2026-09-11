@@ -20,7 +20,17 @@ from typing import Any
 
 
 REQUIRED_MODES = {"english", "translate", "lisu_assistant"}
-REQUIRED_ASSETS = ("shared.js", "app.js", "admin.html")
+REQUIRED_ASSETS = (
+    "index.html",
+    "styles.css",
+    "shared.js",
+    "app.js",
+    "admin.html",
+    "admin.js",
+    "api-guide.html",
+    "api-guide.css",
+    "api-guide.js",
+)
 PROTECTED_ROUTES = ("/api/conversations", "/api/admin/usage")
 MAX_RESPONSE_BYTES = 256 * 1024
 
