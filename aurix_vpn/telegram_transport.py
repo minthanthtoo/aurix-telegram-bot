@@ -821,6 +821,8 @@ class TelegramBot(
             {"command": "admin", "description": "Open the admin panel"},
             {"command": "promo", "description": "View and configure promo campaign"},
             {"command": "provisionnode", "description": "Queue a guarded VPN node intent"},
+            {"command": "failsafety", "description": "View failover safety budgets"},
+            {"command": "setsafety", "description": "Pause or budget failover migrations"},
         ]
         for admin_id in self.admin_ids:
             scope = {"type": "chat", "chat_id": admin_id}

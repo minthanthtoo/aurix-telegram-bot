@@ -2187,6 +2187,8 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 "admin",
                 "promo",
                 "provisionnode",
+                "failsafety",
+                "setsafety",
             },
         )
 
