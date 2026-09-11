@@ -492,6 +492,23 @@ class EndpointRegistryTest(unittest.TestCase):
         with self.assertRaisesRegex(ConnectivityError, "enabled xray protocol profile"):
             self.registry.transfer_assignment("paid:sub-1", "bkk-xray", now=now)
 
+    def test_transfer_assignment_rejects_degraded_target_for_normal_move(self):
+        now = datetime.now(UTC)
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, region, state, accepts_new_assignments,
+                    created_at, last_healthy_at)
+                   VALUES ('bkk-degraded', 'BKK-DEGRADED', 'bkk1', 'DEGRADED', 1, ?, ?)""",
+                (now.isoformat(), now.isoformat()),
+            )
+        assignment = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000, now=now
+        )
+        with self.assertRaisesRegex(ConnectivityError, "target endpoint is not available"):
+            self.registry.transfer_assignment("paid:sub-1", "bkk-degraded", now=now)
+        self.assertEqual(self.registry.assignment_for_subscription("sub-1").endpoint_id, assignment.endpoint_id)
+
     def test_preferred_endpoint_is_honored_inside_capacity_selection(self):
         now = datetime.now(UTC)
         with self.database.connect() as connection:
@@ -520,6 +537,66 @@ class EndpointRegistryTest(unittest.TestCase):
         endpoint = self.registry.list_customer_endpoints("basic")[0]
         self.assertFalse(endpoint["healthy"])
         self.assertFalse(endpoint["eligible"])
+
+    def test_capacity_health_uses_hysteresis_and_audits_automatic_transitions(self):
+        now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+        with patch.dict(
+            os.environ,
+            {
+                "AURIX_ENDPOINT_DEGRADE_FAILURES": "2",
+                "AURIX_ENDPOINT_RECOVER_SUCCESSES": "2",
+            },
+            clear=False,
+        ):
+            first_failure = self.registry.record_capacity(
+                "legacy-default",
+                healthy=False,
+                active_key_count=None,
+                observed_transfer_bytes=None,
+                management_latency_ms=100,
+                last_error="timeout",
+                now=now,
+            )
+            second_failure = self.registry.record_capacity(
+                "legacy-default",
+                healthy=False,
+                active_key_count=None,
+                observed_transfer_bytes=None,
+                management_latency_ms=100,
+                last_error="timeout",
+                now=now + timedelta(seconds=1),
+            )
+            first_recovery = self.registry.record_capacity(
+                "legacy-default",
+                healthy=True,
+                active_key_count=0,
+                observed_transfer_bytes=0,
+                management_latency_ms=10,
+                now=now + timedelta(seconds=2),
+            )
+            second_recovery = self.registry.record_capacity(
+                "legacy-default",
+                healthy=True,
+                active_key_count=0,
+                observed_transfer_bytes=0,
+                management_latency_ms=10,
+                now=now + timedelta(seconds=3),
+            )
+        self.assertEqual((first_failure["state"], first_failure["transitioned"]), ("ACTIVE", False))
+        self.assertEqual((second_failure["state"], second_failure["transitioned"]), ("DEGRADED", True))
+        self.assertEqual((first_recovery["state"], first_recovery["transitioned"]), ("DEGRADED", False))
+        self.assertEqual((second_recovery["state"], second_recovery["transitioned"]), ("ACTIVE", True))
+        with self.database.connect() as connection:
+            audits = connection.execute(
+                """SELECT action, metadata_json
+                     FROM audit_events
+                    WHERE action = 'endpoint_health_state_changed'
+                      AND target_id = 'legacy-default'
+                    ORDER BY id"""
+            ).fetchall()
+        self.assertEqual(len(audits), 2)
+        self.assertEqual(json.loads(audits[0]["metadata_json"])["next_state"], "DEGRADED")
+        self.assertEqual(json.loads(audits[1]["metadata_json"])["next_state"], "ACTIVE")
 
     def test_customer_directory_requires_enabled_protocol_profile(self):
         self.registry.register_protocol_profile("legacy-default", "outline", status="disabled")

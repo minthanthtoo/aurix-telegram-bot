@@ -362,6 +362,16 @@ class EndpointRegistry:
             parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).astimezone(UTC)
 
+    @staticmethod
+    def _health_threshold(name: str, default: int) -> int:
+        try:
+            value = int(os.environ.get(name, str(default)))
+        except (TypeError, ValueError) as exc:
+            raise ConnectivityError(f"{name} is invalid") from exc
+        if not 1 <= value <= 100:
+            raise ConnectivityError(f"{name} is invalid")
+        return value
+
     def record_protocol_observation(
         self,
         endpoint_id: str,
@@ -1717,7 +1727,8 @@ class EndpointRegistry:
                     GROUP BY e.id, e.state, e.accepts_new_assignments, e.max_active_keys""",
                 (target_id,),
             ).fetchone()
-            if target is None or str(target["state"]) not in {"ACTIVE", "DEGRADED", "DRAINING"}:
+            allowed_target_states = {"ACTIVE", "DRAINING"} if rollback else {"ACTIVE"}
+            if target is None or str(target["state"]).upper() not in allowed_target_states:
                 raise ConnectivityError("target endpoint is not available")
             if not rollback and target["accepts_new_assignments"] in (False, 0):
                 raise ConnectivityError("target endpoint is not accepting assignments")
@@ -1815,10 +1826,24 @@ class EndpointRegistry:
         last_error: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
+        failure_threshold = self._health_threshold(
+            "AURIX_ENDPOINT_DEGRADE_FAILURES", 2
+        )
+        recovery_threshold = self._health_threshold(
+            "AURIX_ENDPOINT_RECOVER_SUCCESSES", 2
+        )
         timestamp = (now or datetime.now(UTC)).isoformat()
         snapshot_id = uuid.uuid4().hex
         with self.database.connect() as connection:
             self.database.begin_write(connection)
+            lock = " FOR UPDATE" if isinstance(connection, _PostgresConnection) else ""
+            endpoint = connection.execute(
+                "SELECT state FROM vpn_endpoints WHERE id = ?" + lock,
+                (endpoint_id,),
+            ).fetchone()
+            if endpoint is None:
+                raise ConnectivityError("VPN endpoint does not exist")
+            current_state = str(endpoint["state"] or "ACTIVE").upper()
             connection.execute(
                 """INSERT INTO endpoint_capacity_snapshots
                    (id, endpoint_id, observed_at, healthy, active_key_count,
@@ -1835,20 +1860,67 @@ class EndpointRegistry:
                     (last_error or "")[:500] or None,
                 ),
             )
+            history = connection.execute(
+                """SELECT healthy FROM endpoint_capacity_snapshots
+                    WHERE endpoint_id = ?
+                    ORDER BY observed_at DESC, id DESC
+                    LIMIT ?""",
+                (endpoint_id, max(failure_threshold, recovery_threshold)),
+            ).fetchall()
+            latest_health = bool(history[0]["healthy"]) if history else bool(healthy)
+            health_streak = 0
+            for row in history:
+                if bool(row["healthy"]) != latest_health:
+                    break
+                health_streak += 1
+            next_state = current_state
+            if current_state not in {"DRAINING", "RETIRED"}:
+                if (
+                    not latest_health
+                    and health_streak >= failure_threshold
+                    and current_state == "ACTIVE"
+                ):
+                    next_state = "DEGRADED"
+                elif (
+                    latest_health
+                    and health_streak >= recovery_threshold
+                    and current_state == "DEGRADED"
+                ):
+                    next_state = "ACTIVE"
             connection.execute(
                 """UPDATE vpn_endpoints SET
                      last_healthy_at = CASE WHEN ? THEN ? ELSE last_healthy_at END,
-                     state = CASE WHEN ? THEN
-                               CASE WHEN state = 'DEGRADED' THEN 'ACTIVE' ELSE state END
-                              WHEN state = 'ACTIVE' THEN 'DEGRADED' ELSE state END
+                     state = ?
                    WHERE id = ?""",
-                (healthy, timestamp, healthy, endpoint_id),
+                (healthy, timestamp, next_state, endpoint_id),
             )
+            transitioned = next_state != current_state
+            if transitioned:
+                self._record_audit_event(
+                    connection,
+                    actor_type="system",
+                    actor_id=None,
+                    action="endpoint_health_state_changed",
+                    target_type="vpn_endpoint",
+                    target_id=str(endpoint_id),
+                    metadata={
+                        "previous_state": current_state,
+                        "next_state": next_state,
+                        "healthy": latest_health,
+                        "health_streak": health_streak,
+                        "failure_threshold": failure_threshold,
+                        "recovery_threshold": recovery_threshold,
+                    },
+                    created_at=timestamp,
+                )
         return {
             "id": snapshot_id,
             "endpoint_id": endpoint_id,
             "observed_at": timestamp,
             "healthy": healthy,
+            "state": next_state,
+            "health_streak": health_streak,
+            "transitioned": transitioned,
             "active_key_count": active_key_count,
             "observed_transfer_bytes": observed_transfer_bytes,
             "management_latency_ms": management_latency_ms,

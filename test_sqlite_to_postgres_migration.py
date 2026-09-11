@@ -287,6 +287,43 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                                    'local-rehearsal', 'bkk1', 'ACTIVE', TRUE, ?, ?)""",
                         (now.isoformat(), now.isoformat()),
                     )
+                first_health = registry.record_capacity(
+                    "postgres-failover-target",
+                    healthy=False,
+                    active_key_count=None,
+                    observed_transfer_bytes=None,
+                    management_latency_ms=20,
+                    last_error="postgres-rehearsal-timeout",
+                    now=now,
+                )
+                second_health = registry.record_capacity(
+                    "postgres-failover-target",
+                    healthy=False,
+                    active_key_count=None,
+                    observed_transfer_bytes=None,
+                    management_latency_ms=20,
+                    last_error="postgres-rehearsal-timeout",
+                    now=now + timedelta(seconds=1),
+                )
+                self.assertEqual(first_health["state"], "ACTIVE")
+                self.assertEqual(second_health["state"], "DEGRADED")
+                registry.record_capacity(
+                    "postgres-failover-target",
+                    healthy=True,
+                    active_key_count=0,
+                    observed_transfer_bytes=0,
+                    management_latency_ms=5,
+                    now=now + timedelta(seconds=2),
+                )
+                recovered_health = registry.record_capacity(
+                    "postgres-failover-target",
+                    healthy=True,
+                    active_key_count=0,
+                    observed_transfer_bytes=0,
+                    management_latency_ms=5,
+                    now=now + timedelta(seconds=3),
+                )
+                self.assertEqual(recovered_health["state"], "ACTIVE")
                 required_signals = ("management", "direct_client")
                 required_capabilities = ("per_customer_auth", "usage_stats")
                 for endpoint_id in ("legacy-default", "postgres-failover-target"):

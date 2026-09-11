@@ -183,6 +183,17 @@ class RouteFailoverTest(unittest.TestCase):
         )
         self.assertIsNotNone(observed["decision_id"])
 
+    def test_degraded_endpoint_is_not_selected_as_migration_target(self):
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE vpn_endpoints SET state = 'DEGRADED' WHERE id = 'bkk-a'"
+            )
+        preview = self.failover.endpoint_drain_preview(
+            "sg-a", target_endpoint_id="bkk-a", limit=10
+        )
+        self.assertFalse(preview["target_available"])
+        self.assertEqual(preview["target_endpoint_id"], "bkk-a")
+
 
 if __name__ == "__main__":
     unittest.main()

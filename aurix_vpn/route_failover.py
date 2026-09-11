@@ -118,7 +118,7 @@ class RouteFailoverService:
                              e.max_active_keys, COUNT(a.id) AS active_count FROM vpn_endpoints e
                     LEFT JOIN endpoint_assignments a
                       ON a.endpoint_id = e.id AND a.status = 'active'
-                   WHERE e.id <> ? AND UPPER(e.state) IN ('ACTIVE', 'DEGRADED')
+                   WHERE e.id <> ? AND UPPER(e.state) = 'ACTIVE'
                      AND e.accepts_new_assignments = {true}
                      {target_filter}
                      {protocol_filter}
@@ -210,7 +210,7 @@ class RouteFailoverService:
             "target_endpoint_id": str(target["id"]) if target else None,
             "target_code": str(target["code"] or target["id"]) if target else None,
             "target_available": target is not None
-            and str(target["state"]).upper() in {"ACTIVE", "DEGRADED"}
+            and str(target["state"]).upper() == "ACTIVE"
             and target["accepts_new_assignments"] not in (False, 0)
             and not missing_protocols,
             "protocols": source_protocols,
