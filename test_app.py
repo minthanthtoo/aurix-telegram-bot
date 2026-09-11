@@ -735,6 +735,21 @@ class MaintenanceCommerceService:
         return 0
 
 
+class ManagedMaintenanceCommerceService(MaintenanceCommerceService):
+    def __init__(self):
+        super().__init__()
+        self.managed_route_provider = lambda _endpoint_id, _protocol: {
+            "endpoint_id": "sg-a",
+            "protocol": "xray",
+        }
+        self.managed_adapter_provider = object()
+        self.managed_calls = []
+
+    def enforce_managed_quotas(self, **kwargs):
+        self.managed_calls.append(kwargs)
+        return {"status": "completed"}
+
+
 class FailingQuotaClaimService(MaintenanceClaimService):
     def enforce_quota(self, metrics=None):
         self.metrics = metrics
@@ -1151,6 +1166,26 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIs(commerce.metrics, outline.snapshot)
         self.assertEqual(claim.expiry_calls, 1)
         self.assertEqual(commerce.process_calls, 1)
+
+    def test_maintenance_runs_managed_quota_stage_only_when_explicitly_bound(self):
+        outline = MaintenanceOutline()
+        claim = MaintenanceClaimService(outline)
+        commerce = ManagedMaintenanceCommerceService()
+        bot = TelegramBot("test-token", claim, commerce)
+        bot._send_termination_notices = lambda: None
+        bot._send_pending_notifications = lambda: None
+
+        bot._run_maintenance()
+
+        self.assertEqual(len(commerce.managed_calls), 1)
+        self.assertIs(
+            commerce.managed_calls[0]["route_provider"],
+            commerce.managed_route_provider,
+        )
+        self.assertIs(
+            commerce.managed_calls[0]["adapter_provider"],
+            commerce.managed_adapter_provider,
+        )
 
     def test_maintenance_expiry_runs_when_quota_stage_fails(self):
         outline = MaintenanceOutline()

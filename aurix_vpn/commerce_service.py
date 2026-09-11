@@ -44,6 +44,8 @@ class CommerceService(CommerceWorkerMixin):
         receipt_storage_required: bool = False,
         connectivity: Any | None = None,
         adapter_registry: ConnectivityAdapterRegistry | None = None,
+        managed_route_provider: Any | None = None,
+        managed_adapter_provider: Any | None = None,
     ):
         self.database = database
         self.outline = outline
@@ -54,6 +56,11 @@ class CommerceService(CommerceWorkerMixin):
         self.receipt_storage_required = bool(receipt_storage_required)
         self.connectivity = connectivity
         self.adapter_registry = adapter_registry or ConnectivityAdapterRegistry()
+        # Non-Outline route material is deployment-specific. Keep this
+        # binding explicit so the scheduler cannot guess a customer-facing
+        # address or accidentally route managed traffic through Outline.
+        self.managed_route_provider = managed_route_provider
+        self.managed_adapter_provider = managed_adapter_provider
         self.identity = IdentityService(database)
         self.failover = RouteFailoverService(database)
         try:

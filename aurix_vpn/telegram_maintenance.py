@@ -216,6 +216,18 @@ class TelegramMaintenanceMixin:
         run_stage("termination_notices", self._send_termination_notices)
         if self.commerce is not None:
             run_stage("paid_quota", lambda: self.commerce.enforce_quotas(metrics=metrics))
+            managed_quota = getattr(self.commerce, "enforce_managed_quotas", None)
+            managed_routes = getattr(self.commerce, "managed_route_provider", None)
+            if callable(managed_quota) and callable(managed_routes):
+                managed_adapter = getattr(self.commerce, "managed_adapter_provider", None)
+                run_stage(
+                    "managed_quota",
+                    lambda: managed_quota(
+                        route_provider=managed_routes,
+                        adapter_provider=managed_adapter,
+                        now=datetime.now(UTC),
+                    ),
+                )
             run_stage("paid_expiry", self.commerce.expire_and_process)
             identity = getattr(self.commerce, "identity", None)
             expire_pairing = getattr(identity, "expire_pairing_tokens", None)
