@@ -1198,3 +1198,18 @@ PostgreSQL concurrency/restore, live staged 2/5/expected-load tests, 24–48 hou
 soak, cost evidence, and explicit approval before any server mutation. The local
 operator drain queue/worker path is implemented and covered, but it does not
 replace the live two-node drain, reconnect, and support exercise.
+
+## 21. Local protocol promotion control update — 2026-09-11
+
+The local control plane now exposes the evidence gate through an authorized
+Telegram operator workflow. `/protocolreadiness` is read-only and redacted;
+`/promoteprotocol` requires a five-minute, single-use, state-bound confirmation
+and rechecks fresh evidence at execution. The browser Control Center remains
+read-only, and customer Telegram identities are denied before any commerce
+operation is called.
+
+The complete local regression suite passes `345` tests. This does not change
+the release decision: Xray and Hysteria2 remain candidates until their live
+per-customer lifecycle, quota, restart, outage, client-path, concurrency, soak,
+and accounting evidence is accepted. BKK-A remains Outline-only and no live
+protocol profile was promoted.

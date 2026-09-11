@@ -1,4 +1,4 @@
-# AuriX backend integration record — 2026-09-09 / continuation 2026-09-10
+# AuriX backend integration record — 2026-09-09 / continuation 2026-09-11
 
 Status: local implementation plus a bounded, disposable SG-A Xray canary. No
 occupied production service, customer credential, backend deployment, database,
@@ -193,10 +193,11 @@ queueing pauses new source assignments and preserves order/payment/entitlement
 identity while the verified worker owns target provision, probes, assignment
 transfer, lease transfer, and commit.
 
-The current checkout has `341` discovered test entries, and complete discovery
-passes (`Ran 341 tests ... OK`) after the reproducible Python environment added
-the previously missing OpenCV dependency. Ruff, Python compilation, JavaScript
-syntax validation, and `git diff --check` pass for the continuation files. Notification
+The current checkout had `341` discovered test entries at this checkpoint, and
+complete discovery passed (`Ran 341 tests ... OK`) after the reproducible Python
+environment added the previously missing OpenCV dependency. Ruff, Python
+compilation, JavaScript syntax validation, and `git diff --check` pass for the
+continuation files. Notification
 delivery now claims due rows with a bounded lease and token-guarded completion,
 so a second worker cannot duplicate a live claim and a stale worker cannot
 complete a reclaimed row. Daily free and monthly trial issuance now use the
@@ -206,6 +207,23 @@ durable reservation and retry boundary, including capacity release on provider
 failure. Backup/restore artifact creation, isolated SQLite restore verification,
 and receipt-path reconciliation are also covered by tests. The resulting commits are recorded in
 Git history after this verification.
+
+## Continuation verification — 2026-09-11
+
+The protocol promotion operator surface is now complete locally. Telegram
+admins can inspect a redacted `/protocolreadiness` preview and can request
+`/promoteprotocol` only through the existing durable, single-use confirmation
+boundary. Confirmation fingerprints bind profile state, required evidence,
+capabilities, and evidence timestamps while ignoring only the preview's
+volatile `checked_at` timestamp; the promotion method rechecks all evidence
+before enabling the profile. Customer identities cannot reach either command.
+
+The complete suite now passes `345` tests (`Ran 345 tests ... OK`) with
+`PYTHONWARNINGS=error::ResourceWarning`; focused Telegram authorization and
+promotion tests, Python compilation, Ruff, and `git diff --check` also pass.
+This verification is local only: no server, database, credential, customer,
+load-test, or speed-test state was changed. The implementation is committed as
+`610e3fa` (`Add confirmed protocol promotion workflow`).
 
 ## Remaining gates and next action
 
