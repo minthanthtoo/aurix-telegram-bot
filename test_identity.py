@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from commerce import CommerceDatabase
+from commerce import CommerceDatabase, CommerceError
 from aurix_vpn.commerce_repositories import _PostgresConnection
 from aurix_vpn.commerce_worker import CommerceWorkerMixin
 from identity import IdentityError, IdentityService
@@ -233,6 +233,31 @@ class IdentityAccountingTest(unittest.TestCase):
         self.assertEqual(result["credited_bytes"], 0)
         self.assertEqual(len(adapter.grants), 0)
         self.assertEqual(result["errors"][0]["error"], "CommerceError")
+
+    def test_managed_revoke_rejects_a_route_identity_mismatch(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)
+        generation = self.identity.ensure_generation_for_credential(
+            entitlement,
+            "sg-a",
+            credential_id="xray-revoke",
+            external_id="xray-revoke",
+            protocol="xray",
+            access_url_ciphertext="vless://xray-revoke@example.com:18443",
+            usage_baseline_provenance="new",
+            now=self.now.isoformat(),
+        )
+        self.identity.ensure_generation_lease(
+            entitlement, generation, "sg-a", 1000, (self.now + timedelta(days=1)).isoformat(), now=self.now
+        )
+        worker = ManagedQuotaWorkerHarness(self.database, self.identity)
+        worker.managed_route_provider = lambda _endpoint_id, _protocol: {
+            "route_id": "xray:bkk-a",
+            "endpoint_id": "bkk-a",
+            "protocol": "xray",
+        }
+        worker.managed_adapter_provider = lambda _route: object()
+        with self.assertRaisesRegex(CommerceError, "route does not match generation"):
+            worker._revoke_generation_set(entitlement, self.now)
 
     def test_failover_generations_share_one_quota_and_never_double_credit(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)

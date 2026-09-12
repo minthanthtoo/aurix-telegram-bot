@@ -1255,8 +1255,10 @@ class CommerceWorkerMixin:
             managed_route = getattr(self, "managed_route_provider", None)
             if protocol != "outline" and callable(managed_route):
                 route = dict(managed_route(endpoint_id, protocol))
-                route.setdefault("protocol", protocol)
-                route.setdefault("endpoint_id", endpoint_id)
+                route_protocol = str(route.get("protocol") or "").strip().lower()
+                route_endpoint = str(route.get("endpoint_id") or "").strip()
+                if route_protocol != protocol or route_endpoint != endpoint_id:
+                    raise CommerceError("managed revoke route does not match generation")
                 route.setdefault("route_id", f"{protocol}:{endpoint_id}")
             client = None
             if protocol == "outline":
