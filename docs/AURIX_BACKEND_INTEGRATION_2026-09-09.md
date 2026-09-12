@@ -570,3 +570,11 @@ complete non-PostgreSQL VPN regression passes `355` tests and the disposable Pos
 all `3` tests. These are local contract and migration checks only: no live
 provider, server, customer credential, BKK-A protocol promotion, load/speed
 test, soak, or production database cutover was performed.
+
+The endpoint-drain preview and mutation now fail closed when an active
+assignment has no matching active credential generation and quota lease. This
+covers the pre-provisioning window for managed protocols: operators can see
+the blocker count and protocol names, while a drain leaves the source ACTIVE
+until the pending assignment is reconciled. The route-failover regression now
+covers a pending Xray assignment and the complete non-PostgreSQL VPN suite
+passes `356` tests after this guard.

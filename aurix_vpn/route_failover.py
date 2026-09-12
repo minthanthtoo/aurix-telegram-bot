@@ -442,6 +442,55 @@ class RouteFailoverService:
         ).fetchone()
         return dict(row) if row is not None else None
 
+    @staticmethod
+    def _unmigratable_assignments(connection: Any, source_endpoint_id: str) -> list[dict[str, Any]]:
+        """Find active assignments that have no live accounting generation.
+
+        Endpoint assignments are created before remote credential generation.
+        Draining such an endpoint without first resolving the pending
+        assignment would leave the assignment pinned to a source that no
+        longer accepts new work, and a retry could provision it there anyway.
+        Keep the drain operation fail-closed until the generation/lease pair
+        exists and can be migrated by the normal executor.
+        """
+        assignments = connection.execute(
+            """SELECT id, subscription_id, free_key_id,
+                              LOWER(COALESCE(NULLIF(protocol, ''), 'outline')) AS protocol
+                 FROM endpoint_assignments
+                WHERE endpoint_id = ? AND status = 'active'
+                ORDER BY id""",
+            (str(source_endpoint_id),),
+        ).fetchall()
+        if not assignments:
+            return []
+        live_generations = connection.execute(
+            """SELECT DISTINCT g.entitlement_key
+                 FROM credential_generations g
+                 JOIN quota_leases l ON l.generation_id = g.generation_id
+                    AND l.status = 'active'
+                WHERE g.endpoint_id = ? AND g.status = 'active'""",
+            (str(source_endpoint_id),),
+        ).fetchall()
+        live_entitlements = {str(row["entitlement_key"]) for row in live_generations}
+        blockers: list[dict[str, Any]] = []
+        for assignment in assignments:
+            if assignment["subscription_id"] is not None:
+                entitlement_key = f"paid:{assignment['subscription_id']}"
+            elif assignment["free_key_id"] is not None:
+                entitlement_key = f"free:{assignment['free_key_id']}"
+            else:
+                entitlement_key = ""
+            if entitlement_key in live_entitlements:
+                continue
+            blockers.append(
+                {
+                    "assignment_id": str(assignment["id"]),
+                    "entitlement_key": entitlement_key or None,
+                    "protocol": str(assignment["protocol"] or "outline").strip().lower(),
+                }
+            )
+        return blockers
+
     def endpoint_drain_preview(
         self,
         source_endpoint_id: str,
@@ -464,6 +513,7 @@ class RouteFailoverService:
             ).fetchone()
             if source is None:
                 raise FailoverError("source endpoint does not exist")
+            unmigratable_assignments = self._unmigratable_assignments(connection, source_id)
             target = (
                 connection.execute(
                     "SELECT id, code, state, accepts_new_assignments FROM vpn_endpoints WHERE id = ?",
@@ -525,10 +575,15 @@ class RouteFailoverService:
             "target_available": target is not None
             and str(target["state"]).upper() == "ACTIVE"
             and target["accepts_new_assignments"] not in (False, 0)
-            and not missing_protocols,
+            and not missing_protocols
+            and not unmigratable_assignments,
             "protocols": source_protocols,
             "target_protocols": target_protocols,
             "missing_protocols": missing_protocols,
+            "unmigratable_assignments": len(unmigratable_assignments),
+            "unmigratable_assignment_protocols": sorted(
+                {item["protocol"] for item in unmigratable_assignments}
+            ),
             "active_generations": min(int(candidates["n"] or 0), bounded_limit),
             "queued_decisions": int(queued["n"] or 0),
             "limit": bounded_limit,
@@ -570,6 +625,13 @@ class RouteFailoverService:
                 raise FailoverError("source endpoint does not exist")
             if str(source["state"]).upper() == "RETIRED":
                 raise FailoverError("retired endpoint cannot be drained")
+            unmigratable_assignments = self._unmigratable_assignments(connection, source_id)
+            if unmigratable_assignments:
+                protocols = sorted({item["protocol"] for item in unmigratable_assignments})
+                raise FailoverError(
+                    "endpoint has active assignments without migratable credential generations"
+                    f" ({len(unmigratable_assignments)}; protocols: {', '.join(protocols)})"
+                )
             generations = connection.execute(
                 """SELECT DISTINCT g.generation_id, g.entitlement_key,
                                   LOWER(COALESCE(NULLIF(g.protocol, ''), 'outline')) AS protocol

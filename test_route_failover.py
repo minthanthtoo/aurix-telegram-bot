@@ -316,6 +316,33 @@ class RouteFailoverTest(unittest.TestCase):
         self.assertEqual(decision["decision_id"], result["decision_ids"][0])
         self.assertEqual(decision["policy_version"], 1)
 
+    def test_operator_drain_fails_closed_for_pending_protocol_assignment(self):
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO endpoint_assignments
+                   (id, endpoint_id, subscription_id, free_key_id, plan_code,
+                    status, reason, reserved_quota_bytes, assigned_at, protocol)
+                   VALUES ('pending-xray-assignment', 'sg-a', 'sub-1', NULL,
+                           'basic_50gb', 'active', 'test-pending-generation',
+                           1000, ?, 'xray')""",
+                (self.now.isoformat(),),
+            )
+
+        preview = self.failover.endpoint_drain_preview("sg-a", limit=10)
+        self.assertEqual(preview["unmigratable_assignments"], 1)
+        self.assertEqual(preview["unmigratable_assignment_protocols"], ["xray"])
+        self.assertFalse(preview["target_available"])
+        with self.assertRaisesRegex(
+            FailoverError, "active assignments without migratable credential generations"
+        ):
+            self.failover.request_endpoint_drain("sg-a", limit=10, now=self.now)
+        with self.database.connect() as connection:
+            endpoint = connection.execute(
+                "SELECT state, accepts_new_assignments FROM vpn_endpoints WHERE id = 'sg-a'"
+            ).fetchone()
+        self.assertEqual(endpoint["state"], "ACTIVE")
+        self.assertTrue(bool(endpoint["accepts_new_assignments"]))
+
     def test_protocol_profile_is_required_for_failover_and_drain(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
         source = self.identity.create_generation(
