@@ -595,4 +595,4 @@ The failover executor also now requires a durable assignment transfer result
 before moving the accounting lease; a missing reservation or malformed
 transfer response rolls the newly provisioned target back instead of
 committing an unowned route. The complete non-PostgreSQL VPN suite passes
-`359` tests with this reservation/lease ordering guard.
+`360` tests with this reservation/lease ordering guard.
