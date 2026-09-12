@@ -1758,31 +1758,62 @@ class EndpointRegistry:
         ).fetchone()
         return row is not None
 
-    def _known_outline_external_ids(self, connection: Any) -> dict[str, set[str]]:
-        """Return durable Outline IDs by endpoint without exposing them."""
-        known: dict[str, set[str]] = {}
+    @staticmethod
+    def _table_columns(connection: Any, table: str) -> set[str]:
+        if isinstance(connection, _PostgresConnection):
+            rows = connection.execute(
+                """SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = ?""",
+                (table,),
+            ).fetchall()
+            return {str(row["column_name"]) for row in rows}
+        rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
+        return {str(row["name"] if "name" in row.keys() else row[1]) for row in rows}
+
+    def _known_protocol_external_ids(
+        self, connection: Any
+    ) -> dict[tuple[str, str], set[str]]:
+        """Return durable provider IDs by endpoint/protocol without exposing them."""
+        known: dict[tuple[str, str], set[str]] = {}
         sources = (
-            ("credential_generations", "endpoint_id, external_id", "protocol = 'outline'"),
+            (
+                "credential_generations",
+                "endpoint_id, protocol, external_id",
+                "protocol IS NOT NULL",
+            ),
             ("paid_vpn_keys", "endpoint_id, outline_key_id", "1 = 1"),
             ("keys", "endpoint_id, outline_key_id", "1 = 1"),
         )
         for table, columns, predicate in sources:
             if not self._table_exists(connection, table):
                 continue
+            available = self._table_columns(connection, table)
+            if not set(columns.replace(" ", "").split(",")).issubset(available):
+                continue
             rows = connection.execute(
                 f"SELECT {columns} FROM {table} WHERE {predicate}"
             ).fetchall()
             for row in rows:
                 endpoint_id = str(row["endpoint_id"] or "").strip()
-                raw_external_id = (
-                    row["external_id"]
-                    if "external_id" in row.keys()
-                    else row["outline_key_id"]
+                protocol = (
+                    str(row["protocol"] or "").strip().lower()
+                    if "protocol" in row.keys()
+                    else "outline"
                 )
+                raw_external_id = row["external_id"] if "external_id" in row.keys() else row["outline_key_id"]
                 external_id = str(raw_external_id or "").strip()
-                if endpoint_id and external_id:
-                    known.setdefault(endpoint_id, set()).add(external_id)
+                if endpoint_id and protocol and external_id:
+                    known.setdefault((endpoint_id, protocol), set()).add(external_id)
         return known
+
+    def _known_outline_external_ids(self, connection: Any) -> dict[str, set[str]]:
+        """Compatibility view of durable Outline IDs by endpoint."""
+        known = self._known_protocol_external_ids(connection)
+        return {
+            endpoint_id: external_ids
+            for (endpoint_id, protocol), external_ids in known.items()
+            if protocol == "outline"
+        }
 
     def persist_inventory_snapshot(
         self,
@@ -1798,7 +1829,14 @@ class EndpointRegistry:
         A failed endpoint is left untouched so a transient outage cannot turn
         all of its known keys into false absences.
         """
-        scoped = inventory.get("byEndpoint") if isinstance(inventory, dict) else None
+        scoped = inventory.get("byEndpointProtocol") if isinstance(inventory, dict) else None
+        if not isinstance(scoped, dict) and isinstance(inventory, dict):
+            legacy = inventory.get("byEndpoint")
+            if isinstance(legacy, dict):
+                scoped = {
+                    str(endpoint_id): {"outline": values}
+                    for endpoint_id, values in legacy.items()
+                }
         errors = inventory.get("errors") if isinstance(inventory, dict) else None
         if not isinstance(scoped, dict):
             return {
@@ -1811,86 +1849,128 @@ class EndpointRegistry:
             }
         timestamp = self._observation_time(now).isoformat()
         source_text = str(source or "maintenance").strip()[:64] or "maintenance"
+        normalized_scoped: dict[tuple[str, str], dict[str, Any]] = {}
         result = {
             "status": "healthy",
             "endpoints": 0,
             "remote_keys": 0,
             "managed_present": 0,
             "unmanaged_present": 0,
+            "protocols": {},
             "errors": {
                 str(endpoint): str(value)[:128]
                 for endpoint, value in (errors.items() if isinstance(errors, dict) else ())
             },
         }
+        for raw_endpoint, protocol_values in scoped.items():
+            endpoint = str(raw_endpoint or "").strip()
+            if not endpoint or not isinstance(protocol_values, dict):
+                if endpoint:
+                    result["errors"][endpoint] = "invalid_payload"
+                continue
+            for raw_protocol, values in protocol_values.items():
+                protocol = str(raw_protocol or "").strip().lower()
+                if (
+                    not protocol
+                    or len(protocol) > 64
+                    or any(char.isspace() for char in protocol)
+                    or not isinstance(values, dict)
+                ):
+                    result["errors"][f"{endpoint}:{raw_protocol}"] = "invalid_payload"
+                    continue
+                normalized_scoped[(endpoint, protocol)] = values
         with self.database.connect() as connection:
             if not self._table_exists(connection, "endpoint_key_inventory"):
                 result["status"] = "unavailable"
                 result["errors"]["inventory"] = "schema_missing"
                 return result
-            known = self._known_outline_external_ids(connection)
+            if "protocol" not in self._table_columns(connection, "endpoint_key_inventory"):
+                result["status"] = "unavailable"
+                result["errors"]["inventory"] = "protocol_schema_missing"
+                return result
+            known = self._known_protocol_external_ids(connection)
             existing_rows = connection.execute(
-                "SELECT endpoint_id, external_id_ciphertext, classification FROM endpoint_key_inventory"
+                """SELECT endpoint_id, protocol, external_id_ciphertext, classification
+                     FROM endpoint_key_inventory"""
             ).fetchall()
-            existing: dict[tuple[str, str], Any] = {}
+            existing: dict[tuple[str, str, str], Any] = {}
             for row in existing_rows:
                 try:
                     external_id = self._decrypt(str(row["external_id_ciphertext"] or ""))
                 except ConnectivityError:
                     continue
-                existing[(str(row["endpoint_id"]), external_id)] = row
+                existing[
+                    (
+                        str(row["endpoint_id"]),
+                        str(row["protocol"] or "outline").strip().lower(),
+                        external_id,
+                    )
+                ] = row
             self.database.begin_write(connection)
-            for endpoint_id, values in scoped.items():
-                endpoint = str(endpoint_id or "").strip()
-                if not endpoint or not isinstance(values, dict):
-                    continue
-                result["endpoints"] += 1
+            successful_endpoints: set[str] = set()
+            for (endpoint, protocol), values in normalized_scoped.items():
+                successful_endpoints.add(endpoint)
                 connection.execute(
-                    "UPDATE endpoint_key_inventory SET present = 0 WHERE endpoint_id = ?",
-                    (endpoint,),
+                    """UPDATE endpoint_key_inventory SET present = 0
+                        WHERE endpoint_id = ? AND protocol = ?""",
+                    (endpoint, protocol),
                 )
+                protocol_result = result["protocols"].setdefault(
+                    protocol,
+                    {"endpoints": 0, "remote_keys": 0, "managed_present": 0, "unmanaged_present": 0},
+                )
+                protocol_result["endpoints"] += 1
                 for raw_external_id in values:
                     external_id = str(raw_external_id or "").strip()
                     if not external_id or len(external_id) > 256:
                         continue
                     classification = (
                         "managed"
-                        if external_id in known.get(endpoint, set())
+                        if external_id in known.get((endpoint, protocol), set())
                         else "unmanaged"
                     )
-                    row = existing.get((endpoint, external_id))
+                    row = existing.get((endpoint, protocol, external_id))
                     if row is not None:
                         ciphertext = str(row["external_id_ciphertext"])
                         connection.execute(
                             """UPDATE endpoint_key_inventory
                                   SET classification = ?, present = 1,
                                       last_seen_at = ?, source = ?
-                                WHERE endpoint_id = ? AND external_id_ciphertext = ?""",
-                            (classification, timestamp, source_text, endpoint, ciphertext),
+                                WHERE endpoint_id = ? AND protocol = ?
+                                  AND external_id_ciphertext = ?""",
+                            (classification, timestamp, source_text, endpoint, protocol, ciphertext),
                         )
                     else:
                         ciphertext = self._encrypt(external_id)
                         connection.execute(
                             """INSERT INTO endpoint_key_inventory
-                                   (endpoint_id, external_id_ciphertext, classification,
+                                   (endpoint_id, protocol, external_id_ciphertext, classification,
                                     present, first_seen_at, last_seen_at, source)
-                                VALUES (?, ?, ?, 1, ?, ?, ?)""",
-                            (endpoint, ciphertext, classification, timestamp, timestamp, source_text),
+                                VALUES (?, ?, ?, ?, 1, ?, ?, ?)""",
+                            (endpoint, protocol, ciphertext, classification, timestamp, timestamp, source_text),
                         )
                     result["remote_keys"] += 1
+                    protocol_result["remote_keys"] += 1
                     if classification == "managed":
                         result["managed_present"] += 1
+                        protocol_result["managed_present"] += 1
                     else:
                         result["unmanaged_present"] += 1
+                        protocol_result["unmanaged_present"] += 1
+            result["endpoints"] = len(successful_endpoints)
             if result["errors"]:
                 result["status"] = "degraded"
         return result
 
-    def inventory_reconciliation(self, endpoint_id: str | None = None) -> dict[str, Any] | list[dict[str, Any]]:
+    def inventory_reconciliation(
+        self, endpoint_id: str | None = None, protocol: str | None = None
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         """Return redacted present/managed/unmanaged inventory counts."""
         with self.database.connect() as connection:
             if not self._table_exists(connection, "endpoint_key_inventory"):
                 empty = {
                     "endpoint_id": str(endpoint_id) if endpoint_id else None,
+                    "protocol": str(protocol).lower() if protocol else None,
                     "present_keys": 0,
                     "managed_present": 0,
                     "unmanaged_present": 0,
@@ -1899,23 +1979,32 @@ class EndpointRegistry:
                     "status": "unavailable",
                 }
                 return empty if endpoint_id else {"status": "unavailable", "endpoints": []}
-            clauses = " WHERE endpoint_id = ?" if endpoint_id else ""
-            params = (str(endpoint_id),) if endpoint_id else ()
+            clauses: list[str] = []
+            params: list[Any] = []
+            if endpoint_id:
+                clauses.append("endpoint_id = ?")
+                params.append(str(endpoint_id))
+            if protocol:
+                clauses.append("protocol = ?")
+                params.append(str(protocol).strip().lower())
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
             rows = connection.execute(
                 """SELECT endpoint_id,
+                          protocol,
                           SUM(CASE WHEN present = 1 THEN 1 ELSE 0 END) AS present_keys,
                           SUM(CASE WHEN present = 1 AND classification = 'managed' THEN 1 ELSE 0 END) AS managed_present,
                           SUM(CASE WHEN present = 1 AND classification = 'unmanaged' THEN 1 ELSE 0 END) AS unmanaged_present,
                           COUNT(*) AS historical_keys,
                           MAX(last_seen_at) AS latest_observed_at
                      FROM endpoint_key_inventory"""
-                + clauses
-                + " GROUP BY endpoint_id ORDER BY endpoint_id",
-                params,
+                + where
+                + " GROUP BY endpoint_id, protocol ORDER BY endpoint_id, protocol",
+                tuple(params),
             ).fetchall()
-        result = [
+        scoped_result = [
             {
                 "endpoint_id": str(row["endpoint_id"]),
+                "protocol": str(row["protocol"] or "outline"),
                 "present_keys": int(row["present_keys"] or 0),
                 "managed_present": int(row["managed_present"] or 0),
                 "unmanaged_present": int(row["unmanaged_present"] or 0),
@@ -1925,11 +2014,12 @@ class EndpointRegistry:
             }
             for row in rows
         ]
-        if endpoint_id:
+        if protocol:
             return next(
-                (item for item in result if item["endpoint_id"] == str(endpoint_id)),
+                iter(scoped_result),
                 {
-                    "endpoint_id": str(endpoint_id),
+                    "endpoint_id": str(endpoint_id) if endpoint_id else None,
+                    "protocol": str(protocol).strip().lower(),
                     "present_keys": 0,
                     "managed_present": 0,
                     "unmanaged_present": 0,
@@ -1938,7 +2028,46 @@ class EndpointRegistry:
                     "status": "unobserved",
                 },
             )
-        return {"status": "healthy", "endpoints": result}
+        if endpoint_id:
+            matching = [item for item in scoped_result if item["endpoint_id"] == str(endpoint_id)]
+            aggregate = {
+                "endpoint_id": str(endpoint_id),
+                "present_keys": sum(item["present_keys"] for item in matching),
+                "managed_present": sum(item["managed_present"] for item in matching),
+                "unmanaged_present": sum(item["unmanaged_present"] for item in matching),
+                "historical_keys": sum(item["historical_keys"] for item in matching),
+                "latest_observed_at": max(
+                    (item["latest_observed_at"] for item in matching if item["latest_observed_at"]),
+                    default=None,
+                ),
+                "status": "healthy" if matching else "unobserved",
+                "protocols": matching,
+            }
+            return aggregate
+        grouped: dict[str, dict[str, Any]] = {}
+        for item in scoped_result:
+            aggregate = grouped.setdefault(
+                item["endpoint_id"],
+                {
+                    "endpoint_id": item["endpoint_id"],
+                    "present_keys": 0,
+                    "managed_present": 0,
+                    "unmanaged_present": 0,
+                    "historical_keys": 0,
+                    "latest_observed_at": None,
+                    "status": "healthy",
+                    "protocols": [],
+                },
+            )
+            for field in ("present_keys", "managed_present", "unmanaged_present", "historical_keys"):
+                aggregate[field] += item[field]
+            if item["latest_observed_at"] and (
+                aggregate["latest_observed_at"] is None
+                or item["latest_observed_at"] > aggregate["latest_observed_at"]
+            ):
+                aggregate["latest_observed_at"] = item["latest_observed_at"]
+            aggregate["protocols"].append(item)
+        return {"status": "healthy", "endpoints": list(grouped.values())}
 
     def collect_customer_snapshot(self) -> dict[str, Any]:
         """Fetch usage and key inventory once per endpoint for interactive views."""

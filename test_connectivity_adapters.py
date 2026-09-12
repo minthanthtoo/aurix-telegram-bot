@@ -243,6 +243,7 @@ class ConnectivityAdapterTest(unittest.TestCase):
         self.assertTrue(adapter.capabilities["terminate_sessions"])
         self.assertEqual(adapter.probe_data_plane(route)["status"], "healthy")
         self.assertEqual(adapter.reconcile(route)["users"], 1)
+        self.assertEqual(adapter.inventory(route)["external_ids"], ["uuid-a"])
         rotated = adapter.rotate(grant)
         self.assertNotEqual(rotated["external_id"], grant["external_id"])
         self.assertTrue(rotated["access_url"].startswith("vless://"))
@@ -309,6 +310,35 @@ class ConnectivityAdapterTest(unittest.TestCase):
         restored = adapter.reconcile_credentials(route, [grant])
         self.assertEqual(restored["restored"], 1)
         self.assertEqual(client.users["customer-a"]["secret"], grant["secret"])
+
+    def test_worker_collects_enabled_managed_inventory_by_protocol(self):
+        client = _ProtocolClient()
+        route = self._xray_route()
+        XrayConnectivityAdapter(client).provision(
+            route, {"external_id": "uuid-a", "name": "customer-a"}
+        )
+        client.users["unknown-user"] = {"external_id": "unknown-user", "name": "foreign"}
+        harness = _WorkerHarness(client, route, "vless://uuid-a@example.com:18443")
+        harness.connectivity = type(
+            "ConnectivityFixture",
+            (),
+            {
+                "list_endpoints": lambda _self: [{"id": "sg-a", "state": "ACTIVE"}],
+                "list_protocol_profiles": lambda _self, _endpoint_id: [
+                    {"protocol": "xray", "status": "enabled"}
+                ],
+            },
+        )()
+        harness.managed_route_provider = lambda _endpoint_id, _protocol: dict(route)
+        harness.managed_adapter_provider = lambda _route: XrayConnectivityAdapter(client)
+
+        result = harness.collect_managed_inventory()
+
+        self.assertEqual(
+            result["byEndpointProtocol"]["sg-a"]["xray"],
+            {"uuid-a": "", "unknown-user": ""},
+        )
+        self.assertEqual(result["errors"], {})
 
     def test_worker_requires_recovery_authority_when_available(self):
         client = _ProtocolClient()

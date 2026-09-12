@@ -1448,6 +1448,18 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS endpoint_key_inventory_present ON endpoint_key_inventory(endpoint_id, present, last_seen_at)",
         ),
     ),
+    Migration(
+        17,
+        "protocol_scoped_endpoint_key_inventory",
+        sqlite_statements=(
+            "ALTER TABLE endpoint_key_inventory ADD COLUMN protocol TEXT NOT NULL DEFAULT 'outline'",
+            "CREATE INDEX IF NOT EXISTS endpoint_key_inventory_protocol ON endpoint_key_inventory(endpoint_id, protocol, present, last_seen_at)",
+        ),
+        postgres_statements=(
+            "ALTER TABLE endpoint_key_inventory ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT 'outline'",
+            "CREATE INDEX IF NOT EXISTS endpoint_key_inventory_protocol ON endpoint_key_inventory(endpoint_id, protocol, present, last_seen_at)",
+        ),
+    ),
 )
 
 

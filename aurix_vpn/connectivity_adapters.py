@@ -666,6 +666,26 @@ class _ManagedCredentialAdapter:
             "users": len(records),
         }
 
+    def inventory(self, route: dict[str, Any]) -> dict[str, Any]:
+        """Return provider IDs only for durable, secret-safe reconciliation."""
+        _assert_route_protocol(route, protocol=self.protocol)
+        records = self._inventory()
+        external_ids = sorted(
+            {
+                external_id
+                for record in records
+                if (external_id := _provider_id(record, ""))
+                and len(external_id) <= 256
+                and "/" not in external_id
+                and "\\" not in external_id
+            }
+        )
+        return {
+            "protocol": self.protocol,
+            "route_id": str(route.get("route_id") or route.get("endpoint_id") or ""),
+            "external_ids": external_ids,
+        }
+
     def reconcile_credentials(
         self, route: dict[str, Any], expected_grants: Iterable[Mapping[str, Any]]
     ) -> dict[str, Any]:

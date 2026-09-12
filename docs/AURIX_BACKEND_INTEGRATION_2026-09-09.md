@@ -675,3 +675,16 @@ and usage snapshots, and the Control Center endpoint detail exposes counts only
 full VPN-only regression passes `373` tests, Ruff and the disposable PostgreSQL
 migration rehearsal pass, and no live provider, server, customer credential,
 load/speed test, soak test, or production database was changed.
+
+The inventory boundary is now protocol-scoped for managed transports as well.
+Migration `commerce:17` adds the protocol dimension to the encrypted inventory
+projection. Enabled Xray/Hysteria2 adapters expose provider IDs through a
+secret-free inventory method; maintenance collects those IDs by endpoint and
+protocol, and the same reconciliation classifies them against durable
+generation ownership. Unknown managed users remain preserved, while the
+Control Center continues to expose counts rather than IDs or credentials.
+Outline-only deployments return an empty managed-inventory stage and retain
+their existing behavior. The full VPN-only regression passes `375` tests, the
+disposable PostgreSQL migration rehearsal passes, and no live protocol,
+server, customer credential, load/speed test, soak test, or production database
+was changed.

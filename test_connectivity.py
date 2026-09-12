@@ -259,6 +259,46 @@ class EndpointRegistryTest(unittest.TestCase):
         detail = self.registry.inventory_reconciliation("legacy-default")
         self.assertEqual(detail["present_keys"], 2)
 
+    def test_inventory_reconciliation_is_protocol_scoped_for_managed_keys(self):
+        now = datetime.now(UTC).replace(microsecond=0)
+        identity = IdentityService(self.database)
+        entitlement = identity.ensure_subscription_entitlement(1, "sub-1")
+        identity.ensure_generation_for_credential(
+            entitlement,
+            "legacy-default",
+            credential_id="xray-managed",
+            external_id="xray-managed",
+            protocol="xray",
+            access_url_ciphertext="vless://xray-managed@example.com:18443",
+            usage_baseline_provenance="new",
+            now=now.isoformat(),
+        )
+
+        result = self.registry.persist_inventory_snapshot(
+            {
+                "byEndpointProtocol": {
+                    "legacy-default": {
+                        "xray": {"xray-managed": "", "xray-orphan": ""}
+                    }
+                },
+                "errors": {},
+            },
+            now=now,
+        )
+
+        self.assertEqual(result["protocols"]["xray"]["managed_present"], 1)
+        detail = self.registry.inventory_reconciliation("legacy-default", "xray")
+        self.assertEqual(detail["protocol"], "xray")
+        self.assertEqual(detail["present_keys"], 2)
+        self.assertEqual(detail["managed_present"], 1)
+        self.assertEqual(detail["unmanaged_present"], 1)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT protocol, external_id_ciphertext FROM endpoint_key_inventory"
+            ).fetchall()
+        self.assertEqual({str(row["protocol"]) for row in rows}, {"xray"})
+        self.assertNotIn("xray-orphan", json.dumps([dict(row) for row in rows]))
+
     def test_usage_snapshots_are_durable_and_provider_free_for_customer_reads(self):
         observed_at = datetime.now(UTC).replace(microsecond=0)
         written = self.registry.persist_usage_snapshot(
