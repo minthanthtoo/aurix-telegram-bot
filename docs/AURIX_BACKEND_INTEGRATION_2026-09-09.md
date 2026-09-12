@@ -813,3 +813,17 @@ Xray/node-agent/provider/commerce regressions, Ruff, Python compilation, and
 secret-boundary improvement only: it does not constitute a live Xray
 restart-persistence result, Hysteria2 canary evidence, endpoint promotion,
 server mutation, or production rollout authorization.
+
+## 26. Managed-device acknowledgement replay protection — 2026-09-13
+
+Managed device acknowledgements now require an `X-AuriX-Request-Id` that is
+part of the Ed25519 signed envelope. Migration 18 stores the per-device
+acknowledgement receipt before failover observation; repeated signed delivery
+therefore returns a replay result rather than incrementing a failure streak or
+creating a second failover signal. Receipt cleanup is a separately bounded
+maintenance stage, preserving existing pairing-token cleanup behavior. The
+claim intentionally favors dropping a transient observation after a process
+failure over replaying a signed mutable request; later device heartbeats supply
+new observations. This is a local control-plane safety improvement only and
+does not authorize any live server, provider, customer, or production-database
+change.

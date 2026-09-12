@@ -1460,6 +1460,30 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS endpoint_key_inventory_protocol ON endpoint_key_inventory(endpoint_id, protocol, present, last_seen_at)",
         ),
     ),
+    Migration(
+        18,
+        "device_acknowledgement_replay_protection",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS device_request_receipts (
+                   device_id TEXT NOT NULL REFERENCES devices(device_id),
+                   request_id TEXT NOT NULL,
+                   request_kind TEXT NOT NULL CHECK (request_kind IN ('ack')),
+                   created_at TEXT NOT NULL,
+                   PRIMARY KEY (device_id, request_id)
+               )""",
+            "CREATE INDEX IF NOT EXISTS device_request_receipts_cleanup ON device_request_receipts(created_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS device_request_receipts (
+                   device_id TEXT NOT NULL REFERENCES devices(device_id),
+                   request_id TEXT NOT NULL,
+                   request_kind TEXT NOT NULL CHECK (request_kind IN ('ack')),
+                   created_at TIMESTAMPTZ NOT NULL,
+                   PRIMARY KEY (device_id, request_id)
+               )""",
+            "CREATE INDEX IF NOT EXISTS device_request_receipts_cleanup ON device_request_receipts(created_at)",
+        ),
+    ),
 )
 
 

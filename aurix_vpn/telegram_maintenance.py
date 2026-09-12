@@ -295,6 +295,9 @@ class TelegramMaintenanceMixin:
             expire_pairing = getattr(identity, "expire_pairing_tokens", None)
             if callable(expire_pairing):
                 run_stage("device_cleanup", expire_pairing)
+            expire_device_receipts = getattr(identity, "expire_device_request_receipts", None)
+            if callable(expire_device_receipts):
+                run_stage("device_request_cleanup", expire_device_receipts)
             run_failover = getattr(self.commerce, "run_failover_once", None)
             if callable(run_failover) and getattr(self.commerce, "connectivity", None) is not None:
                 run_stage("route_failover", run_failover)

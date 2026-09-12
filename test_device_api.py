@@ -48,17 +48,31 @@ class DeviceAPITest(unittest.TestCase):
     def tearDown(self):
         self.tempdir.cleanup()
 
-    def request(self, method, path, body=b"", *, device_id="", private_key=None):
-        timestamp = str(time.time())
+    def request(
+        self,
+        method,
+        path,
+        body=b"",
+        *,
+        device_id="",
+        private_key=None,
+        timestamp=None,
+        request_id="",
+        signature_request_id=None,
+    ):
+        timestamp = str(time.time() if timestamp is None else timestamp)
         headers = {}
         if device_id and private_key is not None:
+            signed_request_id = request_id if signature_request_id is None else signature_request_id
             headers = {
                 "HTTP_X_AURIX_DEVICE_ID": device_id,
                 "HTTP_X_AURIX_REQUEST_TIMESTAMP": timestamp,
                 "HTTP_X_AURIX_REQUEST_SIGNATURE": sign_device_request(
-                    method, path, timestamp, body, private_key
+                    method, path, timestamp, body, private_key, request_id=signed_request_id
                 ),
             }
+            if request_id:
+                headers["HTTP_X_AURIX_REQUEST_ID"] = request_id
         environ = {
             "REQUEST_METHOD": method,
             "PATH_INFO": path.split("?", 1)[0],
@@ -101,6 +115,7 @@ class DeviceAPITest(unittest.TestCase):
             json.dumps({"outcome": "probe"}).encode(),
             device_id=paired["device_id"],
             private_key=private_key,
+            request_id="ack-pair-manifest-0001",
         )
         self.assertEqual(status, "200 OK")
         self.assertTrue(ack["accepted"])
@@ -263,6 +278,7 @@ class DeviceAPITest(unittest.TestCase):
             json.dumps({"route_id": foreign_generation, "outcome": "failed"}).encode(),
             device_id=paired["device_id"],
             private_key=private_key,
+            request_id="ack-foreign-route-0001",
         )
         self.assertEqual(status, "200 OK")
         self.assertTrue(ack["accepted"])
@@ -272,6 +288,82 @@ class DeviceAPITest(unittest.TestCase):
                 (foreign_generation,),
             ).fetchone()["n"]
         self.assertEqual(observed, 0)
+
+    def test_acknowledgement_request_id_is_signed_and_replay_safe(self):
+        private_key, paired = self.pair()
+        body = json.dumps({"outcome": "probe"}).encode()
+        timestamp = time.time()
+        request_id = "ack-replay-safe-0001"
+        with patch.object(self.identity, "acknowledge_device", wraps=self.identity.acknowledge_device) as acknowledge:
+            status, first = self.request(
+                "POST",
+                "/v1/devices/ack",
+                body,
+                device_id=paired["device_id"],
+                private_key=private_key,
+                timestamp=timestamp,
+                request_id=request_id,
+            )
+            status_again, replay = self.request(
+                "POST",
+                "/v1/devices/ack",
+                body,
+                device_id=paired["device_id"],
+                private_key=private_key,
+                timestamp=timestamp,
+                request_id=request_id,
+            )
+        self.assertEqual(status, "200 OK")
+        self.assertEqual(first, {"accepted": True, "replayed": False})
+        self.assertEqual(status_again, "200 OK")
+        self.assertEqual(replay, {"accepted": True, "replayed": True})
+        self.assertEqual(acknowledge.call_count, 1)
+        with self.database.connect() as connection:
+            receipt_count = connection.execute(
+                "SELECT COUNT(*) AS n FROM device_request_receipts WHERE device_id = ?",
+                (paired["device_id"],),
+            ).fetchone()["n"]
+        self.assertEqual(receipt_count, 1)
+
+        status, value = self.request(
+            "POST",
+            "/v1/devices/ack",
+            body,
+            device_id=paired["device_id"],
+            private_key=private_key,
+            timestamp=timestamp,
+            request_id="ack-replay-safe-0002",
+            signature_request_id="ack-replay-safe-other",
+        )
+        self.assertEqual(status, "401 Unauthorized")
+        self.assertIn("signature", value["error"])
+
+    def test_acknowledgement_requires_request_id_and_receipts_expire(self):
+        private_key, paired = self.pair()
+        status, value = self.request(
+            "POST",
+            "/v1/devices/ack",
+            json.dumps({"outcome": "probe"}).encode(),
+            device_id=paired["device_id"],
+            private_key=private_key,
+        )
+        self.assertEqual(status, "401 Unauthorized")
+        self.assertIn("request ID", value["error"])
+
+        self.assertEqual(
+            self.identity.claim_device_request(
+                paired["device_id"],
+                "ack-expire-receipt-01",
+                now="2026-09-01T00:00:00+00:00",
+            ),
+            {"accepted": True, "replayed": False},
+        )
+        self.assertEqual(
+            self.identity.expire_device_request_receipts(
+                now="2026-09-09T00:00:01+00:00"
+            ),
+            1,
+        )
 
     def test_signed_api_mounts_under_the_vpn_portal_handler(self):
         runtime = SimpleNamespace(token="unused", commerce=SimpleNamespace(identity=self.identity))

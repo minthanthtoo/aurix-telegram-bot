@@ -16,7 +16,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from .identity import IdentityError, IdentityService
+from .identity import IdentityError, IdentityService, _device_request_id
 
 
 MAX_BODY_BYTES = 128 * 1024
@@ -84,22 +84,45 @@ def _manifest_route(value: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _device_request_message(
+    method: str,
+    path: str,
+    timestamp: str,
+    body: bytes,
+    *,
+    request_id: str = "",
+) -> bytes:
+    """Build the stable signed request envelope used by managed devices.
+
+    Existing read-only clients use the original four components.  A mutable
+    acknowledgement additionally binds its durable request identifier before
+    the body hash, so a header cannot be detached from its signed request.
+    """
+    parts = [
+        str(method).upper().encode(),
+        str(path).encode(),
+        str(timestamp).encode(),
+    ]
+    if request_id:
+        parts.append(str(request_id).encode())
+    parts.append(hashlib.sha256(body).hexdigest().encode())
+    return b"\n".join(parts)
+
+
 def sign_device_request(
     method: str,
     path: str,
     timestamp: str,
     body: bytes,
     private_key: Ed25519PrivateKey,
+    *,
+    request_id: str = "",
 ) -> str:
-    message = b"\n".join(
-        (
-            str(method).upper().encode(),
-            str(path).encode(),
-            str(timestamp).encode(),
-            hashlib.sha256(body).hexdigest().encode(),
+    return _b64(
+        private_key.sign(
+            _device_request_message(method, path, timestamp, body, request_id=request_id)
         )
     )
-    return _b64(private_key.sign(message))
 
 
 class ManifestSigner:
@@ -200,6 +223,8 @@ class DeviceAPIService:
         body: bytes,
         signature: str,
         *,
+        request_id: str = "",
+        touch: bool = True,
         now: float | None = None,
     ) -> dict[str, Any]:
         record = self.identity.device_auth_record(device_id)
@@ -211,21 +236,15 @@ class DeviceAPIService:
             raise DeviceAPIError("request timestamp is invalid", status_code=401) from exc
         if abs(float(self.clock() if now is None else now) - request_time) > REQUEST_CLOCK_SKEW_SECONDS:
             raise DeviceAPIError("request timestamp is expired", status_code=401)
-        message = b"\n".join(
-            (
-                str(method).upper().encode(),
-                str(path).encode(),
-                str(timestamp).encode(),
-                hashlib.sha256(body).hexdigest().encode(),
-            )
-        )
+        message = _device_request_message(method, path, timestamp, body, request_id=request_id)
         try:
             Ed25519PublicKey.from_public_bytes(_unb64(str(record["public_key"]))).verify(
                 _unb64(signature), message
             )
         except (ValueError, TypeError, InvalidSignature, binascii.Error) as exc:
             raise DeviceAPIError("device request signature is invalid", status_code=401) from exc
-        self.identity.touch_device(device_id)
+        if touch:
+            self.identity.touch_device(device_id)
         return record
 
     def pair(self, token: str, public_key: str, *, label: str = "") -> dict[str, Any]:
@@ -291,17 +310,30 @@ class DeviceAPIService:
             "access_url": str(access_url),
         }
 
-    def acknowledge(self, device_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+    def acknowledge(
+        self, device_id: str, body: Mapping[str, Any], *, request_id: str
+    ) -> dict[str, Any]:
         try:
             outcome = str(body.get("outcome") or "")
             route_id = str(body.get("route_id") or "")[:128] or None
             details = body.get("details") if isinstance(body.get("details"), dict) else None
+            if outcome not in {"connected", "failed", "disconnected", "probe"}:
+                raise IdentityError("device acknowledgement outcome is invalid")
+            if details is not None and len(str(details)) > 2048:
+                raise IdentityError("device acknowledgement is too large")
+            claimed = self.identity.claim_device_request(
+                device_id, request_id, request_kind="ack"
+            )
+            if not claimed["accepted"]:
+                raise DeviceAPIError("device is not active", status_code=401)
+            if claimed["replayed"]:
+                return {"accepted": True, "replayed": True}
             accepted = self.identity.acknowledge_device(
                 device_id, route_id=route_id, outcome=outcome, details=details
             )
         except IdentityError as exc:
             raise DeviceAPIError(str(exc)) from exc
-        return {"accepted": accepted}
+        return {"accepted": accepted, "replayed": False}
 
 
 def _response(status: str, value: Mapping[str, Any]) -> tuple[str, list[tuple[str, str]], list[bytes]]:
@@ -350,10 +382,27 @@ def create_device_wsgi_app(
                 device_id = str(environ.get("HTTP_X_AURIX_DEVICE_ID") or "")
                 timestamp = str(environ.get("HTTP_X_AURIX_REQUEST_TIMESTAMP") or "")
                 signature = str(environ.get("HTTP_X_AURIX_REQUEST_SIGNATURE") or "")
+                request_id = str(environ.get("HTTP_X_AURIX_REQUEST_ID") or "")
                 request_path = path + (
                     "?" + str(environ.get("QUERY_STRING")) if environ.get("QUERY_STRING") else ""
                 )
-                service._authenticate(device_id, method, request_path, timestamp, body, signature, now=clock())
+                is_acknowledgement = method == "POST" and path == "/v1/devices/ack"
+                if is_acknowledgement:
+                    try:
+                        request_id = _device_request_id(request_id)
+                    except IdentityError as exc:
+                        raise DeviceAPIError(str(exc), status_code=401) from exc
+                service._authenticate(
+                    device_id,
+                    method,
+                    request_path,
+                    timestamp,
+                    body,
+                    signature,
+                    request_id=request_id,
+                    touch=not is_acknowledgement,
+                    now=clock(),
+                )
                 if method == "GET" and path == "/v1/devices/manifest":
                     result = service.manifest(device_id)
                 elif method == "GET" and path == "/v1/devices/config":
@@ -362,8 +411,8 @@ def create_device_wsgi_app(
                     if not route_id or len(route_id) > 128:
                         raise DeviceAPIError("route_id is required")
                     result = service.config(device_id, route_id)
-                elif method == "POST" and path == "/v1/devices/ack":
-                    result = service.acknowledge(device_id, value)
+                elif is_acknowledgement:
+                    result = service.acknowledge(device_id, value, request_id=request_id)
                 else:
                     status, headers, parts = _response("404 Not Found", {"error": "not_found"})
                     start_response(status, headers)

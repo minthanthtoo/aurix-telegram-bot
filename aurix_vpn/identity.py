@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,7 @@ from .commerce_repositories import _PostgresConnection
 UTC = timezone.utc
 REMOTE_USABLE_GENERATION_STATUSES = ("pending", "active", "retiring", "unknown")
 USAGE_BASELINE_PROVENANCES = ("new", "migrated", "unknown")
+_DEVICE_REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{16,128}\Z")
 
 
 class IdentityError(RuntimeError):
@@ -50,6 +52,14 @@ def _entitlement_parts(entitlement_key: str) -> tuple[str, str]:
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+
+
+def _device_request_id(value: object) -> str:
+    """Validate the stable idempotency key carried by a signed device call."""
+    request_id = value if isinstance(value, str) else ""
+    if _DEVICE_REQUEST_ID_PATTERN.fullmatch(request_id) is None:
+        raise IdentityError("device request ID is invalid")
+    return request_id
 
 
 class IdentityService:
@@ -179,6 +189,24 @@ class IdentityService:
                 """UPDATE device_sessions SET revoked_at = COALESCE(revoked_at, ?)
                     WHERE revoked_at IS NULL AND expires_at <= ?""",
                 (timestamp, timestamp),
+            )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    def expire_device_request_receipts(
+        self,
+        *,
+        older_than_seconds: int = 7 * 86_400,
+        now: str | datetime | None = None,
+    ) -> int:
+        """Bound durable device idempotency receipt storage during maintenance."""
+        if isinstance(older_than_seconds, bool) or not 300 <= int(older_than_seconds) <= 2_592_000:
+            raise IdentityError("device request receipt retention is invalid")
+        timestamp = _now_text(now)
+        cutoff = (_parse_time(timestamp) - timedelta(seconds=int(older_than_seconds))).isoformat()
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            result = connection.execute(
+                "DELETE FROM device_request_receipts WHERE created_at < ?", (cutoff,)
             )
         return int(getattr(result, "rowcount", 0) or 0)
 
@@ -539,6 +567,53 @@ class IdentityService:
                 (timestamp, str(device_id)),
             )
         return int(getattr(updated, "rowcount", 0) or 0) == 1
+
+    def claim_device_request(
+        self,
+        device_id: str,
+        request_id: str,
+        *,
+        request_kind: str = "ack",
+        now: str | datetime | None = None,
+    ) -> dict[str, bool]:
+        """Claim one signed mutable-device request before applying its effects.
+
+        The active device and account are locked for the short claim
+        transaction.  A receipt is written before acknowledgement processing,
+        deliberately favoring a missed transient observation over replaying a
+        request that could influence failover state.
+        """
+        request_id = _device_request_id(request_id)
+        if request_kind != "ack":
+            raise IdentityError("device request kind is invalid")
+        timestamp = _now_text(now)
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            lock_clause = " FOR UPDATE OF d, a" if isinstance(connection, _PostgresConnection) else ""
+            active = connection.execute(
+                """SELECT d.device_id
+                     FROM devices d
+                     JOIN accounts a ON a.account_id = d.account_id
+                    WHERE d.device_id = ? AND d.status = 'active' AND a.status = 'active'"""
+                + lock_clause,
+                (str(device_id),),
+            ).fetchone()
+            if active is None:
+                return {"accepted": False, "replayed": False}
+            inserted = connection.execute(
+                """INSERT INTO device_request_receipts
+                   (device_id, request_id, request_kind, created_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(device_id, request_id) DO NOTHING""",
+                (str(device_id), request_id, request_kind, timestamp),
+            )
+            if int(getattr(inserted, "rowcount", 0) or 0) != 1:
+                return {"accepted": True, "replayed": True}
+            connection.execute(
+                "UPDATE devices SET last_seen_at = ? WHERE device_id = ?",
+                (timestamp, str(device_id)),
+            )
+        return {"accepted": True, "replayed": False}
 
     def create_device_session(
         self,

@@ -160,7 +160,11 @@ compatibility.
 - signed `GET /v1/devices/config?route_id=...` — retrieve one owned encrypted
   route configuration after server-side entitlement checks; and
 - signed `POST /v1/devices/ack` — report connection/failure observations for
-  failover evaluation.
+  failover evaluation. It requires a fresh `X-AuriX-Request-Id` (16–128
+  URL-safe identifier characters) included in the device signature. The
+  server durably records each device/request pair; a retry of the same signed
+  acknowledgement returns `replayed: true` without re-observing or changing
+  failover state.
 
 Route delivery is protocol-neutral and accepts verified `ss`, VLESS, Hysteria2,
 Trojan, VMess, and WireGuard schemes. This does not by itself enable a new
