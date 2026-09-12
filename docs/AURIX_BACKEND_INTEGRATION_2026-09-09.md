@@ -737,6 +737,14 @@ failed as an unhealthy heartbeat even when the stage continues without an
 exception. Later cleanup and expiry stages still run, while operators can see
 that the pass was not fully successful.
 
+Managed revoke now carries the provider's session-termination proof through the
+entire job path. A verified credential delete with unproven existing-session
+termination leaves the generation retiring and its accounting lease active until
+the explicit session acknowledgement arrives; the legacy Outline compatibility
+fallback retains its historical finalize-after-delete behavior. The regression
+suite covers this boundary locally; no provider, customer, server, or production
+database state was changed.
+
 Managed adapter idempotent reads now retain the verified deployment route and
 secret-free credential intent on the transient grant. A recovered or
 pre-existing provider user can therefore rotate or reconcile through the same

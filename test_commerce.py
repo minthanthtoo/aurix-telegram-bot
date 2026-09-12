@@ -407,6 +407,7 @@ class CommerceServiceTest(unittest.TestCase):
             def __init__(self):
                 self.users = {}
                 self.quotas = {}
+                self.session_termination_result = True
 
             def get_user(self, external_id):
                 value = self.users.get(str(external_id))
@@ -423,6 +424,12 @@ class CommerceServiceTest(unittest.TestCase):
 
             def set_user_quota(self, external_id, limit):
                 self.quotas[str(external_id)] = int(limit)
+
+            def delete_user(self, external_id):
+                self.users.pop(str(external_id), None)
+
+            def terminate_user_sessions(self, external_id):
+                return self.session_termination_result
 
             def list_users(self):
                 return list(self.users.values())
@@ -473,7 +480,7 @@ class CommerceServiceTest(unittest.TestCase):
             requested_protocol="xray",
         )
         self.service.submit_payment(123, order.order_id, "manual", "managed-protocol", self.now)
-        self.service.approve_order(order.order_id, 999, self.now)
+        approval = self.service.approve_order(order.order_id, 999, self.now)
 
         self.assertEqual(self.service.process_jobs(self.now), 1)
         self.assertEqual(len(managed_client.users), 1)
@@ -487,6 +494,28 @@ class CommerceServiceTest(unittest.TestCase):
         vpn = self.service.user_vpns(123)[0]
         self.assertEqual(vpn["preferred_protocol"], "xray")
         self.assertTrue(vpn["access_url"].startswith("vless://"))
+
+        managed_client.session_termination_result = {
+            "terminated": False,
+            "reason": "existing sessions not proven terminated",
+        }
+        self.service.refund_order(order.order_id, 999, "session safety regression", self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        with self.database.connect() as connection:
+            generation_state = connection.execute(
+                """SELECT status, remote_state FROM credential_generations
+                   WHERE source_type = 'paid'"""
+            ).fetchone()
+            lease_state = connection.execute(
+                """SELECT status FROM quota_leases
+                   WHERE entitlement_key = ?""",
+                (f"paid:{approval.subscription_id}",),
+            ).fetchone()
+        self.assertEqual(
+            tuple(generation_state),
+            ("retiring", "revoked_verified"),
+        )
+        self.assertEqual(lease_state["status"], "active")
 
     def test_managed_protocol_provisioning_fails_closed_when_profile_is_disabled(self):
         with self.assertRaisesRegex(CommerceError, "protocol profile is not enabled"):

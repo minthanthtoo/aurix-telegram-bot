@@ -1427,12 +1427,14 @@ class CommerceWorkerMixin:
                 count += 1
         return count
 
-    def _revoke_generation_set(self, entitlement_key: str, now: datetime) -> dict[str, tuple[str, bool]]:
+    def _revoke_generation_set(
+        self, entitlement_key: str, now: datetime
+    ) -> dict[str, tuple[str, bool, bool]]:
         """Revoke every remote generation while preserving proof boundaries."""
         identity = getattr(self, "identity", None)
         if identity is None:
             return {}
-        result: dict[str, tuple[str, bool]] = {}
+        result: dict[str, tuple[str, bool, bool]] = {}
         for generation in identity.generations_for_accounting(entitlement_key):
             endpoint_id = str(generation["endpoint_id"])
             protocol = str(generation.get("protocol") or "outline").strip().lower()
@@ -1481,6 +1483,7 @@ class CommerceWorkerMixin:
             result[str(generation["external_id"])] = (
                 "deleted_verified" if verified else "delete_accepted",
                 verified,
+                sessions_terminated,
             )
         return result
 
@@ -1509,8 +1512,8 @@ class CommerceWorkerMixin:
         try:
             endpoint_id = str(key["endpoint_id"] or "legacy-default")
             key_protocol = str(key["preferred_protocol"] or "").strip().lower() or "outline"
-            remote_state, verified = generation_results.get(
-                str(key["outline_key_id"]), ("delete_accepted", False)
+            remote_state, verified, sessions_terminated = generation_results.get(
+                str(key["outline_key_id"]), ("delete_accepted", False, False)
             )
             if str(key["outline_key_id"]) not in generation_results:
                 if key_protocol != "outline":
@@ -1536,6 +1539,11 @@ class CommerceWorkerMixin:
                         raise CommerceError("Outline key still exists after delete")
                     remote_state = "deleted_verified"
                     verified = True
+                    # Legacy Outline has no session-termination capability in
+                    # this compatibility path. Its historical revoke
+                    # semantics finalize the identity generation after the
+                    # provider confirms credential deletion.
+                    sessions_terminated = True
             with self.database.connect() as connection:
                 self.database.begin_write(connection)
                 connection.execute(
@@ -1622,6 +1630,7 @@ class CommerceWorkerMixin:
                 identity.mark_remote_revoked(
                     self._generation_id_for_paid_key(key),
                     verified=verified,
+                    sessions_terminated=sessions_terminated,
                     now=_now_text(now),
                 )
         except Exception:
