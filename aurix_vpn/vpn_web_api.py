@@ -313,15 +313,27 @@ class AuriXVpnWebApplication:
     def protocols_payload(self, plan_code: str | None = None) -> dict[str, Any]:
         """Return customer-selectable protocols without exposing fleet secrets.
 
-        A protocol is customer-visible only when an endpoint profile is enabled
-        and its adapter is registered in the runtime. Candidate profiles and
-        transports that are merely present in the roadmap stay out of the
-        purchase UI.
+        A protocol is customer-visible only when an endpoint profile is enabled,
+        its adapter is registered, and a deployment-owned route binding exists.
+        Candidate profiles and transports that are merely present in the roadmap
+        stay out of the purchase UI.
         """
         registry = getattr(self.runtime, "connectivity", None)
         profile_method = getattr(registry, "list_protocol_profiles", None)
-        adapter_registry = getattr(getattr(self.runtime, "commerce", None), "adapter_registry", None)
+        commerce = getattr(self.runtime, "commerce", None)
+        adapter_registry = getattr(commerce, "adapter_registry", None)
         registered_check = getattr(adapter_registry, "is_registered", None)
+        managed_bindings = getattr(commerce, "managed_route_bindings", None)
+        routes_method = getattr(managed_bindings, "routes", None)
+        bound_routes: set[tuple[str, str]] = set()
+        if callable(routes_method):
+            for route in routes_method() or []:
+                if not isinstance(route, dict):
+                    continue
+                endpoint_id = str(route.get("endpoint_id") or "").strip()
+                protocol = str(route.get("protocol") or "").strip().lower()
+                if endpoint_id and protocol:
+                    bound_routes.add((endpoint_id, protocol))
         protocols: set[str] = set()
         if callable(profile_method):
             try:
@@ -337,6 +349,10 @@ class AuriXVpnWebApplication:
                 if protocol != "outline" and not callable(registered_check):
                     continue
                 if callable(registered_check) and not registered_check(protocol):
+                    continue
+                if protocol != "outline" and not any(
+                    bound_protocol == protocol for _endpoint_id, bound_protocol in bound_routes
+                ):
                     continue
                 protocols.add(protocol)
         # Preserve the legacy Outline customer experience for older injected
@@ -354,6 +370,12 @@ class AuriXVpnWebApplication:
                     endpoint_rows = list_endpoints(plan_code)
             else:
                 endpoint_rows = []
+            if protocol != "outline":
+                endpoint_rows = [
+                    item for item in endpoint_rows or []
+                    if isinstance(item, dict)
+                    and (str(item.get("id") or ""), protocol) in bound_routes
+                ]
             endpoints = [
                 _safe_endpoint(item)
                 for item in endpoint_rows or []
@@ -371,7 +393,7 @@ class AuriXVpnWebApplication:
         return {
             "protocols": result,
             "plan_code": str(plan_code or "").strip() or None,
-            "selection_policy": "Only enabled endpoint profiles with registered adapters can be purchased.",
+            "selection_policy": "Only enabled endpoint profiles with registered adapters and managed route bindings can be purchased.",
         }
 
     def dashboard(self, user: VerifiedTelegramUser) -> dict[str, Any]:

@@ -169,6 +169,9 @@ class VpnWebApplicationTest(unittest.TestCase):
         self.application.runtime.commerce.adapter_registry = SimpleNamespace(
             is_registered=lambda protocol: protocol in {"outline", "xray"}
         )
+        self.application.runtime.commerce.managed_route_bindings = SimpleNamespace(
+            routes=lambda: [{"endpoint_id": "xray-01", "protocol": "xray"}]
+        )
         payload = self.application.protocols_payload("basic")
         self.assertEqual(
             [item["protocol"] for item in payload["protocols"]],
@@ -179,6 +182,9 @@ class VpnWebApplicationTest(unittest.TestCase):
         self.application.runtime.connectivity = _ProtocolRegistry()
         self.application.runtime.commerce.adapter_registry = SimpleNamespace(
             is_registered=lambda protocol: protocol in {"outline", "xray"}
+        )
+        self.application.runtime.commerce.managed_route_bindings = SimpleNamespace(
+            routes=lambda: [{"endpoint_id": "xray-01", "protocol": "xray"}]
         )
         server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.application))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
