@@ -751,11 +751,18 @@ class CommerceServiceTest(unittest.TestCase):
         )
         self.service.connectivity = registry
         for signal in requirements["signals"]:
+            details = {
+                "usage": {"sample_count": 1, "active_users": 1},
+                "quota": {"quota_enforced": True},
+                "restart": {"restart_persisted": True},
+                "data_plane": {"client_path": "admin-test"},
+            }.get(signal, {})
             registry.record_protocol_observation(
                 "legacy-default",
                 "xray",
                 signal=signal,
                 status="healthy",
+                details=details,
                 observed_at=self.now,
                 expires_at=self.now + timedelta(hours=1),
                 source="admin-test",

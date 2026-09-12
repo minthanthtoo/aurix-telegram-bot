@@ -73,6 +73,12 @@ class EndpointRegistry:
         "data_plane_probe",
         "reconcile",
     )
+    _NON_OUTLINE_PROMOTION_EVIDENCE = {
+        "usage": "sample_count",
+        "quota": "quota_enforced",
+        "restart": "restart_persisted",
+        "data_plane": "data_plane_result",
+    }
     _PROTOCOL_OBSERVATION_STATUSES = {
         "healthy",
         "degraded",
@@ -150,6 +156,30 @@ class EndpointRegistry:
         signals = tuple(sorted(operator_signals.union(minimums["signals"])))
         capabilities = tuple(sorted(operator_capabilities.union(minimums["capabilities"])))
         return signals, capabilities
+
+    @classmethod
+    def _promotion_evidence_is_credible(
+        cls, protocol: str, signal: str, details: dict[str, Any]
+    ) -> bool:
+        """Require the bounded proof field associated with mandatory gates."""
+        if str(protocol or "").strip().lower() == "outline":
+            return True
+        if signal == "usage":
+            sample_count = details.get("sample_count")
+            return isinstance(sample_count, int) and not isinstance(sample_count, bool) and sample_count > 0
+        if signal in {"quota", "restart"}:
+            return details.get(cls._NON_OUTLINE_PROMOTION_EVIDENCE[signal]) is True
+        if signal == "data_plane":
+            client_path = details.get("client_path")
+            if isinstance(client_path, str) and client_path.strip():
+                return True
+            status_code = details.get("status_code")
+            return (
+                isinstance(status_code, int)
+                and not isinstance(status_code, bool)
+                and 200 <= status_code < 400
+            )
+        return True
 
     @staticmethod
     def _audit_events_available(connection: Any) -> bool:
@@ -645,6 +675,7 @@ class EndpointRegistry:
                 "declared_capabilities": {},
                 "fresh_healthy_signals": [],
                 "missing_signals": list(signals),
+                "missing_evidence": [],
                 "missing_capabilities": list(capabilities),
                 "latest_healthy_at": None,
                 "reasons": [],
@@ -664,12 +695,13 @@ class EndpointRegistry:
                 name for name in capabilities if declared.get(name) is not True
             ]
             observations = connection.execute(
-                """SELECT signal, observed_at, expires_at
+                """SELECT signal, details_json, observed_at, expires_at
                      FROM endpoint_protocol_observations
                     WHERE profile_id = ? AND status = 'healthy'""",
                 (str(profile["profile_id"]),),
             ).fetchall()
             fresh_signals: set[str] = set()
+            incomplete_evidence: set[str] = set()
             latest_healthy: datetime | None = None
             for observation in observations:
                 try:
@@ -683,10 +715,26 @@ class EndpointRegistry:
                     continue
                 if observed > checked_at or (expires is not None and expires <= checked_at):
                     continue
-                fresh_signals.add(str(observation["signal"]).strip().lower())
+                observation_signal = str(observation["signal"]).strip().lower()
+                try:
+                    details = json.loads(str(observation["details_json"] or "{}"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    details = {}
+                if not isinstance(details, dict):
+                    details = {}
+                if self._promotion_evidence_is_credible(transport, observation_signal, details):
+                    fresh_signals.add(observation_signal)
+                    incomplete_evidence.discard(observation_signal)
+                elif observation_signal in self._NON_OUTLINE_PROMOTION_EVIDENCE:
+                    incomplete_evidence.add(observation_signal)
                 if latest_healthy is None or observed > latest_healthy:
                     latest_healthy = observed
             missing_signals = [name for name in signals if name not in fresh_signals]
+            missing_evidence = [
+                name
+                for name in signals
+                if name in incomplete_evidence and name not in fresh_signals
+            ]
             reasons: list[str] = []
             if str(profile["status"] or "").lower() == "retired":
                 reasons.append("retired protocol profile cannot be promoted")
@@ -699,11 +747,17 @@ class EndpointRegistry:
                 reasons.append(
                     "protocol profile evidence is incomplete: " + ", ".join(missing_signals)
                 )
+            if missing_evidence:
+                reasons.append(
+                    "protocol profile evidence details are incomplete: "
+                    + ", ".join(missing_evidence)
+                )
             base.update(
                 {
                     "declared_capabilities": declared,
                     "fresh_healthy_signals": sorted(fresh_signals),
                     "missing_signals": missing_signals,
+                    "missing_evidence": missing_evidence,
                     "missing_capabilities": missing_capabilities,
                     "latest_healthy_at": latest_healthy.isoformat() if latest_healthy else None,
                     "reasons": reasons,
@@ -773,12 +827,13 @@ class EndpointRegistry:
                     + ", ".join(missing_capabilities)
                 )
             observations = connection.execute(
-                """SELECT signal, observed_at, expires_at
+                """SELECT signal, details_json, observed_at, expires_at
                      FROM endpoint_protocol_observations
                     WHERE profile_id = ? AND status = 'healthy'""",
                 (str(profile["profile_id"]),),
             ).fetchall()
             fresh_signals: set[str] = set()
+            incomplete_evidence: set[str] = set()
             latest_healthy: datetime | None = None
             for observation in observations:
                 try:
@@ -792,14 +847,36 @@ class EndpointRegistry:
                     continue
                 if observed > timestamp_dt or (expires is not None and expires <= timestamp_dt):
                     continue
-                fresh_signals.add(str(observation["signal"]).strip().lower())
+                observation_signal = str(observation["signal"]).strip().lower()
+                try:
+                    details = json.loads(str(observation["details_json"] or "{}"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    details = {}
+                if not isinstance(details, dict):
+                    details = {}
+                if self._promotion_evidence_is_credible(transport, observation_signal, details):
+                    fresh_signals.add(observation_signal)
+                    incomplete_evidence.discard(observation_signal)
+                elif observation_signal in self._NON_OUTLINE_PROMOTION_EVIDENCE:
+                    incomplete_evidence.add(observation_signal)
                 if latest_healthy is None or observed > latest_healthy:
                     latest_healthy = observed
             missing_signals = [name for name in signals if name not in fresh_signals]
+            missing_evidence = [
+                name
+                for name in signals
+                if name in incomplete_evidence and name not in fresh_signals
+            ]
             if missing_signals:
                 raise ConnectivityError(
                     "protocol profile evidence is incomplete: "
                     + ", ".join(missing_signals)
+                    + (
+                        "; evidence details are incomplete: "
+                        + ", ".join(missing_evidence)
+                        if missing_evidence
+                        else ""
+                    )
                 )
             healthy_text = (latest_healthy or timestamp_dt).isoformat()
             connection.execute(

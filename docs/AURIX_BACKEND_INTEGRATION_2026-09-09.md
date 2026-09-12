@@ -641,3 +641,12 @@ tests, Ruff and the disposable PostgreSQL migration rehearsal pass, and the
 change is committed as `4032fb5` (`Enforce production protocol promotion
 evidence`). No live protocol profile, server, customer credential, load/speed
 test, soak test, or production database was changed.
+
+Promotion evidence is now semantically checked as well as timestamped: a
+non-Outline usage observation needs a positive `sample_count`, quota and
+restart observations need explicit `quota_enforced=true` and
+`restart_persisted=true`, and a data-plane observation needs a non-empty
+`client_path` or a successful bounded status code. Invalid proof remains
+visible in readiness as missing evidence and cannot enable a profile. Outline
+promotion keeps its prior operator-selected behavior. This follow-up is local
+only and is covered by the expanded VPN regression suite.

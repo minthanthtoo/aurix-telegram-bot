@@ -44,8 +44,10 @@ snapshots, so management, client-path, quota, restart, and session evidence can
 be reviewed per transport without promoting a candidate profile. Observation
 records are bounded and redacted before persistence. The explicit promotion
 boundary requires fresh, non-expired healthy observations for every required
-signal and matching declared capabilities, and records the operator decision in
-the commerce audit log when available; observation ingestion never auto-enables
+a non-Outline signal's structured proof fields (sample count, quota/restart
+assertions, or a data-plane path/status as applicable) and matching declared
+capabilities, and records the operator decision in the commerce audit log when
+available; observation ingestion never auto-enables
 a protocol. Direct profile registration also cannot mark Xray or Hysteria2
 enabled; those transports must pass the explicit promotion method.
 The registry also exposes a non-mutating readiness preview so operators can

@@ -341,12 +341,18 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                         now=now,
                     )
                     for signal in required_signals:
+                        details = {
+                            "usage": {"sample_count": 1, "active_users": 1},
+                            "quota": {"quota_enforced": True},
+                            "restart": {"restart_persisted": True},
+                            "data_plane": {"client_path": "postgres-rehearsal"},
+                        }.get(signal, {})
                         registry.record_protocol_observation(
                             endpoint_id,
                             "xray",
                             signal=signal,
                             status="healthy",
-                            details={"quota_enforced": True, "restart_persisted": True},
+                            details=details,
                             latency_ms=7,
                             observed_at=now,
                             expires_at=now + timedelta(hours=1),

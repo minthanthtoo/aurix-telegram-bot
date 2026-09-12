@@ -97,11 +97,18 @@ class EndpointRegistryTest(unittest.TestCase):
             now=now,
         )
         for signal in requirements["signals"]:
+            details = {
+                "usage": {"sample_count": 1, "active_users": 1},
+                "quota": {"quota_enforced": True},
+                "restart": {"restart_persisted": True},
+                "data_plane": {"client_path": "test"},
+            }.get(signal, {})
             self.registry.record_protocol_observation(
                 endpoint_id,
                 protocol,
                 signal=signal,
                 status="healthy",
+                details=details,
                 observed_at=now,
                 expires_at=now + timedelta(hours=1),
                 source="promotion-test",
@@ -564,6 +571,80 @@ class EndpointRegistryTest(unittest.TestCase):
                 required_capabilities=("usage",),
                 now=now,
             )
+
+    def test_non_outline_promotion_requires_structured_evidence(self):
+        now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+        requirements = EndpointRegistry.protocol_promotion_requirements("xray")
+        self.registry.register_protocol_profile(
+            "legacy-default",
+            "xray",
+            status="candidate",
+            capabilities={name: True for name in requirements["capabilities"]},
+            now=now,
+        )
+        for signal in requirements["signals"]:
+            self.registry.record_protocol_observation(
+                "legacy-default",
+                "xray",
+                signal=signal,
+                status="healthy",
+                details={},
+                observed_at=now,
+                expires_at=now + timedelta(hours=1),
+                source="promotion-test",
+                now=now,
+            )
+        preview = self.registry.protocol_profile_promotion_readiness(
+            "legacy-default",
+            "xray",
+            required_signals=(),
+            required_capabilities=(),
+            now=now,
+        )
+        self.assertEqual(
+            preview["missing_evidence"],
+            ["data_plane", "quota", "restart", "usage"],
+        )
+        self.assertFalse(preview["promotable"])
+        with self.assertRaisesRegex(ConnectivityError, "evidence details are incomplete"):
+            self.registry.promote_protocol_profile(
+                "legacy-default",
+                "xray",
+                required_signals=(),
+                required_capabilities=(),
+                now=now,
+            )
+
+    def test_outline_promotion_keeps_operator_evidence_compatibility(self):
+        now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+        self.registry.register_protocol_profile(
+            "legacy-default", "outline", status="candidate", now=now
+        )
+        self.registry.record_protocol_observation(
+            "legacy-default",
+            "outline",
+            signal="quota",
+            status="healthy",
+            details={},
+            observed_at=now,
+            expires_at=now + timedelta(hours=1),
+            source="promotion-test",
+            now=now,
+        )
+        readiness = self.registry.protocol_profile_promotion_readiness(
+            "legacy-default",
+            "outline",
+            required_signals=("quota",),
+            now=now,
+        )
+        self.assertTrue(readiness["promotable"])
+        promoted = self.registry.promote_protocol_profile(
+            "legacy-default",
+            "outline",
+            required_signals=("quota",),
+            now=now,
+        )
+        self.assertEqual(promoted["status"], "enabled")
 
     def test_protocol_observations_are_safe_append_only_evidence(self):
         now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
