@@ -111,6 +111,21 @@ class DeviceAPITest(unittest.TestCase):
         self.assertEqual(status, "401 Unauthorized")
         self.assertIn("not active", value["error"])
 
+    def test_manifest_rejects_credential_material_from_route_provider(self):
+        private_key, paired = self.pair()
+        self.service.route_provider = lambda _account_id: [
+            {
+                "route_id": "generation-leak",
+                "protocol": "xray",
+                "access_url": "vless://should-not-be-signed",
+            }
+        ]
+        status, value = self.request(
+            "GET", "/v1/devices/manifest", device_id=paired["device_id"], private_key=private_key
+        )
+        self.assertEqual(status, "400 Bad Request")
+        self.assertIn("credential material", value["error"])
+
     def test_shared_device_builder_applies_configured_cap(self):
         runtime = SimpleNamespace(
             commerce_database=self.database,

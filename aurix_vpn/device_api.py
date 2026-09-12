@@ -22,6 +22,26 @@ from .identity import IdentityError, IdentityService
 MAX_BODY_BYTES = 128 * 1024
 REQUEST_CLOCK_SKEW_SECONDS = 300
 ALLOWED_CONFIG_SCHEMES = {"ss", "ssconf", "vless", "hysteria2", "hy2", "trojan", "vmess", "wireguard", "wg"}
+MANIFEST_ROUTE_FIELDS = frozenset(
+    {
+        "route_id",
+        "generation_id",
+        "endpoint_id",
+        "region",
+        "protocol",
+        "transport",
+        "generation",
+        "credential_ref",
+    }
+)
+_FORBIDDEN_MANIFEST_FIELD_MARKERS = (
+    "access_url",
+    "secret",
+    "password",
+    "token",
+    "private",
+    "cipher",
+)
 
 
 class DeviceAPIError(RuntimeError):
@@ -42,6 +62,26 @@ def _b64(value: bytes) -> str:
 
 def _unb64(value: str) -> bytes:
     return base64.urlsafe_b64decode(str(value) + "=" * (-len(str(value)) % 4))
+
+
+def _manifest_route(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep signed device manifests metadata-only and bounded."""
+    result: dict[str, Any] = {}
+    for raw_key, raw_value in value.items():
+        key = str(raw_key)
+        lowered = key.lower()
+        if any(marker in lowered for marker in _FORBIDDEN_MANIFEST_FIELD_MARKERS):
+            raise DeviceAPIError("route provider returned credential material")
+        if key not in MANIFEST_ROUTE_FIELDS:
+            continue
+        if isinstance(raw_value, (Mapping, list, tuple)):
+            raise DeviceAPIError("route provider returned invalid route metadata")
+        if raw_value is not None and not isinstance(raw_value, (bool, int, float, str)):
+            raise DeviceAPIError("route provider returned invalid route metadata")
+        if isinstance(raw_value, str) and len(raw_value) > 512:
+            raise DeviceAPIError("route provider returned oversized route metadata")
+        result[key] = raw_value
+    return result
 
 
 def sign_device_request(
@@ -212,6 +252,7 @@ class DeviceAPIService:
         routes = self.route_provider(str(record["account_id"]))
         if not isinstance(routes, list) or len(routes) > 100 or any(not isinstance(route, Mapping) for route in routes):
             raise DeviceAPIError("route provider returned invalid data")
+        safe_routes = [_manifest_route(route) for route in routes]
         issued_at = datetime.fromtimestamp(float(self.clock()), timezone.utc)
         manifest = {
             "version": 1,
@@ -220,7 +261,7 @@ class DeviceAPIService:
             "revocation_epoch": int(record.get("revocation_epoch") or 0),
             "issued_at": issued_at.isoformat(),
             "expires_at": (issued_at + timedelta(minutes=15)).isoformat(),
-            "routes": [dict(route) for route in routes],
+            "routes": safe_routes,
         }
         return self.manifest_signer.sign(manifest)
 
