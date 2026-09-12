@@ -178,6 +178,30 @@ class IdentityAccountingTest(unittest.TestCase):
         self.assertEqual((subscription["status"], subscription["consumed_bytes"]), ("revoked", 1000))
         self.assertEqual(jobs["n"], 1)
 
+    def test_credential_generation_protocol_cannot_drift_on_retry(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
+        generation = self.identity.ensure_generation_for_credential(
+            entitlement,
+            "sg-a",
+            external_id="stable-credential",
+            protocol="xray",
+            usage_baseline_provenance="new",
+        )
+        with self.assertRaisesRegex(IdentityError, "protocol is immutable"):
+            self.identity.ensure_generation_for_credential(
+                entitlement,
+                "sg-a",
+                external_id="stable-credential",
+                protocol="outline",
+                usage_baseline_provenance="new",
+            )
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT generation_id, protocol FROM credential_generations WHERE generation_id = ?",
+                (generation,),
+            ).fetchone()
+        self.assertEqual((row["generation_id"], row["protocol"]), (generation, "xray"))
+
     def test_managed_quota_sweep_rejects_a_route_protocol_mismatch(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)
         generation = self.identity.ensure_generation_for_credential(

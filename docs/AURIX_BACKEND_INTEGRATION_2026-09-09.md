@@ -543,10 +543,15 @@ legacy registry remains compatible only for Outline.
 
 Latest verification on 2026-09-12: the disposable local PostgreSQL rehearsal
 passes all 3 tests after correcting a stale fixture expectation from 11 to 12
-migrated rows; the complete non-PostgreSQL VPN regression passes 348 tests.
+migrated rows; the complete non-PostgreSQL VPN regression passes 349 tests.
 This validates local migration/repository behavior only and does not validate
 the hosted production database or authorize a production cutover.
 
 The read-only Control Center now includes the persisted protocol on endpoint
 assignments and pending orders, so operators can reconcile protocol-specific
 capacity and customer requests without exposing route secrets or credentials.
+
+Credential-generation retries now enforce protocol immutability as well: a
+stable generation cannot be rewritten from Outline to Xray/Hysteria2 or back
+again. A protocol change must create a new generation and preserve the old
+generation's accounting and revocation history.

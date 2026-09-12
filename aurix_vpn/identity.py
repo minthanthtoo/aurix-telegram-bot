@@ -787,6 +787,13 @@ class IdentityService:
     ) -> str:
         source_type, source_id = _entitlement_parts(entitlement_key)
         external_id = str(external_id or credential_id or "").strip()
+        normalized_protocol = str(protocol or "").strip().lower()
+        if (
+            not normalized_protocol
+            or len(normalized_protocol) > 64
+            or any(char.isspace() for char in normalized_protocol)
+        ):
+            raise IdentityError("credential protocol is invalid")
         if not external_id:
             raise IdentityError("credential external id is required")
         if status not in REMOTE_USABLE_GENERATION_STATUSES + ("revoked", "failed"):
@@ -806,13 +813,16 @@ class IdentityService:
             if self._source_row(connection, entitlement_key) is None:
                 raise IdentityError("generation references an unknown entitlement")
             existing = connection.execute(
-                """SELECT generation_id, status, usage_baseline_provenance,
+                """SELECT generation_id, protocol, status, usage_baseline_provenance,
                           usage_baseline_bytes
                      FROM credential_generations
                     WHERE entitlement_key = ? AND endpoint_id = ? AND external_id = ?""",
                 (entitlement_key, str(endpoint_id), external_id),
             ).fetchone()
             if existing is not None:
+                existing_protocol = str(existing["protocol"] or "outline").strip().lower()
+                if existing_protocol != normalized_protocol:
+                    raise IdentityError("credential generation protocol is immutable")
                 connection.execute(
                     """UPDATE credential_generations
                           SET access_url_ciphertext = COALESCE(?, access_url_ciphertext),
@@ -829,7 +839,7 @@ class IdentityService:
                         WHERE generation_id = ?""",
                     (
                         access_url_ciphertext,
-                        str(protocol),
+                        normalized_protocol,
                         str(remote_state),
                         str(remote_state),
                         status,
@@ -864,7 +874,7 @@ class IdentityService:
                     source_type,
                     source_id,
                     str(endpoint_id),
-                    str(protocol),
+                    normalized_protocol,
                     external_id,
                     access_url_ciphertext,
                     int(latest["latest"] or 0) + 1,
