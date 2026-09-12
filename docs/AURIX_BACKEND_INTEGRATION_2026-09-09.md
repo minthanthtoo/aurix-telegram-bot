@@ -705,3 +705,10 @@ from the same redacted API payload. This gives operators one view across
 Outline and future managed transports without turning the browser into a
 credential or provider-management surface. The API and UI regression checks
 pass locally; no provider or customer state was changed.
+
+The scheduled managed-quota sweep now explicitly skips Outline generations,
+which are already accounted by the shared Outline snapshot path. This keeps a
+mixed Outline/managed fleet from invoking a non-Outline binding for legacy
+routes and reporting a false partial-maintenance failure. The regression suite
+passes locally; no live provider, customer credential, server, or database was
+changed.

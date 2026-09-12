@@ -586,6 +586,13 @@ class CommerceWorkerMixin:
             external_id = str(generation.get("external_id") or "").strip()
             status = str(generation.get("status") or "").strip().lower()
             remote_state = str(generation.get("remote_state") or "").strip().lower()
+            if protocol == "outline":
+                # Outline is accounted by enforce_quotas from the shared
+                # endpoint snapshot. The managed sweep must not ask a
+                # protocol-specific binding for an Outline route, or a mixed
+                # fleet would report a false partial failure each pass.
+                skipped += 1
+                continue
             if status not in {"active", "retiring"} or remote_state != "observed":
                 skipped += 1
                 continue

@@ -178,6 +178,40 @@ class IdentityAccountingTest(unittest.TestCase):
         self.assertEqual((subscription["status"], subscription["consumed_bytes"]), ("revoked", 1000))
         self.assertEqual(jobs["n"], 1)
 
+    def test_managed_quota_sweep_skips_outline_generations(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)
+        generation = self.identity.ensure_generation_for_credential(
+            entitlement,
+            "legacy-default",
+            credential_id="outline-credential",
+            external_id="outline-credential",
+            protocol="outline",
+            access_url_ciphertext="ss://outline-credential@example.com",
+            usage_baseline_provenance="new",
+            now=self.now.isoformat(),
+        )
+        self.identity.ensure_generation_lease(
+            entitlement,
+            generation,
+            "legacy-default",
+            1000,
+            (self.now + timedelta(days=1)).isoformat(),
+            now=self.now,
+        )
+        worker = ManagedQuotaWorkerHarness(self.database, self.identity)
+
+        result = worker.enforce_managed_quotas(
+            route_provider=lambda *_args: self.fail("Outline must not use managed route discovery"),
+            adapter_provider=lambda _route: self.fail("Outline must not use managed adapter discovery"),
+            now=self.now,
+        )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["generations"], 1)
+        self.assertEqual(result["eligible"], 0)
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(result["errors"], [])
+
     def test_credential_generation_protocol_cannot_drift_on_retry(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
         generation = self.identity.ensure_generation_for_credential(
