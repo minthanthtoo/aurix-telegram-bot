@@ -768,3 +768,21 @@ secret-free credential intent on the transient grant. A recovered or
 pre-existing provider user can therefore rotate or reconcile through the same
 route as a newly-created user instead of losing protocol-specific route
 metadata on the idempotent path.
+
+## 24. Managed route endpoint validation — 2026-09-12
+
+The managed Xray and Hysteria2 adapters now validate deployment-owned public
+hosts and ports before any provider-side user creation or reconciliation. Hosts
+must be a plain DNS name or IP address without URI delimiters, whitespace, or
+embedded credentials; ports must be canonical integers in the `1..65535`
+range. This prevents malformed route metadata from producing invalid customer
+exports or leaving an orphaned remote user after a configuration error.
+
+The focused protocol, node-agent, and provider-backend selection passes 45
+tests, and the complete explicit VPN-only regression passes `384` tests. Ruff,
+Python compilation, and `git diff --check` also pass. This VPN-only step is
+committed as `6333805` (`Validate managed protocol route endpoints`). No AI
+files were staged or modified by this step. No live server, provider,
+customer credential, BKK-A protocol profile, load/speed test, soak test, or
+production database was changed or run; the documented canary, Myanmar client,
+PostgreSQL, concurrency, cost, and rollout gates remain outstanding.
