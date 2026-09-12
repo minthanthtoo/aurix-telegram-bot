@@ -143,9 +143,12 @@ load test, or speed test was changed or performed.
   evidence fields are persisted, and the Control Center can inspect recent
   management/client-path/quota/restart observations without receiving secrets.
   `EndpointRegistry.promote_protocol_profile` is the explicit promotion
-  boundary: it requires fresh, non-expired healthy observations for every
-  operator-selected signal and matching declared capabilities, then records an
-  audit event when the commerce audit schema is available. Observations alone
+  boundary: for every non-Outline transport it requires fresh, non-expired
+  healthy observations for the mandatory management/usage/quota/restart/data-
+  plane gates, plus any operator-selected signal, and matching declared
+  capabilities for the mandatory lifecycle/data-plane controls, plus any
+  operator-selected capability. It then records an audit event when the
+  commerce audit schema is available. Observations alone
   do not enable a candidate profile or constitute live compatibility proof;
   direct registration cannot bypass this boundary for non-Outline protocols.
   The non-mutating promotion-readiness check exposes missing fresh signals and

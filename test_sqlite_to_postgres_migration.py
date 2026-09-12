@@ -324,8 +324,13 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                     now=now + timedelta(seconds=62),
                 )
                 self.assertEqual(recovered_health["state"], "ACTIVE")
-                required_signals = ("management", "direct_client")
-                required_capabilities = ("per_customer_auth", "usage_stats")
+                minimums = EndpointRegistry.protocol_promotion_requirements("xray")
+                required_signals = tuple(
+                    sorted(set(minimums["signals"]) | {"direct_client"})
+                )
+                required_capabilities = tuple(
+                    sorted(set(minimums["capabilities"]) | {"per_customer_auth", "usage_stats"})
+                )
                 for endpoint_id in ("legacy-default", "postgres-failover-target"):
                     registry.register_protocol_profile(
                         endpoint_id,

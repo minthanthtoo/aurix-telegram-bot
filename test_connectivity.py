@@ -87,6 +87,28 @@ class EndpointRegistryTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def _make_protocol_ready(self, endpoint_id: str, protocol: str, now: datetime):
+        requirements = EndpointRegistry.protocol_promotion_requirements(protocol)
+        self.registry.register_protocol_profile(
+            endpoint_id,
+            protocol,
+            status="candidate",
+            capabilities={name: True for name in requirements["capabilities"]},
+            now=now,
+        )
+        for signal in requirements["signals"]:
+            self.registry.record_protocol_observation(
+                endpoint_id,
+                protocol,
+                signal=signal,
+                status="healthy",
+                observed_at=now,
+                expires_at=now + timedelta(hours=1),
+                source="promotion-test",
+                now=now,
+            )
+        return requirements
+
     def test_assignment_is_durable_and_idempotent(self):
         first = self.registry.ensure_subscription_assignment("sub-1", "basic", 50_000_000_000)
         second = self.registry.ensure_subscription_assignment("sub-1", "basic", 50_000_000_000)
@@ -105,10 +127,7 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(json.loads(audit_rows[0]["metadata_json"])["protocol"], "outline")
 
     def test_assignment_persists_explicit_protocol(self):
-        self.registry.register_protocol_profile("legacy-default", "xray", status="candidate")
-        self.registry.record_protocol_observation(
-            "legacy-default", "xray", signal="management", status="healthy"
-        )
+        self._make_protocol_ready("legacy-default", "xray", datetime.now(UTC))
         self.registry.promote_protocol_profile(
             "legacy-default", "xray", required_signals=("management",)
         )
@@ -328,22 +347,17 @@ class EndpointRegistryTest(unittest.TestCase):
             now=datetime(2026, 9, 11, 0, 0, tzinfo=UTC),
         )
         self.assertFalse(readiness["promotable"])
-        self.assertEqual(readiness["missing_signals"], ["management"])
-        self.assertEqual(readiness["missing_capabilities"], [])
+        self.assertEqual(
+            readiness["missing_signals"],
+            sorted(EndpointRegistry.protocol_promotion_requirements("xray")["signals"]),
+        )
+        self.assertIn("quota_cap", readiness["missing_capabilities"])
+        self.assertNotIn("usage", readiness["missing_capabilities"])
         with self.database.connect() as connection:
             with self.assertRaisesRegex(ConnectivityError, "capacity"):
                 self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray")
         now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
-        self.registry.record_protocol_observation(
-            "legacy-default",
-            "xray",
-            signal="management",
-            status="healthy",
-            observed_at=now,
-            expires_at=now.replace(hour=1),
-            source="promotion-test",
-            now=now,
-        )
+        requirements = self._make_protocol_ready("legacy-default", "xray", now)
         promoted = self.registry.promote_protocol_profile(
             "legacy-default",
             "xray",
@@ -363,7 +377,10 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(audit["action"], "protocol_profile_promoted")
         self.assertEqual(audit["actor_id"], "7")
         self.assertEqual(audit["target_id"], "xray:legacy-default")
-        self.assertEqual(json.loads(audit["metadata_json"])["required_signals"], ["management"])
+        self.assertEqual(
+            json.loads(audit["metadata_json"])["required_signals"],
+            sorted(requirements["signals"]),
+        )
         with self.database.connect() as connection:
             self.assertEqual(
                 self.registry.select_endpoint_for_plan(connection, "basic", protocol="xray"),
@@ -429,7 +446,12 @@ class EndpointRegistryTest(unittest.TestCase):
             "legacy-default",
             "hysteria2",
             status="candidate",
-            capabilities={"usage": True, "quota_cap": False},
+            capabilities={
+                name: True
+                for name in EndpointRegistry.protocol_promotion_requirements("hysteria2")[
+                    "capabilities"
+                ]
+            },
             now=now,
         )
         with self.assertRaisesRegex(ConnectivityError, "evidence is incomplete"):
@@ -466,6 +488,18 @@ class EndpointRegistryTest(unittest.TestCase):
             source="promotion-test",
             now=now,
         )
+        self.registry.register_protocol_profile(
+            "legacy-default",
+            "hysteria2",
+            status="candidate",
+            capabilities={
+                name: name != "quota_cap"
+                for name in EndpointRegistry.protocol_promotion_requirements("hysteria2")[
+                    "capabilities"
+                ]
+            },
+            now=now,
+        )
         with self.assertRaisesRegex(ConnectivityError, "lacks required capabilities"):
             self.registry.promote_protocol_profile(
                 "legacy-default",
@@ -479,6 +513,55 @@ class EndpointRegistryTest(unittest.TestCase):
                 "legacy-default",
                 "hysteria2",
                 required_signals="management",
+                now=now,
+            )
+
+    def test_non_outline_promotion_cannot_bypass_minimum_evidence(self):
+        now = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+        requirements = EndpointRegistry.protocol_promotion_requirements("xray")
+        self.registry.register_protocol_profile(
+            "legacy-default",
+            "xray",
+            status="candidate",
+            capabilities={name: True for name in requirements["capabilities"]},
+            now=now,
+        )
+        self.registry.record_protocol_observation(
+            "legacy-default",
+            "xray",
+            signal="management",
+            status="healthy",
+            observed_at=now,
+            expires_at=now + timedelta(hours=1),
+            source="promotion-test",
+            now=now,
+        )
+        preview = self.registry.protocol_profile_promotion_readiness(
+            "legacy-default",
+            "xray",
+            required_signals=("management",),
+            required_capabilities=("usage",),
+            now=now,
+        )
+        self.assertFalse(preview["promotable"])
+        self.assertEqual(
+            preview["required_signals"],
+            sorted(requirements["signals"]),
+        )
+        self.assertEqual(
+            preview["required_capabilities"],
+            sorted(requirements["capabilities"]),
+        )
+        self.assertEqual(
+            preview["missing_signals"],
+            ["data_plane", "quota", "restart", "usage"],
+        )
+        with self.assertRaisesRegex(ConnectivityError, "data_plane"):
+            self.registry.promote_protocol_profile(
+                "legacy-default",
+                "xray",
+                required_signals=("management",),
+                required_capabilities=("usage",),
                 now=now,
             )
 
@@ -519,7 +602,17 @@ class EndpointRegistryTest(unittest.TestCase):
         )
         self.assertFalse(readiness["promotable"])
         self.assertEqual(readiness["fresh_healthy_signals"], [])
-        self.assertEqual(readiness["reasons"], ["protocol profile evidence is incomplete: client_path"])
+        self.assertIn("client_path", readiness["missing_signals"])
+        self.assertIn("management", readiness["missing_signals"])
+        self.assertTrue(
+            any(reason.startswith("protocol profile lacks required capabilities:")
+                for reason in readiness["reasons"])
+        )
+        self.assertTrue(
+            any(reason.startswith("protocol profile evidence is incomplete:")
+                and "client_path" in reason
+                for reason in readiness["reasons"])
+        )
         with self.assertRaisesRegex(ConnectivityError, "profile does not exist"):
             self.registry.record_protocol_observation(
                 "legacy-default", "hysteria2", now=now
@@ -577,8 +670,7 @@ class EndpointRegistryTest(unittest.TestCase):
 
     def test_transfer_assignment_rejects_target_without_source_protocol_profile(self):
         now = datetime.now(UTC)
-        self.registry.register_protocol_profile("legacy-default", "xray", status="candidate", now=now)
-        self.registry.record_protocol_observation("legacy-default", "xray", now=now)
+        self._make_protocol_ready("legacy-default", "xray", now)
         self.registry.promote_protocol_profile(
             "legacy-default", "xray", required_signals=("management",), now=now
         )
@@ -609,8 +701,7 @@ class EndpointRegistryTest(unittest.TestCase):
 
     def test_transfer_assignment_uses_assignment_protocol_before_provisioning(self):
         now = datetime.now(UTC)
-        self.registry.register_protocol_profile("legacy-default", "xray", status="candidate", now=now)
-        self.registry.record_protocol_observation("legacy-default", "xray", now=now)
+        self._make_protocol_ready("legacy-default", "xray", now)
         self.registry.promote_protocol_profile(
             "legacy-default", "xray", required_signals=("management",), now=now
         )
@@ -622,10 +713,7 @@ class EndpointRegistryTest(unittest.TestCase):
                    VALUES ('bkk-xray-ready', 'BKK-XRAY-READY', 'bkk1', 'ACTIVE', 1, ?, ?)""",
                 (now.isoformat(), now.isoformat()),
             )
-        self.registry.register_protocol_profile(
-            "bkk-xray-ready", "xray", status="candidate", now=now
-        )
-        self.registry.record_protocol_observation("bkk-xray-ready", "xray", now=now)
+        self._make_protocol_ready("bkk-xray-ready", "xray", now)
         self.registry.promote_protocol_profile(
             "bkk-xray-ready", "xray", required_signals=("management",), now=now
         )
@@ -640,8 +728,7 @@ class EndpointRegistryTest(unittest.TestCase):
 
     def test_transfer_assignment_rejects_assignment_generation_protocol_drift(self):
         now = datetime.now(UTC)
-        self.registry.register_protocol_profile("legacy-default", "xray", status="candidate", now=now)
-        self.registry.record_protocol_observation("legacy-default", "xray", now=now)
+        self._make_protocol_ready("legacy-default", "xray", now)
         self.registry.promote_protocol_profile(
             "legacy-default", "xray", required_signals=("management",), now=now
         )

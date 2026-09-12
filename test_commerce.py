@@ -738,6 +738,7 @@ class CommerceServiceTest(unittest.TestCase):
 
     def test_protocol_promotion_flows_through_commerce_admin_boundary(self):
         registry = EndpointRegistry(self.database, Fernet.generate_key())
+        requirements = EndpointRegistry.protocol_promotion_requirements("xray")
         registry.configure_bootstrap(
             "https://outline.invalid:1234/secret", "0" * 64, now=self.now
         )
@@ -745,20 +746,21 @@ class CommerceServiceTest(unittest.TestCase):
             "legacy-default",
             "xray",
             status="candidate",
-            capabilities={"usage": True},
+            capabilities={name: True for name in requirements["capabilities"]},
             now=self.now,
         )
         self.service.connectivity = registry
-        registry.record_protocol_observation(
-            "legacy-default",
-            "xray",
-            signal="management",
-            status="healthy",
-            observed_at=self.now,
-            expires_at=self.now + timedelta(hours=1),
-            source="admin-test",
-            now=self.now,
-        )
+        for signal in requirements["signals"]:
+            registry.record_protocol_observation(
+                "legacy-default",
+                "xray",
+                signal=signal,
+                status="healthy",
+                observed_at=self.now,
+                expires_at=self.now + timedelta(hours=1),
+                source="admin-test",
+                now=self.now,
+            )
         preview = self.service.protocol_profile_promotion_readiness(
             "legacy-default",
             "xray",

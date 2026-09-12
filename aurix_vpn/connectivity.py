@@ -53,6 +53,26 @@ class EndpointAssignment:
 class EndpointRegistry:
     """PostgreSQL/SQLite-compatible endpoint and assignment repository."""
 
+    # These are the minimum commercial-readiness gates for every non-Outline
+    # transport.  Operator-supplied requirements may add checks, but cannot
+    # remove any of these documented lifecycle and data-plane checks.
+    _NON_OUTLINE_PROMOTION_SIGNALS = (
+        "management",
+        "usage",
+        "quota",
+        "restart",
+        "data_plane",
+    )
+    _NON_OUTLINE_PROMOTION_CAPABILITIES = (
+        "managed_config",
+        "manual_export",
+        "quota_cap",
+        "usage",
+        "rotation",
+        "management_probe",
+        "data_plane_probe",
+        "reconcile",
+    )
     _PROTOCOL_OBSERVATION_STATUSES = {
         "healthy",
         "degraded",
@@ -90,6 +110,46 @@ class EndpointRegistry:
             return self.cipher.decrypt(value.encode()).decode()
         except (InvalidToken, UnicodeDecodeError, ValueError) as exc:
             raise ConnectivityError("Endpoint management secret cannot be decrypted") from exc
+
+    @classmethod
+    def protocol_promotion_requirements(cls, protocol: str) -> dict[str, tuple[str, ...]]:
+        """Return immutable minimum promotion gates for one transport.
+
+        Outline is already the default production transport and retains its
+        existing caller-selected evidence behavior.  Every other transport
+        must prove the full documented lifecycle before it can be enabled.
+        """
+        normalized = str(protocol or "").strip().lower()
+        if normalized == "outline":
+            return {"signals": (), "capabilities": ()}
+        return {
+            "signals": cls._NON_OUTLINE_PROMOTION_SIGNALS,
+            "capabilities": cls._NON_OUTLINE_PROMOTION_CAPABILITIES,
+        }
+
+    @classmethod
+    def _normalize_promotion_requirements(
+        cls,
+        protocol: str,
+        required_signals: tuple[str, ...] | list[str],
+        required_capabilities: tuple[str, ...] | list[str],
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        if isinstance(required_signals, str) or isinstance(required_capabilities, str):
+            raise ConnectivityError("protocol evidence requirements must be a sequence")
+        operator_signals = {
+            str(value or "").strip().lower()
+            for value in required_signals
+            if str(value or "").strip()
+        }
+        operator_capabilities = {
+            str(value or "").strip().lower()
+            for value in required_capabilities
+            if str(value or "").strip()
+        }
+        minimums = cls.protocol_promotion_requirements(protocol)
+        signals = tuple(sorted(operator_signals.union(minimums["signals"])))
+        capabilities = tuple(sorted(operator_capabilities.union(minimums["capabilities"])))
+        return signals, capabilities
 
     @staticmethod
     def _audit_events_available(connection: Any) -> bool:
@@ -546,30 +606,13 @@ class EndpointRegistry:
         """
         endpoint = str(endpoint_id or "").strip()
         transport = str(protocol or "").strip().lower()
-        if isinstance(required_signals, str) or isinstance(required_capabilities, str):
-            raise ConnectivityError("protocol evidence requirements must be a sequence")
-        signals = tuple(
-            sorted(
-                {
-                    str(value or "").strip().lower()
-                    for value in required_signals
-                    if str(value or "").strip()
-                }
-            )
-        )
-        capabilities = tuple(
-            sorted(
-                {
-                    str(value or "").strip().lower()
-                    for value in required_capabilities
-                    if str(value or "").strip()
-                }
-            )
-        )
         if not endpoint or len(endpoint) > 128:
             raise ConnectivityError("endpoint ID is invalid")
         if not transport or len(transport) > 64 or any(char.isspace() for char in transport):
             raise ConnectivityError("protocol is invalid")
+        signals, capabilities = self._normalize_promotion_requirements(
+            transport, required_signals, required_capabilities
+        )
         if not signals:
             raise ConnectivityError("at least one protocol evidence signal is required")
         if any(len(value) > 64 or any(char.isspace() for char in value) for value in signals):
@@ -589,6 +632,12 @@ class EndpointRegistry:
                 "protocol": transport,
                 "required_signals": list(signals),
                 "required_capabilities": list(capabilities),
+                "minimum_required_signals": list(
+                    self.protocol_promotion_requirements(transport)["signals"]
+                ),
+                "minimum_required_capabilities": list(
+                    self.protocol_promotion_requirements(transport)["capabilities"]
+                ),
                 "checked_at": checked_at.isoformat(),
                 "profile_exists": profile is not None,
                 "profile_id": None if profile is None else str(profile["profile_id"]),
@@ -683,30 +732,13 @@ class EndpointRegistry:
         """
         endpoint = str(endpoint_id or "").strip()
         transport = str(protocol or "").strip().lower()
-        if isinstance(required_signals, str) or isinstance(required_capabilities, str):
-            raise ConnectivityError("protocol evidence requirements must be a sequence")
-        signals = tuple(
-            sorted(
-                {
-                    str(value or "").strip().lower()
-                    for value in required_signals
-                    if str(value or "").strip()
-                }
-            )
-        )
-        capabilities = tuple(
-            sorted(
-                {
-                    str(value or "").strip()
-                    for value in required_capabilities
-                    if str(value or "").strip()
-                }
-            )
-        )
         if not endpoint or len(endpoint) > 128:
             raise ConnectivityError("endpoint ID is invalid")
         if not transport or len(transport) > 64 or any(char.isspace() for char in transport):
             raise ConnectivityError("protocol is invalid")
+        signals, capabilities = self._normalize_promotion_requirements(
+            transport, required_signals, required_capabilities
+        )
         if not signals:
             raise ConnectivityError("at least one protocol evidence signal is required")
         if any(len(value) > 64 or any(char.isspace() for char in value) for value in signals):

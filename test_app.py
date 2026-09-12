@@ -1610,28 +1610,37 @@ class TelegramBotCommerceTest(unittest.TestCase):
     def test_admin_protocol_readiness_and_promotion_are_confirmation_bound(self):
         registry = EndpointRegistry(self.commerce.database, Fernet.generate_key())
         now = datetime.now(UTC)
+        requirements = EndpointRegistry.protocol_promotion_requirements("xray")
         registry.configure_bootstrap(
             "https://outline.invalid:1234/secret", "0" * 64, now=now
         )
         registry.register_protocol_profile(
-            "legacy-default", "xray", status="candidate", capabilities={"usage": True}, now=now
-        )
-        registry.record_protocol_observation(
             "legacy-default",
             "xray",
-            signal="management",
-            status="healthy",
-            observed_at=now,
-            expires_at=now + timedelta(hours=1),
-            source="telegram-test",
+            status="candidate",
+            capabilities={name: True for name in requirements["capabilities"]},
             now=now,
         )
+        for signal in requirements["signals"]:
+            registry.record_protocol_observation(
+                "legacy-default",
+                "xray",
+                signal=signal,
+                status="healthy",
+                observed_at=now,
+                expires_at=now + timedelta(hours=1),
+                source="telegram-test",
+                now=now,
+            )
         self.commerce.connectivity = registry
         self.commerce.adapter_registry.register("xray", XrayConnectivityAdapter)
 
         self.bot.handle(self.message(999, "/protocolreadiness legacy-default xray management usage"))
         self.assertIn("READY", self.bot.sent[-1][1])
-        self.assertIn("Fresh healthy signals: management", self.bot.sent[-1][1])
+        self.assertIn(
+            "Fresh healthy signals: data_plane, management, quota, restart, usage",
+            self.bot.sent[-1][1],
+        )
 
         self.bot.handle(self.message(999, "/promoteprotocol legacy-default xray management usage"))
         self.assertIn("expires in 5 minutes", self.bot.sent[-1][1])
