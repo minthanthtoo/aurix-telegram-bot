@@ -290,27 +290,42 @@ class AuriXVpnWebApplication:
         self, plan_code: str | None = None, protocol: str = "outline"
     ) -> dict[str, Any]:
         registry = getattr(self.runtime, "connectivity", None)
+        selected_protocol = str(protocol or "outline").strip().lower()
         directory = []
         if registry is not None:
             list_customer_endpoints = getattr(registry, "list_customer_endpoints", None)
             if callable(list_customer_endpoints):
-                try:
-                    endpoint_rows = list_customer_endpoints(plan_code, protocol)
-                except TypeError:
-                    # Keep compatibility with a pre-protocol registry injected
-                    # by an older embedding application. Such a registry can
-                    # only serve the default Outline directory; never relabel
-                    # those rows as a requested managed transport.
-                    endpoint_rows = (
-                        list_customer_endpoints(plan_code)
-                        if str(protocol or "outline").strip().lower() == "outline"
-                        else []
-                    )
+                catalog_protocols = self.protocols_payload(plan_code)["protocols"]
+                catalog_entry = next(
+                    (
+                        item
+                        for item in catalog_protocols
+                        if str(item.get("protocol") or "").strip().lower() == selected_protocol
+                    ),
+                    None,
+                )
+                if selected_protocol != "outline" and (
+                    not isinstance(catalog_entry, dict)
+                    or int(catalog_entry.get("eligible_servers") or 0) <= 0
+                ):
+                    endpoint_rows = []
+                else:
+                    try:
+                        endpoint_rows = list_customer_endpoints(plan_code, selected_protocol)
+                    except TypeError:
+                        # Keep compatibility with a pre-protocol registry
+                        # only for the default Outline directory. Managed
+                        # transports must never inherit Outline rows.
+                        endpoint_rows = (
+                            list_customer_endpoints(plan_code)
+                            if selected_protocol == "outline"
+                            else []
+                        )
                 directory = [_safe_endpoint(item) for item in endpoint_rows]
         return {
             "servers": directory,
             "plan_code": str(plan_code or "").strip() or None,
-            "protocol": str(protocol or "outline").strip().lower(),
+            "protocol": selected_protocol,
             "selection_policy": "A selected server is rechecked at payment approval and provisioning.",
             "latency_note": "Displayed latency is the latest Outline control-plane check, not a user-device ping.",
         }

@@ -517,7 +517,7 @@ to default to Outline. The portal sends the selected protocol through the
 existing order boundary and shows the matching connection method for active
 credentials. The authenticated protocol catalog route is covered end-to-end
 with redaction assertions. The complete non-PostgreSQL VPN regression passes
-`347` tests after this change; no live
+`348` tests after this change; no live
 server, provider, customer credential, load test, speed test, or deployment was
 changed.
 
@@ -536,6 +536,10 @@ The portal's backward-compatible registry fallback is fail-closed for the
 same reason: an old Outline-only directory can still serve Outline rows, but
 cannot relabel them as Xray or Hysteria2 when a managed-protocol server query
 is made directly.
+
+Direct server-directory requests now reuse that same catalog gate: an
+unbound or otherwise unavailable managed transport returns no rows, while a
+legacy registry remains compatible only for Outline.
 
 The read-only Control Center now includes the persisted protocol on endpoint
 assignments and pending orders, so operators can reconcile protocol-specific

@@ -125,6 +125,7 @@ class _ProtocolRegistry(_Registry):
             "id": f"{protocol}-01",
             "code": f"{protocol.upper()}-01",
             "region": "sgp1",
+            "protocol": protocol,
             "state": "ACTIVE",
             "healthy": True,
             "eligible": True,
@@ -169,6 +170,17 @@ class VpnWebApplicationTest(unittest.TestCase):
         payload = self.application.servers_payload("basic", "xray")
         self.assertEqual(payload["protocol"], "xray")
         self.assertEqual(payload["servers"], [])
+
+    def test_server_directory_requires_bound_managed_protocol_catalog_entry(self):
+        self.application.runtime.connectivity = _ProtocolRegistry()
+        self.application.runtime.commerce.adapter_registry = SimpleNamespace(
+            is_registered=lambda protocol: protocol in {"outline", "xray"}
+        )
+        self.application.runtime.commerce.managed_route_bindings = SimpleNamespace(
+            routes=lambda: [{"endpoint_id": "xray-01", "protocol": "xray"}]
+        )
+        payload = self.application.servers_payload("basic", "xray")
+        self.assertEqual([item["protocol"] for item in payload["servers"]], ["xray"])
 
     def test_protocol_catalog_exposes_only_enabled_registered_profiles(self):
         self.application.runtime.connectivity = _ProtocolRegistry()
