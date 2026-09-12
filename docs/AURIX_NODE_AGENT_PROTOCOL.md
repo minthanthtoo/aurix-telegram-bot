@@ -75,10 +75,11 @@ interface is an accounting source, not proof of either behavior.
 Hysteria2 lab boundary. The user store keeps a keyed digest for authentication
 and a Fernet-encrypted copy for customer delivery; the auth callback accepts
 the documented HTTP-auth request shape. `Hysteria2TrafficStatsClient` is
-bounded and sends the Traffic Stats API secret explicitly. `/traffic` supplies
-usage and `/kick` is treated only as a disconnect request because a kick does
-not by itself prevent a reconnect. Hysteria2 quota enforcement is therefore
-not advertised by this backend.
+bounded, accepts only a loopback-local HTTP(S) URL without embedded
+credentials, query, or fragment, and sends the Traffic Stats API secret
+explicitly. `/traffic` supplies usage and `/kick` is treated only as a
+disconnect request because a kick does not by itself prevent a reconnect.
+Hysteria2 quota enforcement is therefore not advertised by this backend.
 
 The WSGI service and these concrete backends are contract boundaries, not proof
 that a provider is safe for commercial traffic. A real deployment still needs

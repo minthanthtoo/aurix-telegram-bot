@@ -26,6 +26,20 @@ from aurix_vpn.provider_backends import (
 
 
 class ProviderBackendsTest(unittest.TestCase):
+    def test_hysteria2_stats_client_rejects_nonlocal_or_decorated_urls(self):
+        for base_url, message in (
+            ("https://stats.example.test:19000", "loopback-local"),
+            ("http://user:password@127.0.0.1:19000", "credentials or URL decorations"),
+            ("http://127.0.0.1:19000?next=https://example.test", "credentials or URL decorations"),
+            ("http://127.0.0.1:19000#fragment", "credentials or URL decorations"),
+        ):
+            with self.subTest(base_url=base_url):
+                with self.assertRaisesRegex(ValueError, message):
+                    Hysteria2TrafficStatsClient(base_url, "stats-secret")
+
+        Hysteria2TrafficStatsClient("http://localhost:19000", "stats-secret")
+        Hysteria2TrafficStatsClient("http://[::1]:19000", "stats-secret")
+
     @staticmethod
     def _client_for_app(app):
         def requester(method, path, payload):

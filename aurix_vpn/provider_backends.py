@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import tempfile
@@ -20,7 +21,7 @@ from contextlib import contextmanager
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -192,8 +193,22 @@ class Hysteria2TrafficStatsClient:
         requester: Callable[[str, str, bytes | None, Mapping[str, str]], Any] | None = None,
     ):
         normalized = str(base_url).strip().rstrip("/")
-        if not normalized.startswith(("http://", "https://")):
+        parsed = urlsplit(normalized)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
             raise ValueError("Hysteria2 stats URL must use HTTP or HTTPS")
+        if (
+            parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Hysteria2 stats URL must not contain credentials or URL decorations")
+        try:
+            loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+        except ValueError:
+            loopback = parsed.hostname.lower() == "localhost"
+        if not loopback:
+            raise ValueError("Hysteria2 stats URL must be loopback-local")
         if not str(secret):
             raise ValueError("Hysteria2 stats API secret is required")
         self.base_url = normalized + "/"
