@@ -1422,6 +1422,29 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(request_calls[0][2]["target_endpoint_id"], "bkk-a")
         self.assertEqual(request_calls[0][2]["limit"], 2)
 
+    def test_admin_drain_preview_explains_protocol_blockers(self):
+        text = self.bot._admin_preview_text(
+            "/drain",
+            ["sg-a"],
+            "Confirm drain",
+            {
+                "state": "present",
+                "source_code": "SG-A",
+                "target_code": "BKK-A",
+                "target_available": False,
+                "active_generations": 0,
+                "queued_decisions": 0,
+                "limit": 50,
+                "missing_protocols": ["xray"],
+                "unmigratable_assignments": 1,
+                "unmigratable_assignment_protocols": ["xray"],
+            },
+        )
+        self.assertIn("Target available: no", text)
+        self.assertIn("Missing target protocol profiles: xray", text)
+        self.assertIn("Unmigratable active assignments: 1 (xray)", text)
+        self.assertIn("Result: BLOCKED", text)
+
     def test_admin_failover_safety_controls_are_confirmation_bound(self):
         self.bot.handle(self.message(999, "/failsafety"))
         self.assertIn("global:global", self.bot.sent[-1][1])

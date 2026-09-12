@@ -592,17 +592,47 @@ class TelegramAdminMixin:
                 lines.append("Result: resume the saved season if it is within its dates.")
             return "\n".join(lines)
         if command == "/drain":
-            return "\n".join(
-                [
-                    f"Source: {snapshot.get('source_code') or args[0]}",
-                    f"Target: {snapshot.get('target_code') or snapshot.get('target_endpoint_id') or '-'}",
-                    f"Active generations in cohort: {snapshot.get('active_generations') or 0}",
-                    f"Already queued: {snapshot.get('queued_decisions') or 0}",
-                    f"Cohort limit: {snapshot.get('limit') or 50}",
-                    "Result: pause new assignments on the source and queue verified migrations.",
-                    "Existing credentials are not revoked until a target is provisioned and probed.",
-                ]
+            missing_protocols = sorted(
+                {str(value).strip().lower() for value in snapshot.get("missing_protocols", []) if value}
             )
+            blocked_assignments = int(snapshot.get("unmigratable_assignments") or 0)
+            blocked_protocols = sorted(
+                {
+                    str(value).strip().lower()
+                    for value in snapshot.get("unmigratable_assignment_protocols", [])
+                    if value
+                }
+            )
+            blocked = (
+                snapshot.get("target_available") is False
+                or bool(missing_protocols)
+                or blocked_assignments > 0
+            )
+            lines = [
+                f"Source: {snapshot.get('source_code') or args[0]}",
+                f"Target: {snapshot.get('target_code') or snapshot.get('target_endpoint_id') or '-'}",
+                f"Target available: {'yes' if snapshot.get('target_available') else 'no'}",
+                f"Active generations in cohort: {snapshot.get('active_generations') or 0}",
+                f"Already queued: {snapshot.get('queued_decisions') or 0}",
+                f"Cohort limit: {snapshot.get('limit') or 50}",
+            ]
+            if missing_protocols:
+                lines.append("Missing target protocol profiles: " + ", ".join(missing_protocols))
+            if blocked_assignments:
+                suffix = f" ({', '.join(blocked_protocols)})" if blocked_protocols else ""
+                lines.append(
+                    f"Unmigratable active assignments: {blocked_assignments}{suffix}"
+                )
+            if blocked:
+                lines.append("Result: BLOCKED; no endpoint state will change until this is resolved.")
+            else:
+                lines.extend(
+                    [
+                        "Result: pause new assignments on the source and queue verified migrations.",
+                        "Existing credentials are not revoked until a target is provisioned and probed.",
+                    ]
+                )
+            return "\n".join(lines)
         if command == "/setsafety":
             current = snapshot.get("current") or {}
             old_state = "not configured"

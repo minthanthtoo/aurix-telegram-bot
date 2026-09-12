@@ -584,3 +584,9 @@ endpoint assignment and its live generation set. The read-only drain preview
 labels this as `protocol_mismatch`, while both operator drain and assignment
 transfer fail before changing route state. The complete non-PostgreSQL VPN
 suite passes `358` tests after this lifecycle-integrity guard.
+
+The Telegram administrator drain preview now surfaces target availability,
+missing protocol profiles, and unmigratable assignment blockers explicitly;
+blocked previews say that no endpoint state will change. The operator surface
+therefore matches the backend's fail-closed behavior instead of presenting a
+generic migration confirmation.
