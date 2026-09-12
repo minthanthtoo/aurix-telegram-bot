@@ -615,6 +615,7 @@ class AuriXVpnWebApplication:
             "unmanaged_present": 0,
             "historical_keys": 0,
             "latest_observed_at": None,
+            "protocols": [],
             "status": "unavailable",
         }
         inventory_method = getattr(registry, "inventory_reconciliation", None)
@@ -647,6 +648,33 @@ class AuriXVpnWebApplication:
                     inventory_reconciliation["latest_observed_at"] = str(
                         inventory_reconciliation["latest_observed_at"]
                     )[:64]
+                protocol_rows = raw_inventory.get("protocols")
+                if isinstance(protocol_rows, list):
+                    safe_protocols: list[dict[str, Any]] = []
+                    for item in protocol_rows:
+                        if not isinstance(item, dict):
+                            continue
+                        safe_item = {
+                            "protocol": str(item.get("protocol") or "")[:64],
+                            "present_keys": 0,
+                            "managed_present": 0,
+                            "unmanaged_present": 0,
+                            "historical_keys": 0,
+                            "latest_observed_at": None,
+                            "status": str(item.get("status") or "unavailable")[:32],
+                        }
+                        for key in (
+                            "present_keys", "managed_present", "unmanaged_present", "historical_keys"
+                        ):
+                            try:
+                                safe_item[key] = max(0, int(item.get(key) or 0))
+                            except (TypeError, ValueError):
+                                safe_item[key] = 0
+                        if item.get("latest_observed_at") is not None:
+                            safe_item["latest_observed_at"] = str(item["latest_observed_at"])[:64]
+                        if safe_item["protocol"]:
+                            safe_protocols.append(safe_item)
+                    inventory_reconciliation["protocols"] = safe_protocols
         database = getattr(self.runtime, "commerce_database", None)
         assignments: list[dict[str, Any]] = []
         if database is not None:

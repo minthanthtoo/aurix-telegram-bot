@@ -688,3 +688,10 @@ their existing behavior. The full VPN-only regression passes `375` tests, the
 disposable PostgreSQL migration rehearsal passes, and no live protocol,
 server, customer credential, load/speed test, soak test, or production database
 was changed.
+
+The Control Center endpoint detail now renders the protocol-scoped inventory
+breakdown (present, managed, unmanaged, historical, and latest observation)
+from the same redacted API payload. This gives operators one view across
+Outline and future managed transports without turning the browser into a
+credential or provider-management surface. The API and UI regression checks
+pass locally; no provider or customer state was changed.

@@ -87,6 +87,15 @@ class ControlCenterTest(unittest.TestCase):
                 "unmanaged_present": 1,
                 "historical_keys": 4,
                 "latest_observed_at": "2026-09-12T00:00:00+00:00",
+                "protocols": [{
+                    "protocol": "outline",
+                    "present_keys": 3,
+                    "managed_present": 2,
+                    "unmanaged_present": 1,
+                    "historical_keys": 4,
+                    "latest_observed_at": "2026-09-12T00:00:00+00:00",
+                    "status": "healthy",
+                }],
                 "status": "healthy",
             },
         )
@@ -143,6 +152,7 @@ class ControlCenterTest(unittest.TestCase):
         self.assertEqual(detail["protocol_observations"][0]["protocol"], "outline")
         self.assertEqual(detail["inventory_reconciliation"]["present_keys"], 3)
         self.assertEqual(detail["inventory_reconciliation"]["unmanaged_present"], 1)
+        self.assertEqual(detail["inventory_reconciliation"]["protocols"][0]["protocol"], "outline")
 
     def test_registered_non_outline_adapter_remains_evidence_gated_in_summary(self):
         self.runtime.commerce.adapter_registry.register("xray", XrayConnectivityAdapter)
