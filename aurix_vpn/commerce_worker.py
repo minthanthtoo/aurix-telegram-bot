@@ -1516,11 +1516,13 @@ class CommerceWorkerMixin:
                 "attempted": 0,
                 "finalized": 0,
                 "errors": {"identity": "identity_service_unavailable"},
+                "deferred": 0,
             }
         batch_size = self._managed_session_termination_batch_size()
+        read_limit = batch_size + 1
         pending_reader = getattr(identity, "pending_session_termination_generations", None)
         if callable(pending_reader):
-            pending = list(pending_reader(limit=batch_size) or [])
+            pending = list(pending_reader(limit=read_limit) or [])
         else:
             pending = [
                 generation
@@ -1529,7 +1531,9 @@ class CommerceWorkerMixin:
                 and str(generation.get("remote_state") or "").lower()
                 == "revoked_verified"
                 and str(generation.get("protocol") or "outline").lower() != "outline"
-            ][:batch_size]
+            ][:read_limit]
+        batch_limited = len(pending) > batch_size
+        pending = pending[:batch_size]
         if not pending:
             return {
                 "status": "completed",
@@ -1537,6 +1541,7 @@ class CommerceWorkerMixin:
                 "attempted": 0,
                 "finalized": 0,
                 "errors": {},
+                "deferred": 0,
             }
 
         route_provider = getattr(self, "managed_route_provider", None)
@@ -1547,6 +1552,7 @@ class CommerceWorkerMixin:
                 "attempted": 0,
                 "finalized": 0,
                 "errors": {"binding": "managed_route_provider_unavailable"},
+                "deferred": int(batch_limited),
             }
         decrypt = getattr(self, "_decrypt_access_url", None)
         timestamp = _now_text(now)
@@ -1599,12 +1605,13 @@ class CommerceWorkerMixin:
             except Exception as exc:
                 errors[key] = type(exc).__name__
         return {
-            "status": "completed" if not errors else "partial",
+            "status": "completed" if not errors and not batch_limited else "partial",
             "pending": len(pending),
             "attempted": attempted,
             "finalized": finalized,
             "errors": errors,
-            "batch_limited": len(pending) >= batch_size,
+            "deferred": int(batch_limited),
+            "batch_limited": batch_limited,
         }
 
     def _revoke(self, job: dict[str, Any], now: datetime) -> None:
