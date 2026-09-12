@@ -363,6 +363,17 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                     {item["id"] for item in xray_endpoints if item["eligible"]},
                     {"legacy-default", "postgres-failover-target"},
                 )
+                # The assignment created above is being promoted in this
+                # disposable rehearsal before the Xray failover scenario.
+                # Production assignments are immutable once created; this
+                # models a pre-protocol migration fixture without weakening
+                # that runtime invariant.
+                with database.connect() as connection:
+                    connection.execute(
+                        "UPDATE endpoint_assignments SET protocol = 'xray' WHERE id = ?",
+                        (assignment.id,),
+                    )
+                self.assertEqual(registry.assignment_for_subscription("source-sub").protocol, "xray")
                 entitlement = identity.ensure_subscription_entitlement(
                     777, "source-sub", now=now.isoformat()
                 )
