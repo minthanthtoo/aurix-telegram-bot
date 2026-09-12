@@ -556,16 +556,17 @@ stable generation cannot be rewritten from Outline to Xray/Hysteria2 or back
 again. A protocol change must create a new generation and preserve the old
 generation's accounting and revocation history.
 
-Latest VPN-only verification refresh on 2026-09-12 adds four fail-closed
+Latest VPN-only verification refresh on 2026-09-12 adds five fail-closed
 boundaries. The controller node-agent client now rejects empty, oversized, or
 path-like user identifiers before transport; signed device manifests accept
 only bounded metadata fields and reject credential material; assignment
 transfers treat the persisted assignment protocol as authoritative even before
 the first credential generation exists; and managed revocation refuses both a
 missing-generation Outline fallback and a route whose endpoint/protocol does
-not match the generation. The disposable PostgreSQL rehearsal fixture now
-models the Xray assignment explicitly. The complete non-PostgreSQL VPN
-regression passes `354` tests and the disposable PostgreSQL rehearsal passes
+not match the generation. Malformed managed management/data-plane probe
+responses are now unhealthy rather than promotable evidence. The disposable
+PostgreSQL rehearsal fixture now models the Xray assignment explicitly. The
+complete non-PostgreSQL VPN regression passes `355` tests and the disposable PostgreSQL rehearsal passes
 all `3` tests. These are local contract and migration checks only: no live
 provider, server, customer credential, BKK-A protocol promotion, load/speed
 test, soak, or production database cutover was performed.
