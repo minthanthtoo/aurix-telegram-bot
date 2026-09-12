@@ -30,6 +30,26 @@ from .route_failover import FailoverError
 class CommerceWorkerMixin:
     """Reliable-worker operations sharing the service transaction boundary."""
 
+    _MANAGED_OBSERVATION_STATUSES = {
+        "healthy",
+        "degraded",
+        "failed",
+        "unsupported",
+        "unknown",
+    }
+    _MANAGED_OBSERVATION_DETAIL_KEYS = {
+        "error",
+        "reason",
+        "network_bucket",
+        "sample_count",
+        "active_users",
+        "status_code",
+        "quota_enforced",
+        "restart_persisted",
+        "session_termination",
+        "client_path",
+    }
+
     def queue_infrastructure_provision(
         self,
         region: str,
@@ -202,6 +222,98 @@ class CommerceWorkerMixin:
             except Exception as exc:
                 errors[key] = type(exc).__name__
         return {"byEndpointProtocol": by_endpoint_protocol, "errors": errors}
+
+    @classmethod
+    def _managed_observation_details(cls, value: Any) -> dict[str, Any]:
+        """Keep provider probe details bounded and free of nested secrets."""
+        sources: list[Mapping[str, Any]] = []
+        if isinstance(value, Mapping):
+            sources.append(value)
+            nested = value.get("result")
+            if isinstance(nested, Mapping):
+                sources.append(nested)
+        details: dict[str, Any] = {}
+        for source in sources:
+            for raw_key, raw_value in source.items():
+                key = str(raw_key).strip().lower()
+                if key not in cls._MANAGED_OBSERVATION_DETAIL_KEYS:
+                    continue
+                if isinstance(raw_value, (bool, int, float, str)):
+                    details[key] = raw_value
+        return details
+
+    @staticmethod
+    def _managed_observation_ttl() -> int:
+        try:
+            value = int(os.environ.get("AURIX_MANAGED_HEALTH_OBSERVATION_TTL_SECONDS", "900"))
+        except (TypeError, ValueError):
+            value = 900
+        return max(60, min(value, 86_400))
+
+    def collect_managed_protocol_health(self) -> dict[str, Any]:
+        """Persist bounded health observations for enabled managed routes.
+
+        Routine probes can establish current management/data-plane health, but
+        they deliberately do not synthesize usage, quota, restart, or client
+        acceptance evidence required for commercial protocol promotion.
+        """
+        connectivity = getattr(self, "connectivity", None)
+        recorder = getattr(connectivity, "record_protocol_observation", None)
+        if not callable(recorder):
+            return {
+                "status": "unavailable",
+                "routes": 0,
+                "observations": 0,
+                "errors": {"collector": "observation_recorder_unavailable"},
+            }
+        routes, route_errors = self._enabled_managed_routes()
+        errors: dict[str, str] = dict(route_errors)
+        observations = 0
+        timestamp = datetime.now(UTC)
+        expires_at = timestamp + timedelta(seconds=self._managed_observation_ttl())
+        for route in routes:
+            endpoint_id = str(route.get("endpoint_id") or "").strip()
+            protocol = str(route.get("protocol") or "").strip().lower()
+            route_id = str(route.get("route_id") or f"{protocol}:{endpoint_id}")
+            try:
+                adapter = self._adapter_for_route(route)
+            except Exception as exc:
+                errors[route_id] = type(exc).__name__
+                continue
+            for signal, method_name in (("management", "probe_management"), ("data_plane", "probe_data_plane")):
+                key = f"{route_id}:{signal}"
+                started = datetime.now(UTC)
+                try:
+                    method = getattr(adapter, method_name, None)
+                    if not callable(method):
+                        result = {"status": "unsupported", "reason": "adapter_probe_unavailable"}
+                    else:
+                        result = method(dict(route))
+                    status = str(result.get("status") or "unknown").strip().lower() if isinstance(result, Mapping) else "unknown"
+                    if status not in self._MANAGED_OBSERVATION_STATUSES:
+                        status = "unknown"
+                    latency_ms = (datetime.now(UTC) - started).total_seconds() * 1000
+                    recorder(
+                        endpoint_id,
+                        protocol,
+                        signal=signal,
+                        status=status,
+                        details=self._managed_observation_details(result),
+                        latency_ms=max(0.0, min(latency_ms, 120_000.0)),
+                        observed_at=timestamp,
+                        expires_at=expires_at,
+                        source="maintenance",
+                        now=timestamp,
+                    )
+                    observations += 1
+                except Exception as exc:
+                    errors[key] = type(exc).__name__
+        return {
+            "status": "completed" if not errors else "partial",
+            "routes": len(routes),
+            "observations": observations,
+            "errors": errors,
+        }
 
     def reconcile_managed_route(
         self, route: dict[str, Any], client: Any | None = None, *, now: datetime | str | None = None

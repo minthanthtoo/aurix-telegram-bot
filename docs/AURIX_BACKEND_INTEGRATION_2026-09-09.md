@@ -726,6 +726,12 @@ expose provider identifiers, access URLs, or secrets; they make recovery and
 quota posture inspectable for Outline and future managed protocols in one
 place.
 
+Scheduled maintenance now records bounded management and data-plane health
+observations for explicitly bound, enabled managed routes. Probe results are
+allow-listed scalar details with a short expiry; failures are isolated per
+route. The collector does not synthesize usage, quota, restart, or client-path
+promotion evidence, so the commercial activation gate remains unchanged.
+
 Managed adapter idempotent reads now retain the verified deployment route and
 secret-free credential intent on the transient grant. A recovered or
 pre-existing provider user can therefore rotate or reconcile through the same

@@ -359,6 +359,38 @@ class ConnectivityAdapterTest(unittest.TestCase):
         self.assertEqual(result["errors"], {})
         self.assertEqual(harness.managed_routes(), [route])
 
+    def test_worker_records_bounded_managed_health_observations(self):
+        client = _ProtocolClient()
+        route = self._xray_route()
+        harness = _WorkerHarness(client, route, "vless://uuid-a@example.com:18443")
+        recorded = []
+        harness.connectivity = type(
+            "HealthConnectivityFixture",
+            (),
+            {
+                "list_endpoints": lambda _self: [{"id": "sg-a", "state": "ACTIVE"}],
+                "list_protocol_profiles": lambda _self, _endpoint_id: [
+                    {"protocol": "xray", "status": "enabled"}
+                ],
+                "record_protocol_observation": lambda _self, endpoint_id, protocol, **kwargs: recorded.append(
+                    (endpoint_id, protocol, kwargs)
+                ),
+            },
+        )()
+        harness.managed_route_provider = lambda _endpoint_id, _protocol: dict(route)
+        harness.managed_adapter_provider = lambda _route: XrayConnectivityAdapter(client)
+
+        result = harness.collect_managed_protocol_health()
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["routes"], 1)
+        self.assertEqual(result["observations"], 2)
+        self.assertEqual(result["errors"], {})
+        self.assertEqual({item[2]["signal"] for item in recorded}, {"management", "data_plane"})
+        self.assertTrue(all(item[2]["source"] == "maintenance" for item in recorded))
+        self.assertTrue(all(item[2]["expires_at"] > item[2]["observed_at"] for item in recorded))
+        self.assertNotIn("exit_ip", str(recorded))
+
     def test_worker_requires_recovery_authority_when_available(self):
         client = _ProtocolClient()
         route = self._xray_route()

@@ -229,6 +229,9 @@ class TelegramMaintenanceMixin:
                     "managed_inventory_reconciliation",
                     lambda: persist_inventory(managed_inventory, now=datetime.now(UTC)),
                 )
+            collect_managed_health = getattr(self.commerce, "collect_managed_protocol_health", None)
+            if callable(collect_managed_health):
+                run_stage("managed_protocol_health", collect_managed_health)
             managed_routes = getattr(self.commerce, "managed_routes", None)
             reconcile_managed_routes = getattr(self.commerce, "reconcile_managed_routes", None)
             if callable(managed_routes) and callable(reconcile_managed_routes):
