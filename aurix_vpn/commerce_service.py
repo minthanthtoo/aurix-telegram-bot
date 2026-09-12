@@ -105,6 +105,66 @@ class CommerceService(CommerceWorkerMixin):
         bucket = getattr(self.receipt_storage, "bucket", None)
         return str(bucket) if bucket else None
 
+    def _validate_managed_protocol_request(
+        self,
+        plan_code: str,
+        protocol: str,
+        requested_endpoint_id: str | None,
+    ) -> None:
+        """Reject a managed transport before an order can collect payment.
+
+        An enabled endpoint profile is durable readiness evidence, but it is
+        not the deployment binding itself. The customer order path must also
+        see a registered adapter and a concrete route/adapter binding. This
+        remains read-only and skips legacy embeddings that do not expose the
+        endpoint-directory API.
+        """
+        if protocol == "outline":
+            return
+        connectivity = self.connectivity
+        list_endpoints = getattr(connectivity, "list_customer_endpoints", None)
+        if not callable(list_endpoints):
+            return
+        registered = getattr(self.adapter_registry, "is_registered", None)
+        if not callable(registered) or not registered(protocol):
+            raise CommerceError("This VPN protocol is not configured")
+        route_provider = getattr(self, "managed_route_provider", None)
+        adapter_provider = getattr(self, "managed_adapter_provider", None)
+        if not callable(route_provider) or not callable(adapter_provider):
+            raise CommerceError("This VPN protocol is not configured")
+        try:
+            rows = list_endpoints(plan_code, protocol)
+        except TypeError:
+            rows = list_endpoints(plan_code)
+        eligible = [
+            str(item.get("id") or "")
+            for item in rows or []
+            if isinstance(item, dict)
+            and item.get("eligible")
+            and str(item.get("protocol") or protocol).strip().lower() == protocol
+        ]
+        if requested_endpoint_id:
+            eligible = [
+                endpoint_id
+                for endpoint_id in eligible
+                if endpoint_id == str(requested_endpoint_id).strip()
+            ]
+        for endpoint_id in eligible:
+            try:
+                route = dict(route_provider(endpoint_id, protocol))
+                if (
+                    str(route.get("endpoint_id") or "").strip() != endpoint_id
+                    or str(route.get("protocol") or "").strip().lower() != protocol
+                ):
+                    continue
+                if adapter_provider(route) is not None:
+                    return
+            except Exception:
+                # A malformed or unavailable deployment binding is not
+                # customer-visible and must not create a payable order.
+                continue
+        raise CommerceError("This VPN protocol is not currently available")
+
     @staticmethod
     def _lock_order(connection: Any, order_id: str) -> None:
         """Serialize aggregate mutations on PostgreSQL as well as SQLite.
@@ -425,6 +485,10 @@ class CommerceService(CommerceWorkerMixin):
             raise CommerceError("Choose a valid VPN protocol")
         if requested_protocol and requested_protocol != "outline" and self.connectivity is None:
             raise CommerceError("This VPN protocol is not configured")
+        if requested_protocol and requested_protocol != "outline":
+            self._validate_managed_protocol_request(
+                plan.code, requested_protocol, requested_endpoint_id
+            )
         if requested_endpoint_id and self.connectivity is not None:
             validator = getattr(self.connectivity, "validate_customer_endpoint", None)
             if callable(validator):

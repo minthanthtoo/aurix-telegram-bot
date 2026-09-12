@@ -517,6 +517,12 @@ to default to Outline. The portal sends the selected protocol through the
 existing order boundary and shows the matching connection method for active
 credentials. The authenticated protocol catalog route is covered end-to-end
 with redaction assertions. The complete non-PostgreSQL VPN regression passes
-`343` tests after this change; no live
+`344` tests after this change; no live
 server, provider, customer credential, load test, speed test, or deployment was
 changed.
+
+The paid-order service repeats the same readiness boundary before payment
+state is created: a non-Outline request must have an eligible endpoint, a
+registered adapter, and a matching route/adapter binding. This prevents a
+crafted order from reserving capacity for a transport that can only fail in
+the worker.

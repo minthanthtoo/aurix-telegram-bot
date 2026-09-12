@@ -359,6 +359,46 @@ class CommerceServiceTest(unittest.TestCase):
             ).fetchone()["preferred_protocol"]
         self.assertEqual(preferred, "xray")
 
+    def test_managed_protocol_order_requires_registered_bound_route(self):
+        self.service.connectivity = SimpleNamespace(
+            list_customer_endpoints=lambda _plan_code, protocol="outline": [
+                {"id": "xray-sgp-a", "protocol": protocol, "eligible": True}
+            ],
+        )
+        with self.assertRaisesRegex(CommerceError, "protocol is not configured"):
+            self.service.create_order(
+                123,
+                "Min",
+                "basic_50gb",
+                self.now,
+                requested_protocol="xray",
+            )
+
+        self.service.adapter_registry.register("xray", XrayConnectivityAdapter)
+        with self.assertRaisesRegex(CommerceError, "not configured"):
+            self.service.create_order(
+                123,
+                "Min",
+                "basic_50gb",
+                self.now,
+                requested_protocol="xray",
+            )
+
+        self.service.managed_route_provider = lambda endpoint_id, protocol: {
+            "endpoint_id": endpoint_id,
+            "protocol": protocol,
+            "route_id": f"{protocol}:{endpoint_id}",
+        }
+        self.service.managed_adapter_provider = lambda _route: object()
+        order = self.service.create_order(
+            123,
+            "Min",
+            "basic_50gb",
+            self.now,
+            requested_protocol="xray",
+        )
+        self.assertTrue(order.created)
+
     def test_managed_protocol_provisioning_uses_assignment_route_and_generation(self):
         class ManagedClient:
             def __init__(self):
