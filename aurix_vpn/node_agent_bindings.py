@@ -87,6 +87,13 @@ def _route(value: Any, *, endpoint_id: str, protocol: str) -> dict[str, Any]:
     result["endpoint_id"] = endpoint_id
     result["protocol"] = protocol
     result.setdefault("route_id", f"{protocol}:{endpoint_id}")
+    if protocol == "xray":
+        xray_protocol = str(result.get("xray_protocol") or "vless").strip().lower()
+        if xray_protocol != "vless":
+            raise NodeAgentBindingError(
+                "xray route must declare xray_protocol=vless"
+            )
+        result["xray_protocol"] = xray_protocol
     if protocol == "hysteria2":
         auth_mode = str(result.get("auth_mode") or "").strip().lower()
         if auth_mode != "http":

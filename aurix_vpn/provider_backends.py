@@ -131,6 +131,11 @@ class XrayConfigProvider:
         intent: Mapping[str, Any],
     ) -> dict[str, Any]:
         external_id = _identifier(external_id)
+        xray_protocol = str(route.get("xray_protocol") or "vless").strip().lower()
+        if xray_protocol != "vless":
+            raise ProviderBackendError(
+                "Xray provider currently supports only xray_protocol=vless"
+            )
         requested_tag = str(route.get("inbound_tag") or self.writer.inbound_tag)
         if requested_tag != self.writer.inbound_tag:
             raise ProviderBackendError("Xray route targets a different managed inbound")

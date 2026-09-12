@@ -50,10 +50,11 @@ the identity finalization path before that lease is released.
 
 ## Local Xray config fallback
 
-`XrayConfigWriter` updates only an inbound tagged `aurix-managed`, preserves
-all other inbounds and users, and commits through a same-directory atomic
-replace. It does not restart Xray or execute shell commands. A supervisor must
-validate the generated JSON and perform a separately controlled reload.
+`XrayConfigWriter` updates only an inbound tagged `aurix-managed` that declares
+the `vless` protocol, preserves all other inbounds and users, and commits
+through a same-directory atomic replace. It does not restart Xray or execute
+shell commands. A supervisor must validate the generated JSON and perform a
+separately controlled reload.
 
 The writer is suitable for a lab or a deliberately minimal node agent. Before
 production use, validate Xray's actual statistics behavior, quota semantics,
@@ -157,7 +158,10 @@ live data-plane compatibility claim.
 
 ## Protocol scope
 
-The same lifecycle contract can back Xray/VLESS, VMess, Trojan, Shadowsocks,
-and Hysteria2. Protocol-specific URI rendering and accounting remain in the
-connectivity adapters. A protocol is not enabled in the default registry until
-its management, usage, quota, restart, and data-plane evidence is recorded.
+The HTTP lifecycle envelope can back Xray/VLESS, VMess, Trojan, Shadowsocks,
+and Hysteria2. The concrete local Xray adapter and config writer currently
+support only VLESS/REALITY (`xray_protocol=vless`); VMess, Trojan, and
+Shadowsocks require their own client representation, URI renderer, provider
+backend, and lifecycle evidence rather than sharing the VLESS user shape. A
+protocol is not enabled in the default registry until its management, usage,
+quota, restart, and data-plane evidence is recorded.

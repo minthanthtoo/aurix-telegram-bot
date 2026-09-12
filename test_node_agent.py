@@ -70,6 +70,7 @@ class NodeAgentTest(unittest.TestCase):
                             },
                             {
                                 "tag": "aurix-managed",
+                                "protocol": "vless",
                                 "settings": {"clients": [{"id": "unknown", "email": "keep"}]},
                             },
                         ],
@@ -101,7 +102,7 @@ class NodeAgentTest(unittest.TestCase):
             path = Path(directory) / "xray.json"
             path.write_text(
                 json.dumps(
-                    {"inbounds": [{"tag": "aurix-managed", "settings": {"clients": []}}]}
+                    {"inbounds": [{"tag": "aurix-managed", "protocol": "vless", "settings": {"clients": []}}]}
                 ),
                 encoding="utf-8",
             )
@@ -125,6 +126,21 @@ class NodeAgentTest(unittest.TestCase):
                 {item["external_id"] for item in writer.list_users()},
                 {f"user-{index}" for index in range(16)},
             )
+
+    def test_xray_writer_rejects_non_vless_managed_inbound_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "xray.json"
+            original = {
+                "inbounds": [
+                    {"tag": "aurix-managed", "protocol": "trojan", "settings": {"clients": []}}
+                ]
+            }
+            path.write_text(json.dumps(original), encoding="utf-8")
+
+            with self.assertRaisesRegex(NodeAgentError, "protocol vless"):
+                XrayConfigWriter(path).upsert_user("customer-a", "Customer")
+
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), original)
 
 
 if __name__ == "__main__":

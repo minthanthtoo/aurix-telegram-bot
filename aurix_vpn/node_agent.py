@@ -232,6 +232,11 @@ class XrayConfigWriter:
         for inbound in inbounds:
             if not isinstance(inbound, Mapping) or inbound.get("tag") != self.inbound_tag:
                 continue
+            protocol = str(inbound.get("protocol") or "").strip().lower()
+            if protocol != "vless":
+                raise NodeAgentError(
+                    "managed Xray inbound must declare protocol vless"
+                )
             settings = inbound.get("settings")
             if not isinstance(settings, dict):
                 raise NodeAgentError("managed Xray inbound settings must be an object")

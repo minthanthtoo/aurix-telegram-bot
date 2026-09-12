@@ -834,9 +834,25 @@ class XrayConnectivityAdapter(_ManagedCredentialAdapter):
         "quota_cap": True,
     }
 
+    def _xray_protocol(self, route: Mapping[str, Any]) -> str:
+        """Keep this concrete adapter aligned with its VLESS user shape.
+
+        The node-agent envelope is generic, but this adapter renders a VLESS
+        REALITY URI and the local config writer manages VLESS ``id`` clients.
+        Treating a VMess, Trojan, or Shadowsocks inbound as interchangeable
+        would create a credential that cannot safely be verified or revoked.
+        """
+        value = str(route.get("xray_protocol") or "vless").strip().lower()
+        if value != "vless":
+            raise ConnectivityAdapterError(
+                "Xray adapter currently supports only xray_protocol=vless"
+            )
+        return value
+
     def _render_access_url(
         self, route: Mapping[str, Any], external_id: str, secret: str, name: str
     ) -> str:
+        self._xray_protocol(route)
         host = _route_host(route, "public_address", "public_host", "host", protocol=self.protocol)
         port = _route_port(route, "port", "public_port", protocol=self.protocol)
         public_key = self._route_value(route, "public_key", "reality_public_key")

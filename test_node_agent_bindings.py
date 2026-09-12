@@ -84,6 +84,7 @@ class NodeAgentBindingsTest(unittest.TestCase):
             ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "https://user:pass@agent", "token": "t", "route": {}}], "decorations"),
             ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "https://agent", "token": "t", "route": {"secret": "leak"}}], "not allowed"),
             ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "https://agent", "token": "t", "route": {"endpoint_id": "sg-b"}}], "does not match"),
+            ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "https://agent", "token": "t", "route": {"xray_protocol": "trojan"}}], "xray_protocol=vless"),
             ([{"endpoint_id": "sg-a", "protocol": "wireguard", "base_url": "https://agent", "token": "t", "route": {}}], "unsupported"),
             ([{"endpoint_id": "sg-a", "protocol": "hysteria2", "base_url": "https://agent", "token": "t", "route": {}}], "auth_mode=http"),
             ([{"endpoint_id": "sg-a", "protocol": "hysteria2", "base_url": "https://agent", "token": "t", "route": {"auth_mode": "password"}}], "auth_mode=http"),

@@ -223,6 +223,15 @@ class ConnectivityAdapterTest(unittest.TestCase):
             )
         self.assertEqual(client.users, {})
 
+    def test_xray_adapter_rejects_an_unsupported_inbound_protocol_before_creation(self):
+        client = _ProtocolClient()
+        with self.assertRaisesRegex(ConnectivityAdapterError, "xray_protocol=vless"):
+            XrayConnectivityAdapter(client).provision(
+                {**self._xray_route(), "xray_protocol": "trojan"},
+                {"external_id": "customer-a", "name": "Customer A"},
+            )
+        self.assertEqual(client.users, {})
+
     def test_adapter_rejects_a_grant_for_another_protocol(self):
         client = _ProtocolClient()
         grant = XrayConnectivityAdapter(client).provision(

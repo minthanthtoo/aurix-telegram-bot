@@ -74,6 +74,7 @@ class ProviderBackendsTest(unittest.TestCase):
                             {"tag": "public", "settings": {"clients": [{"id": "keep"}]}},
                             {
                                 "tag": "aurix-managed",
+                                "protocol": "vless",
                                 "settings": {"clients": [{"id": "existing", "email": "keep"}]},
                             },
                         ]
@@ -114,7 +115,7 @@ class ProviderBackendsTest(unittest.TestCase):
     def test_xray_provider_restores_config_when_supervised_reload_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "xray.json"
-            original = {"inbounds": [{"tag": "aurix-managed", "settings": {"clients": []}}]}
+            original = {"inbounds": [{"tag": "aurix-managed", "protocol": "vless", "settings": {"clients": []}}]}
             path.write_text(json.dumps(original), encoding="utf-8")
             reloads = []
             fail_next_reload = [True]
@@ -156,7 +157,7 @@ class ProviderBackendsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "xray.json"
             path.write_text(
-                json.dumps({"inbounds": [{"tag": "aurix-managed", "settings": {"clients": []}}]}),
+                json.dumps({"inbounds": [{"tag": "aurix-managed", "protocol": "vless", "settings": {"clients": []}}]}),
                 encoding="utf-8",
             )
             provider = XrayConfigProvider(
@@ -164,6 +165,12 @@ class ProviderBackendsTest(unittest.TestCase):
             )
             with self.assertRaises(ProviderBackendError):
                 provider.create_user("../escape", "name", {}, {})
+            with self.assertRaisesRegex(ProviderBackendError, "xray_protocol=vless"):
+                provider.create_user("customer-a", "name", {"xray_protocol": "trojan"}, {})
+            self.assertEqual(
+                json.loads(path.read_text(encoding="utf-8"))["inbounds"][0]["settings"]["clients"],
+                [],
+            )
             store = Hysteria2UserStore(
                 Path(directory) / "users.json", encryption_key=Fernet.generate_key()
             )
@@ -370,7 +377,7 @@ class ProviderBackendsTest(unittest.TestCase):
             xray_path = Path(directory) / "xray.json"
             xray_path.write_text(
                 json.dumps(
-                    {"inbounds": [{"tag": "aurix-managed", "settings": {"clients": []}}]}
+                    {"inbounds": [{"tag": "aurix-managed", "protocol": "vless", "settings": {"clients": []}}]}
                 ),
                 encoding="utf-8",
             )

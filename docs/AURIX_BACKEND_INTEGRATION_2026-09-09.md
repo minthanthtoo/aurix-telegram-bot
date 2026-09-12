@@ -827,3 +827,14 @@ failure over replaying a signed mutable request; later device heartbeats supply
 new observations. This is a local control-plane safety improvement only and
 does not authorize any live server, provider, customer, or production-database
 change.
+
+## 27. Xray transport-shape boundary — 2026-09-13
+
+The generic node-agent lifecycle endpoint is not a claim that every Xray
+inbound has the same credential representation. The concrete local writer,
+provider, binding, and URI renderer now accept only an explicitly VLESS-shaped
+managed inbound (`xray_protocol=vless`). VMess, Trojan, and Shadowsocks require
+separate per-user representations, rendering, accounting, and canary evidence;
+they cannot be bound to the VLESS writer by a route configuration mistake. This
+is a local configuration-safety boundary only and does not enable or mutate any
+server protocol.
