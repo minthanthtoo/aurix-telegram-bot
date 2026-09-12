@@ -142,6 +142,42 @@ class ControlCenterTest(unittest.TestCase):
         self.assertEqual(readiness["xray"]["status"], "candidate")
         self.assertIn("endpoint evidence", readiness["xray"]["activation_gate"])
 
+    def test_endpoint_detail_exposes_redacted_protocol_readiness(self):
+        self.runtime.connectivity.list_protocol_profiles = lambda endpoint_id=None: [
+            {
+                "protocol": "xray",
+                "adapter_type": "xray",
+                "status": "candidate",
+                "capabilities": {"managed_config": True},
+            }
+        ]
+        self.runtime.connectivity.protocol_promotion_requirements = lambda _protocol: {
+            "signals": ("management", "usage"),
+            "capabilities": ("managed_config", "usage"),
+        }
+        self.runtime.connectivity.protocol_profile_promotion_readiness = (
+            lambda endpoint_id, protocol, **_kwargs: {
+                "endpoint_id": endpoint_id,
+                "protocol": protocol,
+                "profile_id": f"{protocol}:{endpoint_id}",
+                "profile_status": "candidate",
+                "required_signals": ["management", "usage"],
+                "required_capabilities": ["managed_config", "usage"],
+                "fresh_healthy_signals": ["management"],
+                "missing_signals": ["usage"],
+                "missing_evidence": ["usage"],
+                "missing_capabilities": ["usage"],
+                "reasons": ["must not include secrets"],
+                "promotable": False,
+            }
+        )
+        detail = AuriXVpnWebApplication(self.runtime).admin_endpoint("bkk-a")
+        readiness = detail["protocol_readiness"][0]
+        self.assertEqual(readiness["protocol"], "xray")
+        self.assertEqual(readiness["missing_evidence"], ["usage"])
+        self.assertFalse(readiness["promotable"])
+        self.assertNotIn("public_address", json.dumps(readiness))
+
     def test_endpoint_detail_exposes_assignment_protocol(self):
         now = "2026-09-12T00:00:00+00:00"
         with self.database.connect() as connection:

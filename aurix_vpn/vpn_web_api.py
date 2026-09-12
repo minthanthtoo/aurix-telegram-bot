@@ -175,6 +175,30 @@ def _safe_protocol_observation(item: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _safe_protocol_readiness(item: dict[str, Any]) -> dict[str, Any]:
+    """Expose effective promotion gates without operator or provider secrets."""
+    allowed = {
+        "endpoint_id",
+        "protocol",
+        "profile_id",
+        "profile_status",
+        "required_signals",
+        "required_capabilities",
+        "minimum_required_signals",
+        "minimum_required_capabilities",
+        "fresh_healthy_signals",
+        "missing_signals",
+        "missing_evidence",
+        "missing_capabilities",
+        "latest_healthy_at",
+        "promotable",
+        "reasons",
+    }
+    result = {key: item[key] for key in allowed if key in item}
+    result["reasons"] = [str(value)[:256] for value in item.get("reasons") or []]
+    return result
+
+
 def _safe_giveaway(giveaway: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "exists",
@@ -548,8 +572,34 @@ class AuriXVpnWebApplication:
         }
         safe_endpoint["healthy"] = self._endpoint_health_is_fresh(raw.get("last_healthy_at"))
         profile_method = getattr(registry, "list_protocol_profiles", None)
+        profiles: list[dict[str, Any]] = []
         if callable(profile_method):
-            safe_endpoint["protocols"] = profile_method(str(endpoint_id))
+            profiles = [
+                item
+                for item in profile_method(str(endpoint_id)) or []
+                if isinstance(item, dict)
+            ]
+            safe_endpoint["protocols"] = profiles
+        protocol_readiness: list[dict[str, Any]] = []
+        requirements_method = getattr(registry, "protocol_promotion_requirements", None)
+        readiness_method = getattr(registry, "protocol_profile_promotion_readiness", None)
+        if callable(requirements_method) and callable(readiness_method):
+            for profile in profiles:
+                protocol = str(profile.get("protocol") or "").strip().lower()
+                if not protocol or protocol == "outline":
+                    continue
+                try:
+                    requirements = requirements_method(protocol)
+                    preview = readiness_method(
+                        str(endpoint_id),
+                        protocol,
+                        required_signals=tuple(requirements.get("signals") or ()),
+                        required_capabilities=tuple(requirements.get("capabilities") or ()),
+                    )
+                except (ConnectivityError, TypeError, ValueError):
+                    continue
+                if isinstance(preview, dict):
+                    protocol_readiness.append(_safe_protocol_readiness(preview))
         observation_method = getattr(registry, "list_protocol_observations", None)
         observations: list[dict[str, Any]] = []
         if callable(observation_method):
@@ -605,6 +655,7 @@ class AuriXVpnWebApplication:
             "capacity_by_plan": capacity_by_plan,
             "credentials": generations,
             "protocol_observations": observations,
+            "protocol_readiness": protocol_readiness,
         }
 
     def admin_usage_snapshot(self) -> dict[str, Any]:
