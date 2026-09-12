@@ -179,20 +179,22 @@
     if (!state.servers.length) { list.innerHTML = `<div class="empty-state">No server health data is available yet. Try refresh shortly.</div>`; return; }
     list.innerHTML = state.servers.map((server) => {
       const selected = String(state.selectedEndpointId || "") === String(server.id);
-      const current = (state.dashboard && state.dashboard.keys || []).some((key) => key.status === "active" && String(key.endpoint_id) === String(server.id));
+      const current = (state.dashboard && state.dashboard.keys || []).some((key) => key.status === "active" && keyProtocol(key) === state.selectedProtocol && String(key.endpoint_id) === String(server.id));
       const latency = server.management_latency_ms != null ? `${Math.round(Number(server.management_latency_ms))} ms check` : "No recent check";
-      return `<article class="server-row ${selected ? "is-selected" : ""}"><span class="server-orb server-orb--small" aria-hidden="true">⌁</span><div class="server-main"><div><strong>${escapeHtml(server.code || server.region || server.id)}</strong><span>${escapeHtml(server.region || "AuriX network")}</span></div><div class="server-health"><span class="status-dot ${server.eligible ? "is-good" : server.healthy ? "is-warn" : "is-bad"}"></span>${escapeHtml(serverStatus(server))} · ${escapeHtml(latency)}</div></div><button class="button ${selected ? "button--selected" : "button--quiet"} choose-server" data-endpoint="${escapeHtml(server.id)}" type="button">${current ? "Current" : selected ? "Selected" : server.eligible ? "Choose" : "Unavailable"}</button></article>`;
+      return `<article class="server-row ${selected ? "is-selected" : ""}"><span class="server-orb server-orb--small" aria-hidden="true">⌁</span><div class="server-main"><div><strong>${escapeHtml(server.code || server.region || server.id)}</strong><span>${escapeHtml(server.region || "AuriX network")} · ${escapeHtml(protocolLabel(server.protocol || state.selectedProtocol))}</span></div><div class="server-health"><span class="status-dot ${server.eligible ? "is-good" : server.healthy ? "is-warn" : "is-bad"}"></span>${escapeHtml(serverStatus(server))} · ${escapeHtml(latency)}</div></div><button class="button ${selected ? "button--selected" : "button--quiet"} choose-server" data-endpoint="${escapeHtml(server.id)}" type="button">${current ? "Current" : selected ? "Selected" : server.eligible ? "Choose" : "Unavailable"}</button></article>`;
     }).join("");
   };
   const renderPlans = () => {
     const catalog = state.catalog || { plans: [] };
     const selected = serverFor(state.selectedEndpointId);
+    const selectedProtocol = (state.protocols || []).find((item) => item.protocol === state.selectedProtocol);
+    const protocolUnavailable = Boolean(state.initData && selectedProtocol && Number(selectedProtocol.eligible_servers || 0) === 0);
     $("#selected-server-label").textContent = selected ? `${serverLabel(selected)} · ${selected.region || ""}` : "Automatic capacity selection";
     const list = $("#plan-list");
     if (!catalog.plans || !catalog.plans.length) { list.innerHTML = `<div class="empty-state">No active package is published yet.</div>`; return; }
     list.innerHTML = catalog.plans.map((plan) => {
       const quota = plan.quota_bytes ? formatBytes(plan.quota_bytes) : "Fair-use";
-      const action = state.initData ? `<button class="button button--primary buy-button" data-plan="${escapeHtml(plan.code)}" type="button">Get this package</button>` : `<a class="button button--quiet" href="${escapeHtml(catalog.telegram_url || "#")}">Open in Telegram</a>`;
+      const action = state.initData ? `<button class="button button--primary buy-button" data-plan="${escapeHtml(plan.code)}" type="button" ${protocolUnavailable ? "disabled title=\"No healthy server is available for this method\"" : ""}>${protocolUnavailable ? "Unavailable" : "Get this package"}</button>` : `<a class="button button--quiet" href="${escapeHtml(catalog.telegram_url || "#")}">Open in Telegram</a>`;
       return `<article class="plan-card"><div class="plan-tag">${escapeHtml(plan.code)}</div><h2>${escapeHtml(plan.name)}</h2><div class="plan-price">${Number(plan.price_minor || 0).toLocaleString()} <small>${escapeHtml(plan.currency || "MMK")}</small></div><div class="plan-specs"><span>${escapeHtml(quota)}</span><span>${escapeHtml(plan.duration_days)} days</span></div>${action}</article>`;
     }).join("");
   };
