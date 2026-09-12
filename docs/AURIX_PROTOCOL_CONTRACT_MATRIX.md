@@ -5,7 +5,9 @@ shared node-agent boundary. `test_multi_protocol_contract.py` covers staged
 2/5/16-customer cohorts per protocol; `scripts/aurix_protocol_matrix.py` emits
 JSON evidence for a selected cohort. Each run checks protocol-specific route
 rendering, per-customer usage, quota assignment, data-plane probe results,
-inventory reconciliation, operation latency, and revocation.
+inventory reconciliation, one representative rotation/session-termination/
+verified-revocation lifecycle per protocol, operation latency, and final
+revocation.
 
 Run the local staged matrix with:
 

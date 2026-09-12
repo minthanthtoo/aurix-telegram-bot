@@ -220,6 +220,44 @@ class ProtocolMatrixRunner:
         protocol_counts = {
             protocol: sum(1 for item in grants if item[0] == protocol) for protocol in self.protocols
         }
+        rotation_ok = True
+        session_termination_ok = True
+        rotation_revocation_ok = True
+        rotated = 0
+        rotation_revoked = 0
+        if not errors:
+            # Exercise one representative generation per protocol. The
+            # disposable provider supports the same explicit lifecycle
+            # boundaries as the managed adapters, but this remains contract
+            # evidence rather than proof of a real daemon's behavior.
+            for protocol in self.protocols:
+                sample = next((item for item in grants if item[0] == protocol), None)
+                if sample is None:
+                    rotation_ok = False
+                    session_termination_ok = False
+                    rotation_revocation_ok = False
+                    continue
+                _grant_protocol, adapter, grant, _latency = sample
+                try:
+                    rotated_grant = adapter.rotate(grant)
+                    rotated += 1
+                    rotation_ok = rotation_ok and (
+                        rotated_grant.get("protocol") == protocol
+                        and rotated_grant.get("external_id") != grant.get("external_id")
+                    )
+                    session_result = adapter.terminate_sessions(grant)
+                    session_termination_ok = session_termination_ok and bool(
+                        session_result.get("supported")
+                        and session_result.get("terminated")
+                    )
+                    adapter.revoke_auth(rotated_grant)
+                    verification = adapter.verify_auth_revoked(rotated_grant)
+                    rotation_revoked += 1
+                    rotation_revocation_ok = rotation_revocation_ok and bool(
+                        verification.get("verified")
+                    )
+                except Exception as exc:  # pragma: no cover - surfaced in report and test assertion
+                    errors.append({"type": type(exc).__name__, "message": str(exc)[:256]})
         usage_ok = True
         probe_ok = True
         reconcile_counts: dict[str, int] = {}
@@ -262,6 +300,9 @@ class ProtocolMatrixRunner:
             "usage_contract": usage_ok and not errors,
             "data_plane_probe": probe_ok and not errors,
             "inventory_reconciliation": inventory_ok and not errors,
+            "rotation": rotation_ok and not errors,
+            "session_termination": session_termination_ok and not errors,
+            "rotation_revocation": rotation_revocation_ok and not errors,
             "revocation": revocation_ok,
         }
         return {
@@ -274,6 +315,8 @@ class ProtocolMatrixRunner:
             "workers": self.workers,
             "total_customers": len(jobs),
             "provisioned": len(grants),
+            "rotated": rotated,
+            "rotation_revoked": rotation_revoked,
             "revoked": revoked,
             "protocol_counts": protocol_counts,
             "reconcile_counts": reconcile_counts,

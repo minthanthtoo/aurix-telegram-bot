@@ -163,6 +163,8 @@ class MultiProtocolContractTest(unittest.TestCase):
                 ).run()
                 self.assertEqual(report["status"], "passed")
                 self.assertEqual(report["total_customers"], customers_per_protocol * 2)
+                self.assertEqual(report["rotated"], 2)
+                self.assertEqual(report["rotation_revoked"], 2)
                 self.assertEqual(report["revoked"], report["total_customers"])
                 self.assertEqual(report["errors"], [])
                 self.assertTrue(all(report["checks"].values()))
