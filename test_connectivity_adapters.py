@@ -253,6 +253,24 @@ class ConnectivityAdapterTest(unittest.TestCase):
         adapter.revoke_auth(rotated)
         self.assertIsNone(client.get_user("uuid-a"))
 
+    def test_idempotent_managed_provision_preserves_route_for_rotation(self):
+        client = _ProtocolClient()
+        adapter = XrayConnectivityAdapter(client)
+        route = self._xray_route()
+        first = adapter.provision(
+            route, {"external_id": "uuid-a", "name": "customer-a"}
+        )
+        second = adapter.provision(
+            route, {"external_id": "uuid-a", "name": "customer-a"}
+        )
+
+        self.assertEqual(second["ownership"], "preexisting")
+        self.assertEqual(second["route"], route)
+        self.assertEqual(second["credential_intent"], {"external_id": "uuid-a", "name": "customer-a"})
+        rotated = adapter.rotate(second)
+        self.assertNotEqual(rotated["external_id"], first["external_id"])
+        self.assertTrue(rotated["access_url"].startswith("vless://"))
+
     def test_structured_provider_results_are_not_coerced_to_success(self):
         client = _ProtocolClient()
         adapter = XrayConnectivityAdapter(client)

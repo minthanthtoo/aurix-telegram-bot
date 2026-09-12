@@ -471,10 +471,19 @@ class _ManagedCredentialAdapter:
         self._render_access_url(route, external_id, secret, name)
         existing = self._lookup(external_id)
         if existing is not None:
-            return self._grant(
+            grant = self._grant(
                 route, existing, external_id=external_id, secret=secret, name=name,
                 created=False, ownership="preexisting",
             )
+            # Keep a recovered/idempotent grant as useful as a freshly-created
+            # one. Rotation and later reconciliation need the deployment-owned
+            # route metadata, while the durable layer still encrypts only the
+            # access URL and never persists this transient secret.
+            grant["route"] = dict(route)
+            grant["credential_intent"] = {
+                key: value for key, value in credential_intent.items() if key != "secret"
+            }
+            return grant
         try:
             record = self._create(external_id, name, route, credential_intent, secret)
             created = True
