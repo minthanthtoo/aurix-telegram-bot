@@ -606,6 +606,6 @@ local snapshot and generation projection when the managed endpoint registry is
 configured. Legacy isolated service fixtures retain their compatibility path,
 but the production combined runtime no longer inventories every Outline
 endpoint on an interactive request. The complete non-PostgreSQL VPN suite
-passes `360` tests after this change, and the disposable PostgreSQL rehearsal
+passes `362` tests after this change, and the disposable PostgreSQL rehearsal
 remains green. No live provider, server, customer credential, load/speed test,
 soak test, or production database cutover was performed.
