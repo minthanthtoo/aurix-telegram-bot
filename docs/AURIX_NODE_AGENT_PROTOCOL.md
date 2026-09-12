@@ -129,6 +129,12 @@ HTTP only for loopback-local agents (127.0.0.1, ::1, or localhost). URL
 userinfo, query strings, and fragments are rejected so bearer tokens cannot
 be sent alongside ambiguous or embedded endpoint credentials.
 
+Managed Xray and Hysteria2 adapters additionally validate the route's public
+host and port before calling the provider: the host must be a plain DNS name or
+IP address without URI delimiters or whitespace, and the port must be an
+integer from 1 through 65535. This is a customer-export safety boundary, not a
+live data-plane compatibility claim.
+
 ## Protocol scope
 
 The same lifecycle contract can back Xray/VLESS, VMess, Trojan, Shadowsocks,
