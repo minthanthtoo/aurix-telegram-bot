@@ -133,6 +133,51 @@ class ControlCenterTest(unittest.TestCase):
         self.assertEqual(readiness["xray"]["status"], "candidate")
         self.assertIn("endpoint evidence", readiness["xray"]["activation_gate"])
 
+    def test_endpoint_detail_exposes_assignment_protocol(self):
+        now = "2026-09-12T00:00:00+00:00"
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
+                (12345, "Min", now),
+            )
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, provider, region, state, accepts_new_assignments, created_at)
+                   VALUES (?, ?, 'managed', 'sgp1', 'ACTIVE', 1, ?)""",
+                ("xray-sgp-a", "XRAY-SGP-A", now),
+            )
+            connection.execute(
+                """INSERT INTO orders
+                   (id, telegram_id, plan_code, amount_minor, currency, plan_name,
+                    quota_bytes_snapshot, duration_days_snapshot, status, created_at)
+                   VALUES (?, ?, 'basic_50gb', 3000, 'MMK', '50 GB', ?, 30, 'approved', ?)""",
+                ("order-control-xray", 12345, 50 * 1024**3, now),
+            )
+            connection.execute(
+                """INSERT INTO subscriptions
+                   (id, order_id, telegram_id, plan_code, starts_at, expires_at,
+                    plan_name, quota_bytes, duration_days, status, preferred_protocol)
+                   VALUES (?, ?, ?, 'basic_50gb', ?, ?, '50 GB', ?, 30, 'active', 'xray')""",
+                (
+                    "sub-control-xray",
+                    "order-control-xray",
+                    12345,
+                    now,
+                    "2026-10-12T00:00:00+00:00",
+                    50 * 1024**3,
+                ),
+            )
+            connection.execute(
+                """INSERT INTO endpoint_assignments
+                   (id, endpoint_id, subscription_id, plan_code, protocol, status,
+                    reason, reserved_quota_bytes, assigned_at)
+                   VALUES (?, ?, ?, 'basic_50gb', 'xray', 'active',
+                           'test', ?, ?)""",
+                ("assignment-control-xray", "xray-sgp-a", "sub-control-xray", 50 * 1024**3, now),
+            )
+        detail = AuriXVpnWebApplication(self.runtime).admin_endpoint("xray-sgp-a")
+        self.assertEqual(detail["assignments"][0]["protocol"], "xray")
+
     def test_admin_api_requires_signed_allowlisted_telegram_identity(self):
         with patch.dict(os.environ, {"ADMIN_TELEGRAM_IDS": "12345"}, clear=False):
             app = AuriXVpnWebApplication(self.runtime)

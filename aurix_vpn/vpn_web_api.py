@@ -549,8 +549,8 @@ class AuriXVpnWebApplication:
             with database.connect() as connection:
                 rows = connection.execute(
                     """SELECT id, endpoint_id, subscription_id, free_key_id,
-                              plan_code, status, reason, reserved_quota_bytes,
-                              assigned_at, released_at
+                              plan_code, protocol, status, reason,
+                              reserved_quota_bytes, assigned_at, released_at
                            FROM endpoint_assignments
                           WHERE endpoint_id = ?
                           ORDER BY assigned_at DESC LIMIT 200""",
@@ -781,7 +781,8 @@ class AuriXVpnWebApplication:
                 for key in (
                     "id", "plan_code", "amount_minor", "currency", "status",
                     "created_at", "order_type", "receipt_status", "stage",
-                    "wallet_reservation_status",
+                    "wallet_reservation_status", "requested_endpoint_id",
+                    "requested_protocol",
                 )
                 if key in item
             }
