@@ -335,6 +335,7 @@ class ConnectivityAdapterTest(unittest.TestCase):
             "public_address": "198.51.100.10",
             "port": 8444,
             "server_name": "example.com",
+            "auth_mode": "http",
         }
         grant = adapter.provision(route, {"external_id": "customer-a", "name": "customer-a", "quota_bytes": 500})
         self.assertTrue(grant["access_url"].startswith("hysteria2://"))
@@ -357,6 +358,26 @@ class ConnectivityAdapterTest(unittest.TestCase):
         restored = adapter.reconcile_credentials(route, [grant])
         self.assertEqual(restored["restored"], 1)
         self.assertEqual(client.users["customer-a"]["secret"], grant["secret"])
+
+    def test_hysteria2_rejects_shared_or_undeclared_auth_before_user_creation(self):
+        route = {
+            "route_id": "hysteria2:sg-a",
+            "endpoint_id": "sg-a",
+            "protocol": "hysteria2",
+            "public_address": "198.51.100.10",
+            "port": 8444,
+        }
+        for auth_mode in (None, "password", "userpass"):
+            with self.subTest(auth_mode=auth_mode):
+                client = _ProtocolClient()
+                candidate = dict(route)
+                if auth_mode is not None:
+                    candidate["auth_mode"] = auth_mode
+                with self.assertRaisesRegex(ConnectivityAdapterError, "auth_mode=http"):
+                    Hysteria2ConnectivityAdapter(client).provision(
+                        candidate, {"external_id": "customer-a", "name": "customer-a"}
+                    )
+                self.assertEqual(client.users, {})
 
     def test_worker_collects_enabled_managed_inventory_by_protocol(self):
         client = _ProtocolClient()

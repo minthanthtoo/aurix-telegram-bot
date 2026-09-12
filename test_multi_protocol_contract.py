@@ -115,6 +115,7 @@ class MultiProtocolContractTest(unittest.TestCase):
             "public_address": "198.51.100.10",
             "port": 18444,
             "server_name": "example.com",
+            "auth_mode": "http",
         }
 
     def test_xray_and_hysteria2_are_isolated_under_bounded_concurrency(self):

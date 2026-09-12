@@ -84,6 +84,15 @@ explicitly. `/traffic` supplies usage and `/kick` is treated only as a
 disconnect request because a kick does not by itself prevent a reconnect.
 Hysteria2 quota enforcement is therefore not advertised by this backend.
 
+The current managed Hysteria2 adapter and binding require the explicit route
+field `auth_mode: "http"`. Hysteria2's HTTP callback returns the unique client
+ID that its Traffic Stats API then reports and kicks, so this is the only
+implemented customer-isolation/accounting mode. Missing, `password`, and
+`userpass` modes fail before a local or remote user is created. Adding another
+auth mode requires a separate adapter/provider implementation plus the same
+per-customer lifecycle evidence; the existing shared-password deployment
+cannot be bound by configuration mistake.
+
 The WSGI service and these concrete backends are contract boundaries, not proof
 that a provider is safe for commercial traffic. A real deployment still needs
 local/mTLS transport policy, service supervision, restart reconciliation,

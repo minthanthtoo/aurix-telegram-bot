@@ -857,9 +857,24 @@ class XrayConnectivityAdapter(_ManagedCredentialAdapter):
 
 
 class Hysteria2ConnectivityAdapter(_ManagedCredentialAdapter):
-    """Hysteria2 adapter requiring customer-scoped authentication and stats."""
+    """Hysteria2 adapter requiring HTTP auth with customer-scoped IDs and stats."""
 
     protocol = "hysteria2"
+
+    def _auth_mode(self, route: Mapping[str, Any]) -> str:
+        """Reject shared-password and unproven Hysteria2 auth configurations.
+
+        The supported local provider maps a per-customer credential to the
+        unique client ID returned by Hysteria2 HTTP authentication.  That ID is
+        what its Traffic Stats API reports and kicks.  A shared password cannot
+        establish this ownership/accounting boundary.
+        """
+        mode = str(route.get("auth_mode") or "").strip().lower()
+        if mode != "http":
+            raise ConnectivityAdapterError(
+                "hysteria2 route must declare customer-scoped auth_mode=http"
+            )
+        return mode
 
     def _reconcile_secret(self, grant: Mapping[str, Any], external_id: str) -> str:
         secret = str(grant.get("secret") or "").strip()
@@ -877,6 +892,7 @@ class Hysteria2ConnectivityAdapter(_ManagedCredentialAdapter):
     def _render_access_url(
         self, route: Mapping[str, Any], external_id: str, secret: str, name: str
     ) -> str:
+        self._auth_mode(route)
         host = _route_host(route, "public_address", "public_host", "host", protocol=self.protocol)
         port = _route_port(route, "port", "public_port", protocol=self.protocol)
         query: dict[str, str] = {}

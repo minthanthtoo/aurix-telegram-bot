@@ -157,6 +157,7 @@ class ProtocolMatrixRunner:
                 "public_address": "198.51.100.10",
                 "port": 18444,
                 "server_name": "example.com",
+                "auth_mode": "http",
             }
         raise ValueError(f"unsupported matrix protocol: {protocol}")
 

@@ -389,7 +389,7 @@ class Hysteria2Provider:
 
     def server_info(self) -> dict[str, Any]:
         info = self.stats.server_info()
-        return {"version": self.version, **info}
+        return {"version": self.version, "auth_mode": "http", **info}
 
     def list_users(self) -> list[dict[str, Any]]:
         return self.users.list_users()
@@ -401,10 +401,14 @@ class Hysteria2Provider:
         self,
         external_id: str,
         name: str,
-        _route: Mapping[str, Any],
+        route: Mapping[str, Any],
         intent: Mapping[str, Any],
     ) -> dict[str, Any]:
         external_id = _identifier(external_id)
+        if str(route.get("auth_mode") or "").strip().lower() != "http":
+            raise ProviderBackendError(
+                "Hysteria2 provider requires customer-scoped auth_mode=http"
+            )
         secret = str(intent.get("secret") or "").strip()
         if not secret or len(secret) > 4096:
             raise ProviderBackendError("Hysteria2 customer secret is required")

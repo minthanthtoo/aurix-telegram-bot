@@ -87,6 +87,13 @@ def _route(value: Any, *, endpoint_id: str, protocol: str) -> dict[str, Any]:
     result["endpoint_id"] = endpoint_id
     result["protocol"] = protocol
     result.setdefault("route_id", f"{protocol}:{endpoint_id}")
+    if protocol == "hysteria2":
+        auth_mode = str(result.get("auth_mode") or "").strip().lower()
+        if auth_mode != "http":
+            raise NodeAgentBindingError(
+                "hysteria2 route must declare customer-scoped auth_mode=http"
+            )
+        result["auth_mode"] = auth_mode
     return result
 
 

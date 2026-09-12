@@ -800,8 +800,12 @@ recoverable credential after a failed activation.
 The concrete Hysteria2 Traffic Stats client is also constrained to a
 loopback-local HTTP(S) endpoint without URL userinfo, query, or fragment, so
 its stats API secret cannot be sent to a remote or decorated URL through a
-configuration mistake. Focused Xray/node-agent/provider/commerce regressions,
-Ruff, Python compilation, and `git diff --check` pass locally. This remains a
-local recovery and secret-boundary improvement only: it does not constitute a
-live Xray restart-persistence result, Hysteria2 canary evidence, endpoint
-promotion, server mutation, or production rollout authorization.
+configuration mistake. The managed Hysteria2 adapter and node-agent binding now
+also require the explicit `auth_mode: "http"` route declaration. The current
+shared-password Hysteria2 service therefore fails before provider user creation
+and cannot be attached to the customer lifecycle accidentally. Focused
+Xray/node-agent/provider/commerce regressions, Ruff, Python compilation, and
+`git diff --check` pass locally. This remains a local recovery and
+secret-boundary improvement only: it does not constitute a live Xray
+restart-persistence result, Hysteria2 canary evidence, endpoint promotion,
+server mutation, or production rollout authorization.

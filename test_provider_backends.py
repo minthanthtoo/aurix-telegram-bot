@@ -242,6 +242,7 @@ class ProviderBackendsTest(unittest.TestCase):
                 "public_address": "198.51.100.20",
                 "port": 443,
                 "server_name": "example.com",
+                "auth_mode": "http",
             }
             grant = adapter.provision(
                 route,
@@ -299,6 +300,7 @@ class ProviderBackendsTest(unittest.TestCase):
                 "protocol": "hysteria2",
                 "public_address": "198.51.100.20",
                 "port": 8444,
+                "auth_mode": "http",
             }
             with self.assertRaisesRegex(ConnectivityAdapterError, "unsupported"):
                 Hysteria2ConnectivityAdapter(provider).provision(
@@ -399,12 +401,32 @@ class ProviderBackendsTest(unittest.TestCase):
                     "public_address": "198.51.100.10",
                     "port": 8444,
                     "server_name": "example.com",
+                    "auth_mode": "http",
                 },
                 {"external_id": "h2-http", "name": "HTTP H2", "secret": "h2-secret"},
             )
             self.assertEqual(h2_adapter.read_usage(h2_grant)["bytes_transferred"], 7)
             self.assertFalse(h2_adapter.terminate_sessions(h2_grant)["terminated"])
             self.assertFalse(h2_adapter.verify_auth_revoked(h2_grant)["verified"])
+
+    def test_hysteria2_provider_rejects_shared_auth_mode_before_user_creation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Hysteria2UserStore(
+                Path(directory) / "users.json", encryption_key=Fernet.generate_key()
+            )
+            provider = Hysteria2Provider(
+                store,
+                Hysteria2TrafficStatsClient(
+                    "http://127.0.0.1:19000",
+                    "stats-secret",
+                    requester=lambda *_args: {"online": 0},
+                ),
+            )
+            with self.assertRaisesRegex(ProviderBackendError, "auth_mode=http"):
+                provider.create_user(
+                    "h2-1", "Customer", {"auth_mode": "password"}, {"secret": "customer-secret"}
+                )
+            self.assertEqual(store.list_users(), [])
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ class NodeAgentBindingsTest(unittest.TestCase):
                         "public_address": "198.51.100.10",
                         "port": 18444,
                         "server_name": "example.com",
+                        "auth_mode": "http",
                     },
                 },
             ]
@@ -84,6 +85,8 @@ class NodeAgentBindingsTest(unittest.TestCase):
             ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "https://agent", "token": "t", "route": {"secret": "leak"}}], "not allowed"),
             ([{"endpoint_id": "sg-a", "protocol": "xray", "base_url": "https://agent", "token": "t", "route": {"endpoint_id": "sg-b"}}], "does not match"),
             ([{"endpoint_id": "sg-a", "protocol": "wireguard", "base_url": "https://agent", "token": "t", "route": {}}], "unsupported"),
+            ([{"endpoint_id": "sg-a", "protocol": "hysteria2", "base_url": "https://agent", "token": "t", "route": {}}], "auth_mode=http"),
+            ([{"endpoint_id": "sg-a", "protocol": "hysteria2", "base_url": "https://agent", "token": "t", "route": {"auth_mode": "password"}}], "auth_mode=http"),
         ]
         for value, message in cases:
             with self.subTest(message=message), self.assertRaisesRegex(NodeAgentBindingError, message):
