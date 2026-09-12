@@ -612,3 +612,11 @@ synchronous provider collection in the managed runtime. The disposable
 PostgreSQL rehearsal remains green. No live provider, server, customer
 credential, load/speed test, soak test, or production database cutover was
 performed.
+
+Maintenance also repairs missing encrypted free-key URL projections from its
+provider inventory pass, so legacy generations can recover without reopening
+provider access from a customer request. Durable usage reads now include a
+bounded freshness verdict (`AURIX_USAGE_SNAPSHOT_MAX_AGE_SECONDS`, default 30
+minutes); stale or empty snapshots are surfaced as unavailable while retaining
+the last bounded values for operator diagnosis. The VPN-only regression now
+passes `366` tests after these read-model guards.

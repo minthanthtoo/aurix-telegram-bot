@@ -161,7 +161,7 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertNotIn("xray-only", snapshot["metrics"]["byEndpoint"])
 
     def test_usage_snapshots_are_durable_and_provider_free_for_customer_reads(self):
-        observed_at = datetime(2026, 9, 12, 1, 2, 3, tzinfo=UTC)
+        observed_at = datetime.now(UTC).replace(microsecond=0)
         written = self.registry.persist_usage_snapshot(
             {
                 "byEndpoint": {
@@ -186,8 +186,20 @@ class EndpointRegistryTest(unittest.TestCase):
                 "errors": {},
                 "source": "maintenance_snapshot",
                 "latest_observed_at": observed_at.isoformat(),
+                "snapshot_max_age_seconds": 1800,
             },
         )
+
+    def test_stale_usage_snapshot_is_marked_unavailable(self):
+        observed_at = datetime.now(UTC) - timedelta(hours=2)
+        self.registry.persist_usage_snapshot(
+            {"byEndpoint": {"legacy-default": {"free-key": 123}}},
+            now=observed_at,
+        )
+        with patch.dict(os.environ, {"AURIX_USAGE_SNAPSHOT_MAX_AGE_SECONDS": "60"}):
+            cached = self.registry.cached_usage_metrics()
+        self.assertEqual(cached["errors"], {"snapshot": "stale"})
+        self.assertEqual(cached["byEndpoint"]["legacy-default"]["free-key"], 123)
 
     def test_endpoint_lifecycle_is_drain_then_terminal_retirement(self):
         now = datetime.now(UTC)

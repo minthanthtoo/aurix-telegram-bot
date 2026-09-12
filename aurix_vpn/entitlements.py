@@ -1869,6 +1869,69 @@ class ClaimService:
             )
         return result
 
+    def persist_access_url_snapshot(self, inventory: dict[str, Any] | None) -> int:
+        """Encrypt provider inventory into free generations during maintenance."""
+        scoped = inventory.get("byEndpoint") if isinstance(inventory, dict) else None
+        if self._access_url_cipher is None or not isinstance(scoped, dict):
+            return 0
+        normalized: dict[str, dict[str, str]] = {}
+        for endpoint_id, values in scoped.items():
+            if not isinstance(values, dict):
+                continue
+            endpoint = str(endpoint_id or "").strip()
+            if not endpoint:
+                continue
+            for external_id, raw_url in values.items():
+                key_id = str(external_id or "").strip()
+                access_url = str(raw_url or "").replace("\r", "").replace("\n", "").strip()
+                if key_id and access_url and len(access_url) <= 4096:
+                    normalized.setdefault(endpoint, {})[key_id] = access_url
+        if not normalized:
+            return 0
+        try:
+            with self.database.connect() as connection:
+                if not IdentityService._table_exists(connection, "credential_generations"):
+                    return 0
+                rows = connection.execute(
+                    """SELECT generation_id, endpoint_id, external_id,
+                              access_url_ciphertext
+                         FROM credential_generations
+                        WHERE source_type = 'free'
+                          AND protocol = 'outline'
+                          AND status IN ('active', 'retiring', 'unknown')"""
+                ).fetchall()
+                updates: list[tuple[str, str]] = []
+                for row in rows:
+                    access_url = normalized.get(str(row["endpoint_id"]), {}).get(
+                        str(row["external_id"])
+                    )
+                    if not access_url:
+                        continue
+                    current = str(row["access_url_ciphertext"] or "")
+                    if current:
+                        try:
+                            if self._access_url_cipher.decrypt(current.encode()).decode() == access_url:
+                                continue
+                        except Exception:
+                            pass
+                    updates.append(
+                        (
+                            self._access_url_cipher.encrypt(access_url.encode()).decode(),
+                            str(row["generation_id"]),
+                        )
+                    )
+                if not updates:
+                    return 0
+                self.database.begin_write(connection)
+                for ciphertext, generation_id in updates:
+                    connection.execute(
+                        "UPDATE credential_generations SET access_url_ciphertext = ? WHERE generation_id = ?",
+                        (ciphertext, generation_id),
+                    )
+                return len(updates)
+        except Exception:
+            return 0
+
     def cached_access_urls(self, telegram_id: int) -> dict[str, Any]:
         """Return encrypted free-key URLs without contacting Outline.
 

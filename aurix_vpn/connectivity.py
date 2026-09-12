@@ -1520,11 +1520,23 @@ class EndpointRegistry:
             observed_at = str(row["observed_at"] or "")
             if observed_at and (latest is None or observed_at > latest):
                 latest = observed_at
+        max_age_seconds = max(
+            60, int(os.environ.get("AURIX_USAGE_SNAPSHOT_MAX_AGE_SECONDS", "1800"))
+        )
+        stale = latest is None
+        if latest is not None:
+            try:
+                stale = datetime.fromisoformat(latest).astimezone(UTC) < (
+                    datetime.now(UTC) - timedelta(seconds=max_age_seconds)
+                )
+            except (TypeError, ValueError, OverflowError):
+                stale = True
         return {
             "byEndpoint": by_endpoint,
-            "errors": {},
+            "errors": {"snapshot": "stale"} if stale else {},
             "source": "maintenance_snapshot",
             "latest_observed_at": latest,
+            "snapshot_max_age_seconds": max_age_seconds,
         }
 
     def collect_inventory(self) -> dict[str, Any]:

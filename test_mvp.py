@@ -124,6 +124,21 @@ class MvpFeatureTest(unittest.TestCase):
             free.access_url,
         )
 
+    def test_maintenance_inventory_repairs_legacy_free_url_projection(self):
+        free = self.claims.claim(101, "A", self.now)
+        with self.commerce.database.connect() as connection:
+            connection.execute(
+                "UPDATE credential_generations SET access_url_ciphertext = NULL "
+                "WHERE entitlement_key LIKE 'free:%'"
+            )
+        self.assertEqual(
+            self.claims.persist_access_url_snapshot(
+                {"byEndpoint": {"legacy-default": {"1": free.access_url}}}
+            ),
+            1,
+        )
+        self.assertEqual(self.claims.cached_access_urls(101)["errors"], {})
+
     def test_verified_free_expiry_releases_generation_lease(self):
         self.claims.claim(101, "A", self.now)
         with self.commerce.database.connect() as connection:

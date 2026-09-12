@@ -757,6 +757,26 @@ class FailingQuotaClaimService(MaintenanceClaimService):
         raise RuntimeError("quota provider unavailable")
 
 
+class SnapshotMaintenanceConnectivity:
+    def __init__(self):
+        self.metrics = {"byEndpoint": {"legacy-default": {"key-1": 123}}, "errors": {}}
+        self.inventory = {
+            "byEndpoint": {"legacy-default": {"key-1": "ss://cached"}},
+            "errors": {},
+        }
+        self.persisted_metrics = None
+
+    def collect_metrics(self):
+        return self.metrics
+
+    def persist_usage_snapshot(self, metrics, **_kwargs):
+        self.persisted_metrics = metrics
+        return 1
+
+    def collect_inventory(self):
+        return self.inventory
+
+
 class TelegramBotCommerceTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1167,6 +1187,23 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIs(commerce.metrics, outline.snapshot)
         self.assertEqual(claim.expiry_calls, 1)
         self.assertEqual(commerce.process_calls, 1)
+
+    def test_maintenance_persists_inventory_for_durable_free_urls(self):
+        outline = MaintenanceOutline()
+        claim = MaintenanceClaimService(outline)
+        connectivity = SnapshotMaintenanceConnectivity()
+        claim.connectivity = connectivity
+        persisted_inventory = []
+        claim.persist_access_url_snapshot = persisted_inventory.append
+        commerce = MaintenanceCommerceService()
+        bot = TelegramBot("test-token", claim, commerce)
+        bot._send_termination_notices = lambda: None
+        bot._send_pending_notifications = lambda: None
+
+        bot._run_maintenance()
+
+        self.assertIs(connectivity.persisted_metrics, connectivity.metrics)
+        self.assertEqual(persisted_inventory, [connectivity.inventory])
 
     def test_maintenance_runs_managed_quota_stage_only_when_explicitly_bound(self):
         outline = MaintenanceOutline()
