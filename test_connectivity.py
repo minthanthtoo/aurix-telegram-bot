@@ -121,6 +121,16 @@ class EndpointRegistryTest(unittest.TestCase):
             "xray",
         )
 
+    def test_assignment_protocol_cannot_drift_on_retry(self):
+        first = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000, protocol="outline"
+        )
+        self.assertEqual(first.protocol, "outline")
+        with self.assertRaisesRegex(ConnectivityError, "protocol is immutable"):
+            self.registry.ensure_subscription_assignment(
+                "sub-1", "basic", 50_000_000_000, protocol="xray"
+            )
+
     def test_outline_collectors_skip_protocol_only_endpoints(self):
         now = datetime.now(UTC)
         with self.database.connect() as connection:

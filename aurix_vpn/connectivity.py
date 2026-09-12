@@ -1641,6 +1641,13 @@ class EndpointRegistry:
         protocol: str | None = "outline",
         now: datetime | None = None,
     ) -> EndpointAssignment:
+        normalized_protocol = str(protocol or "outline").strip().lower()
+        if (
+            not normalized_protocol
+            or len(normalized_protocol) > 64
+            or any(char.isspace() for char in normalized_protocol)
+        ):
+            raise ConnectivityError("protocol is invalid")
         timestamp = (now or datetime.now(UTC)).isoformat()
         with self.database.connect() as connection:
             self.database.begin_write(connection)
@@ -1660,12 +1667,15 @@ class EndpointRegistry:
                 (subscription_id,),
             ).fetchone()
             if existing is not None:
+                existing_protocol = str(existing["protocol"] or "outline").strip().lower()
+                if existing_protocol != normalized_protocol:
+                    raise ConnectivityError("subscription assignment protocol is immutable")
                 return self._assignment(existing)
             endpoint_id = self.select_endpoint_for_plan(
                 connection,
                 plan_code,
                 preferred_endpoint_id=preferred_endpoint_id,
-                protocol=protocol,
+                protocol=normalized_protocol,
             )
             assignment_id = uuid.uuid4().hex
             connection.execute(
@@ -1681,7 +1691,7 @@ class EndpointRegistry:
                     reason[:128],
                     quota_bytes,
                     timestamp,
-                    str(protocol or "outline").strip().lower(),
+                    normalized_protocol,
                 ),
             )
             self._record_audit_event(
@@ -1696,7 +1706,7 @@ class EndpointRegistry:
                     "entitlement_kind": "paid",
                     "plan_code": str(plan_code),
                     "preferred_endpoint_id": preferred_endpoint_id,
-                    "protocol": str(protocol or "outline").strip().lower(),
+                    "protocol": normalized_protocol,
                     "reason": str(reason or "deterministic-allocation")[:128],
                 },
                 created_at=timestamp,

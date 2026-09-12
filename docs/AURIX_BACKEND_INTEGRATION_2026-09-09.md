@@ -517,7 +517,7 @@ to default to Outline. The portal sends the selected protocol through the
 existing order boundary and shows the matching connection method for active
 credentials. The authenticated protocol catalog route is covered end-to-end
 with redaction assertions. The complete non-PostgreSQL VPN regression passes
-`344` tests after this change; no live
+`345` tests after this change; no live
 server, provider, customer credential, load test, speed test, or deployment was
 changed.
 
@@ -526,3 +526,8 @@ state is created: a non-Outline request must have an eligible endpoint, a
 registered adapter, and a matching route/adapter binding. This prevents a
 crafted order from reserving capacity for a transport that can only fail in
 the worker.
+
+Endpoint assignment retries now enforce the same invariant: the persisted
+subscription protocol is immutable once an assignment exists. A later retry
+cannot silently reuse an Outline reservation for an Xray/Hysteria2 request or
+vice versa; such drift is surfaced for operator reconciliation.
