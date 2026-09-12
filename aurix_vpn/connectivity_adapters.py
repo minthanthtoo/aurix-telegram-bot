@@ -8,6 +8,8 @@ accounting behavior has been verified.
 
 from __future__ import annotations
 
+import ipaddress
+import re
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -18,6 +20,7 @@ from ports import ConnectivityAdapter, OutlineGateway
 
 
 UTC = timezone.utc
+_HOSTNAME_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\Z")
 
 
 class ConnectivityAdapterError(RuntimeError):
@@ -316,6 +319,48 @@ def _route_bool(route: Mapping[str, Any], field: str, *, default: bool = False) 
     if not isinstance(value, bool):
         raise ConnectivityAdapterError(f"route field {field} must be a boolean")
     return value
+
+
+def _required_route_value(route: Mapping[str, Any], *names: str) -> str:
+    for name in names:
+        value = str(route.get(name) or "").strip()
+        if value:
+            return value
+    raise ConnectivityAdapterError(f"route is missing {'/'.join(names)}")
+
+
+def _route_host(route: Mapping[str, Any], *names: str, protocol: str) -> str:
+    """Validate the public host before it can enter a customer URI."""
+    value = _required_route_value(route, *names)
+    normalized = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    if (
+        not normalized
+        or len(normalized) > 253
+        or any(char.isspace() or char in "/?#@" for char in normalized)
+    ):
+        raise ConnectivityAdapterError(f"{protocol} route host is invalid")
+    try:
+        ipaddress.ip_address(normalized)
+    except ValueError:
+        if ".." in normalized or not _HOSTNAME_PATTERN.fullmatch(normalized):
+            raise ConnectivityAdapterError(f"{protocol} route host is invalid")
+    return normalized
+
+
+def _route_port(route: Mapping[str, Any], *names: str, protocol: str) -> str:
+    """Return a canonical TCP/UDP port and reject coercive values."""
+    raw = next((route.get(name) for name in names if route.get(name) is not None), None)
+    if raw is None or isinstance(raw, bool):
+        raise ConnectivityAdapterError(f"{protocol} route port is invalid")
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str) and raw.strip().isdigit():
+        value = int(raw.strip())
+    else:
+        raise ConnectivityAdapterError(f"{protocol} route port is invalid")
+    if not 1 <= value <= 65_535:
+        raise ConnectivityAdapterError(f"{protocol} route port is invalid")
+    return str(value)
 
 
 class _ManagedCredentialAdapter:
@@ -792,8 +837,8 @@ class XrayConnectivityAdapter(_ManagedCredentialAdapter):
     def _render_access_url(
         self, route: Mapping[str, Any], external_id: str, secret: str, name: str
     ) -> str:
-        host = self._route_value(route, "public_address", "public_host", "host")
-        port = self._route_value(route, "port", "public_port")
+        host = _route_host(route, "public_address", "public_host", "host", protocol=self.protocol)
+        port = _route_port(route, "port", "public_port", protocol=self.protocol)
         public_key = self._route_value(route, "public_key", "reality_public_key")
         server_name = self._route_value(route, "server_name", "sni")
         short_id = self._route_value(route, "short_id", "reality_short_id")
@@ -832,8 +877,8 @@ class Hysteria2ConnectivityAdapter(_ManagedCredentialAdapter):
     def _render_access_url(
         self, route: Mapping[str, Any], external_id: str, secret: str, name: str
     ) -> str:
-        host = self._route_value(route, "public_address", "public_host", "host")
-        port = self._route_value(route, "port", "public_port")
+        host = _route_host(route, "public_address", "public_host", "host", protocol=self.protocol)
+        port = _route_port(route, "port", "public_port", protocol=self.protocol)
         query: dict[str, str] = {}
         sni = str(route.get("server_name") or route.get("sni") or "").strip()
         if sni:

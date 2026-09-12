@@ -190,6 +190,27 @@ class ConnectivityAdapterTest(unittest.TestCase):
                     )
                 self.assertEqual(client.users, {})
 
+    def test_invalid_protocol_route_host_and_port_fail_before_provider_creation(self):
+        route = self._xray_route()
+        for field, values, message in (
+            (
+                "public_address",
+                ("https://example.com/path", "bad/host", "bad host"),
+                "route host is invalid",
+            ),
+            ("port", (True, 0, 65_536, 18_443.0, "18443.0"), "route port is invalid"),
+        ):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    client = _ProtocolClient()
+                    adapter = XrayConnectivityAdapter(client)
+                    with self.assertRaisesRegex(ConnectivityAdapterError, message):
+                        adapter.provision(
+                            {**route, field: value},
+                            {"external_id": "uuid-a", "name": "customer-a"},
+                        )
+                    self.assertEqual(client.users, {})
+
     def test_adapter_rejects_a_route_for_another_protocol(self):
         client = _ProtocolClient()
         route = self._xray_route()
@@ -324,6 +345,12 @@ class ConnectivityAdapterTest(unittest.TestCase):
                 {**route, "insecure": "false"},
                 {"external_id": "customer-b", "name": "customer-b"},
             )
+        with self.assertRaisesRegex(ConnectivityAdapterError, "route port is invalid"):
+            adapter.provision(
+                {**route, "port": 0},
+                {"external_id": "customer-b", "name": "customer-b"},
+            )
+        self.assertNotIn("customer-b", client.users)
         self.assertEqual(adapter.read_usage(grant)["bytes_transferred"], 0)
         self.assertEqual(adapter.reconcile(route)["users"], 1)
         client.users.clear()
