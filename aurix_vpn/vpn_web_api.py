@@ -607,6 +607,51 @@ class AuriXVpnWebApplication:
             "protocol_observations": observations,
         }
 
+    def admin_usage_snapshot(self) -> dict[str, Any]:
+        """Expose maintenance snapshot health without contacting providers."""
+        registry = getattr(self.runtime, "connectivity", None)
+        reader = getattr(registry, "cached_usage_metrics", None)
+        if not callable(reader):
+            return {
+                "status": "unavailable",
+                "latest_observed_at": None,
+                "failed_endpoint_count": 0,
+                "snapshot_max_age_seconds": None,
+            }
+        try:
+            payload = reader()
+        except Exception:
+            return {
+                "status": "unavailable",
+                "latest_observed_at": None,
+                "failed_endpoint_count": 0,
+                "snapshot_max_age_seconds": None,
+            }
+        if not isinstance(payload, dict):
+            return {
+                "status": "unavailable",
+                "latest_observed_at": None,
+                "failed_endpoint_count": 0,
+                "snapshot_max_age_seconds": None,
+            }
+        errors = payload.get("errors")
+        errors = errors if isinstance(errors, dict) else {}
+        failed_endpoint_count = sum(1 for key in errors if str(key) != "snapshot")
+        latest = payload.get("latest_observed_at")
+        status = (
+            "unavailable"
+            if not latest
+            else "healthy"
+            if not errors
+            else "degraded"
+        )
+        return {
+            "status": status,
+            "latest_observed_at": latest,
+            "failed_endpoint_count": failed_endpoint_count,
+            "snapshot_max_age_seconds": payload.get("snapshot_max_age_seconds"),
+        }
+
     def admin_summary(self) -> dict[str, Any]:
         """Read-only overview for the AuriX Control Center."""
         commerce = self.runtime.commerce
@@ -642,6 +687,7 @@ class AuriXVpnWebApplication:
         else:
             scale_out = {"status": "unavailable", "reason": "scale controller is not configured"}
         fleet = self.admin_fleet()
+        usage_snapshot = self.admin_usage_snapshot()
         max_active_devices = getattr(self.device_api, "max_active_devices", None)
         device_policy = {
             "status": (
@@ -662,6 +708,7 @@ class AuriXVpnWebApplication:
             "protocols": catalog,
             "protocol_readiness": readiness,
             "scale_out": scale_out,
+            "usage_snapshot": usage_snapshot,
             "device_policy": device_policy,
             "fleet": {
                 "endpoints": len(fleet),

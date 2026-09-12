@@ -622,3 +622,6 @@ the last bounded values for operator diagnosis. The VPN-only regression now
 passes `367` tests after these read-model guards. Migration `free_access:10`
 also records endpoint-level healthy/failed status, so one healthy node cannot
 mask a failed or stale node's last usage values in the customer read model.
+The read-only Control Center summary now surfaces this maintenance snapshot
+health and latest observation time without exposing key IDs, URLs, or provider
+secrets.

@@ -90,6 +90,13 @@ class ControlCenterTest(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_summary_and_fleet_are_read_only_and_redacted(self):
+        self.runtime.connectivity.cached_usage_metrics = lambda: {
+            "byEndpoint": {"bkk-a": {"key-1": 123}},
+            "errors": {},
+            "source": "maintenance_snapshot",
+            "latest_observed_at": "2026-09-12T00:00:00+00:00",
+            "snapshot_max_age_seconds": 1800,
+        }
         with patch.dict(
             os.environ,
             {"ADMIN_TELEGRAM_IDS": "12345", "AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS": "30"},
@@ -107,6 +114,8 @@ class ControlCenterTest(unittest.TestCase):
         self.assertEqual(fleet[0]["code"], "BKK-A")
         self.assertFalse(fleet[0]["healthy"])
         self.assertEqual(summary["fleet"], {"endpoints": 1, "healthy": 0})
+        self.assertEqual(summary["usage_snapshot"]["status"], "healthy")
+        self.assertEqual(summary["usage_snapshot"]["failed_endpoint_count"], 0)
         self.assertEqual(summary["device_policy"], {"status": "unconfigured", "max_active_devices": None})
         self.assertNotIn("public_address", json.dumps(fleet))
         self.assertNotIn("management_url", json.dumps(fleet))
