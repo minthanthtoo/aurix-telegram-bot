@@ -1648,6 +1648,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "Fresh healthy signals: data_plane, management, quota, restart, usage",
             self.bot.sent[-1][1],
         )
+        self.assertIn("Missing evidence: —", self.bot.sent[-1][1])
 
         self.bot.handle(self.message(999, "/promoteprotocol legacy-default xray management usage"))
         self.assertIn("expires in 5 minutes", self.bot.sent[-1][1])

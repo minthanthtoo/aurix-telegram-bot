@@ -694,6 +694,7 @@ class TelegramAdminMixin:
                 label("Required signals", "required_signals"),
                 label("Fresh healthy signals", "fresh_healthy_signals"),
                 label("Missing signals", "missing_signals"),
+                label("Missing evidence", "missing_evidence"),
                 label("Missing capabilities", "missing_capabilities"),
             ]
             if command == "/promoteprotocol" and snapshot.get("promotable"):
