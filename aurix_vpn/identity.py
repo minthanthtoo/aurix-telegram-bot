@@ -438,15 +438,49 @@ class IdentityService:
         normalized_protocol = str(protocol or "").strip().lower()
         normalized_status = str(status or "").strip().lower()
         with self.database.connect() as connection:
+            has_free_keys = self._table_exists(connection, "keys")
+            free_quota = "fk.data_limit_bytes" if has_free_keys else "NULL"
+            free_consumed = "fk.last_usage_bytes" if has_free_keys else "NULL"
+            free_join = (
+                "LEFT JOIN keys fk ON g.source_type = 'free' "
+                "AND CAST(fk.id AS TEXT) = g.source_id"
+                if has_free_keys
+                else ""
+            )
             rows = connection.execute(
-                """SELECT generation_id, entitlement_key, source_type, source_id,
-                          endpoint_id, protocol, generation_no, status, remote_state,
-                          usage_baseline_provenance, usage_baseline_bytes,
-                          created_at, revoked_at, revoke_verified_at
-                     FROM credential_generations
-                    WHERE (? = '' OR LOWER(protocol) = ?)
-                      AND (? = '' OR status = ?)
-                    ORDER BY created_at DESC LIMIT ?""",
+                f"""SELECT g.generation_id, g.entitlement_key, g.source_type, g.source_id,
+                          g.endpoint_id, g.protocol, g.generation_no, g.status, g.remote_state,
+                          g.usage_baseline_provenance, g.usage_baseline_bytes,
+                          g.created_at, g.revoked_at, g.revoke_verified_at,
+                          CASE WHEN g.source_type = 'paid' THEN s.quota_bytes
+                               WHEN g.source_type = 'free' THEN {free_quota}
+                               ELSE NULL END AS quota_bytes,
+                          CASE WHEN g.source_type = 'paid' THEN s.consumed_bytes
+                               WHEN g.source_type = 'free' THEN {free_consumed}
+                               ELSE NULL END AS consumed_bytes,
+                          (SELECT COALESCE(SUM(l.lease_bytes), 0)
+                             FROM quota_leases l
+                            WHERE l.generation_id = g.generation_id
+                              AND l.status = 'active') AS active_lease_bytes,
+                          (SELECT COALESCE(SUM(l.used_bytes), 0)
+                             FROM quota_leases l
+                            WHERE l.generation_id = g.generation_id
+                              AND l.status = 'active') AS lease_used_bytes,
+                          (SELECT l.expires_at
+                             FROM quota_leases l
+                            WHERE l.generation_id = g.generation_id
+                              AND l.status = 'active'
+                            ORDER BY l.created_at DESC LIMIT 1) AS lease_expires_at,
+                          (SELECT MAX(e.last_observed_at)
+                             FROM entitlement_usage_epochs e
+                            WHERE e.generation_id = g.generation_id) AS last_usage_at
+                     FROM credential_generations g
+                     LEFT JOIN subscriptions s
+                       ON g.source_type = 'paid' AND s.id = g.source_id
+                     {free_join}
+                    WHERE (? = '' OR LOWER(g.protocol) = ?)
+                      AND (? = '' OR g.status = ?)
+                    ORDER BY g.created_at DESC LIMIT ?""",
                 (
                     normalized_protocol,
                     normalized_protocol,
@@ -455,7 +489,34 @@ class IdentityService:
                     max(1, min(int(limit), 200)),
                 ),
             ).fetchall()
-        return [dict(row) for row in rows]
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            raw_quota = item.get("quota_bytes")
+            raw_consumed = item.get("consumed_bytes")
+            if raw_quota is None:
+                item["quota_bytes"] = None
+                item["consumed_bytes"] = None
+                item["remaining_bytes"] = None
+            else:
+                try:
+                    quota = max(0, int(raw_quota or 0))
+                except (TypeError, ValueError):
+                    quota = 0
+                try:
+                    consumed = max(0, int(raw_consumed or 0))
+                except (TypeError, ValueError):
+                    consumed = 0
+                item["quota_bytes"] = quota
+                item["consumed_bytes"] = consumed
+                item["remaining_bytes"] = max(0, quota - consumed)
+            for field in ("active_lease_bytes", "lease_used_bytes"):
+                try:
+                    item[field] = max(0, int(item.get(field) or 0))
+                except (TypeError, ValueError):
+                    item[field] = 0
+            result.append(item)
+        return result
 
     def touch_device(self, device_id: str, *, now: str | datetime | None = None) -> bool:
         timestamp = _now_text(now)

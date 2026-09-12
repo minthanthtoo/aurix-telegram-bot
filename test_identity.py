@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -118,6 +119,50 @@ class IdentityAccountingTest(unittest.TestCase):
         self.assertEqual(subscription["quota_bytes"], 1000)
         self.assertEqual(subscription["status"], "active")
         self.assertNotIn("access_url", subscription)
+
+    def test_admin_generations_include_safe_usage_and_lease_state(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)
+        generation = self.identity.ensure_generation_for_credential(
+            entitlement,
+            "sg-a",
+            credential_id="xray-credential",
+            external_id="xray-credential",
+            protocol="xray",
+            access_url_ciphertext="vless://secret@example.com:18443",
+            usage_baseline_provenance="new",
+            now=self.now.isoformat(),
+        )
+        self.identity.ensure_generation_lease(
+            entitlement,
+            generation,
+            "sg-a",
+            1000,
+            (self.now + timedelta(days=1)).isoformat(),
+            now=self.now,
+        )
+
+        initial = self.identity.admin_generations(protocol="xray")
+        self.assertEqual(len(initial), 1)
+        self.assertEqual(initial[0]["quota_bytes"], 1000)
+        self.assertEqual(initial[0]["consumed_bytes"], 0)
+        self.assertEqual(initial[0]["remaining_bytes"], 1000)
+        self.assertEqual(initial[0]["active_lease_bytes"], 1000)
+        self.assertEqual(initial[0]["lease_used_bytes"], 0)
+        self.assertIsNone(initial[0]["last_usage_at"])
+        self.assertNotIn("secret", json.dumps(initial))
+
+        self.identity.record_usage(
+            entitlement,
+            generation,
+            125,
+            endpoint_id="sg-a",
+            source_external_id="xray-credential",
+            observed_at=self.now.isoformat(),
+        )
+        current = self.identity.admin_generations(protocol="xray")[0]
+        self.assertEqual(current["consumed_bytes"], 125)
+        self.assertEqual(current["remaining_bytes"], 875)
+        self.assertEqual(current["last_usage_at"], self.now.isoformat())
 
     def test_managed_quota_sweep_is_protocol_neutral_and_idempotent(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)

@@ -712,3 +712,22 @@ mixed Outline/managed fleet from invoking a non-Outline binding for legacy
 routes and reporting a false partial-maintenance failure. The regression suite
 passes locally; no live provider, customer credential, server, or database was
 changed.
+
+Managed adapter idempotent reads now retain the verified deployment route and
+secret-free credential intent on the transient grant. A recovered or
+pre-existing provider user can therefore rotate or reconcile through the same
+route as a newly-created user instead of losing protocol-specific route
+metadata on the idempotent path.
+
+The read-only Access and endpoint-detail views now include safe per-generation
+quota, consumed, remaining, active-lease, lease-used, and latest-observation
+fields. These values come from durable entitlement/lease state and never
+expose provider identifiers, access URLs, or secrets; they make recovery and
+quota posture inspectable for Outline and future managed protocols in one
+place.
+
+Managed adapter idempotent reads now retain the verified deployment route and
+secret-free credential intent on the transient grant. A recovered or
+pre-existing provider user can therefore rotate or reconcile through the same
+route as a newly-created user instead of losing protocol-specific route
+metadata on the idempotent path.
