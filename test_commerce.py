@@ -606,6 +606,45 @@ class CommerceServiceTest(unittest.TestCase):
         )
         self.assertEqual(payment["status"], "refunded")
 
+    def test_revoke_does_not_fallback_to_outline_for_missing_managed_generation(self):
+        order = self._paid_order(129)
+        approval = self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        with self.service.database.connect() as connection:
+            connection.execute(
+                "UPDATE subscriptions SET preferred_protocol = 'xray' WHERE id = ?",
+                (approval.subscription_id,),
+            )
+            connection.execute(
+                "DELETE FROM quota_leases WHERE entitlement_key = ?",
+                (f"paid:{approval.subscription_id}",),
+            )
+            connection.execute(
+                "DELETE FROM credential_generations WHERE entitlement_key = ?",
+                (f"paid:{approval.subscription_id}",),
+            )
+            key_state = connection.execute(
+                "SELECT status FROM paid_vpn_keys WHERE subscription_id = ?",
+                (approval.subscription_id,),
+            ).fetchone()
+            subscription_state = connection.execute(
+                "SELECT status, preferred_protocol FROM subscriptions WHERE id = ?",
+                (approval.subscription_id,),
+            ).fetchone()
+        self.assertEqual(key_state["status"], "active")
+        self.assertEqual(subscription_state["preferred_protocol"], "xray")
+        self.service.refund_order(order.order_id, 999, "customer request", self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.assertEqual(self.outline.deleted, [])
+        with self.service.database.connect() as connection:
+            job = connection.execute(
+                """SELECT status, attempts, last_error FROM provisioning_jobs
+                    WHERE subscription_id = ? AND operation = 'revoke'""",
+                (approval.subscription_id,),
+            ).fetchone()
+        self.assertEqual(job["status"], "pending")
+        self.assertIn("refusing Outline fallback", job["last_error"])
+
     def test_failed_notification_dead_letters_and_is_reported(self):
         order = self._paid_order(127)
         self.service.reject_order(order.order_id, 999, self.now)

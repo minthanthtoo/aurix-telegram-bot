@@ -1297,6 +1297,7 @@ class CommerceWorkerMixin:
         with self.database.connect() as connection:
             key = connection.execute(
                 """SELECT k.*, s.status AS subscription_status,
+                          s.preferred_protocol,
                           o.id AS order_id, o.refund_status
                    FROM paid_vpn_keys k
                    JOIN subscriptions s ON s.id = k.subscription_id
@@ -1316,10 +1317,15 @@ class CommerceWorkerMixin:
             return
         try:
             endpoint_id = str(key["endpoint_id"] or "legacy-default")
+            key_protocol = str(key["preferred_protocol"] or "").strip().lower() or "outline"
             remote_state, verified = generation_results.get(
                 str(key["outline_key_id"]), ("delete_accepted", False)
             )
             if str(key["outline_key_id"]) not in generation_results:
+                if key_protocol != "outline":
+                    raise CommerceError(
+                        f"{key_protocol} credential generation is missing; refusing Outline fallback"
+                    )
                 outline = self.outline
                 if self.connectivity is not None and key["endpoint_id"]:
                     outline = self.connectivity.client(endpoint_id)
