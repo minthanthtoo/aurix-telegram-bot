@@ -229,6 +229,15 @@ class TelegramMaintenanceMixin:
                     "managed_inventory_reconciliation",
                     lambda: persist_inventory(managed_inventory, now=datetime.now(UTC)),
                 )
+            managed_routes = getattr(self.commerce, "managed_routes", None)
+            reconcile_managed_routes = getattr(self.commerce, "reconcile_managed_routes", None)
+            if callable(managed_routes) and callable(reconcile_managed_routes):
+                route_snapshot = run_stage("managed_routes", managed_routes)
+                if isinstance(route_snapshot, list) and route_snapshot:
+                    run_stage(
+                        "managed_reconciliation",
+                        lambda: reconcile_managed_routes(route_snapshot),
+                    )
         free_provisioning = getattr(self.service, "process_free_provisioning", None)
         giveaway_provisioning = getattr(self.service, "process_giveaway_provisioning", None)
         if callable(giveaway_provisioning):

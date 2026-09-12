@@ -133,15 +133,14 @@ class CommerceWorkerMixin:
     def _adapter_for_endpoint(self, endpoint_id: str, client: Any | None = None) -> Any:
         return self._adapter_for_route(self._route_for_endpoint(str(endpoint_id)), client)
 
-    def collect_managed_inventory(self) -> dict[str, Any]:
-        """Collect protocol-scoped provider IDs without returning secrets."""
+    def _enabled_managed_routes(self) -> tuple[list[dict[str, Any]], dict[str, str]]:
         connectivity = getattr(self, "connectivity", None)
         route_provider = getattr(self, "managed_route_provider", None)
         list_endpoints = getattr(connectivity, "list_endpoints", None)
         list_profiles = getattr(connectivity, "list_protocol_profiles", None)
         if not callable(route_provider) or not callable(list_endpoints) or not callable(list_profiles):
-            return {"byEndpointProtocol": {}, "errors": {}}
-        by_endpoint_protocol: dict[str, dict[str, dict[str, str]]] = {}
+            return [], {}
+        routes: list[dict[str, Any]] = []
         errors: dict[str, str] = {}
         for endpoint in list_endpoints() or []:
             if not isinstance(endpoint, Mapping):
@@ -168,21 +167,40 @@ class CommerceWorkerMixin:
                         or str(route.get("protocol") or "").strip().lower() != protocol
                     ):
                         raise CommerceError("managed inventory route does not match profile")
-                    adapter = self._adapter_for_route(route)
-                    inventory_method = getattr(adapter, "inventory", None)
-                    if not callable(inventory_method):
-                        raise CommerceError(f"managed {protocol} adapter lacks inventory")
-                    snapshot = inventory_method(route)
-                    external_ids = snapshot.get("external_ids") if isinstance(snapshot, Mapping) else None
-                    if not isinstance(external_ids, list):
-                        raise CommerceError(f"managed {protocol} inventory is invalid")
-                    by_endpoint_protocol.setdefault(endpoint_id, {})[protocol] = {
-                        str(external_id): ""
-                        for external_id in external_ids
-                        if str(external_id or "").strip()
-                    }
+                    routes.append(route)
                 except Exception as exc:
                     errors[key] = type(exc).__name__
+        return routes, errors
+
+    def managed_routes(self) -> list[dict[str, Any]]:
+        """Return explicitly bound, enabled managed routes for recovery."""
+        routes, _errors = self._enabled_managed_routes()
+        return routes
+
+    def collect_managed_inventory(self) -> dict[str, Any]:
+        """Collect protocol-scoped provider IDs without returning secrets."""
+        routes, errors = self._enabled_managed_routes()
+        by_endpoint_protocol: dict[str, dict[str, dict[str, str]]] = {}
+        for route in routes:
+            endpoint_id = str(route.get("endpoint_id") or "").strip()
+            protocol = str(route.get("protocol") or "").strip().lower()
+            key = f"{endpoint_id}:{protocol}"
+            try:
+                adapter = self._adapter_for_route(route)
+                inventory_method = getattr(adapter, "inventory", None)
+                if not callable(inventory_method):
+                    raise CommerceError(f"managed {protocol} adapter lacks inventory")
+                snapshot = inventory_method(route)
+                external_ids = snapshot.get("external_ids") if isinstance(snapshot, Mapping) else None
+                if not isinstance(external_ids, list):
+                    raise CommerceError(f"managed {protocol} inventory is invalid")
+                by_endpoint_protocol.setdefault(endpoint_id, {})[protocol] = {
+                    str(external_id): ""
+                    for external_id in external_ids
+                    if str(external_id or "").strip()
+                }
+            except Exception as exc:
+                errors[key] = type(exc).__name__
         return {"byEndpointProtocol": by_endpoint_protocol, "errors": errors}
 
     def reconcile_managed_route(

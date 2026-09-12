@@ -745,9 +745,17 @@ class ManagedMaintenanceCommerceService(MaintenanceCommerceService):
         }
         self.managed_adapter_provider = object()
         self.managed_calls = []
+        self.reconciliation_calls = []
 
     def enforce_managed_quotas(self, **kwargs):
         self.managed_calls.append(kwargs)
+        return {"status": "completed"}
+
+    def managed_routes(self):
+        return [{"route_id": "xray:sg-a", "endpoint_id": "sg-a", "protocol": "xray"}]
+
+    def reconcile_managed_routes(self, routes):
+        self.reconciliation_calls.append(routes)
         return {"status": "completed"}
 
 
@@ -1225,6 +1233,22 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertIs(
             commerce.managed_calls[0]["route_provider"],
             commerce.managed_route_provider,
+        )
+
+    def test_maintenance_reconciles_explicitly_bound_managed_routes(self):
+        outline = MaintenanceOutline()
+        claim = MaintenanceClaimService(outline)
+        claim.connectivity = SnapshotMaintenanceConnectivity()
+        commerce = ManagedMaintenanceCommerceService()
+        bot = TelegramBot("test-token", claim, commerce)
+        bot._send_termination_notices = lambda: None
+        bot._send_pending_notifications = lambda: None
+
+        bot._run_maintenance()
+
+        self.assertEqual(
+            commerce.reconciliation_calls,
+            [[{"route_id": "xray:sg-a", "endpoint_id": "sg-a", "protocol": "xray"}]],
         )
         self.assertIs(
             commerce.managed_calls[0]["adapter_provider"],

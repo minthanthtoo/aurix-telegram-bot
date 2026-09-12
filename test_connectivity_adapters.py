@@ -339,6 +339,7 @@ class ConnectivityAdapterTest(unittest.TestCase):
             {"uuid-a": "", "unknown-user": ""},
         )
         self.assertEqual(result["errors"], {})
+        self.assertEqual(harness.managed_routes(), [route])
 
     def test_worker_requires_recovery_authority_when_available(self):
         client = _ProtocolClient()

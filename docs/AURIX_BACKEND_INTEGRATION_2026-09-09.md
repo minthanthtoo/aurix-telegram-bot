@@ -689,6 +689,16 @@ disposable PostgreSQL migration rehearsal passes, and no live protocol,
 server, customer credential, load/speed test, soak test, or production database
 was changed.
 
+Managed-route recovery is now part of the scheduled maintenance boundary when
+explicit node-agent bindings and enabled protocol profiles exist. Maintenance
+discovers only those verified endpoint/protocol routes and invokes the existing
+durable reconciliation method after inventory collection; it never guesses a
+route and Outline-only deployments remain unchanged. This closes the restart
+recovery gap between durable generations and node-local provider state. The
+full VPN-only regression passes `376` tests, and no live protocol, server,
+customer credential, load/speed test, soak test, or production database was
+changed.
+
 The Control Center endpoint detail now renders the protocol-scoped inventory
 breakdown (present, managed, unmanaged, historical, and latest observation)
 from the same redacted API payload. This gives operators one view across
