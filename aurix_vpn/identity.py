@@ -1557,6 +1557,27 @@ class IdentityService:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def pending_session_termination_generations(
+        self, *, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Return managed generations awaiting explicit session proof."""
+        try:
+            bounded_limit = int(limit)
+        except (TypeError, ValueError):
+            bounded_limit = 100
+        bounded_limit = max(1, min(bounded_limit, 1000))
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM credential_generations
+                     WHERE status = 'retiring'
+                       AND remote_state = 'revoked_verified'
+                       AND LOWER(protocol) != 'outline'
+                     ORDER BY revoke_verified_at, created_at, generation_id
+                     LIMIT ?""",
+                (bounded_limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def mark_revoke_requested(self, generation_id: str, *, now: str | None = None) -> None:
         with self.database.connect() as connection:
             connection.execute(

@@ -269,6 +269,14 @@ class TelegramMaintenanceMixin:
             run_stage("free_revocation_retry", reconcile_terminations)
         run_stage("termination_notices", self._send_termination_notices)
         if self.commerce is not None:
+            reconcile_managed_sessions = getattr(
+                self.commerce, "reconcile_managed_session_terminations", None
+            )
+            if callable(reconcile_managed_sessions):
+                run_stage(
+                    "managed_session_termination",
+                    lambda: reconcile_managed_sessions(now=datetime.now(UTC)),
+                )
             run_stage("paid_quota", lambda: self.commerce.enforce_quotas(metrics=metrics))
             managed_quota = getattr(self.commerce, "enforce_managed_quotas", None)
             managed_routes = getattr(self.commerce, "managed_route_provider", None)

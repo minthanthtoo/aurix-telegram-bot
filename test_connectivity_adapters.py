@@ -391,6 +391,43 @@ class ConnectivityAdapterTest(unittest.TestCase):
         self.assertTrue(all(item[2]["expires_at"] > item[2]["observed_at"] for item in recorded))
         self.assertNotIn("exit_ip", str(recorded))
 
+    def test_worker_retries_pending_session_termination_without_releasing_unproven_lease(self):
+        client = _ProtocolClient()
+        route = self._xray_route()
+        harness = _WorkerHarness(client, route, "vless://uuid-a@example.com:18443")
+        pending = {
+            "endpoint_id": route["endpoint_id"],
+            "protocol": "xray",
+            "generation_id": "generation-a",
+            "external_id": "uuid-a",
+            "access_url_ciphertext": "vless://uuid-a@example.com:18443",
+            "status": "retiring",
+            "remote_state": "revoked_verified",
+        }
+        harness.identity.pending_session_termination_generations = lambda **_kwargs: [pending]
+        finalized = []
+        harness.identity.mark_sessions_terminated = (
+            lambda generation_id, **_kwargs: finalized.append(generation_id) or True
+        )
+        harness.managed_route_provider = lambda _endpoint_id, _protocol: dict(route)
+        harness.managed_adapter_provider = lambda _route: XrayConnectivityAdapter(client)
+
+        client.terminate_user_sessions = lambda _external_id: {
+            "terminated": False,
+            "reason": "existing session remains",
+        }
+        result = harness.reconcile_managed_session_terminations()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["attempted"], 1)
+        self.assertEqual(result["finalized"], 0)
+        self.assertEqual(finalized, [])
+
+        client.terminate_user_sessions = lambda _external_id: True
+        result = harness.reconcile_managed_session_terminations()
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["finalized"], 1)
+        self.assertEqual(finalized, ["generation-a"])
+
     def test_worker_requires_recovery_authority_when_available(self):
         client = _ProtocolClient()
         route = self._xray_route()

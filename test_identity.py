@@ -177,6 +177,10 @@ class IdentityAccountingTest(unittest.TestCase):
         pending = self.identity.admin_generations(protocol="xray")[0]
         self.assertEqual(pending["lifecycle_phase"], "session_termination_pending")
         self.assertTrue(pending["session_termination_pending"])
+        self.assertEqual(
+            [row["generation_id"] for row in self.identity.pending_session_termination_generations()],
+            [generation],
+        )
 
         self.assertTrue(self.identity.mark_sessions_terminated(generation, now=self.now))
         revoked = self.identity.admin_generations(protocol="xray")[0]

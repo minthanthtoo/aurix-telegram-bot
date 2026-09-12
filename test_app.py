@@ -746,6 +746,7 @@ class ManagedMaintenanceCommerceService(MaintenanceCommerceService):
         self.managed_adapter_provider = object()
         self.managed_calls = []
         self.reconciliation_calls = []
+        self.session_termination_calls = []
 
     def enforce_managed_quotas(self, **kwargs):
         self.managed_calls.append(kwargs)
@@ -756,6 +757,10 @@ class ManagedMaintenanceCommerceService(MaintenanceCommerceService):
 
     def reconcile_managed_routes(self, routes):
         self.reconciliation_calls.append(routes)
+        return {"status": "completed"}
+
+    def reconcile_managed_session_terminations(self, **kwargs):
+        self.session_termination_calls.append(kwargs)
         return {"status": "completed"}
 
 
@@ -1259,6 +1264,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             commerce.managed_calls[0]["adapter_provider"],
             commerce.managed_adapter_provider,
         )
+        self.assertEqual(len(commerce.session_termination_calls), 1)
 
     def test_maintenance_marks_partial_managed_health_as_error(self):
         outline = MaintenanceOutline()

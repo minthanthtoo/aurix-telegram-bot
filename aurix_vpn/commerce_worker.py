@@ -1487,6 +1487,124 @@ class CommerceWorkerMixin:
             )
         return result
 
+    @staticmethod
+    def _managed_session_termination_batch_size() -> int:
+        try:
+            value = int(os.environ.get("AURIX_MANAGED_SESSION_TERMINATION_BATCH", "100"))
+        except (TypeError, ValueError):
+            value = 100
+        return max(1, min(value, 1000))
+
+    def reconcile_managed_session_terminations(
+        self, *, now: datetime | str | None = None
+    ) -> dict[str, Any]:
+        """Retry managed session closure after verified credential deletion.
+
+        A provider can confirm that a credential no longer accepts new
+        connections while still being unable to prove that already-open
+        sessions are closed.  Keep that generation's lease until a later
+        explicit termination acknowledgement succeeds.  The batch is bounded
+        so a large fleet cannot turn maintenance into an unbounded sweep.
+        """
+        identity = getattr(self, "identity", None)
+        if identity is None:
+            return {
+                "status": "unavailable",
+                "pending": 0,
+                "attempted": 0,
+                "finalized": 0,
+                "errors": {"identity": "identity_service_unavailable"},
+            }
+        batch_size = self._managed_session_termination_batch_size()
+        pending_reader = getattr(identity, "pending_session_termination_generations", None)
+        if callable(pending_reader):
+            pending = list(pending_reader(limit=batch_size) or [])
+        else:
+            pending = [
+                generation
+                for generation in identity.generations_for_accounting()
+                if str(generation.get("status") or "").lower() == "retiring"
+                and str(generation.get("remote_state") or "").lower()
+                == "revoked_verified"
+                and str(generation.get("protocol") or "outline").lower() != "outline"
+            ][:batch_size]
+        if not pending:
+            return {
+                "status": "completed",
+                "pending": 0,
+                "attempted": 0,
+                "finalized": 0,
+                "errors": {},
+            }
+
+        route_provider = getattr(self, "managed_route_provider", None)
+        if not callable(route_provider):
+            return {
+                "status": "partial",
+                "pending": len(pending),
+                "attempted": 0,
+                "finalized": 0,
+                "errors": {"binding": "managed_route_provider_unavailable"},
+            }
+        decrypt = getattr(self, "_decrypt_access_url", None)
+        timestamp = _now_text(now)
+        errors: dict[str, str] = {}
+        attempted = finalized = 0
+        for generation in pending:
+            generation_id = str(generation.get("generation_id") or "")
+            endpoint_id = str(generation.get("endpoint_id") or "").strip()
+            protocol = str(generation.get("protocol") or "").strip().lower()
+            key = f"{protocol}:{endpoint_id}:{generation_id}"
+            try:
+                route = dict(route_provider(endpoint_id, protocol))
+                route_protocol = str(route.get("protocol") or "").strip().lower()
+                route_endpoint = str(route.get("endpoint_id") or "").strip()
+                if route_protocol != protocol or route_endpoint != endpoint_id:
+                    raise CommerceError("managed session route does not match generation")
+                route.setdefault("route_id", f"{protocol}:{endpoint_id}")
+                access_url = decrypt(generation.get("access_url_ciphertext")) if callable(decrypt) else None
+                if not access_url:
+                    raise CommerceError("managed generation access URL is unavailable")
+                adapter = self._adapter_for_route(route)
+                terminate = getattr(adapter, "terminate_sessions", None)
+                if not callable(terminate):
+                    raise CommerceError("managed adapter lacks session termination")
+                attempted += 1
+                result = terminate(
+                    {
+                        **route,
+                        "external_id": str(generation.get("external_id") or ""),
+                        "access_url": access_url,
+                    }
+                )
+                proven = bool(
+                    isinstance(result, Mapping)
+                    and result.get("supported")
+                    and result.get("terminated")
+                )
+                if not proven:
+                    reason = (
+                        str(result.get("reason") or "session termination unproven")
+                        if isinstance(result, Mapping)
+                        else "session termination unproven"
+                    )
+                    errors[key] = reason[:160]
+                    continue
+                if not identity.mark_sessions_terminated(generation_id, now=timestamp):
+                    errors[key] = "session termination acknowledgement was stale"
+                    continue
+                finalized += 1
+            except Exception as exc:
+                errors[key] = type(exc).__name__
+        return {
+            "status": "completed" if not errors else "partial",
+            "pending": len(pending),
+            "attempted": attempted,
+            "finalized": finalized,
+            "errors": errors,
+            "batch_limited": len(pending) >= batch_size,
+        }
+
     def _revoke(self, job: dict[str, Any], now: datetime) -> None:
         with self.database.connect() as connection:
             key = connection.execute(

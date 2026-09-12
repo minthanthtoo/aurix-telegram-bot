@@ -751,6 +751,13 @@ mapping so usage, lease, lifecycle phase, and creation time remain aligned. This
 keeps operators from mistaking authenticated credential deletion for proven
 termination of already-open sessions.
 
+Scheduled maintenance now retries bounded pending managed-session closures. It
+uses only generations already marked `revoked_verified`, exact protocol-bound
+routes, and explicit provider termination acknowledgements; an unproven retry
+remains visible and does not release the accounting lease. This provides a
+durable recovery path after a transient session-control outage without changing
+the Outline-only default or auto-promoting a candidate protocol.
+
 Managed adapter idempotent reads now retain the verified deployment route and
 secret-free credential intent on the transient grant. A recovered or
 pre-existing provider user can therefore rotate or reconcile through the same
