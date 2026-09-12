@@ -847,3 +847,13 @@ new account revocation epoch. Repeated revocation attempts do not create a
 second event. This keeps the existing Telegram device-control path and the
 read-only Control Center audit history consistent without exposing device
 public keys or adding an unaudited browser-side management action.
+
+## 29. Account status at device enrollment — 2026-09-13
+
+Pairing now rechecks the account's active status when consuming a token, within
+the enrollment transaction and under the existing PostgreSQL account lock.
+A token issued before suspension or closure cannot enroll another device while
+the account is inactive. Rejection leaves the token pending and creates no
+device; normal expiry still applies. This enforces the existing account-state
+boundary and does not introduce a complete account suspension or remote VPN
+credential revocation workflow.

@@ -120,6 +120,37 @@ class IdentityAccountingTest(unittest.TestCase):
         self.assertEqual(subscription["status"], "active")
         self.assertNotIn("access_url", subscription)
 
+    def test_pairing_rechecks_account_status_without_consuming_token(self):
+        token = self.identity.create_pairing_token(123, now=self.now)
+        account_id = self.identity.account_snapshot(123)["account_id"]
+        for status in ("suspended", "closed"):
+            with self.subTest(status=status):
+                with self.database.connect() as connection:
+                    connection.execute(
+                        "UPDATE accounts SET status = ? WHERE account_id = ?",
+                        (status, account_id),
+                    )
+                with self.assertRaisesRegex(IdentityError, "account is not active"):
+                    self.identity.consume_pairing_token(
+                        token, "managed-device-public-key-0001", now=self.now
+                    )
+                self.assertEqual(self.identity.devices_for_account(123), [])
+                with self.database.connect() as connection:
+                    row = connection.execute(
+                        "SELECT status, consumed_at FROM pairing_tokens WHERE account_id = ?",
+                        (account_id,),
+                    ).fetchone()
+                self.assertEqual(row["status"], "pending")
+                self.assertIsNone(row["consumed_at"])
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE accounts SET status = 'active' WHERE account_id = ?", (account_id,)
+            )
+        paired = self.identity.consume_pairing_token(
+            token, "managed-device-public-key-0001", now=self.now
+        )
+        self.assertEqual(paired["active_device_count"], 1)
+
     def test_device_revocation_is_audited_once_without_key_material(self):
         token = self.identity.create_pairing_token(123, now=self.now)
         paired = self.identity.consume_pairing_token(

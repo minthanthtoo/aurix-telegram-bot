@@ -242,11 +242,16 @@ class IdentityService:
             ).fetchone()
             if row is None:
                 raise IdentityError("pairing token is invalid, expired, or already used")
-            if isinstance(connection, _PostgresConnection):
-                connection.execute(
-                    "SELECT account_id FROM accounts WHERE account_id = ? FOR UPDATE",
-                    (str(row["account_id"]),),
-                ).fetchone()
+            # Recheck the owner at consumption, since account state may have
+            # changed after the token was issued. Keep the PostgreSQL owner
+            # lock through enrollment and the device-limit check.
+            lock_clause = " FOR UPDATE" if isinstance(connection, _PostgresConnection) else ""
+            account = connection.execute(
+                "SELECT status FROM accounts WHERE account_id = ?" + lock_clause,
+                (str(row["account_id"]),),
+            ).fetchone()
+            if account is None or str(account["status"]) != "active":
+                raise IdentityError("account is not active")
             active_device_count = int(
                 connection.execute(
                     """SELECT COUNT(*) AS n FROM devices
