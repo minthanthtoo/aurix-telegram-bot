@@ -217,6 +217,11 @@ class ClaimService:
                 credential_id=f"free-key:{key_id}",
                 external_id=str(key["id"]),
                 protocol="outline",
+                access_url_ciphertext=(
+                    self._access_url_cipher.encrypt(str(grant["access_url"]).encode()).decode()
+                    if self._access_url_cipher is not None and grant.get("access_url")
+                    else None
+                ),
                 status="active",
                 remote_state=remote_state,
                 intent_key=grant.get("intent_key"),
@@ -1517,9 +1522,11 @@ class ClaimService:
             self.database.begin_write(connection)
             connection.execute(
                 """UPDATE keys SET status = 'active', last_usage_bytes = COALESCE(?, last_usage_bytes),
+                          last_usage_observed_at = CASE WHEN ? IS NULL THEN last_usage_observed_at ELSE ? END,
                           quota_reason = CASE WHEN ? = 'quota' THEN 'quota' ELSE quota_reason END
                    WHERE id = ? AND status != 'revoked'""",
-                (used_bytes, reason, row["id"]),
+                (used_bytes, now_text if used_bytes is not None else None,
+                 now_text if used_bytes is not None else None, reason, row["id"]),
             )
             connection.execute(
                 """INSERT INTO key_termination_events
@@ -1664,8 +1671,9 @@ class ClaimService:
             if used < int(row["data_limit_bytes"]):
                 with self.database.connect() as connection:
                     connection.execute(
-                        "UPDATE keys SET last_usage_bytes = ? WHERE id = ? AND status = 'active'",
-                        (used, row["id"]),
+                        """UPDATE keys SET last_usage_bytes = ?, last_usage_observed_at = ?
+                           WHERE id = ? AND status = 'active'""",
+                        (used, current.astimezone(UTC).isoformat(), row["id"]),
                     )
                 continue
             if self._terminate_key(row, "quota", current, used):
@@ -1860,6 +1868,73 @@ class ClaimService:
                 }
             )
         return result
+
+    def cached_access_urls(self, telegram_id: int) -> dict[str, Any]:
+        """Return encrypted free-key URLs without contacting Outline.
+
+        New free credentials persist their encrypted URL in the shared
+        generation record. Legacy credentials without that projection remain
+        visible as active but report a cache miss until maintenance repairs the
+        projection; an interactive request never performs provider inventory.
+        """
+        empty = {"byEndpoint": {}, "errors": {}, "source": "durable_generation"}
+        if self._access_url_cipher is None:
+            empty["errors"] = {"cache": "encryption_unavailable"}
+            return empty
+        try:
+            with self.database.connect() as connection:
+                if not all(
+                    IdentityService._table_exists(connection, table)
+                    for table in ("keys", "credential_generations")
+                ):
+                    empty["errors"] = {"cache": "unavailable"}
+                    return empty
+                active = connection.execute(
+                    """SELECT COUNT(*) AS n FROM keys
+                        WHERE telegram_id = ? AND status IN ('active', 'revoke_failed')""",
+                    (int(telegram_id),),
+                ).fetchone()
+                rows = connection.execute(
+                    """SELECT k.endpoint_id, k.outline_key_id, g.access_url_ciphertext
+                         FROM keys k
+                         JOIN credential_generations g
+                           ON g.source_type = 'free'
+                          AND g.source_id = CAST(k.id AS TEXT)
+                          AND g.external_id = k.outline_key_id
+                        WHERE k.telegram_id = ?
+                          AND k.status IN ('active', 'revoke_failed')
+                          AND g.status IN ('active', 'retiring', 'unknown')
+                        ORDER BY g.created_at DESC""",
+                    (int(telegram_id),),
+                ).fetchall()
+        except Exception:
+            empty["errors"] = {"cache": "unavailable"}
+            return empty
+        by_endpoint: dict[str, dict[str, str]] = {}
+        errors: dict[str, str] = {}
+        for row in rows:
+            encrypted = str(row["access_url_ciphertext"] or "")
+            if not encrypted:
+                errors[str(row["outline_key_id"])] = "missing"
+                continue
+            try:
+                access_url = self._access_url_cipher.decrypt(encrypted.encode()).decode()
+            except Exception:
+                errors[str(row["outline_key_id"])] = "invalid"
+                continue
+            if access_url:
+                by_endpoint.setdefault(str(row["endpoint_id"]), {})[
+                    str(row["outline_key_id"])
+                ] = access_url
+        if int(active["n"] or 0) > len(
+            {
+                str(row["outline_key_id"])
+                for row in rows
+                if row["access_url_ciphertext"]
+            }
+        ):
+            errors.setdefault("cache", "incomplete")
+        return {"byEndpoint": by_endpoint, "errors": errors, "source": "durable_generation"}
 
     def revoke_expired(self, now: datetime | None = None) -> int:
         current = (now or datetime.now(UTC)).astimezone(UTC)

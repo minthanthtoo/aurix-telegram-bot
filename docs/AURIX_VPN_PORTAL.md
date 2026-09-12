@@ -10,8 +10,10 @@ The VPN product has two customer-facing surfaces with one source of truth:
    activation questions, and account recovery.
 
 Both surfaces use the same `ClaimService`, `CommerceService`, endpoint
-registry, Outline usage collection, and encrypted access-URL storage. No
-Outline management URL is sent to a browser or customer.
+registry, maintenance-owned usage snapshots, and encrypted access-URL
+storage. Provider inventory is a maintenance concern; an interactive
+customer refresh reads the durable snapshot and never queries every Outline
+endpoint. No Outline management URL is sent to a browser or customer.
 
 The new implementation is organized under the VPN product package:
 

@@ -1432,6 +1432,101 @@ class EndpointRegistry:
                 )
         return {"byEndpoint": by_endpoint, "errors": errors}
 
+    def persist_usage_snapshot(
+        self,
+        metrics: dict[str, Any] | None,
+        *,
+        now: datetime | None = None,
+        source: str = "maintenance",
+    ) -> int:
+        """Persist bounded per-key usage observations for read-only customer views.
+
+        Provider reads belong to the maintenance worker.  Customer requests
+        should consume this local snapshot rather than synchronously querying
+        every endpoint.  Invalid counters are ignored and an unavailable
+        legacy schema is reported as zero writes for compatibility.
+        """
+        scoped = metrics.get("byEndpoint") if isinstance(metrics, dict) else None
+        if not isinstance(scoped, dict):
+            return 0
+        timestamp = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+        normalized_source = str(source or "maintenance").strip()[:64] or "maintenance"
+        observations: list[tuple[str, str, int, str, str]] = []
+        for endpoint_id, values in scoped.items():
+            if not isinstance(values, dict):
+                continue
+            endpoint = str(endpoint_id or "").strip()
+            if not endpoint:
+                continue
+            for external_id, raw_value in values.items():
+                if isinstance(raw_value, bool):
+                    continue
+                try:
+                    observed_bytes = int(raw_value)
+                except (TypeError, ValueError):
+                    continue
+                if observed_bytes < 0:
+                    continue
+                key = str(external_id or "").strip()
+                if not key:
+                    continue
+                observations.append(
+                    (endpoint, key, observed_bytes, timestamp, normalized_source)
+                )
+        if not observations:
+            return 0
+        with self.database.connect() as connection:
+            try:
+                connection.execute("SELECT 1 FROM endpoint_usage_snapshots LIMIT 1")
+            except Exception:
+                return 0
+            self.database.begin_write(connection)
+            for endpoint, external_id, observed_bytes, observed_at, snapshot_source in observations:
+                connection.execute(
+                    """INSERT INTO endpoint_usage_snapshots
+                       (endpoint_id, external_id, protocol, observed_bytes, observed_at, source)
+                       VALUES (?, ?, 'outline', ?, ?, ?)
+                       ON CONFLICT(endpoint_id, external_id) DO UPDATE SET
+                           protocol = excluded.protocol,
+                           observed_bytes = excluded.observed_bytes,
+                           observed_at = excluded.observed_at,
+                           source = excluded.source""",
+                    (endpoint, external_id, observed_bytes, observed_at, snapshot_source),
+                )
+        return len(observations)
+
+    def cached_usage_metrics(self) -> dict[str, Any]:
+        """Return the latest maintenance-owned usage snapshot without provider I/O."""
+        try:
+            with self.database.connect() as connection:
+                rows = connection.execute(
+                    """SELECT endpoint_id, external_id, observed_bytes, observed_at
+                         FROM endpoint_usage_snapshots
+                        ORDER BY endpoint_id, external_id"""
+                ).fetchall()
+        except Exception:
+            return {
+                "byEndpoint": {},
+                "errors": {"snapshot": "unavailable"},
+                "source": "maintenance_snapshot",
+            }
+        by_endpoint: dict[str, dict[str, int]] = {}
+        latest: str | None = None
+        for row in rows:
+            endpoint = str(row["endpoint_id"])
+            by_endpoint.setdefault(endpoint, {})[str(row["external_id"])] = max(
+                0, int(row["observed_bytes"] or 0)
+            )
+            observed_at = str(row["observed_at"] or "")
+            if observed_at and (latest is None or observed_at > latest):
+                latest = observed_at
+        return {
+            "byEndpoint": by_endpoint,
+            "errors": {},
+            "source": "maintenance_snapshot",
+            "latest_observed_at": latest,
+        }
+
     def collect_inventory(self) -> dict[str, Any]:
         """Collect access URLs keyed by endpoint, without flattening key IDs."""
         by_endpoint: dict[str, dict[str, str]] = {}

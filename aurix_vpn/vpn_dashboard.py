@@ -13,15 +13,22 @@ def collect_customer_vpn_state(
 
     This function deliberately accepts application services instead of a
     transport object. It performs no Telegram I/O and returns only the
-    authenticated customer's records. Access URLs are obtained from the
-    existing encrypted service path and never from Outline management APIs.
+    authenticated customer's records. With the endpoint registry configured,
+    usage and free-key URLs come from maintenance-owned durable snapshots; a
+    customer request never inventories every provider endpoint.
     """
     giveaway = service.giveaway_status(telegram_id)
     connectivity = getattr(service, "connectivity", None)
     endpoint_snapshot: dict[str, Any] | None = None
     if connectivity is not None:
         try:
-            endpoint_snapshot = connectivity.collect_customer_snapshot()
+            cached_metrics = getattr(connectivity, "cached_usage_metrics", None)
+            if callable(cached_metrics):
+                endpoint_snapshot = {"metrics": cached_metrics()}
+            else:
+                # Compatibility for older injected registries; the production
+                # EndpointRegistry exposes cached_usage_metrics.
+                endpoint_snapshot = {"metrics": connectivity.collect_customer_snapshot()["metrics"]}
         except Exception as exc:
             print(f"customer endpoint snapshot error: {type(exc).__name__}", file=sys.stderr)
 
@@ -47,9 +54,13 @@ def collect_customer_vpn_state(
     access_available = True
     access_by_key: dict[str, Any] = {}
     try:
-        if endpoint_snapshot is not None:
-            access_by_key = endpoint_snapshot["inventory"]
+        cached_access = getattr(service, "cached_access_urls", None)
+        if connectivity is not None and callable(cached_access):
+            access_by_key = cached_access(telegram_id)
             access_available = not bool(access_by_key.get("errors"))
+        elif endpoint_snapshot is not None:
+            access_by_key = {"byEndpoint": {}, "errors": {"cache": "unavailable"}}
+            access_available = False
         elif connectivity is not None:
             access_by_key = {"byEndpoint": {}, "errors": {"registry": "unavailable"}}
             access_available = False

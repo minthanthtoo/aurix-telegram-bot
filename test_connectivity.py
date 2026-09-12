@@ -160,6 +160,35 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertNotIn("xray-only", inventory["byEndpoint"])
         self.assertNotIn("xray-only", snapshot["metrics"]["byEndpoint"])
 
+    def test_usage_snapshots_are_durable_and_provider_free_for_customer_reads(self):
+        observed_at = datetime(2026, 9, 12, 1, 2, 3, tzinfo=UTC)
+        written = self.registry.persist_usage_snapshot(
+            {
+                "byEndpoint": {
+                    "legacy-default": {
+                        "free-key": 123,
+                        "paid-key": "456",
+                        "bad-negative": -1,
+                        "bad-bool": True,
+                    },
+                    "ignored": "not-a-key-map",
+                }
+            },
+            now=observed_at,
+        )
+        self.assertEqual(written, 2)
+        self.assertEqual(
+            self.registry.cached_usage_metrics(),
+            {
+                "byEndpoint": {
+                    "legacy-default": {"free-key": 123, "paid-key": 456}
+                },
+                "errors": {},
+                "source": "maintenance_snapshot",
+                "latest_observed_at": observed_at.isoformat(),
+            },
+        )
+
     def test_endpoint_lifecycle_is_drain_then_terminal_retirement(self):
         now = datetime.now(UTC)
         preview = self.registry.endpoint_lifecycle_preview("legacy-default", "retired")

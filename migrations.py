@@ -452,6 +452,36 @@ FREE_ACCESS_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS endpoint_protocol_observations_lookup ON endpoint_protocol_observations(endpoint_id, protocol, signal, observed_at)",
         ),
     ),
+    Migration(
+        9,
+        "durable_endpoint_usage_snapshots",
+        sqlite_statements=(
+            "ALTER TABLE keys ADD COLUMN last_usage_observed_at TEXT",
+            """CREATE TABLE IF NOT EXISTS endpoint_usage_snapshots (
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   external_id TEXT NOT NULL,
+                   protocol TEXT NOT NULL DEFAULT 'outline',
+                   observed_bytes INTEGER NOT NULL CHECK (observed_bytes >= 0),
+                   observed_at TEXT NOT NULL,
+                   source TEXT NOT NULL DEFAULT 'maintenance',
+                   PRIMARY KEY (endpoint_id, external_id)
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_usage_snapshots_latest ON endpoint_usage_snapshots(endpoint_id, observed_at)",
+        ),
+        postgres_statements=(
+            "ALTER TABLE keys ADD COLUMN IF NOT EXISTS last_usage_observed_at TEXT",
+            """CREATE TABLE IF NOT EXISTS endpoint_usage_snapshots (
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   external_id TEXT NOT NULL,
+                   protocol TEXT NOT NULL DEFAULT 'outline',
+                   observed_bytes BIGINT NOT NULL CHECK (observed_bytes >= 0),
+                   observed_at TEXT NOT NULL,
+                   source TEXT NOT NULL DEFAULT 'maintenance',
+                   PRIMARY KEY (endpoint_id, external_id)
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_usage_snapshots_latest ON endpoint_usage_snapshots(endpoint_id, observed_at)",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (

@@ -596,3 +596,16 @@ before moving the accounting lease; a missing reservation or malformed
 transfer response rolls the newly provisioned target back instead of
 committing an unowned route. The complete non-PostgreSQL VPN suite passes
 `360` tests with this reservation/lease ordering guard.
+
+The customer read model now has a maintenance-owned durability boundary. Free
+access URLs are encrypted into their credential-generation projection, and
+Outline usage is persisted per endpoint/key in the `free_access:9`
+`endpoint_usage_snapshots` table. The maintenance pass writes the snapshot
+after provider collection; Telegram and web customer refreshes read only the
+local snapshot and generation projection when the managed endpoint registry is
+configured. Legacy isolated service fixtures retain their compatibility path,
+but the production combined runtime no longer inventories every Outline
+endpoint on an interactive request. The complete non-PostgreSQL VPN suite
+passes `360` tests after this change, and the disposable PostgreSQL rehearsal
+remains green. No live provider, server, customer credential, load/speed test,
+soak test, or production database cutover was performed.

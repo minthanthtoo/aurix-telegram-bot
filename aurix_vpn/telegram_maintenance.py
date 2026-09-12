@@ -200,6 +200,13 @@ class TelegramMaintenanceMixin:
         metrics = metrics_result if isinstance(metrics_result, dict) else {}
         if metrics_result is None:
             _latency_log("maintenance_metrics", started_at, status="error")
+        if connectivity is not None:
+            persist_snapshot = getattr(connectivity, "persist_usage_snapshot", None)
+            if callable(persist_snapshot):
+                run_stage(
+                    "usage_snapshot",
+                    lambda: persist_snapshot(metrics, now=datetime.now(UTC)),
+                )
         free_provisioning = getattr(self.service, "process_free_provisioning", None)
         giveaway_provisioning = getattr(self.service, "process_giveaway_provisioning", None)
         if callable(giveaway_provisioning):

@@ -114,6 +114,16 @@ class MvpFeatureTest(unittest.TestCase):
         self.assertEqual(len(leases), 3)
         self.assertTrue(all(row["status"] == "active" for row in leases))
 
+    def test_free_access_url_is_cached_without_provider_inventory(self):
+        free = self.claims.claim(101, "A", self.now)
+        with patch.object(self.outline, "list_keys", side_effect=AssertionError("provider I/O")):
+            cached = self.claims.cached_access_urls(101)
+        self.assertEqual(cached["errors"], {})
+        self.assertEqual(
+            cached["byEndpoint"]["legacy-default"]["1"],
+            free.access_url,
+        )
+
     def test_verified_free_expiry_releases_generation_lease(self):
         self.claims.claim(101, "A", self.now)
         with self.commerce.database.connect() as connection:
