@@ -164,6 +164,12 @@ class VpnWebApplicationTest(unittest.TestCase):
         self.assertEqual([item["protocol"] for item in payload["protocols"]], ["outline"])
         self.assertEqual(payload["protocols"][0]["eligible_servers"], 1)
 
+    def test_legacy_registry_cannot_relabel_outline_servers_as_managed(self):
+        self.application.runtime.connectivity = _Registry()
+        payload = self.application.servers_payload("basic", "xray")
+        self.assertEqual(payload["protocol"], "xray")
+        self.assertEqual(payload["servers"], [])
+
     def test_protocol_catalog_exposes_only_enabled_registered_profiles(self):
         self.application.runtime.connectivity = _ProtocolRegistry()
         self.application.runtime.commerce.adapter_registry = SimpleNamespace(

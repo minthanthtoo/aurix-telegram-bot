@@ -517,7 +517,7 @@ to default to Outline. The portal sends the selected protocol through the
 existing order boundary and shows the matching connection method for active
 credentials. The authenticated protocol catalog route is covered end-to-end
 with redaction assertions. The complete non-PostgreSQL VPN regression passes
-`345` tests after this change; no live
+`346` tests after this change; no live
 server, provider, customer credential, load test, speed test, or deployment was
 changed.
 
@@ -531,3 +531,8 @@ Endpoint assignment retries now enforce the same invariant: the persisted
 subscription protocol is immutable once an assignment exists. A later retry
 cannot silently reuse an Outline reservation for an Xray/Hysteria2 request or
 vice versa; such drift is surfaced for operator reconciliation.
+
+The portal's backward-compatible registry fallback is fail-closed for the
+same reason: an old Outline-only directory can still serve Outline rows, but
+cannot relabel them as Xray or Hysteria2 when a managed-protocol server query
+is made directly.

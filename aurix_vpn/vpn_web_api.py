@@ -299,8 +299,13 @@ class AuriXVpnWebApplication:
                 except TypeError:
                     # Keep compatibility with a pre-protocol registry injected
                     # by an older embedding application. Such a registry can
-                    # only serve the default Outline directory.
-                    endpoint_rows = list_customer_endpoints(plan_code)
+                    # only serve the default Outline directory; never relabel
+                    # those rows as a requested managed transport.
+                    endpoint_rows = (
+                        list_customer_endpoints(plan_code)
+                        if str(protocol or "outline").strip().lower() == "outline"
+                        else []
+                    )
                 directory = [_safe_endpoint(item) for item in endpoint_rows]
         return {
             "servers": directory,
