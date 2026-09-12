@@ -123,14 +123,6 @@ class XrayConfigProvider:
     def get_user(self, external_id: str) -> dict[str, Any] | None:
         return self.writer.get_user(external_id)
 
-    def _reload_if_changed(self, result: Mapping[str, Any]) -> None:
-        if not bool(result.get("changed")):
-            return
-        try:
-            self.reload_callback()
-        except Exception as exc:
-            raise ProviderBackendError("Xray config changed but supervised reload failed") from exc
-
     def create_user(
         self,
         external_id: str,
@@ -146,8 +138,8 @@ class XrayConfigProvider:
             external_id,
             name,
             intent=intent,
+            reload_callback=self.reload_callback,
         )
-        self._reload_if_changed(result)
         return {
             "external_id": external_id,
             "name": str(name)[:128],
@@ -156,8 +148,9 @@ class XrayConfigProvider:
         }
 
     def delete_user(self, external_id: str) -> None:
-        result = self.writer.remove_user(_identifier(external_id))
-        self._reload_if_changed(result)
+        self.writer.remove_user(
+            _identifier(external_id), reload_callback=self.reload_callback
+        )
 
     def get_user_usage(self, external_id: str) -> dict[str, Any]:
         if not callable(self.stats_query):

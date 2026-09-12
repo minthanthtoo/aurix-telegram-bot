@@ -14,6 +14,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import fcntl
+from copy import deepcopy
 from contextlib import contextmanager
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -242,6 +243,32 @@ class XrayConfigWriter:
             raise NodeAgentError(f"managed Xray inbound {self.inbound_tag!r} was not found")
         return lists
 
+    def _reload_or_restore(
+        self, previous_config: Mapping[str, Any], reload_callback: Callable[[], Any]
+    ) -> None:
+        """Activate a changed config or restore the exact prior configuration.
+
+        A config file is not equivalent to an active Xray user.  If the
+        supervisor reports a reload failure, restore and reload the prior
+        JSON while the mutation lock is still held.  This prevents a later
+        config-file read-back from being treated as proof that a customer
+        credential became usable.
+        """
+        try:
+            reload_callback()
+            return
+        except Exception as reload_error:
+            try:
+                self.write(previous_config)
+                reload_callback()
+            except Exception as rollback_error:
+                raise NodeAgentError(
+                    "Xray config reload failed and rollback could not be verified"
+                ) from rollback_error
+            raise NodeAgentError(
+                "Xray config reload failed; previous configuration was restored"
+            ) from reload_error
+
     @staticmethod
     def _client(external_id: str, name: str, intent: Mapping[str, Any] | None = None) -> dict[str, Any]:
         value = {"id": str(external_id), "email": str(name)[:128]}
@@ -257,9 +284,11 @@ class XrayConfigWriter:
         *,
         intent: Mapping[str, Any] | None = None,
         write: bool = True,
+        reload_callback: Callable[[], Any] | None = None,
     ) -> dict[str, Any]:
         with self._mutation_lock():
             config = self.load()
+            previous_config = deepcopy(config) if reload_callback is not None else None
             changed = False
             for clients in self._managed_client_lists(config):
                 existing = next((item for item in clients if str(item.get("id")) == str(external_id)), None)
@@ -273,11 +302,22 @@ class XrayConfigWriter:
                     changed = True
             if changed and write:
                 self.write(config)
+                if reload_callback is not None:
+                    if previous_config is None:  # pragma: no cover - defensive invariant
+                        raise NodeAgentError("Xray config rollback state is unavailable")
+                    self._reload_or_restore(previous_config, reload_callback)
             return {"changed": changed, "external_id": str(external_id)}
 
-    def remove_user(self, external_id: str, *, write: bool = True) -> dict[str, Any]:
+    def remove_user(
+        self,
+        external_id: str,
+        *,
+        write: bool = True,
+        reload_callback: Callable[[], Any] | None = None,
+    ) -> dict[str, Any]:
         with self._mutation_lock():
             config = self.load()
+            previous_config = deepcopy(config) if reload_callback is not None else None
             changed = False
             for clients in self._managed_client_lists(config):
                 retained = [item for item in clients if str(item.get("id")) != str(external_id)]
@@ -285,6 +325,10 @@ class XrayConfigWriter:
                 clients[:] = retained
             if changed and write:
                 self.write(config)
+                if reload_callback is not None:
+                    if previous_config is None:  # pragma: no cover - defensive invariant
+                        raise NodeAgentError("Xray config rollback state is unavailable")
+                    self._reload_or_restore(previous_config, reload_callback)
             return {"changed": changed, "external_id": str(external_id)}
 
     def list_users(self) -> list[dict[str, Any]]:

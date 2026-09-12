@@ -111,6 +111,35 @@ class ProviderBackendsTest(unittest.TestCase):
             self.assertEqual(config["inbounds"][0]["settings"]["clients"], [{"id": "keep"}])
             self.assertEqual(config["inbounds"][1]["settings"]["clients"], [{"id": "existing", "email": "keep"}])
 
+    def test_xray_provider_restores_config_when_supervised_reload_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "xray.json"
+            original = {"inbounds": [{"tag": "aurix-managed", "settings": {"clients": []}}]}
+            path.write_text(json.dumps(original), encoding="utf-8")
+            reloads = []
+            fail_next_reload = [True]
+
+            def reload_callback():
+                reloads.append("reload")
+                if fail_next_reload[0]:
+                    fail_next_reload[0] = False
+                    raise RuntimeError("supervisor unavailable")
+
+            provider = XrayConfigProvider(
+                XrayConfigWriter(path), reload_callback=reload_callback
+            )
+            with self.assertRaisesRegex(NodeAgentError, "previous configuration was restored"):
+                provider.create_user("xray-1", "Customer", {}, {})
+            self.assertEqual(reloads, ["reload", "reload"])
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), original)
+            self.assertIsNone(provider.get_user("xray-1"))
+
+            provider.create_user("xray-1", "Customer", {}, {})
+            fail_next_reload[0] = True
+            with self.assertRaisesRegex(NodeAgentError, "previous configuration was restored"):
+                provider.delete_user("xray-1")
+            self.assertIsNotNone(provider.get_user("xray-1"))
+
     def test_xray_stats_parser_rejects_unsafe_shapes(self):
         with self.assertRaises(ProviderBackendError):
             XrayStatsParser.parse({"stat": "not-a-list"}, "user")

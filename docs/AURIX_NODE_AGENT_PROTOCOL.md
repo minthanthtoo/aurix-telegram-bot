@@ -67,9 +67,12 @@ requests cannot silently discard another customer update.
 `XrayConfigProvider` is the concrete implementation of this conservative
 fallback. It combines the tagged writer with an injected, supervised reload
 callback and an injected StatsService query. It preserves unknown users and
-fails closed when a reload or statistics response is invalid. It intentionally
-does not advertise hard-quota enforcement or force-disconnect: the statistics
-interface is an accounting source, not proof of either behavior.
+fails closed when a reload or statistics response is invalid. If a changed
+config cannot be reloaded, it restores and reloads the exact pre-mutation
+config before returning an error, so file read-back is never mistaken for a
+usable credential. It intentionally does not advertise hard-quota enforcement
+or force-disconnect: the statistics interface is an accounting source, not
+proof of either behavior.
 
 `Hysteria2UserStore` and `Hysteria2Provider` provide the corresponding
 Hysteria2 lab boundary. The user store keeps a keyed digest for authentication

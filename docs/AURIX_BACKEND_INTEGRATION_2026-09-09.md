@@ -786,3 +786,22 @@ files were staged or modified by this step. No live server, provider,
 customer credential, BKK-A protocol profile, load/speed test, soak test, or
 production database was changed or run; the documented canary, Myanmar client,
 PostgreSQL, concurrency, cost, and rollout gates remain outstanding.
+
+## 25. Xray config reload compensation — 2026-09-12
+
+The local Xray config-writer provider now treats a successful atomic file write
+and a successful supervised reload as one compensating operation. If the
+reload reports failure, the writer restores the exact pre-mutation JSON while
+holding its mutation lock, reloads that prior configuration, and returns an
+error. If rollback reload cannot be verified, it also fails closed. A later
+file read-back therefore cannot mistake a not-yet-active Xray user for a
+recoverable credential after a failed activation.
+
+The concrete Hysteria2 Traffic Stats client is also constrained to a
+loopback-local HTTP(S) endpoint without URL userinfo, query, or fragment, so
+its stats API secret cannot be sent to a remote or decorated URL through a
+configuration mistake. Focused Xray/node-agent/provider/commerce regressions,
+Ruff, Python compilation, and `git diff --check` pass locally. This remains a
+local recovery and secret-boundary improvement only: it does not constitute a
+live Xray restart-persistence result, Hysteria2 canary evidence, endpoint
+promotion, server mutation, or production rollout authorization.
