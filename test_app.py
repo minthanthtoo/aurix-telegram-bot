@@ -765,6 +765,7 @@ class SnapshotMaintenanceConnectivity:
             "errors": {},
         }
         self.persisted_metrics = None
+        self.persisted_inventory_snapshots = []
 
     def collect_metrics(self):
         return self.metrics
@@ -775,6 +776,10 @@ class SnapshotMaintenanceConnectivity:
 
     def collect_inventory(self):
         return self.inventory
+
+    def persist_inventory_snapshot(self, inventory, **_kwargs):
+        self.persisted_inventory_snapshots.append(inventory)
+        return {"status": "healthy"}
 
 
 class TelegramBotCommerceTest(unittest.TestCase):
@@ -1204,6 +1209,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
         self.assertIs(connectivity.persisted_metrics, connectivity.metrics)
         self.assertEqual(persisted_inventory, [connectivity.inventory])
+        self.assertEqual(connectivity.persisted_inventory_snapshots, [connectivity.inventory])
 
     def test_maintenance_runs_managed_quota_stage_only_when_explicitly_bound(self):
         outline = MaintenanceOutline()

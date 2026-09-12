@@ -137,6 +137,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 13, "endpoint_health_recovery_cooldown"),
                     ("commerce", 14, "failover_policy_history"),
                     ("commerce", 15, "protocol_aware_paid_assignments"),
+                    ("commerce", 16, "endpoint_key_inventory_reconciliation"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

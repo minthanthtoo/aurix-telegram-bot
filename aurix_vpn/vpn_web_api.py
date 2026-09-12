@@ -608,6 +608,45 @@ class AuriXVpnWebApplication:
                 for item in observation_method(str(endpoint_id), limit=200)
                 if isinstance(item, dict)
             ]
+        inventory_reconciliation: dict[str, Any] = {
+            "endpoint_id": str(endpoint_id),
+            "present_keys": 0,
+            "managed_present": 0,
+            "unmanaged_present": 0,
+            "historical_keys": 0,
+            "latest_observed_at": None,
+            "status": "unavailable",
+        }
+        inventory_method = getattr(registry, "inventory_reconciliation", None)
+        if callable(inventory_method):
+            try:
+                raw_inventory = inventory_method(str(endpoint_id))
+            except Exception:
+                raw_inventory = None
+            if isinstance(raw_inventory, dict):
+                inventory_reconciliation.update(
+                    {
+                        key: raw_inventory.get(key)
+                        for key in (
+                            "endpoint_id", "present_keys", "managed_present",
+                            "unmanaged_present", "historical_keys", "latest_observed_at",
+                            "status",
+                        )
+                        if key in raw_inventory
+                    }
+                )
+                for key in ("present_keys", "managed_present", "unmanaged_present", "historical_keys"):
+                    try:
+                        inventory_reconciliation[key] = max(0, int(inventory_reconciliation[key] or 0))
+                    except (TypeError, ValueError):
+                        inventory_reconciliation[key] = 0
+                inventory_reconciliation["status"] = str(
+                    inventory_reconciliation.get("status") or "unavailable"
+                )[:32]
+                if inventory_reconciliation.get("latest_observed_at") is not None:
+                    inventory_reconciliation["latest_observed_at"] = str(
+                        inventory_reconciliation["latest_observed_at"]
+                    )[:64]
         database = getattr(self.runtime, "commerce_database", None)
         assignments: list[dict[str, Any]] = []
         if database is not None:
@@ -656,6 +695,7 @@ class AuriXVpnWebApplication:
             "credentials": generations,
             "protocol_observations": observations,
             "protocol_readiness": protocol_readiness,
+            "inventory_reconciliation": inventory_reconciliation,
         }
 
     def admin_usage_snapshot(self) -> dict[str, Any]:

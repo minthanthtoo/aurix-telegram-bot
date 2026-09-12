@@ -80,6 +80,15 @@ class ControlCenterTest(unittest.TestCase):
                 "details": {"secret": "must-not-leak", "status_code": 200},
                 "source": "test", "observed_at": "2026-09-10T00:00:00+00:00",
             }],
+            inventory_reconciliation=lambda endpoint_id=None: {
+                "endpoint_id": endpoint_id,
+                "present_keys": 3,
+                "managed_present": 2,
+                "unmanaged_present": 1,
+                "historical_keys": 4,
+                "latest_observed_at": "2026-09-12T00:00:00+00:00",
+                "status": "healthy",
+            },
         )
         self.runtime = SimpleNamespace(
             token="bot-token", commerce=commerce, commerce_database=self.database,
@@ -132,6 +141,8 @@ class ControlCenterTest(unittest.TestCase):
         self.assertEqual(detail["capacity_by_plan"][0]["plan_code"], "basic")
         self.assertNotIn("reserved_quota_bytes", json.dumps(detail["capacity_by_plan"]))
         self.assertEqual(detail["protocol_observations"][0]["protocol"], "outline")
+        self.assertEqual(detail["inventory_reconciliation"]["present_keys"], 3)
+        self.assertEqual(detail["inventory_reconciliation"]["unmanaged_present"], 1)
 
     def test_registered_non_outline_adapter_remains_evidence_gated_in_summary(self):
         self.runtime.commerce.adapter_registry.register("xray", XrayConnectivityAdapter)

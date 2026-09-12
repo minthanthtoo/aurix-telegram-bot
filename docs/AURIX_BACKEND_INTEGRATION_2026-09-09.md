@@ -661,3 +661,17 @@ latest healthy observation. It performs no provider I/O and excludes route or
 credential material. The full VPN-only regression passes `371` tests after the
 new redaction/readiness coverage, and the UI/API change is committed as
 `0d11f07` (`Expose protocol readiness in control center`).
+
+The next VPN milestone adds maintenance-owned remote inventory reconciliation.
+Migration `commerce:16` stores only an encrypted provider key ID plus bounded
+classification metadata (`managed` or `unmanaged`), first/last observation
+times, and source. Unknown remote keys are retained for operator review and are
+never auto-deleted. A successful endpoint snapshot marks keys absent only when
+that endpoint was actually collected; failed endpoints remain unchanged, which
+prevents transient provider outages from becoming destructive reconciliation.
+The maintenance worker now runs this reconciliation beside the existing URL
+and usage snapshots, and the Control Center endpoint detail exposes counts only
+(present, managed, unmanaged, historical) without key IDs or access URLs. The
+full VPN-only regression passes `373` tests, Ruff and the disposable PostgreSQL
+migration rehearsal pass, and no live provider, server, customer credential,
+load/speed test, soak test, or production database was changed.

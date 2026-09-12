@@ -186,6 +186,79 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertNotIn("xray-only", inventory["byEndpoint"])
         self.assertNotIn("xray-only", snapshot["metrics"]["byEndpoint"])
 
+    def test_inventory_reconciliation_classifies_and_preserves_unknown_keys(self):
+        now = datetime.now(UTC).replace(microsecond=0)
+        identity = IdentityService(self.database)
+        entitlement = identity.ensure_subscription_entitlement(1, "sub-1")
+        identity.ensure_generation_for_credential(
+            entitlement,
+            "legacy-default",
+            credential_id="managed-key",
+            external_id="managed-key",
+            protocol="outline",
+            access_url_ciphertext="encrypted-url",
+            usage_baseline_provenance="new",
+            now=now.isoformat(),
+        )
+
+        result = self.registry.persist_inventory_snapshot(
+            {
+                "byEndpoint": {
+                    "legacy-default": {
+                        "managed-key": "ss://managed",
+                        "orphan-key": "ss://orphan",
+                    }
+                },
+                "errors": {},
+            },
+            now=now,
+        )
+        self.assertEqual(result["remote_keys"], 2)
+        self.assertEqual(result["managed_present"], 1)
+        self.assertEqual(result["unmanaged_present"], 1)
+        detail = self.registry.inventory_reconciliation("legacy-default")
+        self.assertEqual(detail["present_keys"], 2)
+        self.assertEqual(detail["managed_present"], 1)
+        self.assertEqual(detail["unmanaged_present"], 1)
+        self.assertEqual(detail["historical_keys"], 2)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT external_id_ciphertext FROM endpoint_key_inventory"
+            ).fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertNotIn("orphan-key", json.dumps([dict(row) for row in rows]))
+
+        self.registry.persist_inventory_snapshot(
+            {"byEndpoint": {"legacy-default": {"managed-key": "ss://managed"}}, "errors": {}},
+            now=now + timedelta(minutes=1),
+        )
+        detail = self.registry.inventory_reconciliation("legacy-default")
+        self.assertEqual(detail["present_keys"], 1)
+        self.assertEqual(detail["unmanaged_present"], 0)
+        self.assertEqual(detail["historical_keys"], 2)
+
+    def test_inventory_reconciliation_does_not_mark_failed_endpoint_absent(self):
+        now = datetime.now(UTC).replace(microsecond=0)
+        self.registry.persist_inventory_snapshot(
+            {
+                "byEndpoint": {
+                    "legacy-default": {
+                        "remote-a": "ss://a",
+                        "remote-b": "ss://b",
+                    }
+                },
+                "errors": {},
+            },
+            now=now,
+        )
+        result = self.registry.persist_inventory_snapshot(
+            {"byEndpoint": {}, "errors": {"legacy-default": "TimeoutError"}},
+            now=now + timedelta(minutes=1),
+        )
+        self.assertEqual(result["status"], "degraded")
+        detail = self.registry.inventory_reconciliation("legacy-default")
+        self.assertEqual(detail["present_keys"], 2)
+
     def test_usage_snapshots_are_durable_and_provider_free_for_customer_reads(self):
         observed_at = datetime.now(UTC).replace(microsecond=0)
         written = self.registry.persist_usage_snapshot(

@@ -1416,6 +1416,38 @@ COMMERCE_MIGRATIONS = (
             "ALTER TABLE endpoint_assignments ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT 'outline' CHECK (char_length(protocol) > 0)",
         ),
     ),
+    Migration(
+        16,
+        "endpoint_key_inventory_reconciliation",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_key_inventory (
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   external_id_ciphertext TEXT NOT NULL,
+                   classification TEXT NOT NULL
+                       CHECK (classification IN ('managed', 'unmanaged')),
+                   present INTEGER NOT NULL DEFAULT 1 CHECK (present IN (0, 1)),
+                   first_seen_at TEXT NOT NULL,
+                   last_seen_at TEXT NOT NULL,
+                   source TEXT NOT NULL DEFAULT 'maintenance',
+                   PRIMARY KEY (endpoint_id, external_id_ciphertext)
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_key_inventory_present ON endpoint_key_inventory(endpoint_id, present, last_seen_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_key_inventory (
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   external_id_ciphertext TEXT NOT NULL,
+                   classification TEXT NOT NULL
+                       CHECK (classification IN ('managed', 'unmanaged')),
+                   present INTEGER NOT NULL DEFAULT 1 CHECK (present IN (0, 1)),
+                   first_seen_at TIMESTAMPTZ NOT NULL,
+                   last_seen_at TIMESTAMPTZ NOT NULL,
+                   source TEXT NOT NULL DEFAULT 'maintenance',
+                   PRIMARY KEY (endpoint_id, external_id_ciphertext)
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_key_inventory_present ON endpoint_key_inventory(endpoint_id, present, last_seen_at)",
+        ),
+    ),
 )
 
 

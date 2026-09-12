@@ -209,12 +209,19 @@ class TelegramMaintenanceMixin:
                 )
             collect_inventory = getattr(connectivity, "collect_inventory", None)
             persist_access_urls = getattr(self.service, "persist_access_url_snapshot", None)
-            if callable(collect_inventory) and callable(persist_access_urls):
+            if callable(collect_inventory):
                 inventory_result = run_stage("inventory", collect_inventory)
-                run_stage(
-                    "access_url_snapshot",
-                    lambda: persist_access_urls(inventory_result),
-                )
+                if callable(persist_access_urls):
+                    run_stage(
+                        "access_url_snapshot",
+                        lambda: persist_access_urls(inventory_result),
+                    )
+                persist_inventory = getattr(connectivity, "persist_inventory_snapshot", None)
+                if callable(persist_inventory):
+                    run_stage(
+                        "inventory_reconciliation",
+                        lambda: persist_inventory(inventory_result, now=datetime.now(UTC)),
+                    )
         free_provisioning = getattr(self.service, "process_free_provisioning", None)
         giveaway_provisioning = getattr(self.service, "process_giveaway_provisioning", None)
         if callable(giveaway_provisioning):
