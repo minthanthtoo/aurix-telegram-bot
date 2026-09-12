@@ -759,6 +759,11 @@ class ManagedMaintenanceCommerceService(MaintenanceCommerceService):
         return {"status": "completed"}
 
 
+class PartialManagedHealthCommerceService(ManagedMaintenanceCommerceService):
+    def collect_managed_protocol_health(self):
+        return {"status": "partial", "routes": 1, "observations": 1, "errors": {"xray:sg-a": "TimeoutError"}}
+
+
 class FailingQuotaClaimService(MaintenanceClaimService):
     def enforce_quota(self, metrics=None):
         self.metrics = metrics
@@ -1254,6 +1259,21 @@ class TelegramBotCommerceTest(unittest.TestCase):
             commerce.managed_calls[0]["adapter_provider"],
             commerce.managed_adapter_provider,
         )
+
+    def test_maintenance_marks_partial_managed_health_as_error(self):
+        outline = MaintenanceOutline()
+        claim = MaintenanceClaimService(outline)
+        claim.connectivity = SnapshotMaintenanceConnectivity()
+        commerce = PartialManagedHealthCommerceService()
+        bot = TelegramBot("test-token", claim, commerce)
+        bot._send_termination_notices = lambda: None
+        bot._send_pending_notifications = lambda: None
+
+        bot._run_maintenance()
+
+        self.assertEqual(bot._maintenance_last_status["status"], "error")
+        self.assertIn("managed_protocol_health", bot._maintenance_last_status["last_error"])
+        self.assertEqual(claim.expiry_calls, 1)
 
     def test_maintenance_expiry_runs_when_quota_stage_fails(self):
         outline = MaintenanceOutline()

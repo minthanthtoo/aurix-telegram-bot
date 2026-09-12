@@ -174,7 +174,20 @@ class TelegramMaintenanceMixin:
         def run_stage(name: str, callback: Any) -> Any:
             self._record_maintenance_heartbeat(stage=name)
             try:
-                return callback()
+                result = callback()
+                stage_status = (
+                    str(result.get("status") or "").strip().lower()
+                    if isinstance(result, dict)
+                    else ""
+                )
+                if stage_status in {"failed", "partial", "degraded", "unavailable"}:
+                    marker = RuntimeError(f"stage reported {stage_status}")
+                    failures.append((name, marker))
+                    self._record_maintenance_heartbeat(
+                        stage=name,
+                        error=f"{type(marker).__name__}: {marker}",
+                    )
+                return result
             except Exception as exc:
                 failures.append((name, exc))
                 print(
