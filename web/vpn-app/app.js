@@ -107,6 +107,7 @@
     const method = protocolLabel(key ? keyProtocol(key) : state.selectedProtocol);
     $("#settings-method").textContent = method;
     $("#settings-method-note").textContent = method === "Outline" ? "Use the official Outline app with your AuriX access key." : `Use a client that supports your ${method} configuration.`;
+    renderCatalogLinks();
   };
   const renderCurrentServer = () => {
     const key = selectedKey();
@@ -223,7 +224,11 @@
   };
   const renderCatalogLinks = () => {
     const catalog = state.catalog || { client_downloads: {} };
-    $("#client-links").innerHTML = Object.entries(catalog.client_downloads || {}).map(([name, url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(name)}</a>`).join("");
+    const key = selectedKey();
+    const protocol = key ? keyProtocol(key) : state.selectedProtocol;
+    $("#client-links").innerHTML = protocol === "outline"
+      ? Object.entries(catalog.client_downloads || {}).map(([name, url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(name)}</a>`).join("")
+      : `<span class="fine-print">Use a compatible ${escapeHtml(protocolLabel(protocol))} client. Your configuration can be copied from the Home screen.</span>`;
     telegramLink(catalog.telegram_url);
   };
   const loadServers = async (refreshProtocols = true) => {
@@ -240,7 +245,7 @@
     const active = (state.dashboard && state.dashboard.keys || []).find((key) => key.status === "active" && keyProtocol(key) === state.selectedProtocol);
     const firstEligible = state.servers.find((server) => server.eligible);
     if (!state.selectedEndpointId) state.selectedEndpointId = active && active.endpoint_id || firstEligible && firstEligible.id || null;
-    renderProtocolSelector(); renderServers(); renderPackagesSummary(); renderCurrentServer(); renderPlans();
+    renderIdentity(); renderProtocolSelector(); renderServers(); renderPackagesSummary(); renderCurrentServer(); renderPlans();
   };
   const loadDashboard = async () => {
     if (!state.initData) {
