@@ -265,6 +265,15 @@ class ConnectivityAdapterTest(unittest.TestCase):
         client.probe_data_plane = lambda _route: {"status": "failed", "reason": "egress blocked"}
         self.assertEqual(adapter.probe_data_plane(route)["status"], "failed")
 
+    def test_malformed_probe_results_fail_closed(self):
+        client = _ProtocolClient()
+        adapter = XrayConnectivityAdapter(client)
+        route = self._xray_route()
+        client.server_info = lambda: "not-an-object"
+        client.probe_data_plane = lambda _route: "not-an-object"
+        self.assertEqual(adapter.probe_management(route)["status"], "failed")
+        self.assertEqual(adapter.probe_data_plane(route)["status"], "failed")
+
     def test_xray_ambiguous_create_is_not_owned(self):
         client = _ProtocolClient()
         client.ambiguous = True

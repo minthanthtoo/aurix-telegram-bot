@@ -625,7 +625,14 @@ class _ManagedCredentialAdapter:
         if method is None:
             return {"status": "failed", "protocol": self.protocol, "error": "missing_server_info"}
         try:
-            return {"status": "healthy", "protocol": self.protocol, "server": method()}
+            result = method()
+            if not isinstance(result, Mapping):
+                return {
+                    "status": "failed",
+                    "protocol": self.protocol,
+                    "error": "invalid_server_info",
+                }
+            return {"status": "healthy", "protocol": self.protocol, "server": dict(result)}
         except Exception as exc:
             return {"status": "failed", "protocol": self.protocol, "error": type(exc).__name__}
 
@@ -636,12 +643,17 @@ class _ManagedCredentialAdapter:
             return {"status": "unsupported", "protocol": self.protocol, "reason": "no authenticated probe"}
         try:
             result = method(dict(route))
+            if not isinstance(result, Mapping):
+                return {
+                    "status": "failed",
+                    "protocol": self.protocol,
+                    "error": "invalid_probe_response",
+                }
             status = "healthy"
-            if isinstance(result, Mapping):
-                reported = str(result.get("status") or "").strip().lower()
-                if reported in {"failed", "unhealthy", "unsupported"}:
-                    status = reported
-            return {"status": status, "protocol": self.protocol, "result": result}
+            reported = str(result.get("status") or "").strip().lower()
+            if reported in {"failed", "unhealthy", "unsupported"}:
+                status = reported
+            return {"status": status, "protocol": self.protocol, "result": dict(result)}
         except Exception as exc:
             return {"status": "failed", "protocol": self.protocol, "error": type(exc).__name__}
 
