@@ -653,3 +653,11 @@ only and is covered by the expanded VPN regression suite.
 The full VPN-only regression now passes `370` tests, the disposable PostgreSQL
 rehearsal remains green, and this follow-up is committed as `7ed5be1`
 (`Require structured protocol promotion evidence`).
+
+The read-only Control Center endpoint detail now also computes and displays the
+effective non-Outline promotion readiness from the same registry minimums:
+missing signals, missing structured evidence, missing capabilities, and the
+latest healthy observation. It performs no provider I/O and excludes route or
+credential material. The full VPN-only regression passes `371` tests after the
+new redaction/readiness coverage, and the UI/API change is committed as
+`0d11f07` (`Expose protocol readiness in control center`).
