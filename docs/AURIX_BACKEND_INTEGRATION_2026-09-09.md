@@ -628,3 +628,16 @@ mask a failed or stale node's last usage values in the customer read model.
 The read-only Control Center summary now surfaces this maintenance snapshot
 health and latest observation time without exposing key IDs, URLs, or provider
 secrets.
+
+The protocol promotion boundary now enforces the documented minimum gates for
+every non-Outline transport even when an operator supplies a narrower command
+argument: fresh healthy `management`, `usage`, `quota`, `restart`, and
+`data_plane` observations plus the declared lifecycle/data-plane capabilities
+are always included, while operator-selected checks may only add requirements.
+The readiness preview exposes the effective requirements and the direct state
+change uses the same normalization, so a caller cannot bypass the production
+gate by invoking the registry method directly. The VPN-only suite passes `368`
+tests, Ruff and the disposable PostgreSQL migration rehearsal pass, and the
+change is committed as `4032fb5` (`Enforce production protocol promotion
+evidence`). No live protocol profile, server, customer credential, load/speed
+test, soak test, or production database was changed.
