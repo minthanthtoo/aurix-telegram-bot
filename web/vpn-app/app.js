@@ -17,6 +17,7 @@
     initData: tg && tg.initData ? tg.initData : "",
     selectedEndpointId: null,
     selectedProtocol: "outline",
+    protocolSelectionTouched: false,
     selectedKeyId: null,
   };
   const $ = (selector) => document.querySelector(selector);
@@ -233,6 +234,8 @@
   };
   const loadServers = async (refreshProtocols = true) => {
     if (!state.initData) return;
+    const activeKey = (state.dashboard && state.dashboard.keys || []).find((key) => key.status === "active");
+    if (!state.protocolSelectionTouched && activeKey) state.selectedProtocol = keyProtocol(activeKey);
     if (refreshProtocols) {
       const protocolPayload = await api("/api/protocols");
       state.protocols = protocolPayload.protocols || [];
@@ -343,6 +346,7 @@
     renderCurrentServer(); renderUsage();
   });
   $("#protocol-select").addEventListener("change", async (event) => {
+    state.protocolSelectionTouched = true;
     state.selectedProtocol = event.currentTarget.value || "outline";
     state.selectedEndpointId = null;
     try {
