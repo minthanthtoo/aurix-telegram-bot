@@ -310,6 +310,70 @@ class AuriXVpnWebApplication:
             "latency_note": "Displayed latency is the latest Outline control-plane check, not a user-device ping.",
         }
 
+    def protocols_payload(self, plan_code: str | None = None) -> dict[str, Any]:
+        """Return customer-selectable protocols without exposing fleet secrets.
+
+        A protocol is customer-visible only when an endpoint profile is enabled
+        and its adapter is registered in the runtime. Candidate profiles and
+        transports that are merely present in the roadmap stay out of the
+        purchase UI.
+        """
+        registry = getattr(self.runtime, "connectivity", None)
+        profile_method = getattr(registry, "list_protocol_profiles", None)
+        adapter_registry = getattr(getattr(self.runtime, "commerce", None), "adapter_registry", None)
+        registered_check = getattr(adapter_registry, "is_registered", None)
+        protocols: set[str] = set()
+        if callable(profile_method):
+            try:
+                profiles = profile_method(enabled_only=True)
+            except TypeError:
+                profiles = profile_method()
+            for profile in profiles or []:
+                if not isinstance(profile, dict):
+                    continue
+                protocol = str(profile.get("protocol") or "").strip().lower()
+                if not protocol:
+                    continue
+                if protocol != "outline" and not callable(registered_check):
+                    continue
+                if callable(registered_check) and not registered_check(protocol):
+                    continue
+                protocols.add(protocol)
+        # Preserve the legacy Outline customer experience for older injected
+        # registries that do not expose protocol profiles yet.
+        if not callable(profile_method) or not protocols:
+            protocols.add("outline")
+
+        result: list[dict[str, Any]] = []
+        for protocol in sorted(protocols, key=lambda value: (value != "outline", value)):
+            list_endpoints = getattr(registry, "list_customer_endpoints", None)
+            if callable(list_endpoints):
+                try:
+                    endpoint_rows = list_endpoints(plan_code, protocol)
+                except TypeError:
+                    endpoint_rows = list_endpoints(plan_code)
+            else:
+                endpoint_rows = []
+            endpoints = [
+                _safe_endpoint(item)
+                for item in endpoint_rows or []
+                if isinstance(item, dict)
+            ]
+            result.append(
+                {
+                    "protocol": protocol,
+                    "name": protocol.replace("_", " ").title(),
+                    "servers": len(endpoints),
+                    "eligible_servers": sum(1 for item in endpoints if item.get("eligible")),
+                    "default": protocol == "outline",
+                }
+            )
+        return {
+            "protocols": result,
+            "plan_code": str(plan_code or "").strip() or None,
+            "selection_policy": "Only enabled endpoint profiles with registered adapters can be purchased.",
+        }
+
     def dashboard(self, user: VerifiedTelegramUser) -> dict[str, Any]:
         state = collect_customer_vpn_state(
             self.runtime.claim_service, self.runtime.commerce, user.telegram_id
@@ -1069,6 +1133,12 @@ def make_handler(
                 protocol_values = query.get("protocol") or []
                 protocol = str(protocol_values[0])[:64] if protocol_values else "outline"
                 self._write(200, application.servers_payload(plan_code, protocol))
+                return
+            if path == "/api/protocols" and method == "GET":
+                query = parse_qs(urlsplit(self.path).query)
+                plan_values = query.get("plan_code") or []
+                plan_code = str(plan_values[0])[:64] if plan_values else None
+                self._write(200, application.protocols_payload(plan_code))
                 return
             if path in ("/api/me", "/api/dashboard") and method == "GET":
                 self._write(200, application.dashboard(user))

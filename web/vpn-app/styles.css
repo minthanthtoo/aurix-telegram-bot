@@ -107,6 +107,12 @@ em { color: var(--cyan); font-style: normal; }
 .selected-server { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; padding: 13px 15px; }
 .selected-server > span { color: var(--faint); font-size: .7rem; }
 .selected-server strong { flex: 1; font-size: .78rem; }
+.protocol-selector { display: grid; gap: 8px; padding: 15px 17px; }
+.protocol-selector[hidden] { display: none; }
+.protocol-selector label { display: grid; grid-template-columns: 1fr minmax(140px, 45%); align-items: center; gap: 12px; color: var(--muted); font-size: .74rem; }
+.protocol-selector select { min-width: 0; min-height: 38px; padding: 0 11px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--surface-strong); }
+.protocol-selector .eyebrow { margin: 0; color: var(--faint); }
+.protocol-selector .fine-print { margin: 0; }
 .plan-card { padding: 23px; border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(150deg, rgba(17, 39, 61, .8), rgba(8, 18, 30, .93)); }
 .plan-card.is-featured { border-color: rgba(99, 216, 247, .4); background: linear-gradient(145deg, rgba(16, 57, 76, .88), rgba(11, 24, 42, .93)); }
 .plan-tag { min-height: 18px; margin-bottom: 15px; color: var(--cyan); font-size: .64rem; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; }

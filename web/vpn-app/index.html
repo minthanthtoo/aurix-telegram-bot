@@ -43,7 +43,7 @@
           <label class="key-picker" id="key-picker" hidden>Active key<select id="active-key-select"></select></label>
           <div class="usage-bar" aria-label="VPN package usage"><span id="usage-bar-fill"></span></div>
           <div class="usage-meta"><span id="usage-used">— used</span><span id="usage-remaining">— remaining</span></div>
-          <p class="fine-print" id="usage-note">AuriX reports the latest observed Outline transfer total.</p>
+          <p class="fine-print" id="usage-note">AuriX reports the latest observed transfer total for this connection method.</p>
           <div class="key-actions" id="key-actions"></div>
           <div class="key-secret" id="key-secret" hidden></div>
         </article>
@@ -64,6 +64,10 @@
       <section class="app-view" id="view-packages" aria-labelledby="packages-title">
         <div class="page-heading"><div><p class="eyebrow">Simple access</p><h1 id="packages-title">Packages</h1></div></div>
         <div class="selected-server card"><span>Selected location</span><strong id="selected-server-label">Automatic capacity selection</strong><button class="text-button" data-view-link="servers" type="button">Change</button></div>
+        <div class="protocol-selector card" id="protocol-selector" hidden>
+          <label for="protocol-select"><span class="eyebrow">Connection method</span><select id="protocol-select"></select></label>
+          <p class="fine-print" id="protocol-note">Choose a method available on the selected AuriX fleet.</p>
+        </div>
         <article class="claim-card card" id="claim-card">
           <div class="card-heading"><div><p class="eyebrow">Free access</p><h2>Start with AuriX</h2></div></div>
           <div class="claim-actions"><button class="button button--quiet claim-button" data-claim="daily" type="button">Daily 300 MiB</button><button class="button button--quiet claim-button" data-claim="trial" type="button">Monthly 3 GiB</button></div>
@@ -77,7 +81,7 @@
       <section class="app-view" id="view-settings" aria-labelledby="settings-title">
         <div class="page-heading"><div><p class="eyebrow">Account</p><h1 id="settings-title">Settings</h1></div></div>
         <article class="profile-card card"><span class="avatar avatar--large" id="settings-avatar">A</span><div><h2 id="settings-name">Telegram account</h2><p id="settings-handle">Verified session required</p></div><span class="state-pill" id="settings-state">Locked</span></article>
-        <article class="settings-panel card"><div class="settings-row"><div><strong>Connection method</strong><p>Use the official Outline app with your AuriX access key.</p></div><span>Outline</span></div><div class="client-links" id="client-links"></div></article>
+        <article class="settings-panel card"><div class="settings-row"><div><strong>Connection method</strong><p id="settings-method-note">Use the client that supports your AuriX access configuration.</p></div><span id="settings-method">Outline</span></div><div class="client-links" id="client-links"></div></article>
         <article class="settings-panel card"><div class="card-heading"><div><p class="eyebrow">Order history</p><h2>Orders</h2></div></div><div class="order-list" id="order-list"><div class="empty-state">Open this app from Telegram to load orders.</div></div></article>
         <article class="support-card card"><p class="eyebrow">Need help?</p><h2>Talk to AuriX support.</h2><p>Use Telegram for receipt upload, activation review, and account ownership questions.</p><a class="button button--primary" id="telegram-link" href="#">Open Telegram <span>↗</span></a></article>
         <p class="fine-print">Your Telegram identity is verified server-side. Access keys are never stored in browser local storage.</p>

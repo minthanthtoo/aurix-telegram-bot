@@ -507,3 +507,13 @@ was not re-run at this checkpoint because the host filesystem has only about
 `308 MiB` available and the disposable PostgreSQL cluster exhausted that space
 before the SQLite source snapshot could be initialized. No live server, provider,
 customer credential, database, load test, or speed test was changed or run.
+
+The customer VPN portal now consumes a redacted protocol catalog and lets a
+customer select an enabled, registered transport before choosing a server and
+creating an order. Candidate or unregistered Xray/Hysteria2 profiles remain
+hidden, while legacy portal embeddings continue to default to Outline. The
+portal sends the selected protocol through the existing order boundary and
+shows the matching connection method for active credentials. The complete
+non-PostgreSQL VPN regression passes `342` tests after this change; no live
+server, provider, customer credential, load test, speed test, or deployment was
+changed.

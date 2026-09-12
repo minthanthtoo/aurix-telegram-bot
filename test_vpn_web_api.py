@@ -74,6 +74,7 @@ class _Claims:
 
 class _Commerce:
     PAYMENT_PROVIDERS = {"kpay": "KBZPay"}
+    adapter_registry = None
 
     def user_usage(self, telegram_id, usage_by_key):
         return []
@@ -109,6 +110,26 @@ class _Registry:
         }]
 
 
+class _ProtocolRegistry(_Registry):
+    def list_protocol_profiles(self, enabled_only=False):
+        profiles = [
+            {"protocol": "outline", "status": "enabled"},
+            {"protocol": "xray", "status": "enabled"},
+            {"protocol": "hysteria2", "status": "candidate"},
+        ]
+        return [item for item in profiles if not enabled_only or item["status"] == "enabled"]
+
+    def list_customer_endpoints(self, plan_code=None, protocol="outline"):
+        return [{
+            "id": f"{protocol}-01",
+            "code": f"{protocol.upper()}-01",
+            "region": "sgp1",
+            "state": "ACTIVE",
+            "healthy": True,
+            "eligible": True,
+        }]
+
+
 class VpnWebApplicationTest(unittest.TestCase):
     def setUp(self):
         self.runtime = SimpleNamespace(token="bot-token", claim_service=_Claims(), commerce=_Commerce())
@@ -135,6 +156,23 @@ class VpnWebApplicationTest(unittest.TestCase):
         self.assertEqual(payload["servers"][0]["code"], "SGP-02")
         self.assertNotIn("public_address", str(payload))
         self.assertNotIn("management_url", str(payload))
+
+    def test_protocol_catalog_defaults_to_outline_for_legacy_registry(self):
+        self.application.runtime.connectivity = _Registry()
+        payload = self.application.protocols_payload("basic")
+        self.assertEqual([item["protocol"] for item in payload["protocols"]], ["outline"])
+        self.assertEqual(payload["protocols"][0]["eligible_servers"], 1)
+
+    def test_protocol_catalog_exposes_only_enabled_registered_profiles(self):
+        self.application.runtime.connectivity = _ProtocolRegistry()
+        self.application.runtime.commerce.adapter_registry = SimpleNamespace(
+            is_registered=lambda protocol: protocol in {"outline", "xray"}
+        )
+        payload = self.application.protocols_payload("basic")
+        self.assertEqual(
+            [item["protocol"] for item in payload["protocols"]],
+            ["outline", "xray"],
+        )
 
     def test_text_payment_is_disabled_without_explicit_legacy_flag(self):
         user = self.application.authenticate(_init_data("bot-token", auth_date=int(time.time())))

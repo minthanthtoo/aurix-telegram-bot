@@ -13,8 +13,10 @@
     catalog: null,
     dashboard: null,
     servers: [],
+    protocols: [],
     initData: tg && tg.initData ? tg.initData : "",
     selectedEndpointId: null,
+    selectedProtocol: "outline",
     selectedKeyId: null,
   };
   const $ = (selector) => document.querySelector(selector);
@@ -60,6 +62,7 @@
     if (server.healthy) return "Limited";
     return "Offline check";
   };
+  const protocolLabel = (protocol) => titleCase(protocol || "outline");
   const activeKeys = () => (state.dashboard && state.dashboard.keys || []).filter((key) => key.status === "active");
   const keyIdentity = (key) => `${key.endpoint_id || "legacy-default"}:${key.outline_key_id || ""}`;
   const keyProtocol = (key) => String((key && key.protocol) || "outline").toLowerCase();
@@ -101,15 +104,32 @@
     $("#settings-state").textContent = "Verified";
     const key = selectedKey();
     $("#home-title").innerHTML = key ? "Your secure<br><em>line is ready.</em>" : "Choose access.<br><em>Connect when ready.</em>";
+    const method = protocolLabel(key ? keyProtocol(key) : state.selectedProtocol);
+    $("#settings-method").textContent = method;
+    $("#settings-method-note").textContent = method === "Outline" ? "Use the official Outline app with your AuriX access key." : `Use a client that supports your ${method} configuration.`;
   };
   const renderCurrentServer = () => {
     const key = selectedKey();
     const server = key && serverFor(key.endpoint_id);
+    const protocol = key ? keyProtocol(key) : state.selectedProtocol;
     $("#current-server-name").textContent = server ? serverLabel(server) : (key ? String(key.endpoint_id || "Assigned server") : "Not connected");
     $("#current-server-region").textContent = server ? String(server.region || "Location confirmed") : (key ? "Assigned location" : "Choose a server in Servers");
-    $("#current-server-note").textContent = server ? `${server.region || "AuriX network"} · ${serverStatus(server)}` : "Your selected location appears here.";
+    $("#current-server-note").textContent = server ? `${server.region || "AuriX network"} · ${serverStatus(server)} · ${protocolLabel(protocol)}` : "Your selected location appears here.";
     $("#current-server-state").textContent = key ? (server ? serverStatus(server) : "Assigned") : "Status";
     $("#current-server-state").className = `state-pill ${key && server && server.eligible ? "state-pill--ready" : ""}`;
+  };
+  const renderProtocolSelector = () => {
+    const selector = $("#protocol-selector");
+    const select = $("#protocol-select");
+    const protocols = state.protocols || [];
+    selector.hidden = protocols.length <= 1;
+    select.innerHTML = protocols.map((item) => {
+      const count = Number(item.eligible_servers || 0);
+      const suffix = count === 1 ? "1 server" : `${count} servers`;
+      return `<option value="${escapeHtml(item.protocol)}" ${item.protocol === state.selectedProtocol ? "selected" : ""}>${escapeHtml(item.name || protocolLabel(item.protocol))} · ${suffix}</option>`;
+    }).join("");
+    const selected = protocols.find((item) => item.protocol === state.selectedProtocol);
+    $("#protocol-note").textContent = selected ? `${selected.name || protocolLabel(selected.protocol)} is available on ${Number(selected.eligible_servers || 0)} healthy server${Number(selected.eligible_servers || 0) === 1 ? "" : "s"}.` : "Choose a method available on the selected AuriX fleet.";
   };
   const renderUsage = () => {
     const keys = activeKeys();
@@ -138,9 +158,10 @@
       const protocol = keyProtocol(key);
       const outlineImport = /^ss(?:conf)?:\/\//i.test(key.access_url);
       const openAction = outlineImport ? `<button class="button button--primary" id="open-key" type="button">Add to Outline</button>` : "";
+      const copyLabel = `Copy ${escapeHtml(protocol)} config`;
       actions.innerHTML = `${openAction}<button class="button ${outlineImport ? "button--quiet" : "button--primary"}" id="copy-key" type="button">Copy ${escapeHtml(protocol)} config</button><button class="text-button" id="reveal-key" type="button">Reveal</button>`;
       if (outlineImport) $("#open-key").addEventListener("click", () => { window.location.href = key.access_url; });
-      $("#copy-key").addEventListener("click", async () => { if (navigator.clipboard) { await navigator.clipboard.writeText(key.access_url); $("#copy-key").textContent = "Copied"; setTimeout(() => { $("#copy-key").textContent = "Copy key"; }, 1400); } });
+      $("#copy-key").addEventListener("click", async () => { if (navigator.clipboard) { await navigator.clipboard.writeText(key.access_url); $("#copy-key").textContent = "Copied"; setTimeout(() => { $("#copy-key").textContent = copyLabel; }, 1400); } });
       $("#reveal-key").addEventListener("click", () => { secret.hidden = !secret.hidden; secret.textContent = secret.hidden ? "" : key.access_url; $("#reveal-key").textContent = secret.hidden ? "Reveal" : "Hide"; });
     } else if (key) {
       actions.innerHTML = `<span class="fine-print">Key is being synchronized. Refresh shortly.</span>`;
@@ -203,14 +224,21 @@
     $("#client-links").innerHTML = Object.entries(catalog.client_downloads || {}).map(([name, url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(name)}</a>`).join("");
     telegramLink(catalog.telegram_url);
   };
-  const loadServers = async () => {
+  const loadServers = async (refreshProtocols = true) => {
     if (!state.initData) return;
-    const payload = await api("/api/servers");
+    if (refreshProtocols) {
+      const protocolPayload = await api("/api/protocols");
+      state.protocols = protocolPayload.protocols || [];
+      if (!state.protocols.some((item) => item.protocol === state.selectedProtocol)) {
+        state.selectedProtocol = (state.protocols.find((item) => item.default) || state.protocols[0] || { protocol: "outline" }).protocol;
+      }
+    }
+    const payload = await api(`/api/servers?protocol=${encodeURIComponent(state.selectedProtocol)}`);
     state.servers = payload.servers || [];
-    const active = (state.dashboard && state.dashboard.keys || []).find((key) => key.status === "active");
+    const active = (state.dashboard && state.dashboard.keys || []).find((key) => key.status === "active" && keyProtocol(key) === state.selectedProtocol);
     const firstEligible = state.servers.find((server) => server.eligible);
     if (!state.selectedEndpointId) state.selectedEndpointId = active && active.endpoint_id || firstEligible && firstEligible.id || null;
-    renderServers(); renderPackagesSummary(); renderCurrentServer(); renderPlans();
+    renderProtocolSelector(); renderServers(); renderPackagesSummary(); renderCurrentServer(); renderPlans();
   };
   const loadDashboard = async () => {
     if (!state.initData) {
@@ -236,7 +264,7 @@
   };
   const createOrder = async (planCode) => {
     try {
-      const result = await api("/api/orders", { method: "POST", body: JSON.stringify({ plan_code: planCode, endpoint_id: state.selectedEndpointId }) });
+      const result = await api("/api/orders", { method: "POST", body: JSON.stringify({ plan_code: planCode, endpoint_id: state.selectedEndpointId, protocol: state.selectedProtocol }) });
       await loadDashboard();
       go("settings");
       if (result.plan_conflict) showNotice("You already have an open order for another package. Continue or cancel it in Telegram before choosing a new package.");
@@ -306,6 +334,14 @@
   $("#active-key-select").addEventListener("change", (event) => {
     state.selectedKeyId = event.currentTarget.value;
     renderCurrentServer(); renderUsage();
+  });
+  $("#protocol-select").addEventListener("change", async (event) => {
+    state.selectedProtocol = event.currentTarget.value || "outline";
+    state.selectedEndpointId = null;
+    try {
+      await loadServers(false);
+      showNotice(`${protocolLabel(state.selectedProtocol)} selected for your next package.`);
+    } catch (error) { showNotice(escapeHtml(error.message)); }
   });
   $("#settings-button").addEventListener("click", () => go("settings"));
   $("#servers-refresh").addEventListener("click", async () => { try { await loadServers(); showNotice("Server availability refreshed."); } catch (error) { showNotice(escapeHtml(error.message)); } });
