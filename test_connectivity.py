@@ -523,6 +523,11 @@ class EndpointRegistryTest(unittest.TestCase):
 
     def test_transfer_assignment_rejects_target_without_source_protocol_profile(self):
         now = datetime.now(UTC)
+        self.registry.register_protocol_profile("legacy-default", "xray", status="candidate", now=now)
+        self.registry.record_protocol_observation("legacy-default", "xray", now=now)
+        self.registry.promote_protocol_profile(
+            "legacy-default", "xray", required_signals=("management",), now=now
+        )
         with self.database.connect() as connection:
             connection.execute(
                 """INSERT INTO vpn_endpoints
@@ -533,7 +538,7 @@ class EndpointRegistryTest(unittest.TestCase):
             )
         assignment = self.registry.ensure_subscription_assignment(
             "sub-1", "basic", 50_000_000_000,
-            preferred_endpoint_id="legacy-default", now=now
+            preferred_endpoint_id="legacy-default", protocol="xray", now=now
         )
         identity = IdentityService(self.database)
         entitlement = identity.ensure_subscription_entitlement(1, "sub-1", now=now.isoformat())
@@ -547,6 +552,37 @@ class EndpointRegistryTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ConnectivityError, "enabled xray protocol profile"):
             self.registry.transfer_assignment("paid:sub-1", "bkk-xray", now=now)
+
+    def test_transfer_assignment_uses_assignment_protocol_before_provisioning(self):
+        now = datetime.now(UTC)
+        self.registry.register_protocol_profile("legacy-default", "xray", status="candidate", now=now)
+        self.registry.record_protocol_observation("legacy-default", "xray", now=now)
+        self.registry.promote_protocol_profile(
+            "legacy-default", "xray", required_signals=("management",), now=now
+        )
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, region, state, accepts_new_assignments,
+                    created_at, last_healthy_at)
+                   VALUES ('bkk-xray-ready', 'BKK-XRAY-READY', 'bkk1', 'ACTIVE', 1, ?, ?)""",
+                (now.isoformat(), now.isoformat()),
+            )
+        self.registry.register_protocol_profile(
+            "bkk-xray-ready", "xray", status="candidate", now=now
+        )
+        self.registry.record_protocol_observation("bkk-xray-ready", "xray", now=now)
+        self.registry.promote_protocol_profile(
+            "bkk-xray-ready", "xray", required_signals=("management",), now=now
+        )
+        assignment = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000,
+            preferred_endpoint_id="legacy-default", protocol="xray", now=now
+        )
+        moved = self.registry.transfer_assignment("paid:sub-1", "bkk-xray-ready", now=now)
+        self.assertTrue(moved["changed"])
+        self.assertEqual(moved["source_endpoint_id"], assignment.endpoint_id)
+        self.assertEqual(self.registry.assignment_for_subscription("sub-1").protocol, "xray")
 
     def test_transfer_assignment_rejects_degraded_target_for_normal_move(self):
         now = datetime.now(UTC)

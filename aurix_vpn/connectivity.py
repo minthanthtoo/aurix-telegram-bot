@@ -1798,11 +1798,13 @@ class EndpointRegistry:
                       AND status IN ('pending', 'active', 'retiring', 'unknown')""",
                 (entitlement_key, source_endpoint_id),
             ).fetchall()
-            protocols = {
+            assignment_protocol = str(assignment["protocol"] or "outline").strip().lower()
+            protocols = {assignment_protocol}
+            protocols.update(
                 str(row["protocol"] or "outline").strip().lower()
                 for row in source_protocols
                 if str(row["protocol"] or "outline").strip()
-            } or {"outline"}
+            )
             for protocol in sorted(protocols):
                 profile = connection.execute(
                     """SELECT 1 FROM endpoint_protocol_profiles
