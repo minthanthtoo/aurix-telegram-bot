@@ -34,6 +34,29 @@ class NodeAgentTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(NodeAgentError):
                 client.set_user_quota("u", value)
 
+    def test_client_rejects_invalid_user_identifiers_before_transport(self):
+        calls = []
+
+        def request(*args):
+            calls.append(args)
+            return {}
+
+        client = NodeAgentClient(requester=request)
+        invalid = ("", "  ", "a/b", "a\\b", "x" * 257)
+        for value in invalid:
+            with self.subTest(value=value):
+                for operation in (
+                    lambda: client.get_user(value),
+                    lambda: client.create_user(value, "name", {}, {}),
+                    lambda: client.delete_user(value),
+                    lambda: client.set_user_quota(value, 1),
+                    lambda: client.get_user_usage(value),
+                    lambda: client.terminate_user_sessions(value),
+                ):
+                    with self.assertRaisesRegex(NodeAgentError, "user identifier"):
+                        operation()
+        self.assertEqual(calls, [])
+
     def test_xray_writer_is_idempotent_and_preserves_unknown_users(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "xray.json"

@@ -35,6 +35,14 @@ def _object(value: Any, *, operation: str) -> dict[str, Any]:
     return dict(value)
 
 
+def _user_identifier(value: Any) -> str:
+    """Validate the opaque user id before putting it into a request path."""
+    result = str(value or "").strip()
+    if not result or len(result) > 256 or "/" in result or "\\" in result:
+        raise NodeAgentError("user identifier is invalid")
+    return result
+
+
 class NodeAgentClient:
     """Client for the AuriX node-agent contract.
 
@@ -103,8 +111,9 @@ class NodeAgentClient:
         return [dict(item) for item in value]
 
     def get_user(self, external_id: str) -> dict[str, Any] | None:
+        external_id = _user_identifier(external_id)
         try:
-            value = self.request("GET", f"/v1/users/{quote(str(external_id), safe='')}")
+            value = self.request("GET", f"/v1/users/{quote(external_id, safe='')}")
         except NodeAgentError as exc:
             if exc.status_code == 404:
                 return None
@@ -120,11 +129,12 @@ class NodeAgentClient:
         route: Mapping[str, Any],
         intent: Mapping[str, Any],
     ) -> dict[str, Any]:
+        external_id = _user_identifier(external_id)
         value = self.request(
             "POST",
             "/v1/users",
             {
-                "external_id": str(external_id),
+                "external_id": external_id,
                 "name": str(name)[:128],
                 "route": dict(route),
                 "intent": dict(intent),
@@ -133,9 +143,11 @@ class NodeAgentClient:
         return _object(value, operation="create_user")
 
     def delete_user(self, external_id: str) -> None:
-        self.request("DELETE", f"/v1/users/{quote(str(external_id), safe='')}")
+        external_id = _user_identifier(external_id)
+        self.request("DELETE", f"/v1/users/{quote(external_id, safe='')}")
 
     def set_user_quota(self, external_id: str, quota_bytes: int) -> None:
+        external_id = _user_identifier(external_id)
         if isinstance(quota_bytes, (bool, float)):
             raise NodeAgentError("user quota must be positive")
         try:
@@ -146,17 +158,19 @@ class NodeAgentClient:
             raise NodeAgentError("user quota must be positive")
         self.request(
             "PATCH",
-            f"/v1/users/{quote(str(external_id), safe='')}/quota",
+            f"/v1/users/{quote(external_id, safe='')}/quota",
             {"quota_bytes": normalized_quota},
         )
 
     def get_user_usage(self, external_id: str) -> Any:
-        return self.request("GET", f"/v1/users/{quote(str(external_id), safe='')}/usage")
+        external_id = _user_identifier(external_id)
+        return self.request("GET", f"/v1/users/{quote(external_id, safe='')}/usage")
 
     def terminate_user_sessions(self, external_id: str) -> dict[str, Any]:
+        external_id = _user_identifier(external_id)
         return _object(
             self.request(
-                "POST", f"/v1/users/{quote(str(external_id), safe='')}/sessions/terminate"
+                "POST", f"/v1/users/{quote(external_id, safe='')}/sessions/terminate"
             ),
             operation="terminate_user_sessions",
         )
