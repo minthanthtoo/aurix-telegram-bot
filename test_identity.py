@@ -120,6 +120,33 @@ class IdentityAccountingTest(unittest.TestCase):
         self.assertEqual(subscription["status"], "active")
         self.assertNotIn("access_url", subscription)
 
+    def test_device_revocation_is_audited_once_without_key_material(self):
+        token = self.identity.create_pairing_token(123, now=self.now)
+        paired = self.identity.consume_pairing_token(
+            token,
+            "managed-device-public-key-0001",
+            now=self.now,
+        )
+
+        self.assertTrue(self.identity.revoke_device(123, paired["device_id"], now=self.now))
+        self.assertFalse(self.identity.revoke_device(123, paired["device_id"], now=self.now))
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT actor_type, actor_id, action, target_type, target_id,
+                          metadata_json
+                     FROM audit_events
+                    WHERE action = 'managed_device_revoked'"""
+            ).fetchall()
+
+        self.assertEqual(len(rows), 1)
+        audit = rows[0]
+        self.assertEqual(
+            tuple(audit[key] for key in ("actor_type", "actor_id", "action", "target_type", "target_id")),
+            ("customer", "123", "managed_device_revoked", "managed_device", paired["device_id"]),
+        )
+        self.assertEqual(json.loads(audit["metadata_json"]), {"revocation_epoch": 1})
+        self.assertNotIn("public-key", json.dumps(dict(audit)))
+
     def test_admin_generations_include_safe_usage_and_lease_state(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)
         generation = self.identity.ensure_generation_for_credential(

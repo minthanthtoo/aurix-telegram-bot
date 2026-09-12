@@ -309,10 +309,32 @@ class IdentityService:
                     WHERE account_id = ?""",
                 (timestamp, account_id),
             )
+            epoch = connection.execute(
+                "SELECT epoch FROM device_revocation_epochs WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
             connection.execute(
                 """UPDATE device_sessions SET revoked_at = ?
                     WHERE device_id = ? AND revoked_at IS NULL""",
                 (timestamp, str(device_id)),
+            )
+            connection.execute(
+                """INSERT INTO audit_events
+                   (actor_type, actor_id, action, target_type, target_id,
+                    metadata_json, created_at)
+                   VALUES ('customer', ?, 'managed_device_revoked',
+                           'managed_device', ?, ?, ?)""",
+                (
+                    str(int(telegram_id)),
+                    str(device_id),
+                    json.dumps(
+                        {"revocation_epoch": int(epoch["epoch"] or 0) if epoch is not None else 0},
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    timestamp,
+                ),
             )
         return True
 

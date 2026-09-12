@@ -838,3 +838,12 @@ separate per-user representations, rendering, accounting, and canary evidence;
 they cannot be bound to the VLESS writer by a route configuration mistake. This
 is a local configuration-safety boundary only and does not enable or mutate any
 server protocol.
+
+## 28. Managed-device revocation audit — 2026-09-13
+
+Successful customer-initiated managed-device revocation now writes one atomic,
+secret-free audit event with the verified Telegram actor, device identifier, and
+new account revocation epoch. Repeated revocation attempts do not create a
+second event. This keeps the existing Telegram device-control path and the
+read-only Control Center audit history consistent without exposing device
+public keys or adding an unaudited browser-side management action.
