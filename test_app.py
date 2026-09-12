@@ -2072,6 +2072,29 @@ class TelegramBotCommerceTest(unittest.TestCase):
         copy_button = next(button for button in buttons if button["text"].startswith("📋 Copy #1"))
         self.assertEqual(copy_button["copy_text"], {"text": "ss://secret"})
 
+    def test_usage_button_reads_maintenance_snapshot_when_registry_is_configured(self):
+        self.bot.handle(self.message(123, "/claim"))
+
+        class SnapshotRegistry:
+            @staticmethod
+            def cached_usage_metrics():
+                return {
+                    "byEndpoint": {"legacy-default": {"1": 150 * 1024 * 1024}},
+                    "errors": {},
+                    "source": "maintenance_snapshot",
+                }
+
+            @staticmethod
+            def collect_metrics():
+                raise AssertionError("interactive usage must not query the provider")
+
+        self.bot.service.connectivity = SnapshotRegistry()
+        self.outline.transfer_metrics = lambda: (_ for _ in ()).throw(
+            AssertionError("interactive usage must not query the provider")
+        )
+        self.bot._send_usage(123, 123)
+        self.assertIn("Used: 150.00 MiB", self.bot.sent[-1][1])
+
     def test_myvpn_refresh_edits_the_interacting_message(self):
         self.bot.handle(self.message(123, "/claim"))
         self.bot.handle(self.message(123, "/myvpn"))

@@ -1466,22 +1466,8 @@ class TelegramBot(
                 self._panels[token]["message_id"] = int(result["message_id"])
 
     def _send_usage(self, chat_id: int, telegram_id: int) -> None:
-        try:
-            connectivity = getattr(self.service, "connectivity", None)
-            by_key = (
-                connectivity.collect_metrics()
-                if connectivity is not None
-                else self.service.outline.transfer_metrics()
-            )
-            if not isinstance(by_key, dict):
-                raise ValueError("invalid Outline metrics response")
-        except Exception as exc:
-            self.send(chat_id, "VPN usage is temporarily unavailable. Please try again shortly.")
-            print(f"usage metrics error: {type(exc).__name__}", file=sys.stderr)
-            return
-        entries = self.service.user_usage(telegram_id, by_key)
-        if self.commerce is not None:
-            entries.extend(self.commerce.user_usage(telegram_id, by_key))
+        state = self._collect_customer_vpn_state(telegram_id)
+        entries = list(state.get("all_items") or [])
         entries.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
         if not entries:
             self.send(
@@ -1507,6 +1493,8 @@ class TelegramBot(
                 f"Expires: {entry['expires_at']}\n"
                 f"State: {entry['status']}"
             )
+        if not state.get("usage_available", True):
+            blocks.append("⚠️ Usage is temporarily unavailable; the last known key state is shown.")
         blocks.append(
             "Traffic is bytes reported by Outline for each key. It is not live speed, "
             "and the window is not a calendar-month reset."
