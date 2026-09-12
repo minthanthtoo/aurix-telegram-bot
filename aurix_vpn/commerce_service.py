@@ -1962,6 +1962,7 @@ class CommerceService(CommerceWorkerMixin):
             rows = connection.execute(
                 """SELECT o.id, o.telegram_id, o.plan_code, o.amount_minor, o.currency,
                           o.status, o.created_at, o.order_type,
+                          o.requested_endpoint_id, o.requested_protocol,
                           o.selected_payment_provider,
                           (SELECT p.provider FROM payments p WHERE p.order_id = o.id
                            ORDER BY p.submitted_at DESC LIMIT 1) AS provider,

@@ -350,6 +350,9 @@ class CommerceServiceTest(unittest.TestCase):
                 (order.order_id,),
             ).fetchone()["requested_protocol"]
         self.assertEqual(requested, "xray")
+        pending = self.service.list_pending_orders()
+        self.assertEqual(pending[0]["requested_endpoint_id"], "xray-sgp-a")
+        self.assertEqual(pending[0]["requested_protocol"], "xray")
         self.service.submit_payment(123, order.order_id, "manual", "protocol-pref", self.now)
         self.service.approve_order(order.order_id, 999, self.now)
         with self.database.connect() as connection:
