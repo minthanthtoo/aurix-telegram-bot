@@ -1452,12 +1452,15 @@ class EndpointRegistry:
         timestamp = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
         normalized_source = str(source or "maintenance").strip()[:64] or "maintenance"
         observations: list[tuple[str, str, int, str, str]] = []
+        endpoint_status: dict[str, tuple[str, str | None]] = {}
         for endpoint_id, values in scoped.items():
-            if not isinstance(values, dict):
-                continue
             endpoint = str(endpoint_id or "").strip()
             if not endpoint:
                 continue
+            if not isinstance(values, dict):
+                endpoint_status[endpoint] = ("failed", "invalid_payload")
+                continue
+            endpoint_status[endpoint] = ("healthy", None)
             for external_id, raw_value in values.items():
                 if isinstance(raw_value, bool):
                     continue
@@ -1473,13 +1476,40 @@ class EndpointRegistry:
                 observations.append(
                     (endpoint, key, observed_bytes, timestamp, normalized_source)
                 )
-        if not observations:
+        errors = metrics.get("errors") if isinstance(metrics, dict) else None
+        if isinstance(errors, dict):
+            for endpoint_id, error in errors.items():
+                endpoint = str(endpoint_id or "").strip()
+                if endpoint:
+                    error_type = str(error or "provider_error").strip()[:64] or "provider_error"
+                    endpoint_status[endpoint] = ("failed", error_type)
+        if not observations and not endpoint_status:
             return 0
         with self.database.connect() as connection:
             try:
                 connection.execute("SELECT 1 FROM endpoint_usage_snapshots LIMIT 1")
             except Exception:
                 return 0
+            try:
+                connection.execute("SELECT 1 FROM endpoint_usage_snapshot_status LIMIT 1")
+                status_table_available = True
+            except Exception:
+                status_table_available = False
+            try:
+                valid_endpoints = {
+                    str(row["id"])
+                    for row in connection.execute("SELECT id FROM vpn_endpoints").fetchall()
+                }
+            except Exception:
+                valid_endpoints = set()
+            observations = [
+                item for item in observations if item[0] in valid_endpoints
+            ]
+            endpoint_status = {
+                endpoint: value
+                for endpoint, value in endpoint_status.items()
+                if endpoint in valid_endpoints
+            }
             self.database.begin_write(connection)
             for endpoint, external_id, observed_bytes, observed_at, snapshot_source in observations:
                 connection.execute(
@@ -1493,12 +1523,33 @@ class EndpointRegistry:
                            source = excluded.source""",
                     (endpoint, external_id, observed_bytes, observed_at, snapshot_source),
                 )
+            if status_table_available:
+                for endpoint, (status, error_type) in endpoint_status.items():
+                    connection.execute(
+                        """INSERT INTO endpoint_usage_snapshot_status
+                           (endpoint_id, protocol, status, error_type, observed_at, source)
+                           VALUES (?, 'outline', ?, ?, ?, ?)
+                           ON CONFLICT(endpoint_id, protocol) DO UPDATE SET
+                               status = excluded.status,
+                               error_type = excluded.error_type,
+                               observed_at = excluded.observed_at,
+                               source = excluded.source""",
+                        (endpoint, status, error_type, timestamp, normalized_source),
+                    )
         return len(observations)
 
     def cached_usage_metrics(self) -> dict[str, Any]:
         """Return the latest maintenance-owned usage snapshot without provider I/O."""
         try:
             with self.database.connect() as connection:
+                try:
+                    status_rows = connection.execute(
+                        """SELECT endpoint_id, protocol, status, error_type, observed_at
+                             FROM endpoint_usage_snapshot_status
+                            WHERE protocol = 'outline'"""
+                    ).fetchall()
+                except Exception:
+                    status_rows = []
                 rows = connection.execute(
                     """SELECT endpoint_id, external_id, observed_bytes, observed_at
                          FROM endpoint_usage_snapshots
@@ -1511,20 +1562,38 @@ class EndpointRegistry:
                 "source": "maintenance_snapshot",
             }
         by_endpoint: dict[str, dict[str, int]] = {}
+        unavailable: dict[str, str] = {}
         latest: str | None = None
+        max_age_seconds = max(
+            60, int(os.environ.get("AURIX_USAGE_SNAPSHOT_MAX_AGE_SECONDS", "1800"))
+        )
+        cutoff = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
+        for row in status_rows:
+            endpoint = str(row["endpoint_id"])
+            observed_at = str(row["observed_at"] or "")
+            if observed_at and (latest is None or observed_at > latest):
+                latest = observed_at
+            try:
+                observed = datetime.fromisoformat(observed_at).astimezone(UTC)
+            except (TypeError, ValueError, OverflowError):
+                observed = None
+            status = str(row["status"] or "unknown").strip().lower()
+            if status != "healthy":
+                unavailable[endpoint] = str(row["error_type"] or status or "unavailable")
+            elif observed is None or observed < cutoff:
+                unavailable[endpoint] = "stale"
         for row in rows:
             endpoint = str(row["endpoint_id"])
+            if endpoint in unavailable:
+                continue
             by_endpoint.setdefault(endpoint, {})[str(row["external_id"])] = max(
                 0, int(row["observed_bytes"] or 0)
             )
             observed_at = str(row["observed_at"] or "")
             if observed_at and (latest is None or observed_at > latest):
                 latest = observed_at
-        max_age_seconds = max(
-            60, int(os.environ.get("AURIX_USAGE_SNAPSHOT_MAX_AGE_SECONDS", "1800"))
-        )
         stale = latest is None
-        if latest is not None:
+        if latest is not None and not status_rows:
             try:
                 stale = datetime.fromisoformat(latest).astimezone(UTC) < (
                     datetime.now(UTC) - timedelta(seconds=max_age_seconds)
@@ -1533,7 +1602,10 @@ class EndpointRegistry:
                 stale = True
         return {
             "byEndpoint": by_endpoint,
-            "errors": {"snapshot": "stale"} if stale else {},
+            "errors": {
+                **unavailable,
+                **({"snapshot": "stale"} if stale and not unavailable else {}),
+            },
             "source": "maintenance_snapshot",
             "latest_observed_at": latest,
             "snapshot_max_age_seconds": max_age_seconds,

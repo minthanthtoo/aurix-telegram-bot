@@ -482,6 +482,34 @@ FREE_ACCESS_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS endpoint_usage_snapshots_latest ON endpoint_usage_snapshots(endpoint_id, observed_at)",
         ),
     ),
+    Migration(
+        10,
+        "endpoint_usage_snapshot_status",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_usage_snapshot_status (
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   protocol TEXT NOT NULL DEFAULT 'outline',
+                   status TEXT NOT NULL CHECK (status IN ('healthy', 'failed', 'unknown')),
+                   error_type TEXT,
+                   observed_at TEXT NOT NULL,
+                   source TEXT NOT NULL DEFAULT 'maintenance',
+                   PRIMARY KEY (endpoint_id, protocol)
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_usage_snapshot_status_latest ON endpoint_usage_snapshot_status(observed_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS endpoint_usage_snapshot_status (
+                   endpoint_id TEXT NOT NULL REFERENCES vpn_endpoints(id),
+                   protocol TEXT NOT NULL DEFAULT 'outline',
+                   status TEXT NOT NULL CHECK (status IN ('healthy', 'failed', 'unknown')),
+                   error_type TEXT,
+                   observed_at TEXT NOT NULL,
+                   source TEXT NOT NULL DEFAULT 'maintenance',
+                   PRIMARY KEY (endpoint_id, protocol)
+               )""",
+            "CREATE INDEX IF NOT EXISTS endpoint_usage_snapshot_status_latest ON endpoint_usage_snapshot_status(observed_at)",
+        ),
+    ),
 )
 
 COMMERCE_MIGRATIONS = (

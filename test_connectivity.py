@@ -198,8 +198,21 @@ class EndpointRegistryTest(unittest.TestCase):
         )
         with patch.dict(os.environ, {"AURIX_USAGE_SNAPSHOT_MAX_AGE_SECONDS": "60"}):
             cached = self.registry.cached_usage_metrics()
-        self.assertEqual(cached["errors"], {"snapshot": "stale"})
-        self.assertEqual(cached["byEndpoint"]["legacy-default"]["free-key"], 123)
+        self.assertEqual(cached["errors"], {"legacy-default": "stale"})
+        self.assertEqual(cached["byEndpoint"], {})
+
+    def test_failed_endpoint_status_hides_its_previous_usage_snapshot(self):
+        self.registry.persist_usage_snapshot(
+            {"byEndpoint": {"legacy-default": {"free-key": 123}}},
+            now=datetime.now(UTC),
+        )
+        self.registry.persist_usage_snapshot(
+            {"byEndpoint": {}, "errors": {"legacy-default": "TimeoutError"}},
+            now=datetime.now(UTC),
+        )
+        cached = self.registry.cached_usage_metrics()
+        self.assertEqual(cached["byEndpoint"], {})
+        self.assertEqual(cached["errors"], {"legacy-default": "TimeoutError"})
 
     def test_endpoint_lifecycle_is_drain_then_terminal_retirement(self):
         now = datetime.now(UTC)

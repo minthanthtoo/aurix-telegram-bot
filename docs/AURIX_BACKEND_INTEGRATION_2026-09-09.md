@@ -619,4 +619,6 @@ provider access from a customer request. Durable usage reads now include a
 bounded freshness verdict (`AURIX_USAGE_SNAPSHOT_MAX_AGE_SECONDS`, default 30
 minutes); stale or empty snapshots are surfaced as unavailable while retaining
 the last bounded values for operator diagnosis. The VPN-only regression now
-passes `366` tests after these read-model guards.
+passes `367` tests after these read-model guards. Migration `free_access:10`
+also records endpoint-level healthy/failed status, so one healthy node cannot
+mask a failed or stale node's last usage values in the customer read model.
