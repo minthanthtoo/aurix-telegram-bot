@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 import unittest
@@ -173,6 +174,30 @@ class VpnWebApplicationTest(unittest.TestCase):
             [item["protocol"] for item in payload["protocols"]],
             ["outline", "xray"],
         )
+
+    def test_protocol_catalog_http_route_is_authenticated_and_redacted(self):
+        self.application.runtime.connectivity = _ProtocolRegistry()
+        self.application.runtime.commerce.adapter_registry = SimpleNamespace(
+            is_registered=lambda protocol: protocol in {"outline", "xray"}
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.application))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            request = Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/protocols?plan_code=basic",
+                headers={"X-Telegram-Init-Data": _init_data("bot-token")},
+            )
+            with urlopen(request, timeout=3) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(
+                [item["protocol"] for item in payload["protocols"]],
+                ["outline", "xray"],
+            )
+            self.assertNotIn("public_address", json.dumps(payload))
+        finally:
+            server.shutdown()
+            server.server_close()
 
     def test_text_payment_is_disabled_without_explicit_legacy_flag(self):
         user = self.application.authenticate(_init_data("bot-token", auth_date=int(time.time())))

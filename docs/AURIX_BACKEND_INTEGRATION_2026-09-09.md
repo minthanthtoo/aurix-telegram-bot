@@ -514,7 +514,8 @@ customer select an enabled, registered transport before choosing a server and
 creating an order. Candidate or unregistered Xray/Hysteria2 profiles remain
 hidden, while legacy portal embeddings continue to default to Outline. The
 portal sends the selected protocol through the existing order boundary and
-shows the matching connection method for active credentials. The complete
-non-PostgreSQL VPN regression passes `342` tests after this change; no live
+shows the matching connection method for active credentials. The authenticated
+protocol catalog route is covered end-to-end with redaction assertions. The
+complete non-PostgreSQL VPN regression passes `343` tests after this change; no live
 server, provider, customer credential, load test, speed test, or deployment was
 changed.
