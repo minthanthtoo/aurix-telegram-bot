@@ -149,6 +149,8 @@ class IdentityAccountingTest(unittest.TestCase):
         self.assertEqual(initial[0]["active_lease_bytes"], 1000)
         self.assertEqual(initial[0]["lease_used_bytes"], 0)
         self.assertIsNone(initial[0]["last_usage_at"])
+        self.assertEqual(initial[0]["lifecycle_phase"], "active")
+        self.assertFalse(initial[0]["session_termination_pending"])
         self.assertNotIn("secret", json.dumps(initial))
 
         self.identity.record_usage(
@@ -163,6 +165,23 @@ class IdentityAccountingTest(unittest.TestCase):
         self.assertEqual(current["consumed_bytes"], 125)
         self.assertEqual(current["remaining_bytes"], 875)
         self.assertEqual(current["last_usage_at"], self.now.isoformat())
+
+        self.assertTrue(
+            self.identity.mark_remote_revoked(
+                generation,
+                verified=True,
+                sessions_terminated=False,
+                now=self.now,
+            )
+        )
+        pending = self.identity.admin_generations(protocol="xray")[0]
+        self.assertEqual(pending["lifecycle_phase"], "session_termination_pending")
+        self.assertTrue(pending["session_termination_pending"])
+
+        self.assertTrue(self.identity.mark_sessions_terminated(generation, now=self.now))
+        revoked = self.identity.admin_generations(protocol="xray")[0]
+        self.assertEqual(revoked["lifecycle_phase"], "revoked")
+        self.assertFalse(revoked["session_termination_pending"])
 
     def test_managed_quota_sweep_is_protocol_neutral_and_idempotent(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1", quota_bytes=1000)

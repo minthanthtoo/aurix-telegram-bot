@@ -745,6 +745,12 @@ fallback retains its historical finalize-after-delete behavior. The regression
 suite covers this boundary locally; no provider, customer, server, or production
 database state was changed.
 
+The read-only Control Center now labels that intermediate state as
+`session_termination_pending` and fixes the endpoint credential-detail column
+mapping so usage, lease, lifecycle phase, and creation time remain aligned. This
+keeps operators from mistaking authenticated credential deletion for proven
+termination of already-open sessions.
+
 Managed adapter idempotent reads now retain the verified deployment route and
 secret-free credential intent on the transient grant. A recovered or
 pre-existing provider user can therefore rotate or reconcile through the same

@@ -515,6 +515,18 @@ class IdentityService:
                     item[field] = max(0, int(item.get(field) or 0))
                 except (TypeError, ValueError):
                     item[field] = 0
+            item["session_termination_pending"] = bool(
+                item.get("status") == "retiring"
+                and item.get("remote_state") == "revoked_verified"
+            )
+            if item["session_termination_pending"]:
+                item["lifecycle_phase"] = "session_termination_pending"
+            elif item.get("status") == "revoked":
+                item["lifecycle_phase"] = "revoked"
+            elif item.get("status") == "active":
+                item["lifecycle_phase"] = "active"
+            else:
+                item["lifecycle_phase"] = str(item.get("status") or "unknown")
             result.append(item)
         return result
 
