@@ -857,3 +857,11 @@ the account is inactive. Rejection leaves the token pending and creates no
 device; normal expiry still applies. This enforces the existing account-state
 boundary and does not introduce a complete account suspension or remote VPN
 credential revocation workflow.
+
+## 30. Managed-device enrollment audit — 2026-09-13
+
+Successful pairing now records one atomic `managed_device_enrolled` audit event
+with the customer actor and durable device identifier. It stores no pairing
+token, public key, label, session, or route material. Enrollment and revocation
+therefore have a contiguous secret-free lifecycle history in the same audit
+stream.

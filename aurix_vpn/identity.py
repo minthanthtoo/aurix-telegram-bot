@@ -280,6 +280,14 @@ class IdentityService:
                    VALUES (?, ?, ?, ?, 'active', ?)""",
                 (device_id, str(row["account_id"]), public_key, str(label)[:128], timestamp),
             )
+            connection.execute(
+                """INSERT INTO audit_events
+                   (actor_type, actor_id, action, target_type, target_id,
+                    metadata_json, created_at)
+                   VALUES ('customer', ?, 'managed_device_enrolled',
+                           'managed_device', ?, '{}', ?)""",
+                (str(int(row["requested_by"])), device_id, timestamp),
+            )
             epoch = connection.execute(
                 "SELECT epoch FROM device_revocation_epochs WHERE account_id = ?",
                 (str(row["account_id"]),),

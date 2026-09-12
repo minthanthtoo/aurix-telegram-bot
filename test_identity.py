@@ -159,6 +159,22 @@ class IdentityAccountingTest(unittest.TestCase):
             now=self.now,
         )
 
+        with self.database.connect() as connection:
+            enrollment_rows = connection.execute(
+                """SELECT actor_type, actor_id, action, target_type, target_id,
+                          metadata_json
+                     FROM audit_events
+                    WHERE action = 'managed_device_enrolled'"""
+            ).fetchall()
+        self.assertEqual(len(enrollment_rows), 1)
+        enrollment = enrollment_rows[0]
+        self.assertEqual(
+            tuple(enrollment[key] for key in ("actor_type", "actor_id", "action", "target_type", "target_id")),
+            ("customer", "123", "managed_device_enrolled", "managed_device", paired["device_id"]),
+        )
+        self.assertEqual(json.loads(enrollment["metadata_json"]), {})
+        self.assertNotIn("public-key", json.dumps(dict(enrollment)))
+
         self.assertTrue(self.identity.revoke_device(123, paired["device_id"], now=self.now))
         self.assertFalse(self.identity.revoke_device(123, paired["device_id"], now=self.now))
         with self.database.connect() as connection:
