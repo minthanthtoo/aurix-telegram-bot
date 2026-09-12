@@ -1799,12 +1799,14 @@ class EndpointRegistry:
                 (entitlement_key, source_endpoint_id),
             ).fetchall()
             assignment_protocol = str(assignment["protocol"] or "outline").strip().lower()
-            protocols = {assignment_protocol}
-            protocols.update(
+            generation_protocols = {
                 str(row["protocol"] or "outline").strip().lower()
                 for row in source_protocols
-                if str(row["protocol"] or "outline").strip()
-            )
+            }
+            if generation_protocols and generation_protocols != {assignment_protocol}:
+                raise ConnectivityError("assignment and generation protocols do not match")
+            protocols = {assignment_protocol}
+            protocols.update(generation_protocols)
             for protocol in sorted(protocols):
                 profile = connection.execute(
                     """SELECT 1 FROM endpoint_protocol_profiles

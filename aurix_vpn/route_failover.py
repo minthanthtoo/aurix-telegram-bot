@@ -464,14 +464,19 @@ class RouteFailoverService:
         if not assignments:
             return []
         live_generations = connection.execute(
-            """SELECT DISTINCT g.entitlement_key
+            """SELECT DISTINCT g.entitlement_key,
+                              LOWER(COALESCE(NULLIF(g.protocol, ''), 'outline')) AS protocol
                  FROM credential_generations g
                  JOIN quota_leases l ON l.generation_id = g.generation_id
                     AND l.status = 'active'
                 WHERE g.endpoint_id = ? AND g.status = 'active'""",
             (str(source_endpoint_id),),
         ).fetchall()
-        live_entitlements = {str(row["entitlement_key"]) for row in live_generations}
+        live_protocols: dict[str, set[str]] = {}
+        for row in live_generations:
+            live_protocols.setdefault(str(row["entitlement_key"]), set()).add(
+                str(row["protocol"] or "outline").strip().lower()
+            )
         blockers: list[dict[str, Any]] = []
         for assignment in assignments:
             if assignment["subscription_id"] is not None:
@@ -480,13 +485,20 @@ class RouteFailoverService:
                 entitlement_key = f"free:{assignment['free_key_id']}"
             else:
                 entitlement_key = ""
-            if entitlement_key in live_entitlements:
+            assignment_protocol = str(assignment["protocol"] or "outline").strip().lower()
+            generation_protocols = live_protocols.get(entitlement_key, set())
+            if generation_protocols == {assignment_protocol}:
                 continue
             blockers.append(
                 {
                     "assignment_id": str(assignment["id"]),
                     "entitlement_key": entitlement_key or None,
-                    "protocol": str(assignment["protocol"] or "outline").strip().lower(),
+                    "protocol": assignment_protocol,
+                    "reason": (
+                        "missing_generation"
+                        if not generation_protocols
+                        else "protocol_mismatch"
+                    ),
                 }
             )
         return blockers
@@ -583,6 +595,9 @@ class RouteFailoverService:
             "unmigratable_assignments": len(unmigratable_assignments),
             "unmigratable_assignment_protocols": sorted(
                 {item["protocol"] for item in unmigratable_assignments}
+            ),
+            "unmigratable_assignment_reasons": sorted(
+                {item["reason"] for item in unmigratable_assignments}
             ),
             "active_generations": min(int(candidates["n"] or 0), bounded_limit),
             "queued_decisions": int(queued["n"] or 0),

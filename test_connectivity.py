@@ -584,6 +584,51 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(moved["source_endpoint_id"], assignment.endpoint_id)
         self.assertEqual(self.registry.assignment_for_subscription("sub-1").protocol, "xray")
 
+    def test_transfer_assignment_rejects_assignment_generation_protocol_drift(self):
+        now = datetime.now(UTC)
+        self.registry.register_protocol_profile("legacy-default", "xray", status="candidate", now=now)
+        self.registry.record_protocol_observation("legacy-default", "xray", now=now)
+        self.registry.promote_protocol_profile(
+            "legacy-default", "xray", required_signals=("management",), now=now
+        )
+        self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000, now=now
+        )
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, region, state, accepts_new_assignments,
+                    created_at, last_healthy_at)
+                   VALUES ('protocol-drift-target', 'PROTOCOL-DRIFT-TARGET',
+                           'bkk1', 'ACTIVE', 1, ?, ?)""",
+                (now.isoformat(), now.isoformat()),
+            )
+            connection.execute(
+                """INSERT INTO endpoint_protocol_profiles
+                   (profile_id, endpoint_id, protocol, adapter_type, status, created_at)
+                   VALUES ('outline:protocol-drift-target', 'protocol-drift-target',
+                           'outline', 'outline', 'enabled', ?)""",
+                (now.isoformat(),),
+            )
+        identity = IdentityService(self.database)
+        entitlement = identity.ensure_subscription_entitlement(1, "sub-1", now=now.isoformat())
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE endpoint_assignments SET protocol = 'xray' WHERE subscription_id = 'sub-1'"
+            )
+        identity.create_generation(
+            entitlement,
+            "legacy-default",
+            protocol="outline",
+            external_id="outline-source",
+            usage_baseline_provenance="new",
+            now=now.isoformat(),
+        )
+        with self.assertRaisesRegex(
+            ConnectivityError, "assignment and generation protocols do not match"
+        ):
+            self.registry.transfer_assignment("paid:sub-1", "protocol-drift-target", now=now)
+
     def test_transfer_assignment_rejects_degraded_target_for_normal_move(self):
         now = datetime.now(UTC)
         with self.database.connect() as connection:

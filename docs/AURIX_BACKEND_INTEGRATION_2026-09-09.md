@@ -578,3 +578,9 @@ the blocker count and protocol names, while a drain leaves the source ACTIVE
 until the pending assignment is reconciled. The route-failover regression now
 covers a pending Xray assignment and the complete non-PostgreSQL VPN suite
 passes `356` tests after this guard.
+
+The same drain/transfer boundary now rejects protocol drift between an active
+endpoint assignment and its live generation set. The read-only drain preview
+labels this as `protocol_mismatch`, while both operator drain and assignment
+transfer fail before changing route state. The complete non-PostgreSQL VPN
+suite passes `358` tests after this lifecycle-integrity guard.

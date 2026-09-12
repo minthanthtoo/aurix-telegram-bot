@@ -343,6 +343,41 @@ class RouteFailoverTest(unittest.TestCase):
         self.assertEqual(endpoint["state"], "ACTIVE")
         self.assertTrue(bool(endpoint["accepts_new_assignments"]))
 
+    def test_operator_drain_fails_closed_for_assignment_generation_protocol_drift(self):
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
+        source = self.identity.create_generation(
+            entitlement,
+            "sg-a",
+            protocol="outline",
+            external_id="outline-source",
+            usage_baseline_provenance="new",
+        )
+        self.identity.ensure_generation_lease(
+            entitlement,
+            source,
+            "sg-a",
+            1000,
+            (self.now + timedelta(days=30)).isoformat(),
+            now=self.now,
+        )
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO endpoint_assignments
+                   (id, endpoint_id, subscription_id, free_key_id, plan_code,
+                    status, reason, reserved_quota_bytes, assigned_at, protocol)
+                   VALUES ('drifted-assignment', 'sg-a', 'sub-1', NULL,
+                           'basic_50gb', 'active', 'test-protocol-drift',
+                           1000, ?, 'xray')""",
+                (self.now.isoformat(),),
+            )
+        preview = self.failover.endpoint_drain_preview("sg-a", limit=10)
+        self.assertEqual(preview["unmigratable_assignments"], 1)
+        self.assertEqual(preview["unmigratable_assignment_reasons"], ["protocol_mismatch"])
+        with self.assertRaisesRegex(
+            FailoverError, "active assignments without migratable credential generations"
+        ):
+            self.failover.request_endpoint_drain("sg-a", limit=10, now=self.now)
+
     def test_protocol_profile_is_required_for_failover_and_drain(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
         source = self.identity.create_generation(
