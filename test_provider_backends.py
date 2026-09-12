@@ -214,6 +214,42 @@ class ProviderBackendsTest(unittest.TestCase):
             self.assertEqual(request({"auth": "wrong"})[1], {"ok": False})
             self.assertEqual(request({}, method="GET")[0], "405 Error")
 
+    def test_hysteria2_store_requires_one_customer_id_per_auth_secret(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "users.json"
+            store = Hysteria2UserStore(path, encryption_key=Fernet.generate_key())
+            store.create_user("h2-a", "Customer A", "shared-secret")
+            with self.assertRaisesRegex(ProviderBackendError, "already belongs to another user"):
+                store.create_user("h2-b", "Customer B", "shared-secret")
+            self.assertEqual(store.authenticate("shared-secret"), {"ok": True, "id": "h2-a"})
+            self.assertEqual({item["external_id"] for item in store.list_users()}, {"h2-a"})
+
+    def test_hysteria2_store_upgrades_legacy_auth_records_and_rejects_duplicate_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "users.json"
+            key = Fernet.generate_key()
+            store = Hysteria2UserStore(path, encryption_key=key)
+            store.create_user("h2-a", "Customer A", "customer-a")
+            legacy = json.loads(path.read_text(encoding="utf-8"))
+            legacy.pop("auth_index")
+            legacy["version"] = 1
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+
+            restarted = Hysteria2UserStore(path, encryption_key=key)
+            self.assertEqual(restarted.authenticate("customer-a"), {"ok": True, "id": "h2-a"})
+            restarted.create_user("h2-b", "Customer B", "customer-b")
+            upgraded = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(upgraded["version"], 2)
+            self.assertEqual(len(upgraded["auth_index"]), 2)
+
+            duplicate = dict(upgraded)
+            duplicate["users"] = dict(upgraded["users"])
+            duplicate["users"]["h2-duplicate"] = dict(duplicate["users"]["h2-a"])
+            duplicate.pop("auth_index")
+            path.write_text(json.dumps(duplicate), encoding="utf-8")
+            with self.assertRaisesRegex(ProviderBackendError, "belongs to multiple users"):
+                Hysteria2UserStore(path, encryption_key=key).authenticate("customer-a")
+
     def test_hysteria2_provider_and_adapter_use_stats_and_revoke_boundary(self):
         with tempfile.TemporaryDirectory() as directory:
             store = Hysteria2UserStore(

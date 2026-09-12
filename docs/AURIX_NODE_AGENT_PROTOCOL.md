@@ -93,6 +93,13 @@ auth mode requires a separate adapter/provider implementation plus the same
 per-customer lifecycle evidence; the existing shared-password deployment
 cannot be bound by configuration mistake.
 
+The encrypted HTTP-auth store derives and persists a one-to-one keyed digest
+index from customer authentication secret to Hysteria client ID. It rejects a
+second customer ID using the same secret, preserves compatible version-1 store
+files by rebuilding the index in memory, and writes version 2 on the next user
+mutation. This keeps traffic, kick, and accounting identity unambiguous without
+storing plaintext customer secrets outside their encrypted record.
+
 The WSGI service and these concrete backends are contract boundaries, not proof
 that a provider is safe for commercial traffic. A real deployment still needs
 local/mTLS transport policy, service supervision, restart reconciliation,

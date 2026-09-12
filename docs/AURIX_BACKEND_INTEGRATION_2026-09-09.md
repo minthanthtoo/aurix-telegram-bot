@@ -803,7 +803,11 @@ its stats API secret cannot be sent to a remote or decorated URL through a
 configuration mistake. The managed Hysteria2 adapter and node-agent binding now
 also require the explicit `auth_mode: "http"` route declaration. The current
 shared-password Hysteria2 service therefore fails before provider user creation
-and cannot be attached to the customer lifecycle accidentally. Focused
+and cannot be attached to the customer lifecycle accidentally. Its encrypted
+HTTP-auth store now rejects a secret shared by multiple customer IDs and keeps
+a keyed, plaintext-free secret-to-client-ID index for unambiguous Hysteria
+traffic and disconnect operations; version-1 stores are rebuilt and upgraded
+on their next mutation. Focused
 Xray/node-agent/provider/commerce regressions, Ruff, Python compilation, and
 `git diff --check` pass locally. This remains a local recovery and
 secret-boundary improvement only: it does not constitute a live Xray

@@ -278,14 +278,26 @@ class Hysteria2UserStore:
 
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {"version": 1, "users": {}}
+            return {"version": 2, "users": {}, "auth_index": {}}
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ProviderBackendError("Hysteria2 user store could not be read") from exc
         if not isinstance(value, Mapping) or not isinstance(value.get("users"), Mapping):
             raise ProviderBackendError("Hysteria2 user store has an invalid shape")
-        return {"version": int(value.get("version") or 1), "users": dict(value["users"])}
+        users = dict(value["users"])
+        expected_index = self._auth_index(users)
+        raw_index = value.get("auth_index")
+        if raw_index is not None:
+            if not isinstance(raw_index, Mapping):
+                raise ProviderBackendError("Hysteria2 user store has an invalid auth index")
+            stored_index = {str(digest): str(external_id) for digest, external_id in raw_index.items()}
+            if stored_index != expected_index:
+                raise ProviderBackendError("Hysteria2 user store auth index is inconsistent")
+        # Version-1 stores had no index. Build it in memory and persist it at
+        # the next serialized mutation without making authentication itself a
+        # write operation.
+        return {"version": 2, "users": users, "auth_index": expected_index}
 
     def _write(self, value: Mapping[str, Any]) -> None:
         parent = self.path.parent
@@ -308,6 +320,29 @@ class Hysteria2UserStore:
 
     def _digest(self, secret: str) -> str:
         return hmac.new(self._digest_key, str(secret).encode(), hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def _auth_index(users: Mapping[str, Any]) -> dict[str, str]:
+        """Build a one-to-one Hysteria auth-secret digest to client-ID map."""
+        result: dict[str, str] = {}
+        for raw_external_id, row in users.items():
+            external_id = _identifier(raw_external_id)
+            if not isinstance(row, Mapping):
+                raise ProviderBackendError("Hysteria2 user store has an invalid user record")
+            digest = str(row.get("auth_digest") or "")
+            if not digest:
+                raise ProviderBackendError("Hysteria2 user store user digest is missing")
+            prior = result.setdefault(digest, external_id)
+            if prior != external_id:
+                raise ProviderBackendError("Hysteria2 auth secret belongs to multiple users")
+        return result
+
+    @staticmethod
+    def _customer_secret(secret: str) -> str:
+        value = secret if isinstance(secret, str) else ""
+        if not value or len(value) > 4096:
+            raise ProviderBackendError("Hysteria2 customer secret is invalid")
+        return value
 
     def _record(self, external_id: str, row: Mapping[str, Any], *, include_secret: bool) -> dict[str, Any]:
         result = {
@@ -341,33 +376,44 @@ class Hysteria2UserStore:
         with self._mutation_lock():
             value = self._load()
             key = _identifier(external_id)
+            secret = self._customer_secret(secret)
+            digest = self._digest(secret)
             existing = value["users"].get(key)
             if isinstance(existing, Mapping):
-                if not hmac.compare_digest(str(existing.get("auth_digest") or ""), self._digest(secret)):
+                if not hmac.compare_digest(str(existing.get("auth_digest") or ""), digest):
                     raise ProviderBackendError("Hysteria2 external ID already belongs to another secret")
                 return self._record(key, existing, include_secret=True)
+            existing_id = value["auth_index"].get(digest)
+            if existing_id is not None and existing_id != key:
+                raise ProviderBackendError("Hysteria2 customer secret already belongs to another user")
             record = {
                 "name": str(name)[:128],
-                "auth_digest": self._digest(secret),
-                "secret_ciphertext": self.cipher.encrypt(str(secret).encode()).decode(),
+                "auth_digest": digest,
+                "secret_ciphertext": self.cipher.encrypt(secret.encode()).decode(),
                 "quota_bytes": (metadata or {}).get("quota_bytes"),
             }
             value["users"][key] = record
+            value["auth_index"][digest] = key
             self._write(value)
             return self._record(key, record, include_secret=True)
 
     def delete_user(self, external_id: str) -> None:
         with self._mutation_lock():
             value = self._load()
-            value["users"].pop(_identifier(external_id), None)
+            key = _identifier(external_id)
+            removed = value["users"].pop(key, None)
+            if isinstance(removed, Mapping):
+                digest = str(removed.get("auth_digest") or "")
+                if value["auth_index"].get(digest) == key:
+                    value["auth_index"].pop(digest, None)
             self._write(value)
 
     def authenticate(self, presented: str) -> dict[str, Any]:
         digest = self._digest(presented)
         value = self._load()
-        for external_id, row in value["users"].items():
-            if isinstance(row, Mapping) and hmac.compare_digest(str(row.get("auth_digest") or ""), digest):
-                return {"ok": True, "id": str(external_id)}
+        external_id = value["auth_index"].get(digest)
+        if external_id is not None:
+            return {"ok": True, "id": str(external_id)}
         return {"ok": False}
 
 
