@@ -175,6 +175,36 @@ class FailoverWorkerTest(unittest.TestCase):
         self.assertEqual(result["status"], "committed")
         self.assertEqual(calls, [("bkk-a", "xray")])
 
+    def test_missing_assignment_reservation_fails_closed_before_lease_transfer(self):
+        adapter = _Adapter()
+        executor = RouteFailoverExecutor(
+            self.database,
+            identity=self.identity,
+            failover=self.failover,
+            route_provider=lambda endpoint: {
+                "endpoint_id": endpoint,
+                "protocol": "xray",
+                "route_id": f"xray:{endpoint}",
+            },
+            adapter_provider=lambda _route: adapter,
+            assignment_transfer=lambda _entitlement, _endpoint, _reason: {
+                "changed": False,
+                "reason": "assignment_missing",
+            },
+            access_url_encryptor=lambda value: f"enc:{value}",
+            clock=lambda: self.now,
+            require_data_plane_probe=True,
+        )
+        result = executor.run_once(now=self.now)
+        self.assertEqual(result["status"], "rolled_back")
+        self.assertEqual(len(adapter.revoked), 1)
+        with self.database.connect() as connection:
+            lease = connection.execute(
+                "SELECT generation_id FROM quota_leases WHERE entitlement_key = ? AND status = 'active'",
+                (self.entitlement,),
+            ).fetchone()
+        self.assertEqual(lease["generation_id"], self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

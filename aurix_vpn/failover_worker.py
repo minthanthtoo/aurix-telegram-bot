@@ -174,9 +174,14 @@ class RouteFailoverExecutor:
                 assignment = self.assignment_transfer(
                     entitlement_key, target_endpoint, "failover"
                 )
-                assignment_transferred = bool(
-                    isinstance(assignment, Mapping) and assignment.get("changed") is True
-                )
+                if not isinstance(assignment, Mapping):
+                    raise FailoverExecutionError("assignment transfer returned an invalid response")
+                assignment_reason = str(assignment.get("reason") or "").strip().lower()
+                assignment_transferred = assignment.get("changed") is True
+                if not assignment_transferred and assignment_reason != "already_on_target":
+                    raise FailoverExecutionError(
+                        "failover assignment reservation was not transferred"
+                    )
             lease_id = self.identity.transfer_generation_lease(
                 entitlement_key,
                 source_generation_id,

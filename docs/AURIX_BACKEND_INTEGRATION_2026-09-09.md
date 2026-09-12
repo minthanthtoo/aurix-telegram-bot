@@ -590,3 +590,9 @@ missing protocol profiles, and unmigratable assignment blockers explicitly;
 blocked previews say that no endpoint state will change. The operator surface
 therefore matches the backend's fail-closed behavior instead of presenting a
 generic migration confirmation.
+
+The failover executor also now requires a durable assignment transfer result
+before moving the accounting lease; a missing reservation or malformed
+transfer response rolls the newly provisioned target back instead of
+committing an unowned route. The complete non-PostgreSQL VPN suite passes
+`359` tests with this reservation/lease ordering guard.
