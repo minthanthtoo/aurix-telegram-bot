@@ -153,7 +153,7 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                         ),
                     )
                 result = migrate(source_path, f"postgresql://127.0.0.1:{port}/postgres")
-                self.assertEqual(result["total_rows"], 11)
+                self.assertEqual(result["total_rows"], 12)
                 with database.connect() as connection:
                     profile_type = connection.execute(
                         """SELECT data_type FROM information_schema.columns

@@ -541,6 +541,12 @@ Direct server-directory requests now reuse that same catalog gate: an
 unbound or otherwise unavailable managed transport returns no rows, while a
 legacy registry remains compatible only for Outline.
 
+Latest verification on 2026-09-12: the disposable local PostgreSQL rehearsal
+passes all 3 tests after correcting a stale fixture expectation from 11 to 12
+migrated rows; the complete non-PostgreSQL VPN regression passes 348 tests.
+This validates local migration/repository behavior only and does not validate
+the hosted production database or authorize a production cutover.
+
 The read-only Control Center now includes the persisted protocol on endpoint
 assignments and pending orders, so operators can reconcile protocol-specific
 capacity and customer requests without exposing route secrets or credentials.
