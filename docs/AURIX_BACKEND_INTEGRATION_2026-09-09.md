@@ -650,3 +650,6 @@ restart observations need explicit `quota_enforced=true` and
 visible in readiness as missing evidence and cannot enable a profile. Outline
 promotion keeps its prior operator-selected behavior. This follow-up is local
 only and is covered by the expanded VPN regression suite.
+The full VPN-only regression now passes `370` tests, the disposable PostgreSQL
+rehearsal remains green, and this follow-up is committed as `7ed5be1`
+(`Require structured protocol promotion evidence`).
