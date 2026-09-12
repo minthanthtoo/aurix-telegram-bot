@@ -758,6 +758,11 @@ remains visible and does not release the accounting lease. This provides a
 durable recovery path after a transient session-control outage without changing
 the Outline-only default or auto-promoting a candidate protocol.
 
+Paid revoke jobs also fail closed when credential deletion read-back is
+unavailable: the job remains retryable, the paid key is not marked complete, and
+the customer notice does not claim full termination. This preserves the same
+remote-proof boundary across managed and legacy compatibility paths.
+
 Managed adapter idempotent reads now retain the verified deployment route and
 secret-free credential intent on the transient grant. A recovered or
 pre-existing provider user can therefore rotate or reconcile through the same

@@ -1,6 +1,8 @@
 import unittest
+from datetime import datetime, timezone
 
 from aurix_vpn.commerce_worker import CommerceWorkerMixin
+from commerce import CommerceError
 from connectivity_adapters import (
     ConnectivityAdapterError,
     ConnectivityAdapterRegistry,
@@ -427,6 +429,32 @@ class ConnectivityAdapterTest(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["finalized"], 1)
         self.assertEqual(finalized, ["generation-a"])
+
+    def test_worker_fails_closed_when_managed_delete_readback_is_unavailable(self):
+        client = _ProtocolClient()
+        route = self._xray_route()
+        harness = _WorkerHarness(client, route, "vless://uuid-a@example.com:18443")
+        recorded = []
+        harness.identity.mark_remote_revoked = lambda *args, **kwargs: recorded.append(
+            (args, kwargs)
+        )
+        harness.identity.generations_for_accounting = lambda _entitlement: [{
+            "endpoint_id": route["endpoint_id"],
+            "protocol": "xray",
+            "generation_id": "generation-a",
+            "external_id": "uuid-a",
+            "access_url_ciphertext": "vless://uuid-a@example.com:18443",
+        }]
+        harness.managed_route_provider = lambda _endpoint_id, _protocol: dict(route)
+        harness.managed_adapter_provider = lambda _route: XrayConnectivityAdapter(client)
+        client.users["uuid-a"] = {"external_id": "uuid-a", "name": "customer-a"}
+        client.get_user = None
+
+        with self.assertRaisesRegex(
+            CommerceError, "remote credential deletion could not be verified"
+        ):
+            harness._revoke_generation_set("paid:sub-1", datetime.now(timezone.utc))
+        self.assertEqual(len(recorded), 1)
 
     def test_worker_requires_recovery_authority_when_available(self):
         client = _ProtocolClient()

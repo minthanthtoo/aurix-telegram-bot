@@ -516,6 +516,15 @@ class CommerceServiceTest(unittest.TestCase):
             ("retiring", "revoked_verified"),
         )
         self.assertEqual(lease_state["status"], "active")
+        with self.database.connect() as connection:
+            notices = connection.execute(
+                "SELECT text FROM notifications WHERE telegram_id = ?",
+                (123,),
+            ).fetchall()
+        self.assertTrue(
+            any("could not be proven closed" in row["text"] for row in notices)
+        )
+        self.assertFalse(any("Outline confirmed" in row["text"] for row in notices))
 
     def test_managed_protocol_provisioning_fails_closed_when_profile_is_disabled(self):
         with self.assertRaisesRegex(CommerceError, "protocol profile is not enabled"):

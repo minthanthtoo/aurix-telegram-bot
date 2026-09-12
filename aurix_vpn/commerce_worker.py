@@ -1480,6 +1480,8 @@ class CommerceWorkerMixin:
                 sessions_terminated=sessions_terminated,
                 now=_now_text(now),
             )
+            if not verified:
+                raise CommerceError("remote credential deletion could not be verified")
             result[str(generation["external_id"])] = (
                 "deleted_verified" if verified else "delete_accepted",
                 verified,
@@ -1684,8 +1686,22 @@ class CommerceWorkerMixin:
                        WHERE subscription_id = ? AND reason = 'quota'""",
                     (job["subscription_id"],),
                 ).fetchone()
+                if verified and sessions_terminated:
+                    termination_summary = "VPN access was terminated."
+                elif verified:
+                    termination_summary = (
+                        "The VPN credential was removed, but existing sessions could not be "
+                        "proven closed. AuriX is keeping accounting active until that evidence arrives."
+                    )
+                else:
+                    termination_summary = (
+                        "VPN credential deletion could not be verified and is being retried."
+                    )
                 if key["refund_status"] == "refunded":
-                    notice = "Your AuriX order was refunded to your wallet and its VPN access was terminated."
+                    notice = (
+                        "Your AuriX order was refunded to your wallet. "
+                        + termination_summary
+                    )
                     notice_kind = "payment_refunded"
                 elif quota_reason == "quota":
                     usage = (
@@ -1695,16 +1711,19 @@ class CommerceWorkerMixin:
                         else ""
                     )
                     notice = (
-                        "Your AuriX VPN key reached its data limit and was terminated."
+                        "Your AuriX VPN key reached its data limit. "
+                        + termination_summary
                         + usage
                         + " Renew to receive a new key."
                     )
                     notice_kind = "vpn_quota"
                 else:
-                    notice = "Your AuriX VPN subscription expired and its key was terminated. Renew to restore access."
+                    notice = (
+                        "Your AuriX VPN subscription expired. "
+                        + termination_summary
+                        + " Renew to restore access."
+                    )
                     notice_kind = "vpn_expired"
-                if remote_state == "deleted_verified":
-                    notice += " Outline confirmed the credential is deleted."
                 connection.execute(
                     """INSERT INTO notifications
                        (id, dedupe_key, telegram_id, kind, text, status, next_attempt_at, created_at)
