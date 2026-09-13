@@ -8,9 +8,17 @@ const mode = document.querySelector("#mode");
 const direction = document.querySelector("#direction");
 const directionControl = document.querySelector("#direction-control");
 const model = document.querySelector("#model");
+const chatModelControl = document.querySelector("#chat-model-control");
+const imageModelControl = document.querySelector("#image-model-control");
+const imageSizeControl = document.querySelector("#image-size-control");
+const imageModel = document.querySelector("#image-model");
+const imageSize = document.querySelector("#image-size");
 const modeDescription = document.querySelector("#mode-description");
 const starterPrompts = document.querySelector("#starter-prompts");
 const translatorWorkspace = document.querySelector("#translator-workspace");
+const imageWorkspace = document.querySelector("#image-workspace");
+const imageResult = document.querySelector("#image-result");
+const imageReviewState = document.querySelector("#image-review-state");
 const translationSource = document.querySelector("#translation-source");
 const translationResult = document.querySelector("#translation-result");
 const translationReviewState = document.querySelector("#translation-review-state");
@@ -31,10 +39,13 @@ const shared = window.AuriXShared;
 let authenticatedUser = null;
 let activeMode = mode.value;
 let activeModelId = model.value;
+let activeImageModelId = imageModel.value;
 let lastSubmittedMode = activeMode;
 let lastSubmittedModelId = activeModelId;
+let lastSubmittedImageModelId = activeImageModelId;
 let pendingModeChange = null;
 let pendingModelChange = null;
+let pendingImageModelChange = null;
 let conversation = [];
 let activeRequests = 0;
 let durableConversationId = null;
@@ -43,17 +54,21 @@ let activeEventStream = null;
 let activeAttempt = null;
 let authCheckInFlight = null;
 let lastAuthCheckAt = 0;
-const modeConversations = { english: [], translate: [], lisu_assistant: [] };
+let imageModelsLoadPromise = null;
+let imageModelsUserKey = null;
+const modeConversations = { english: [], translate: [], lisu_assistant: [], image_generation: [] };
 const modelLabels = {};
 const modeLabels = {
   english: "English assistant",
   translate: "English ↔ Lisu translator",
   lisu_assistant: "Lisu assistant (experimental)",
+  image_generation: "Image generation",
 };
 const modeDescriptions = {
   english: "Warm, clear answers in English.",
   translate: "Translate the submitted source and preserve its meaning.",
   lisu_assistant: "Conversational Lisu-script replies; experimental.",
+  image_generation: "Create an image from a clear natural-language description.",
 };
 const starterSets = {
   english: [
@@ -70,6 +85,11 @@ const starterSets = {
     ["Start a conversation", "ꓮ ꓓꓳ ꓡꓯꓽ"],
     ["Ask how it is", "ꓠꓴ ꓮ ꓫꓵꓽ ꓬꓰ ꓠꓲꓹ ꓫꓵ ꓡ?"],
     ["Ask for help", "ꓟꓬꓱꓽ ꓐꓯ ꓖꓶ꓿"],
+  ],
+  image_generation: [
+    ["A mountain lake", "A cinematic sunrise over a quiet mountain lake, mist between the trees, natural colors."],
+    ["A product scene", "A clean editorial product photograph of a handmade woven bag on a warm wooden table."],
+    ["A storybook scene", "A gentle illustrated village scene at dusk, lanterns glowing, welcoming and peaceful."],
   ],
 };
 const MAX_CONTEXT_BYTES = 48 * 1024;
@@ -264,6 +284,66 @@ function setTurnResponse(turn, role, text, onRetry = null) {
   if (shouldFollow) messages.scrollTop = messages.scrollHeight;
 }
 
+function imageItemSource(item) {
+  if (item && typeof item.b64_json === "string" && item.b64_json) {
+    return "data:image/png;base64," + item.b64_json;
+  }
+  return item && typeof item.url === "string" ? item.url : "";
+}
+
+function renderImageResult(payload, prompt) {
+  imageResult.replaceChildren();
+  const data = payload && Array.isArray(payload.data) ? payload.data : [];
+  const valid = data.filter((item) => imageItemSource(item));
+  if (!valid.length) {
+    imageResult.innerHTML = '<p class="empty-state">The provider returned no displayable image.</p>';
+    imageReviewState.textContent = "No image returned";
+    return [];
+  }
+  valid.forEach((item, index) => {
+    const figure = document.createElement("figure");
+    figure.className = "generated-image";
+    const image = document.createElement("img");
+    image.src = imageItemSource(item);
+    image.alt = prompt || "Generated image";
+    image.loading = "lazy";
+    figure.appendChild(image);
+    if (item.revised_prompt) {
+      const caption = document.createElement("figcaption");
+      caption.textContent = item.revised_prompt;
+      figure.appendChild(caption);
+    } else if (valid.length > 1) {
+      const caption = document.createElement("figcaption");
+      caption.textContent = "Image " + (index + 1);
+      figure.appendChild(caption);
+    }
+    imageResult.appendChild(figure);
+  });
+  imageReviewState.textContent = valid.length === 1 ? "Image ready" : valid.length + " images ready";
+  return valid;
+}
+
+function setTurnImageResponse(turn, payload, prompt) {
+  const valid = renderImageResult(payload, prompt);
+  const wrapper = document.createElement("div");
+  wrapper.className = "response-content";
+  wrapper.appendChild(messageNode("assistant", valid.length ? "Image generated." : "No image was returned."));
+  if (valid.length) {
+    const preview = document.createElement("div");
+    preview.className = "turn-images";
+    valid.forEach((item) => {
+      const image = document.createElement("img");
+      image.src = imageItemSource(item);
+      image.alt = prompt || "Generated image";
+      image.loading = "lazy";
+      preview.appendChild(image);
+    });
+    wrapper.appendChild(preview);
+  }
+  turn.response.replaceChildren(wrapper);
+  if (nearBottom()) messages.scrollTop = messages.scrollHeight;
+}
+
 function addOrderedAssistantEntry(turn, text) {
   const userIndex = turn.workingConversation.indexOf(turn.userEntry);
   if (userIndex < 0) return;
@@ -315,6 +395,8 @@ function setAuthenticated(user) {
   mode.disabled = !authenticated;
   direction.disabled = !authenticated;
   model.disabled = !authenticated;
+  imageModel.disabled = !authenticated;
+  imageSize.disabled = !authenticated;
   if (authenticated) {
     const handle = user.username ? "@" + user.username : user.first_name || "Telegram user";
     authUser.textContent = "Signed in as " + handle;
@@ -326,6 +408,7 @@ function setAuthenticated(user) {
     telegramLogin.replaceChildren();
     restoreDraft();
     setStatus("Ready");
+    loadImageModels();
     if (!wasAuthenticated || !durableConversationId) {
       ensureDurableConversation().catch((error) => {
         setStatus(error instanceof Error ? error.message : "Conversation history is unavailable");
@@ -334,6 +417,7 @@ function setAuthenticated(user) {
   } else {
     closeActiveEventStream();
     durableConversationId = null;
+    imageModelsUserKey = null;
     authUser.hidden = true;
     logoutButton.hidden = true;
     reauthButton.hidden = false;
@@ -588,10 +672,17 @@ async function loadAuth({ force = false } = {}) {
 
 function updateModeUI() {
   const isTranslator = mode.value === "translate";
+  const isImageGenerator = mode.value === "image_generation";
   directionControl.hidden = !isTranslator;
   translatorWorkspace.hidden = !isTranslator;
-  messageLabel.textContent = isTranslator ? "Source" : "Message";
-  messageInput.placeholder = isTranslator ? "Enter source text to translate…" : "Write a message…";
+  chatModelControl.hidden = isImageGenerator;
+  imageModelControl.hidden = !isImageGenerator;
+  imageSizeControl.hidden = !isImageGenerator;
+  imageWorkspace.hidden = !isImageGenerator;
+  messageLabel.textContent = isTranslator ? "Source" : isImageGenerator ? "Image prompt" : "Message";
+  messageInput.placeholder = isTranslator
+    ? "Enter source text to translate…"
+    : isImageGenerator ? "Describe the image you want to create…" : "Write a message…";
   modeDescription.textContent = modeDescriptions[mode.value] || "";
   starterPrompts.replaceChildren();
   (starterSets[mode.value] || []).forEach(([label, prompt]) => {
@@ -610,7 +701,9 @@ function resetVisibleConversation() {
   empty.className = "message assistant";
   empty.textContent = mode.value === "translate"
     ? "Choose a direction, enter source text, and translate."
-    : "Choose a suggestion or write a message to begin.";
+    : mode.value === "image_generation"
+      ? "Describe an image and send the prompt to begin."
+      : "Choose a suggestion or write a message to begin.";
   messages.appendChild(empty);
 }
 
@@ -621,15 +714,18 @@ mode.addEventListener("change", () => {
   pendingModeChange = {
     from: activeMode,
     to: nextMode,
-    handoff: nextMode === "translate" ? [] : conversation.slice(-4),
+    handoff: nextMode === "translate" || nextMode === "image_generation" ? [] : conversation.slice(-4),
   };
   activeMode = nextMode;
   conversation = modeConversations[nextMode] || [];
   updateModeUI();
+  if (nextMode === "image_generation") resetVisibleConversation();
   updateTranslationResult("");
+  imageResult.replaceChildren();
+  imageReviewState.textContent = "Waiting for an image prompt";
   restoreDraft();
   setStatus("Mode ready: " + modeLabels[nextMode]);
-  if (authenticatedUser) {
+  if (authenticatedUser && nextMode !== "image_generation") {
     ensureDurableConversation({ force: true }).catch((error) => {
       setStatus(error instanceof Error ? error.message : "Conversation history is unavailable");
     });
@@ -642,6 +738,14 @@ model.addEventListener("change", () => {
   pendingModelChange = { from: activeModelId, to: nextModelId };
   activeModelId = nextModelId;
   setStatus("Model ready: " + (modelLabels[nextModelId] || nextModelId));
+});
+
+imageModel.addEventListener("change", () => {
+  const nextModelId = imageModel.value;
+  if (nextModelId === activeImageModelId) return;
+  pendingImageModelChange = { from: activeImageModelId, to: nextModelId };
+  activeImageModelId = nextModelId;
+  setStatus("Image model ready: " + (modelLabels[nextModelId] || nextModelId));
 });
 
 direction.addEventListener("change", () => {
@@ -691,13 +795,22 @@ newChatButton.addEventListener("click", async () => {
   conversation = [];
   pendingModeChange = null;
   pendingModelChange = null;
+  pendingImageModelChange = null;
   lastSubmittedMode = activeMode;
   lastSubmittedModelId = activeModelId;
+  lastSubmittedImageModelId = activeImageModelId;
   updateTranslationSource("");
   updateTranslationResult("", "Waiting for translation", { force: true });
+  imageResult.replaceChildren();
+  imageReviewState.textContent = "Waiting for an image prompt";
   resetVisibleConversation();
   setStatus("Creating conversation…", true);
   try {
+    if (activeMode === "image_generation") {
+      setStatus("New image workspace ready");
+      messageInput.focus();
+      return;
+    }
     const created = await requestJSON("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -737,6 +850,53 @@ async function loadModels() {
   } catch (_error) {
     setStatus("Model list unavailable; using the configured model");
   }
+}
+
+async function loadImageModels() {
+  if (!authenticatedUser) return;
+  const userKey = String(authenticatedUser.telegram_id || authenticatedUser.id || "");
+  if (imageModelsUserKey === userKey && imageModel.options.length > 0) return;
+  if (imageModelsLoadPromise) return imageModelsLoadPromise;
+  imageModelsLoadPromise = (async () => {
+    try {
+      const payload = await requestJSON("/api/image-models");
+      imageModel.innerHTML = "";
+      const models = Array.isArray(payload.models) ? payload.models : [];
+      models.forEach((item) => {
+        modelLabels[item.id] = item.label || item.id;
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = item.label || item.id;
+        option.title = item.owned_by ? "Provider: " + item.owned_by : "Image generation model";
+        imageModel.appendChild(option);
+      });
+      if (!models.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No image models available";
+        imageModel.appendChild(option);
+        activeImageModelId = "";
+        lastSubmittedImageModelId = "";
+        imageModelsUserKey = userKey;
+        setStatus("Image generation is not available right now");
+        return;
+      }
+      imageModel.value = activeImageModelId && models.some((item) => item.id === activeImageModelId)
+        ? activeImageModelId
+        : models[0].id;
+      activeImageModelId = imageModel.value;
+      lastSubmittedImageModelId = activeImageModelId;
+      imageModelsUserKey = userKey;
+    } catch (_error) {
+      imageModel.innerHTML = '<option value="">Image models unavailable</option>';
+      activeImageModelId = "";
+      lastSubmittedImageModelId = "";
+      imageModelsUserKey = null;
+    } finally {
+      imageModelsLoadPromise = null;
+    }
+  })();
+  return imageModelsLoadPromise;
 }
 
 async function retryTurn(turn) {
@@ -789,18 +949,25 @@ form.addEventListener("submit", async (event) => {
   if (activeRequests > 0) return;
 
   const requestMode = mode.value;
-  const requestModel = model.value;
+  const requestModel = requestMode === "image_generation" ? imageModel.value : model.value;
   const directionValue = direction.value;
+  if (requestMode === "image_generation" && !requestModel) {
+    setStatus("Choose an image model first");
+    return;
+  }
   activeRequests += 1;
-  setStatus("Preparing secure conversation…", true);
+  setStatus(requestMode === "image_generation" ? "Preparing image…" : "Preparing secure conversation…", true);
   let turn = null;
 
   try {
-    await ensureDurableConversation();
+    if (requestMode !== "image_generation") await ensureDurableConversation();
     const modeChange = activeMode === lastSubmittedMode ? null : pendingModeChange;
-    const modelChange = activeModelId === lastSubmittedModelId ? null : pendingModelChange;
+    const modelChange = requestMode === "image_generation"
+      ? (activeImageModelId === lastSubmittedImageModelId ? null : pendingImageModelChange)
+      : (activeModelId === lastSubmittedModelId ? null : pendingModelChange);
     pendingModeChange = null;
     pendingModelChange = null;
+    pendingImageModelChange = null;
     const workingConversation = conversation;
     const userEntry = { role: "user", content: text };
     workingConversation.push(userEntry);
@@ -819,7 +986,30 @@ form.addEventListener("submit", async (event) => {
       updateTranslationSource(text);
       updateTranslationResult("Translating…", "Generating translation…", { force: true });
     }
+    if (requestMode === "image_generation") {
+      imageReviewState.textContent = "Generating image…";
+    }
     setStatus("Thinking…", true);
+    if (requestMode === "image_generation") {
+      const imagePayload = await requestJSON("/api/images/generations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: requestModel,
+          prompt: text,
+          n: 1,
+          size: imageSize.value,
+          response_format: "b64_json",
+        }),
+      });
+      lastSubmittedMode = requestMode;
+      lastSubmittedImageModelId = requestModel;
+      modeConversations[requestMode] = workingConversation;
+      setTurnImageResponse(turn, imagePayload, text);
+      addOrderedAssistantEntry(turn, "Image generated.");
+      setStatus("Image ready");
+      return;
+    }
     const payload = await requestJSON(
       "/api/conversations/" + encodeURIComponent(durableConversationId) + "/turns",
       {
@@ -858,6 +1048,9 @@ form.addEventListener("submit", async (event) => {
         error instanceof Error ? error.message : "The AI request could not be submitted",
       );
       removeTurnUserEntry(turn);
+    }
+    if (requestMode === "image_generation") {
+      imageReviewState.textContent = "Image generation failed — try again";
     }
     setStatus(error instanceof Error ? error.message : "The AI request failed");
     messageInput.value = text;

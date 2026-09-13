@@ -38,6 +38,7 @@
             <p class="sidebar-copy">Keep partner access visible, bounded, and easy to rotate.</p>
             <nav class="admin-nav">
               <a class="admin-nav-link active" href="#overview">Overview</a>
+              <a class="admin-nav-link" href="#analytics">Analytics</a>
               <a class="admin-nav-link" href="#sites">Partner sites</a>
               <a class="admin-nav-link" href="#activity">Activity</a>
               <a class="admin-nav-link" href="#guide">Integration guide</a>
@@ -81,6 +82,129 @@
                 <strong id="metric-tokens">—</strong>
                 <span class="metric-detail">reported by providers</span>
               </article>
+            </section>
+
+            <section id="analytics" class="panel admin-section usage-dashboard">
+              <div class="section-heading analytics-heading">
+                <div>
+                  <p class="eyebrow">Usage &amp; analytics</p>
+                  <h3>Token and request health</h3>
+                  <p class="hint">Aggregated counts only: no prompts, responses, or secret key values are shown.</p>
+                </div>
+                <div class="analytics-controls">
+                  <label class="inventory-filter" for="usage-range">Range
+                    <select id="usage-range">
+                      <option value="today">Today</option>
+                      <option value="24h">24 hours</option>
+                      <option value="7d" selected>7 days</option>
+                      <option value="30d">30 days</option>
+                      <option value="60d">60 days</option>
+                      <option value="month">Current month</option>
+                    </select>
+                  </label>
+                  <button id="refresh-analytics" class="button-quiet" type="button">Refresh</button>
+                </div>
+              </div>
+              <div class="metric-grid analytics-metrics" aria-label="Selected period metrics">
+                <article class="metric-card">
+                  <span class="metric-label">Requests</span>
+                  <strong id="analytics-requests">—</strong>
+                  <span class="metric-detail">all outcomes</span>
+                </article>
+                <article class="metric-card accent-metric">
+                  <span class="metric-label">Successful</span>
+                  <strong id="analytics-successful">—</strong>
+                  <span id="analytics-success-rate" class="metric-detail">success rate —</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Input tokens</span>
+                  <strong id="analytics-input">—</strong>
+                  <span class="metric-detail">inbound context</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Output tokens</span>
+                  <strong id="analytics-output">—</strong>
+                  <span class="metric-detail">generated output</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Total tokens</span>
+                  <strong id="analytics-total">—</strong>
+                  <span id="analytics-reported" class="metric-detail">usage reported —</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Failed</span>
+                  <strong id="analytics-failed">—</strong>
+                  <span class="metric-detail">requests not completed</span>
+                </article>
+              </div>
+              <div class="analytics-grid">
+                <div class="usage-chart-card">
+                  <div class="usage-chart-heading">
+                    <div>
+                      <p class="eyebrow">Daily trend</p>
+                      <h4>Traffic over time</h4>
+                    </div>
+                    <div class="segmented-control" aria-label="Chart metric">
+                      <button id="chart-tokens" class="button-quiet active" type="button">Tokens</button>
+                      <button id="chart-requests" class="button-quiet" type="button">Requests</button>
+                    </div>
+                  </div>
+                  <div id="usage-chart" class="usage-chart" role="img" aria-label="Daily token usage chart"></div>
+                </div>
+                <aside class="analytics-quick-stats" aria-label="Additional usage metrics">
+                  <div>
+                    <span class="quick-stat-label">In / out</span>
+                    <strong id="analytics-in-out">—</strong>
+                    <span class="metric-detail">input / output tokens</span>
+                  </div>
+                  <div>
+                    <span class="quick-stat-label">Cached</span>
+                    <strong id="analytics-cached">—</strong>
+                    <span class="metric-detail">provider-reported cached tokens</span>
+                  </div>
+                  <div>
+                    <span class="quick-stat-label">Estimated cost</span>
+                    <strong id="analytics-cost">—</strong>
+                    <span class="metric-detail">reported provider estimate</span>
+                  </div>
+                  <div>
+                    <span class="quick-stat-label">Last request</span>
+                    <strong id="analytics-last-used">—</strong>
+                    <span class="metric-detail">within selected range</span>
+                  </div>
+                </aside>
+              </div>
+              <div class="breakdown-toolbar">
+                <div>
+                  <p class="eyebrow">Breakdown</p>
+                  <h4 id="breakdown-caption">Usage by site</h4>
+                </div>
+                <label class="inventory-filter" for="breakdown-dimension">View by
+                  <select id="breakdown-dimension">
+                    <option value="accounts">Site / account</option>
+                    <option value="keys">API key</option>
+                    <option value="models">Model</option>
+                    <option value="endpoints">Endpoint</option>
+                  </select>
+                </label>
+              </div>
+              <div class="analytics-table-wrap">
+                <table class="breakdown-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Name</th>
+                      <th scope="col">Requests</th>
+                      <th scope="col">Successful</th>
+                      <th scope="col">In / out</th>
+                      <th scope="col">Total</th>
+                      <th scope="col">Success rate</th>
+                      <th scope="col">Est. cost</th>
+                      <th scope="col">Last used</th>
+                    </tr>
+                  </thead>
+                  <tbody id="breakdown-table-body"></tbody>
+                </table>
+              </div>
             </section>
 
             <section id="sites" class="panel admin-section">

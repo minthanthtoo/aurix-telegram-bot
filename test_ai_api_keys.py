@@ -32,6 +32,39 @@ class _FakeRouter:
             usage={"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9},
         )
 
+    def request_json(self, path, payload, **kwargs):
+        if path == "/videos":
+            self.last_video = (path, payload, kwargs)
+            return {
+                "id": "video_123",
+                "object": "video",
+                "model": payload["model"],
+                "status": "queued",
+            }
+        if path.startswith("/videos/"):
+            self.last_video_metadata = (path, payload, kwargs)
+            return {
+                "id": path.rsplit("/", 1)[-1],
+                "object": "video",
+                "model": "fake-provider-model",
+                "status": "completed",
+            }
+        self.last_image = (path, payload, kwargs)
+        return {
+            "created": 1700000000,
+            "data": [{"b64_json": "ZmFrZS1pbWFnZQ=="}],
+            "model": payload["model"],
+        }
+
+    def request_raw(self, path, data, **kwargs):
+        self.last_video_content = (path, data, kwargs)
+        return {"body": b"MP4-video", "content_type": "video/mp4", "model": "fake-provider-model", "usage": None}
+
+    def list_models(self, category=None):
+        if category == "image":
+            return [{"id": "gemini-3.7-flash-high", "object": "model", "owned_by": "test"}]
+        return [{"id": "gemini-3.7-flash-high", "object": "model", "owned_by": "test"}]
+
 
 class _FeatureRouter:
     model = "ag/gemini-3.7-flash-high"
@@ -61,6 +94,29 @@ class _FeatureRouter:
         }
 
     def request_json(self, path, payload, **kwargs):
+        if path.startswith("/images/generations"):
+            self.last_image = (path, payload, kwargs)
+            return {
+                "created": 1700000000,
+                "data": [{"url": "https://images.example/generated.png"}],
+                "model": payload["model"],
+            }
+        if path == "/videos":
+            self.last_video = (path, payload, kwargs)
+            return {
+                "id": "video_123",
+                "object": "video",
+                "model": payload["model"],
+                "status": "queued",
+            }
+        if path.startswith("/videos/"):
+            self.last_video_metadata = (path, payload, kwargs)
+            return {
+                "id": path.rsplit("/", 1)[-1],
+                "object": "video",
+                "model": "video-model",
+                "status": "completed",
+            }
         self.last_embedding = (path, payload)
         return {
             "object": "list",
@@ -75,6 +131,12 @@ class _FeatureRouter:
         }
 
     def request_raw(self, path, data, **kwargs):
+        if path.startswith("/images/generations"):
+            self.last_image_binary = (path, data, kwargs)
+            return {"body": b"PNG-image", "content_type": "image/png", "model": "image-model", "usage": None}
+        if path.startswith("/videos/"):
+            self.last_video_content = (path, data, kwargs)
+            return {"body": b"MP4-video", "content_type": "video/mp4", "model": "video-model", "usage": None}
         self.last_audio = (path, data, kwargs)
         return {"body": b"RIFF-audio", "content_type": "audio/wav", "usage": None}
 
@@ -247,7 +309,7 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.store.initialize()
         account = self.store.create_account(
             "Translator site",
-            allowed_modes=["translate"],
+            allowed_modes=["translate", "image_generation", "video_generation"],
             allowed_models=["gemini-3.7-flash-high"],
             requests_per_minute=20,
         )
@@ -269,11 +331,13 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.thread.join(timeout=2)
         self.tempdir.cleanup()
 
-    def request(self, body, token=None, path="/v1/chat"):
+    def request(self, body, token=None, path="/v1/chat", cookie=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
         headers = {"Content-Type": "application/json"}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        if cookie is not None:
+            headers["Cookie"] = f"aurix_ai_session={cookie}"
         connection.request("POST", path, json.dumps(body).encode(), headers)
         response = connection.getresponse()
         payload = json.loads(response.read())
@@ -293,11 +357,36 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         connection.close()
         return response.status, payload
 
+    def raw_get(self, path, token=None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        headers = {}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        connection.request("GET", path, headers=headers)
+        response = connection.getresponse()
+        body = response.read()
+        content_type = response.getheader("Content-Type")
+        connection.close()
+        return response.status, content_type, body
+
     def admin_json_request(self, method, path, body):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
         headers = {
             "Content-Type": "application/json",
             "Authorization": "Bearer admin-secret",
+            "X-AuriX-Admin": "1",
+        }
+        connection.request(method, path, json.dumps(body).encode(), headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        connection.close()
+        return response.status, payload
+
+    def user_json_request(self, method, path, body, *, cookie):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        headers = {
+            "Content-Type": "application/json",
+            "Cookie": f"aurix_ai_session={cookie}",
             "X-AuriX-Admin": "1",
         }
         connection.request(method, path, json.dumps(body).encode(), headers)
@@ -357,6 +446,35 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(summary["total_tokens"], 9)
         self.assertEqual(len(report["requests"]), 1)
 
+        status, analytics = self.admin_request(
+            "/api/admin/usage?format=analytics", token="admin-secret"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(analytics["summary"]["requests"], 1)
+        self.assertEqual(analytics["summary"]["successful_requests"], 1)
+        self.assertEqual(analytics["summary"]["failed_requests"], 0)
+        self.assertEqual(analytics["summary"]["input_tokens"], 4)
+        self.assertEqual(analytics["summary"]["output_tokens"], 5)
+        self.assertEqual(analytics["summary"]["total_tokens"], 9)
+        self.assertEqual(analytics["summary"]["usage_reported_requests"], 1)
+        self.assertIsNotNone(analytics["summary"]["last_used_at"])
+        self.assertEqual(len(analytics["accounts"]), 1)
+        self.assertEqual(analytics["accounts"][0]["successful_requests"], 1)
+        self.assertEqual(analytics["keys"][0]["requests"], 1)
+        self.assertEqual(analytics["models"][0]["model_id"], "gemini-3.7-flash-high")
+        self.assertEqual(analytics["endpoints"][0]["requests"], 1)
+        self.assertEqual(sum(item["requests"] for item in analytics["daily"]), 1)
+        account_id = analytics["accounts"][0]["account_id"]
+        key_id = analytics["keys"][0]["key_id"]
+        status, filtered = self.admin_request(
+            f"/api/admin/usage?format=analytics&account_id={account_id}"
+            f"&key_id={key_id}&status=completed",
+            token="admin-secret",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(filtered["summary"]["requests"], 1)
+        self.assertEqual(filtered["accounts"][0]["account_id"], account_id)
+
         status, export = self.admin_request(
             "/api/admin/usage?format=9router", token="admin-secret"
         )
@@ -375,6 +493,20 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("accounts", report)
 
+    def test_any_authenticated_telegram_user_can_create_partner_key(self):
+        user = VerifiedTelegramUser(987654321, "Regular", "User", "regular_user", "en")
+        session_token = self.application.sessions.issue(user)
+        status, payload = self.user_json_request(
+            "POST",
+            "/api/admin/accounts",
+            {"name": "Regular user's integration", "key_label": "personal"},
+            cookie=session_token,
+        )
+        self.assertEqual(status, 201)
+        self.assertTrue(payload["key"]["token"].startswith("ak_live_"))
+        self.assertEqual(payload["account"]["owner_type"], "telegram_admin")
+        self.assertEqual(payload["account"]["owner_id"], str(user.telegram_id))
+
     def test_external_api_attributes_usage_to_site_user_and_conversation(self):
         status, payload = self.request(
             {
@@ -392,6 +524,98 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         event = report["requests"][0]
         self.assertEqual(event["user_id"], "site-user-123")
         self.assertEqual(event["conversation_id"], "chat-456")
+
+    def test_openai_compatible_image_generation_route(self):
+        status, payload = self.request(
+            {
+                "model": "gemini-3.7-flash-high",
+                "prompt": "A bright red flower on a dark background",
+                "response_format": "b64_json",
+                "user_id": "image-user-1",
+            },
+            token=self.key,
+            path="/v1/images/generations",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["model"], "gemini-3.7-flash-high")
+        self.assertEqual(payload["data"][0]["b64_json"], "ZmFrZS1pbWFnZQ==")
+        self.assertEqual(self.application.router.last_image[0], "/images/generations")
+
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        image_event = next(
+            item for item in report["requests"] if item["endpoint"] == "/images/generations"
+        )
+        self.assertEqual(image_event["mode"], "image_generation")
+        self.assertEqual(image_event["user_id"], "image-user-1")
+
+    def test_openai_compatible_video_generation_routes(self):
+        status, payload = self.request(
+            {
+                "model": "gemini-3.7-flash-high",
+                "prompt": "A cinematic product reveal",
+                "seconds": "4",
+                "size": "1280x720",
+                "user_id": "video-user-1",
+            },
+            token=self.key,
+            path="/v1/videos",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["id"], "video_123")
+        self.assertEqual(self.application.router.last_video[0], "/videos")
+        self.assertEqual(self.application.router.last_video[1]["model"], "ag/gemini-3.7-flash-high")
+
+        status, metadata = self.admin_request("/v1/videos/video_123", token=self.key)
+        self.assertEqual(status, 200)
+        self.assertEqual(metadata["status"], "completed")
+        self.assertEqual(self.application.router.last_video_metadata[2]["method"], "GET")
+
+        status, content_type, body = self.raw_get("/v1/videos/video_123/content", token=self.key)
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "video/mp4")
+        self.assertEqual(body, b"MP4-video")
+        self.assertEqual(self.application.router.last_video_content[2]["method"], "GET")
+
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        video_event = next(item for item in report["requests"] if item["endpoint"] == "/videos")
+        self.assertEqual(video_event["mode"], "video_generation")
+        self.assertEqual(video_event["user_id"], "video-user-1")
+
+    def test_first_party_image_model_catalog_requires_session(self):
+        status, _ = self.admin_request("/api/image-models")
+        self.assertEqual(status, 401)
+        session = self.application.sessions.issue(
+            VerifiedTelegramUser(123456789, "Image", "User", "image_user", "en")
+        )
+        status, payload = self.admin_request("/api/image-models", cookie=session)
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["models"][0]["capabilities"], ["image_generation"])
+
+        status, payload = self.request(
+            {
+                "model": "gemini-3.7-flash-high",
+                "prompt": "A small red flower",
+                "response_format": "b64_json",
+            },
+            path="/api/images/generations",
+            cookie=session,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"][0]["b64_json"], "ZmFrZS1pbWFnZQ==")
+
+    def test_image_generation_honors_separate_mode_scope(self):
+        account_id = self.store.list_accounts()[0]["id"]
+        self.store.update_account(account_id, allowed_modes=["translate"])
+        status, payload = self.request(
+            {"model": "gemini-3.7-flash-high", "prompt": "A red flower"},
+            token=self.key,
+            path="/v1/images/generations",
+        )
+        self.assertEqual(status, 403)
+        self.assertIn("mode", payload["error"])
 
     def test_openai_compatible_chat_completions_without_conversation_id(self):
         status, payload = self.request(
@@ -568,6 +792,39 @@ class ExternalFeatureForwardingTest(unittest.TestCase):
         self.assertEqual(audio["body"], b"RIFF-audio")
         self.assertEqual(self.router.last_audio[0], "/audio/speech")
 
+    def test_image_generation_supports_json_and_binary_responses(self):
+        result = self.application.external_image_generation(
+            {
+                "model": "image-model",
+                "prompt": "A golden bird over a mountain lake",
+                "size": "1024x1024",
+                "response_format": "url",
+                "user_id": "site-user-1",
+                "conversation_id": "image-chat-1",
+            },
+            f"Bearer {self.key}",
+        )
+        self.assertEqual(result["data"][0]["url"], "https://images.example/generated.png")
+        self.assertEqual(self.router.last_image[0], "/images/generations")
+        self.assertEqual(self.router.last_image[1]["model"], "image-model")
+        self.assertEqual(self.router.last_image[1]["size"], "1024x1024")
+
+        binary = self.application.external_image_generation(
+            {"model": "image-model", "prompt": "A square blue flower"},
+            f"Bearer {self.key}",
+            binary=True,
+        )
+        self.assertEqual(binary["body"], b"PNG-image")
+        self.assertEqual(self.router.last_image_binary[0], "/images/generations?response_format=binary")
+
+        summary = self.store.usage_summary(
+            account_id=self.store.list_accounts()[0]["id"],
+            start_at="1970-01-01T00:00:00+00:00",
+            end_at="2100-01-01T00:00:00+00:00",
+        )
+        self.assertEqual(summary[0]["requests"], 2)
+        self.assertEqual(summary[0]["total_tokens"], 0)
+
     def test_sse_normalizer_rewrites_id_and_preserves_usage(self):
         event = (
             b'data: {"id":"upstream","model":"provider-model",'
@@ -585,6 +842,72 @@ class ExternalFeatureForwardingTest(unittest.TestCase):
         self.assertEqual(provider_model, "provider-model")
         self.assertEqual(upstream_id, "upstream")
         self.assertFalse(done)
+
+    def test_model_discovery_includes_image_capability(self):
+        payload = self.application.external_models(f"Bearer {self.key}")
+        image_models = [item for item in payload["data"] if item["capabilities"] == ["image_generation"]]
+        self.assertEqual(len(image_models), 1)
+        self.assertEqual(image_models[0]["id"], "image/test")
+
+        video_models = [item for item in payload["data"] if item["capabilities"] == ["video_generation"]]
+        self.assertEqual(len(video_models), 1)
+        self.assertEqual(video_models[0]["id"], "video/test")
+
+    def test_model_discovery_hides_image_models_without_image_scope(self):
+        account_id = self.store.list_accounts()[0]["id"]
+        self.store.update_account(account_id, allowed_modes=["translate"])
+        payload = self.application.external_models(f"Bearer {self.key}")
+        self.assertFalse(
+            any(item["capabilities"] == ["image_generation"] for item in payload["data"])
+        )
+        self.assertFalse(
+            any(item["capabilities"] == ["video_generation"] for item in payload["data"])
+        )
+
+    def test_video_generation_supports_submit_metadata_and_content(self):
+        result = self.application.external_video_generation(
+            {
+                "model": "video-model",
+                "prompt": "A cinematic product reveal",
+                "seconds": "4",
+                "size": "1280x720",
+                "user_id": "site-user-1",
+                "conversation_id": "video-chat-1",
+            },
+            f"Bearer {self.key}",
+        )
+        self.assertEqual(result["id"], "video_123")
+        self.assertEqual(result["status"], "queued")
+        self.assertEqual(self.router.last_video[0], "/videos")
+        self.assertEqual(self.router.last_video[1]["model"], "video-model")
+        self.assertEqual(self.router.last_video[1]["seconds"], "4")
+        self.assertEqual(self.router.last_video[2]["user_id"], "site-user-1")
+
+        metadata = self.application.external_video_metadata("video_123", f"Bearer {self.key}")
+        self.assertEqual(metadata["status"], "completed")
+        self.assertEqual(self.router.last_video_metadata[0], "/videos/video_123")
+        self.assertEqual(self.router.last_video_metadata[2]["method"], "GET")
+
+        content = self.application.external_video_content("video_123", f"Bearer {self.key}")
+        self.assertEqual(content["body"], b"MP4-video")
+        self.assertEqual(self.router.last_video_content[0], "/videos/video_123/content")
+        self.assertEqual(self.router.last_video_content[2]["method"], "GET")
+
+        summary = self.store.usage_summary(
+            account_id=self.store.list_accounts()[0]["id"],
+            start_at="1970-01-01T00:00:00+00:00",
+            end_at="2100-01-01T00:00:00+00:00",
+        )
+        self.assertEqual(summary[0]["requests"], 1)
+
+    def test_video_generation_honors_separate_mode_scope(self):
+        account_id = self.store.list_accounts()[0]["id"]
+        self.store.update_account(account_id, allowed_modes=["image_generation"])
+        with self.assertRaises(PermissionError):
+            self.application.external_video_generation(
+                {"model": "video-model", "prompt": "A cinematic product reveal"},
+                f"Bearer {self.key}",
+            )
 
 
 if __name__ == "__main__":

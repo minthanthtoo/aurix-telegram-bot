@@ -20,6 +20,14 @@ const activityClearFilters = document.querySelector("#activity-clear-filters");
 const activityPrevious = document.querySelector("#activity-previous");
 const activityNext = document.querySelector("#activity-next");
 const activityPageLabel = document.querySelector("#activity-page-label");
+const usageRange = document.querySelector("#usage-range");
+const refreshAnalyticsButton = document.querySelector("#refresh-analytics");
+const breakdownDimension = document.querySelector("#breakdown-dimension");
+const breakdownCaption = document.querySelector("#breakdown-caption");
+const breakdownTableBody = document.querySelector("#breakdown-table-body");
+const usageChart = document.querySelector("#usage-chart");
+const chartTokensButton = document.querySelector("#chart-tokens");
+const chartRequestsButton = document.querySelector("#chart-requests");
 const flash = document.querySelector("#admin-flash");
 const accountDialog = document.querySelector("#account-dialog");
 const accountForm = document.querySelector("#account-form");
@@ -34,6 +42,9 @@ let currentSecret = "";
 let issueAccountName = "Partner site";
 let inventoryAccounts = [];
 let activityOffset = 0;
+let analyticsReport = null;
+let chartMetric = "tokens";
+let analyticsRequestSerial = 0;
 const adminNavLinks = Array.from(document.querySelectorAll(".admin-nav-link"));
 
 function element(tag, className, text) {
@@ -138,6 +149,208 @@ function formatDate(value) {
 
 function compactNumber(value) {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(Number(value) || 0);
+}
+
+function exactNumber(value) {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(Number(value) || 0);
+}
+
+function formatPercent(value) {
+  return value == null ? "—" : `${Number(value).toFixed(Number(value) % 1 ? 1 : 0)}%`;
+}
+
+function formatCost(value) {
+  return value == null ? "—" : new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 4,
+  }).format(Number(value) || 0);
+}
+
+function analyticsRangeQuery() {
+  const now = new Date();
+  const start = new Date(now);
+  switch (usageRange.value) {
+    case "today":
+      start.setHours(0, 0, 0, 0);
+      break;
+    case "24h":
+      start.setTime(now.getTime() - 24 * 60 * 60 * 1000);
+      break;
+    case "30d":
+      start.setTime(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      break;
+    case "60d":
+      start.setTime(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+      break;
+    case "month":
+      start.setDate(1);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case "7d":
+    default:
+      start.setTime(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      break;
+  }
+  return new URLSearchParams({
+    format: "analytics",
+    from: start.toISOString(),
+    to: now.toISOString(),
+  }).toString();
+}
+
+function svgNode(tag, attributes = {}, text = "") {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  Object.entries(attributes).forEach(([name, value]) => node.setAttribute(name, String(value)));
+  if (text) node.textContent = text;
+  return node;
+}
+
+function renderUsageChart(daily) {
+  usageChart.replaceChildren();
+  const rows = Array.isArray(daily) ? daily : [];
+  if (!rows.length) {
+    usageChart.appendChild(element("div", "empty-state large-empty", "No usage in the selected period."));
+    return;
+  }
+  const width = 820;
+  const height = 280;
+  const padding = { top: 20, right: 20, bottom: 42, left: 56 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const series = chartMetric === "tokens"
+    ? [
+      { label: "Input", color: "#ff835c", values: rows.map((row) => Number(row.input_tokens) || 0) },
+      { label: "Output", color: "#63e6be", values: rows.map((row) => Number(row.output_tokens) || 0) },
+    ]
+    : [
+      { label: "Successful", color: "#63e6be", values: rows.map((row) => Number(row.successful_requests) || 0) },
+      { label: "Failed", color: "#ff9c9c", values: rows.map((row) => Number(row.failed_requests) || 0) },
+    ];
+  const maxValue = Math.max(1, ...series.flatMap((item) => item.values));
+  const x = (index) => rows.length === 1
+    ? padding.left + plotWidth / 2
+    : padding.left + (index / (rows.length - 1)) * plotWidth;
+  const y = (value) => padding.top + plotHeight - (value / maxValue) * plotHeight;
+  const svg = svgNode("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    role: "presentation",
+    "aria-hidden": "true",
+  });
+  for (let index = 0; index <= 4; index += 1) {
+    const value = maxValue * (index / 4);
+    const lineY = y(value);
+    svg.appendChild(svgNode("line", {
+      x1: padding.left, y1: lineY, x2: width - padding.right, y2: lineY,
+      class: "chart-grid-line",
+    }));
+    svg.appendChild(svgNode("text", {
+      x: padding.left - 10, y: lineY + 4, "text-anchor": "end", class: "chart-axis-label",
+    }, compactNumber(value)));
+  }
+  const labelStep = Math.max(1, Math.ceil(rows.length / 6));
+  rows.forEach((row, index) => {
+    if (index % labelStep !== 0 && index !== rows.length - 1) return;
+    const dateLabel = String(row.date || "").slice(5) || "—";
+    svg.appendChild(svgNode("text", {
+      x: x(index), y: height - 14, "text-anchor": "middle", class: "chart-axis-label",
+    }, dateLabel));
+  });
+  series.forEach((item) => {
+    const points = item.values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
+    svg.appendChild(svgNode("polyline", { points, class: "chart-series", stroke: item.color }));
+    item.values.forEach((value, index) => {
+      svg.appendChild(svgNode("circle", { cx: x(index), cy: y(value), r: 3.5, fill: item.color, class: "chart-point" }));
+    });
+  });
+  usageChart.appendChild(svg);
+  const legend = element("div", "chart-legend");
+  series.forEach((item) => {
+    const entry = element("span", "chart-legend-item");
+    const swatch = element("span", "chart-legend-swatch");
+    swatch.style.backgroundColor = item.color;
+    entry.append(swatch, element("span", "", item.label));
+    legend.appendChild(entry);
+  });
+  usageChart.appendChild(legend);
+}
+
+function renderAnalyticsMetrics(report) {
+  const summary = report.summary || {};
+  document.querySelector("#analytics-requests").textContent = compactNumber(summary.requests);
+  document.querySelector("#analytics-successful").textContent = compactNumber(summary.successful_requests);
+  document.querySelector("#analytics-success-rate").textContent = `success rate ${formatPercent(summary.success_rate)}`;
+  document.querySelector("#analytics-input").textContent = compactNumber(summary.input_tokens);
+  document.querySelector("#analytics-output").textContent = compactNumber(summary.output_tokens);
+  document.querySelector("#analytics-total").textContent = compactNumber(summary.total_tokens);
+  document.querySelector("#analytics-reported").textContent = `${exactNumber(summary.usage_reported_requests)} usage-reported requests`;
+  document.querySelector("#analytics-failed").textContent = compactNumber(summary.failed_requests);
+  document.querySelector("#analytics-in-out").textContent = `${compactNumber(summary.input_tokens)} / ${compactNumber(summary.output_tokens)}`;
+  document.querySelector("#analytics-cached").textContent = compactNumber(summary.cached_tokens);
+  document.querySelector("#analytics-cost").textContent = formatCost(summary.cost);
+  document.querySelector("#analytics-last-used").textContent = formatDate(summary.last_used_at);
+  renderUsageChart(report.daily);
+}
+
+function breakdownLabel(row, dimension) {
+  if (dimension === "keys") {
+    return { primary: row.label || "Unnamed key", secondary: `${row.token_prefix || "key_…"} · ${row.account_name || "site unavailable"}` };
+  }
+  if (dimension === "models") {
+    return { primary: row.model_id || "Unknown model", secondary: row.provider || "Provider unavailable" };
+  }
+  if (dimension === "endpoints") {
+    return { primary: row.endpoint || "Unknown endpoint", secondary: "API endpoint" };
+  }
+  return { primary: row.account_name || "Partner site", secondary: `${row.account_id || "account unavailable"} · ${row.account_status || "unknown"}` };
+}
+
+function renderBreakdown(report) {
+  const dimension = breakdownDimension.value;
+  const labels = {
+    accounts: "Usage by site",
+    keys: "Usage by API key",
+    models: "Usage by model",
+    endpoints: "Usage by endpoint",
+  };
+  breakdownCaption.textContent = labels[dimension] || "Usage breakdown";
+  breakdownTableBody.replaceChildren();
+  const rows = Array.isArray(report[dimension]) ? report[dimension] : [];
+  if (!rows.length) {
+    const empty = element("tr");
+    const cell = element("td", "empty-state", "No usage in the selected period.");
+    cell.colSpan = 8;
+    empty.appendChild(cell);
+    breakdownTableBody.appendChild(empty);
+    return;
+  }
+  rows.forEach((row) => {
+    const tr = element("tr");
+    const label = breakdownLabel(row, dimension);
+    const nameCell = element("td", "breakdown-name");
+    nameCell.append(element("strong", "breakdown-primary", label.primary), element("span", "breakdown-secondary", label.secondary));
+    tr.append(
+      nameCell,
+      element("td", "numeric-cell", exactNumber(row.requests)),
+      element("td", "numeric-cell", exactNumber(row.successful_requests)),
+      element("td", "numeric-cell", `${compactNumber(row.input_tokens)} / ${compactNumber(row.output_tokens)}`),
+      element("td", "numeric-cell", compactNumber(row.total_tokens)),
+      element("td", "numeric-cell", formatPercent(row.success_rate)),
+      element("td", "numeric-cell", formatCost(row.cost)),
+      element("td", "time-cell", formatDate(row.last_used_at)),
+    );
+    breakdownTableBody.appendChild(tr);
+  });
+}
+
+async function loadAnalytics() {
+  const serial = ++analyticsRequestSerial;
+  const report = await requestJSON(`/api/admin/usage?${analyticsRangeQuery()}`);
+  if (serial !== analyticsRequestSerial) return report;
+  analyticsReport = report;
+  renderAnalyticsMetrics(report);
+  renderBreakdown(report);
+  return report;
 }
 
 function renderActivity(events) {
@@ -348,7 +561,7 @@ async function loadAdmin() {
       if (config.telegram_login_enabled && config.bot_username) renderLoginWidget(config.bot_username);
       throw new Error("Telegram sign-in is required.");
     }
-    await Promise.all([loadAccounts(), loadActivity()]);
+    await Promise.all([loadAccounts(), loadActivity(), loadAnalytics()]);
     showAdmin(session.user);
   } catch (error) {
     if (error && error.status === 401 && error.message.toLowerCase().includes("admin")) {
@@ -423,6 +636,29 @@ document.querySelector("#refresh-activity").addEventListener("click", async () =
     showFlash(error instanceof Error ? error.message : "Activity refresh failed.", "error");
   }
 });
+
+usageRange.addEventListener("change", () => {
+  loadAnalytics().catch((error) => showFlash(error instanceof Error ? error.message : "Analytics refresh failed.", "error"));
+});
+refreshAnalyticsButton.addEventListener("click", async () => {
+  try {
+    await loadAnalytics();
+    showFlash("Analytics refreshed.");
+  } catch (error) {
+    showFlash(error instanceof Error ? error.message : "Analytics refresh failed.", "error");
+  }
+});
+breakdownDimension.addEventListener("change", () => {
+  if (analyticsReport) renderBreakdown(analyticsReport);
+});
+function selectChartMetric(metric) {
+  chartMetric = metric;
+  chartTokensButton.classList.toggle("active", metric === "tokens");
+  chartRequestsButton.classList.toggle("active", metric === "requests");
+  if (analyticsReport) renderUsageChart(analyticsReport.daily);
+}
+chartTokensButton.addEventListener("click", () => selectChartMetric("tokens"));
+chartRequestsButton.addEventListener("click", () => selectChartMetric("requests"));
 
 async function refreshFilteredActivity() {
   try {

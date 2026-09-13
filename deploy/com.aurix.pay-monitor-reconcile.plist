@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aurix.pay-monitor-reconcile</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/min/miniforge3/bin/python</string>
+        <string>-m</string>
+        <string>scripts.pay_monitor_reconcile</string>
+        <string>--serial</string>
+        <string>192.168.1.2:5555</string>
+        <string>--output</string>
+        <string>/Volumes/MacHomeVenvs/aurix-pay-monitor/reconciliation</string>
+        <string>--state</string>
+        <string>/Volumes/MacHomeVenvs/aurix-pay-monitor/needs-attention.json</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/min/projects/tg-AuriX-bot</string>
+    <key>StartInterval</key>
+    <integer>60</integer>
+    <key>StandardOutPath</key>
+    <string>/Volumes/MacHomeVenvs/aurix-pay-monitor/reconcile.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Volumes/MacHomeVenvs/aurix-pay-monitor/reconcile.err.log</string>
+</dict>
+</plist>

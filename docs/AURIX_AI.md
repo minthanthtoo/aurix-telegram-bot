@@ -191,11 +191,12 @@ newest complete user/assistant turns that fit its 48 KiB bounded working
 context, reports trimming in the response `context` object, and treats all
 site-provided history and summaries as untrusted data.
 
-There is no public self-registration. The authenticated Telegram console at
+The `/v1` API does not self-register keys. The authenticated Telegram console at
 `/admin` is available to every signed-in Telegram user and provides
 browser-based account creation, one-time key reveal, key rotation, masked key
-inventory, and revocation. The same operations remain available from the
-operator CLI:
+inventory, and revocation. A signed-in user can create a key for a server-side
+integration and then store it in that integration's secret manager. The same
+operations remain available from the operator CLI:
 
 ```sh
 python /app/aurix_ai_keys.py create-account "Example site" \

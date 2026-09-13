@@ -149,6 +149,60 @@ class NodeAgentAppTest(unittest.TestCase):
         self.assertEqual(status, "400 Error")
         self.assertIn("identifier", value["error"])
 
+    def test_declared_multi_protocol_agent_requires_tagged_inventory(self):
+        app = create_node_agent_wsgi_app(
+            NodeAgentService(
+                self.provider,
+                bearer_token="agent-token",
+                protocols=("xray", "hysteria2"),
+            )
+        )
+
+        def request(method, path, payload=None):
+            body = b"" if payload is None else json.dumps(payload).encode()
+            environ = {
+                "REQUEST_METHOD": method,
+                "PATH_INFO": path,
+                "CONTENT_LENGTH": str(len(body)),
+                "HTTP_AUTHORIZATION": "Bearer agent-token",
+                "wsgi.input": io.BytesIO(body),
+            }
+            captured = {}
+
+            def start_response(status, _headers):
+                captured["status"] = status
+
+            return captured, json.loads(b"".join(app(environ, start_response)))
+
+        captured, value = request(
+            "POST",
+            "/v1/users",
+            {"external_id": "missing-protocol", "route": {}, "intent": {}},
+        )
+        self.assertEqual(captured["status"], "400 Error")
+        self.assertIn("protocol", value["error"])
+
+        captured, created = request(
+            "POST",
+            "/v1/users",
+            {
+                "external_id": "xray-user",
+                "route": {"protocol": "xray"},
+                "intent": {"secret": "secret"},
+            },
+        )
+        self.assertEqual(captured["status"], "200 OK")
+        self.assertEqual(created["protocol"], "xray")
+
+        captured, value = request("GET", "/v1/users")
+        self.assertEqual(captured["status"], "502 Error")
+        self.assertIn("without protocol", value["error"])
+
+        self.provider.users["xray-user"]["protocol"] = "xray"
+        captured, inventory = request("GET", "/v1/users")
+        self.assertEqual(captured["status"], "200 OK")
+        self.assertEqual(inventory["users"][0]["protocol"], "xray")
+
     def test_builtin_http_transport_round_trips_through_wsgi_server(self):
         server = make_server("127.0.0.1", 0, self.app)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

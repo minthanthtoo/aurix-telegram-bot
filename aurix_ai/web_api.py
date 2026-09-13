@@ -64,6 +64,8 @@ MAX_STANDARD_TOOLS = 64
 MAX_STANDARD_TOOL_BYTES = 64 * 1024
 MAX_AUDIO_REQUEST_BYTES = 30 * 1024 * 1024
 MAX_AUDIO_RESPONSE_BYTES = 32 * 1024 * 1024
+MAX_IMAGE_RESPONSE_BYTES = 32 * 1024 * 1024
+MAX_VIDEO_RESPONSE_BYTES = 256 * 1024 * 1024
 MAX_IMAGE_URL_CHARS = 16 * 1024
 SESSION_COOKIE_NAME = "aurix_ai_session"
 
@@ -398,6 +400,25 @@ class AuriXAIApplication:
             ]
         }
 
+    def image_models_payload(self) -> dict[str, Any]:
+        """Return the image-generation catalog exposed by the configured 9Router."""
+
+        try:
+            models = self.router.list_models("image")
+        except AIRouterError:
+            return {"models": [], "available": False}
+        return {
+            "models": [
+                {
+                    **model,
+                    "label": model["id"],
+                    "capabilities": ["image_generation"],
+                }
+                for model in models
+            ],
+            "available": bool(models),
+        }
+
     def chat(self, body: dict[str, Any]) -> dict[str, Any]:
         mode = body.get("mode", "english")
         message = body.get("message")
@@ -412,6 +433,25 @@ class AuriXAIApplication:
             direction=body.get("direction"),
         )
         return _chat_payload(result, model_id=model_id)
+
+    def image_generation(
+        self,
+        user: VerifiedTelegramUser | None,
+        body: dict[str, Any],
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate image data for the authenticated first-party web console."""
+
+        request = _normalize_image_generation_request(body)
+        request_id = request_id or f"req_{secrets.token_urlsafe(12)}"
+        result = self.router.request_json(
+            "/images/generations",
+            request["payload"],
+            request_id=request_id,
+            user_id=(f"telegram:{user.telegram_id}" if user is not None else None),
+        )
+        return _standard_image_payload(result, model=request["model_id"])
 
     @staticmethod
     def _public_attempt(attempt: dict[str, Any]) -> dict[str, Any]:
@@ -1168,7 +1208,13 @@ class AuriXAIApplication:
 
     @staticmethod
     def _authorize_external_request(principal: Any, *, model_id: str, mode: str) -> None:
-        if mode in {"english", "translate", "lisu_assistant"} and not principal.allows_mode(mode):
+        if mode in {
+            "english",
+            "translate",
+            "lisu_assistant",
+            "image_generation",
+            "video_generation",
+        } and not principal.allows_mode(mode):
             raise ExternalAPIAccessDeniedError("API key is not enabled for this mode")
         if not principal.allows_model(model_id):
             raise ExternalAPIAccessDeniedError("API key is not enabled for this model")
@@ -1278,11 +1324,220 @@ class AuriXAIApplication:
         )
         return result
 
+    def external_image_generation(
+        self,
+        body: dict[str, Any],
+        authorization: str | None,
+        *,
+        request_id: str | None = None,
+        binary: bool = False,
+    ) -> dict[str, Any]:
+        """Serve an OpenAI-compatible image-generation request through 9Router."""
+
+        request = _normalize_image_generation_request(body)
+        request_id = request_id or f"req_{secrets.token_urlsafe(12)}"
+        principal = self._authenticate_external_request(authorization)
+        self._authorize_external_request(
+            principal,
+            model_id=request["model_id"],
+            mode="image_generation",
+        )
+        user_id, conversation_id = _request_context(body)
+        upstream_path = "/images/generations?response_format=binary" if binary else "/images/generations"
+        try:
+            if binary:
+                result = self.router.request_raw(
+                    upstream_path,
+                    _json_bytes(request["payload"]),
+                    content_type="application/json",
+                    accept="image/*, application/octet-stream, */*",
+                    max_response_bytes=MAX_IMAGE_RESPONSE_BYTES,
+                    request_id=request_id,
+                    account_id=principal.account_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                )
+            else:
+                result = self.router.request_json(
+                    upstream_path,
+                    request["payload"],
+                    request_id=request_id,
+                    account_id=principal.account_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                )
+        except AIRouterError:
+            self.api_keys.record_usage(
+                request_id=request_id,
+                principal=principal,
+                mode="image_generation",
+                model_id=request["model_id"],
+                status="failed",
+                http_status=502,
+                provider="9router",
+                endpoint="/images/generations",
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+            raise
+        try:
+            normalized = (
+                result
+                if binary
+                else _standard_image_payload(result, model=request["model_id"])
+            )
+        except AIRouterError:
+            self.api_keys.record_usage(
+                request_id=request_id,
+                principal=principal,
+                mode="image_generation",
+                model_id=request["model_id"],
+                status="failed",
+                http_status=502,
+                provider="9router",
+                endpoint="/images/generations",
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+            raise
+        self.api_keys.record_usage(
+            request_id=request_id,
+            principal=principal,
+            mode="image_generation",
+            model_id=request["model_id"],
+            status="completed",
+            http_status=200,
+            provider_model=result.get("model") if isinstance(result, dict) else None,
+            usage=result.get("usage") if isinstance(result, dict) else None,
+            router_request_id=result.get("id") if isinstance(result, dict) else None,
+            provider="9router",
+            endpoint="/images/generations",
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        return normalized
+
+    def external_video_generation(
+        self,
+        body: dict[str, Any],
+        authorization: str | None,
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Serve an OpenAI-compatible video-generation submit request."""
+
+        request = _normalize_video_generation_request(body)
+        request_id = request_id or f"req_{secrets.token_urlsafe(12)}"
+        principal = self._authenticate_external_request(authorization)
+        self._authorize_external_request(
+            principal,
+            model_id=request["model_id"],
+            mode="video_generation",
+        )
+        user_id, conversation_id = _request_context(body)
+        try:
+            result = self.router.request_json(
+                "/videos",
+                request["payload"],
+                request_id=request_id,
+                account_id=principal.account_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+        except AIRouterError:
+            self.api_keys.record_usage(
+                request_id=request_id,
+                principal=principal,
+                mode="video_generation",
+                model_id=request["model_id"],
+                status="failed",
+                http_status=502,
+                provider="9router",
+                endpoint="/videos",
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+            raise
+        self.api_keys.record_usage(
+            request_id=request_id,
+            principal=principal,
+            mode="video_generation",
+            model_id=request["model_id"],
+            status="completed",
+            http_status=200,
+            provider_model=result.get("model") if isinstance(result, dict) else None,
+            usage=result.get("usage") if isinstance(result, dict) else None,
+            router_request_id=result.get("id") if isinstance(result, dict) else None,
+            provider="9router",
+            endpoint="/videos",
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        return result
+
+    def external_video_metadata(
+        self,
+        video_id: str,
+        authorization: str | None,
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        principal = self._authenticate_external_request(authorization)
+        if not principal.allows_mode("video_generation"):
+            raise ExternalAPIAccessDeniedError("API key is not enabled for this mode")
+        request_id = request_id or f"req_{secrets.token_urlsafe(12)}"
+        return self.router.request_json(
+            f"/videos/{_feature_path_segment(video_id, name='video_id')}",
+            {},
+            request_id=request_id,
+            account_id=principal.account_id,
+            method="GET",
+        )
+
+    def external_video_content(
+        self,
+        video_id: str,
+        authorization: str | None,
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        principal = self._authenticate_external_request(authorization)
+        if not principal.allows_mode("video_generation"):
+            raise ExternalAPIAccessDeniedError("API key is not enabled for this mode")
+        request_id = request_id or f"req_{secrets.token_urlsafe(12)}"
+        return self.router.request_raw(
+            f"/videos/{_feature_path_segment(video_id, name='video_id')}/content",
+            b"",
+            content_type="application/octet-stream",
+            accept="video/mp4, application/octet-stream, */*",
+            max_response_bytes=MAX_VIDEO_RESPONSE_BYTES,
+            request_id=request_id,
+            account_id=principal.account_id,
+            method="GET",
+        )
+
     def external_models(self, authorization: str | None) -> dict[str, Any]:
         principal = self._authenticate_external_request(authorization, count_request=False)
         output: list[dict[str, Any]] = []
-        categories = ((None, {"chat", "streaming"}), ("embedding", {"embeddings"}), ("stt", {"audio_input"}), ("tts", {"audio_output"}))
+        categories = (
+            (None, {"chat", "streaming"}),
+            ("embedding", {"embeddings"}),
+            ("stt", {"audio_input"}),
+            ("tts", {"audio_output"}),
+            ("image", {"image_generation"}),
+            ("video", {"video_generation"}),
+        )
         for category, capabilities in categories:
+            if (
+                "image_generation" in capabilities
+                and not principal.allows_mode("image_generation")
+            ):
+                continue
+            if (
+                "video_generation" in capabilities
+                and not principal.allows_mode("video_generation")
+            ):
+                continue
             try:
                 models = self.router.list_models(category)
             except AIRouterError:
@@ -1429,6 +1684,48 @@ class AuriXAIApplication:
                 key: event_page[key]
                 for key in ("offset", "limit", "has_more", "next_offset")
             },
+            "filters": {
+                key: value
+                for key, value in {
+                    "account_id": account_id,
+                    "key_id": key_id,
+                    "model_id": model_id,
+                    "endpoint": endpoint,
+                    "status": status,
+                    "user_id": user_id,
+                }.items()
+                if value
+            },
+        }
+
+    def admin_usage_analytics(
+        self,
+        *,
+        account_id: str | None,
+        start_at: str,
+        end_at: str,
+        key_id: str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return privacy-safe aggregate usage data for the admin dashboard."""
+
+        if self.api_keys is None:
+            raise ExternalAPIUnavailableError("External API is not configured")
+        return {
+            "period": {"start_at": start_at, "end_at": end_at},
+            **self.api_keys.usage_breakdown(
+                account_id=account_id,
+                start_at=start_at,
+                end_at=end_at,
+                key_id=key_id,
+                model_id=model_id,
+                endpoint=endpoint,
+                status=status,
+                user_id=user_id,
+            ),
             "filters": {
                 key: value
                 for key, value in {
@@ -1796,6 +2093,13 @@ def _feature_model(value: Any, *, name: str) -> str:
     return result
 
 
+def _feature_path_segment(value: Any, *, name: str) -> str:
+    result = _feature_model(value, name=name)
+    if any(char in result for char in "/?#\\"):
+        raise ValueError(f"{name} is invalid")
+    return result
+
+
 def _resolve_standard_model(value: Any, *, default_route: str) -> tuple[str, str]:
     if value is None or (isinstance(value, str) and not value.strip()):
         route = default_route
@@ -1806,6 +2110,140 @@ def _resolve_standard_model(value: Any, *, default_route: str) -> tuple[str, str
         return catalog_item["route"], requested
     route_model_id = model_id_for_route(requested)
     return requested, route_model_id or requested
+
+
+def _normalize_image_generation_request(body: dict[str, Any]) -> dict[str, Any]:
+    """Validate the portable image subset and preserve supported 9Router fields."""
+
+    prompt = body.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("prompt is required")
+    if len(prompt) > 12_000:
+        raise ValueError("prompt is too long")
+
+    requested_model = _feature_model(body.get("model"), name="model")
+    model_route, model_id = _resolve_standard_model(
+        requested_model,
+        default_route=requested_model,
+    )
+    payload: dict[str, Any] = {"model": model_route, "prompt": prompt}
+
+    count = body.get("n")
+    if count is not None:
+        if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 4:
+            raise ValueError("n must be an integer from 1 to 4")
+        payload["n"] = count
+
+    string_fields = {
+        "size": 64,
+        "quality": 64,
+        "style": 64,
+        "response_format": 32,
+        "output_format": 32,
+        "background": 32,
+        "aspect_ratio": 32,
+        "image_detail": 32,
+        "user": 160,
+    }
+    for field, maximum in string_fields.items():
+        value = body.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+            raise ValueError(f"{field} is invalid")
+        if field == "response_format" and value not in {"url", "b64_json"}:
+            raise ValueError("response_format must be url or b64_json")
+        payload[field] = value.strip()
+
+    for field in ("image", "negative_prompt"):
+        value = body.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip() or len(value) > MAX_IMAGE_URL_CHARS:
+            raise ValueError(f"{field} is invalid")
+        payload[field] = value
+
+    images = body.get("images")
+    if images is not None:
+        if (
+            not isinstance(images, list)
+            or not 1 <= len(images) <= 4
+            or any(
+                not isinstance(item, str)
+                or not item.strip()
+                or len(item) > MAX_IMAGE_URL_CHARS
+                for item in images
+            )
+        ):
+            raise ValueError("images must contain 1-4 valid image values")
+        payload["images"] = images
+
+    metadata = body.get("metadata")
+    if metadata is not None:
+        if not isinstance(metadata, dict) or len(json.dumps(metadata, ensure_ascii=False)) > 16_384:
+            raise ValueError("metadata is invalid")
+        payload["metadata"] = metadata
+
+    return {"payload": payload, "model_id": model_id}
+
+
+def _normalize_video_generation_request(body: dict[str, Any]) -> dict[str, Any]:
+    """Validate a portable OpenAI-style video submit request."""
+
+    prompt = body.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("prompt is required")
+    if len(prompt) > 12_000:
+        raise ValueError("prompt is too long")
+
+    requested_model = _feature_model(body.get("model"), name="model")
+    model_route, model_id = _resolve_standard_model(
+        requested_model,
+        default_route=requested_model,
+    )
+    payload: dict[str, Any] = {"model": model_route, "prompt": prompt.strip()}
+
+    seconds = body.get("seconds")
+    if seconds is not None:
+        seconds_text = str(seconds).strip()
+        if seconds_text not in {"4", "8", "12"}:
+            raise ValueError("seconds must be 4, 8, or 12")
+        payload["seconds"] = seconds_text
+
+    size = body.get("size")
+    if size is not None:
+        if not isinstance(size, str) or size not in {
+            "720x1280",
+            "1280x720",
+            "1024x1792",
+            "1792x1024",
+        }:
+            raise ValueError("size is invalid")
+        payload["size"] = size
+
+    input_reference = body.get("input_reference")
+    if input_reference is not None:
+        if (
+            not isinstance(input_reference, str)
+            or not input_reference.strip()
+            or len(input_reference) > MAX_IMAGE_URL_CHARS
+        ):
+            raise ValueError("input_reference is invalid")
+        payload["input_reference"] = input_reference
+
+    metadata = body.get("metadata")
+    if metadata is not None:
+        if not isinstance(metadata, dict) or len(json.dumps(metadata, ensure_ascii=False)) > 16_384:
+            raise ValueError("metadata is invalid")
+        payload["metadata"] = metadata
+
+    user = body.get("user")
+    if user is not None:
+        if not isinstance(user, str) or not user.strip() or len(user) > 160:
+            raise ValueError("user is invalid")
+        payload["user"] = user.strip()
+
+    return {"payload": payload, "model_id": model_id}
 
 
 def _standard_tools(value: Any) -> list[dict[str, Any]] | None:
@@ -2032,6 +2470,31 @@ def _standard_embeddings_payload(result: dict[str, Any], *, model: str) -> dict[
         "data": normalized,
         "model": model,
         "usage": result.get("usage") if isinstance(result.get("usage"), dict) else None,
+    }
+
+
+def _standard_image_payload(result: dict[str, Any], *, model: str) -> dict[str, Any]:
+    data = result.get("data")
+    if not isinstance(data, list) or not data:
+        raise AIRouterError("9Router returned invalid image data")
+    normalized = []
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise AIRouterError("9Router returned invalid image data")
+        image: dict[str, Any] = {"index": item.get("index", index)}
+        if isinstance(item.get("url"), str) and item["url"].strip():
+            image["url"] = item["url"]
+        elif isinstance(item.get("b64_json"), str) and item["b64_json"]:
+            image["b64_json"] = item["b64_json"]
+        else:
+            raise AIRouterError("9Router returned an image without url or b64_json")
+        if isinstance(item.get("revised_prompt"), str):
+            image["revised_prompt"] = item["revised_prompt"]
+        normalized.append(image)
+    return {
+        "created": int(result.get("created") or time.time()),
+        "data": normalized,
+        "model": model,
     }
 
 
@@ -2470,6 +2933,14 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             if path == "/api/models" and method == "GET":
                 self._write(200, application.models_payload(), no_store=False)
                 return
+            if path == "/api/image-models" and method == "GET":
+                user = application.authenticate(
+                    self.headers.get("Cookie"), self.headers.get("Authorization")
+                )
+                if user is None and not application.allow_anonymous:
+                    raise PermissionError("Telegram login required")
+                self._write(200, application.image_models_payload(), no_store=False)
+                return
             if path == "/api/auth/config" and method == "GET":
                 self._write(200, application.auth_config(), no_store=False)
                 return
@@ -2668,6 +3139,17 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 requested_format = parse_qs(query, keep_blank_values=False).get(
                     "format", ["summary"]
                 )[0].lower()
+                if path == "/api/admin/usage" and requested_format == "analytics":
+                    self._write(
+                        200,
+                        application.admin_usage_analytics(
+                            account_id=account_id,
+                            start_at=start_at,
+                            end_at=end_at,
+                            **{key: value for key, value in filters.items() if key != "offset"},
+                        ),
+                    )
+                    return
                 if path == "/api/admin/usage" and requested_format == "9router":
                     self._write(
                         200,
@@ -2700,6 +3182,60 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 self._write(
                     200,
                     application.external_models(self.headers.get("Authorization")),
+                    request_id=self._request_id,
+                )
+                return
+            if path == "/v1/images/generations" and method == "POST":
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                body = self._read_json()
+                response_format = parse_qs(query, keep_blank_values=False).get(
+                    "response_format", [None]
+                )[0]
+                result = application.external_image_generation(
+                    body,
+                    self.headers.get("Authorization"),
+                    request_id=self._request_id,
+                    binary=response_format == "binary",
+                )
+                if response_format == "binary":
+                    self._write_raw(200, result, request_id=self._request_id)
+                else:
+                    self._write(200, result, request_id=self._request_id)
+                return
+            if path == "/v1/videos" and method == "POST":
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                self._write(
+                    200,
+                    application.external_video_generation(
+                        self._read_json(),
+                        self.headers.get("Authorization"),
+                        request_id=self._request_id,
+                    ),
+                    request_id=self._request_id,
+                )
+                return
+            if path.startswith("/v1/videos/") and method == "GET":
+                video_suffix = path[len("/v1/videos/") :].strip("/")
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                if video_suffix.endswith("/content"):
+                    video_id = video_suffix[: -len("/content")].strip("/")
+                    self._write_raw(
+                        200,
+                        application.external_video_content(
+                            video_id,
+                            self.headers.get("Authorization"),
+                            request_id=self._request_id,
+                        ),
+                        request_id=self._request_id,
+                    )
+                    return
+                self._write(
+                    200,
+                    application.external_video_metadata(
+                        video_suffix,
+                        self.headers.get("Authorization"),
+                        request_id=self._request_id,
+                    ),
                     request_id=self._request_id,
                 )
                 return
@@ -2738,6 +3274,25 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     request_id=self._request_id,
                 )
                 self._write_raw(200, result, request_id=self._request_id)
+                return
+            if path == "/api/images/generations" and method == "POST":
+                user = application.authenticate(
+                    self.headers.get("Cookie"), self.headers.get("Authorization")
+                )
+                identity = f"telegram:{user.telegram_id}" if user else self._identity()
+                if not application.rate_limiter.allow(identity):
+                    self._error(429, "AI request rate limit reached", retry_after=60)
+                    return
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                self._write(
+                    200,
+                    application.image_generation(
+                        user,
+                        self._read_json(),
+                        request_id=self._request_id,
+                    ),
+                    request_id=self._request_id,
+                )
                 return
             if path in {"/v1/chat", "/v1/chat/completions"} and method == "POST":
                 self._request_id = f"req_{secrets.token_urlsafe(12)}"
@@ -2823,7 +3378,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             self.send_header(
                 "Content-Security-Policy",
                 "default-src 'self'; script-src 'self' https://telegram.org 'unsafe-eval'; "
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; "
                 "frame-src https://oauth.telegram.org https://telegram.org; base-uri 'none'; "
                 "frame-ancestors https://web.telegram.org https://*.telegram.org",
             )

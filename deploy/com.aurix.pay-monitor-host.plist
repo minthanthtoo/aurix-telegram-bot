@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aurix.pay-monitor-host</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/min/miniforge3/bin/python</string>
+        <string>-m</string>
+        <string>scripts.pay_monitor_host</string>
+        <string>--serial</string>
+        <string>192.168.1.2:5555</string>
+        <string>--device-port</string>
+        <string>8765</string>
+        <string>--port</string>
+        <string>18765</string>
+        <string>--private-key</string>
+        <string>/Volumes/MacHomeVenvs/aurix-pay-monitor/private.pem</string>
+        <string>--database</string>
+        <string>/Volumes/MacHomeVenvs/aurix-pay-monitor/pay-monitor.db</string>
+        <string>--refresh-seconds</string>
+        <string>10</string>
+        <string>--admin-token-keychain-service</string>
+        <string>AuriXPayMonitorAdmin</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/min/projects/tg-AuriX-bot</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Volumes/MacHomeVenvs/aurix-pay-monitor/host.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Volumes/MacHomeVenvs/aurix-pay-monitor/host.err.log</string>
+</dict>
+</plist>

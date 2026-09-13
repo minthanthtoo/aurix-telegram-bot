@@ -8,6 +8,10 @@ The examples assume a server-side JavaScript application, but the HTTP
 contract is language-independent. This guide is standalone: give a developer or
 coding agent this entire document and supply the partner key separately.
 
+AuriX Telegram users can create keys for their own server-side integrations
+from the authenticated API console. External website visitors still use the
+integrating website's login and never receive an AuriX partner key.
+
 For a new implementation, start with sections 19–25 (product behavior, prompts,
 UI, architecture, execution steps and acceptance checks). Sections 1–18 are the
 HTTP reference. Examples show response structure, not certified translations.
@@ -52,10 +56,17 @@ mobile-app code, public URLs, or client-visible configuration.
 
 ### How the integrating site receives the key
 
-The AuriX operator creates the partner account and issues the key separately
-from this document. The key should be delivered to the site owner through a
-private channel or secret-management system. It is not included in this guide,
-and it should not be requested from an end user.
+There are two supported issuance paths:
+
+1. An authenticated AuriX Telegram user opens `https://ai.aurix-mart.tech/admin`,
+   creates a site key, and copies the one-time secret into the integrating
+   site's backend secret manager.
+2. An AuriX operator issues a partner key through the operator CLI for a
+   website that is provisioned outside the AuriX user console.
+
+The key should be delivered through a private channel or secret-management
+system. It is not included in this guide, and it must never be requested from
+an ordinary end user of the integrating website.
 
 The other site stores the received value as a backend-only secret, for example:
 
@@ -64,9 +75,9 @@ AURIX_API_KEY=ak_live_the_value_supplied_by_the_aurix_operator
 ```
 
 The site then sends that value as the `Authorization: Bearer ...` header shown
-in the examples. There is no public self-registration or browser key-management
-flow in this integration. If the key is lost or exposed, ask the AuriX operator
-to revoke it and issue a replacement.
+in the examples. The `/v1` API does not self-register keys; issuance happens in
+the authenticated AuriX console or through the operator CLI. If the key is lost
+or exposed, revoke it and issue a replacement.
 
 ## 3. Which endpoint should be used?
 
@@ -77,6 +88,7 @@ Use the endpoint that matches the product:
 | Normal website assistant using standard LLM format | `POST /v1/chat/completions` | Yes |
 | Built-in English assistant, English ↔ Lisu translator, or Lisu assistant | `POST /v1/chat` | Yes |
 | Model and capability discovery | `GET /v1/models` | N/A |
+| Image generation | `POST /v1/images/generations` | No |
 | Text embeddings | `POST /v1/embeddings` | N/A |
 | Speech-to-text | `POST /v1/audio/transcriptions` | N/A |
 | Audio translation | `POST /v1/audio/translations` | N/A |
@@ -113,6 +125,12 @@ The response is an OpenAI-style model list:
       "object": "model",
       "owned_by": "aurix",
       "capabilities": ["embeddings"]
+    },
+    {
+      "id": "image-model-id",
+      "object": "model",
+      "owned_by": "aurix",
+      "capabilities": ["image_generation"]
     }
   ]
 }
@@ -125,6 +143,7 @@ Capability meanings:
 - `embeddings`: vector embeddings.
 - `audio_input`: transcription or audio translation.
 - `audio_output`: speech synthesis.
+- `image_generation`: image output through `/v1/images/generations`.
 
 Tools and image understanding are accepted by the chat gateway, but are not
 always declared separately in the model catalog. The selected chat model must
@@ -369,6 +388,161 @@ Accepted image sources:
 Do not use private-network image URLs, credentials embedded in image URLs, or
 unbounded image downloads. The website should host user uploads securely and
 serve them through short-lived HTTPS URLs.
+
+## 8.1 Image generation
+
+Discover image-capable models from `GET /v1/models` and select an item whose
+capabilities include `image_generation`. Do not assume that a chat model can
+generate images. The partner account must also be granted the
+`image_generation` mode and the selected model; otherwise the gateway returns
+`403` before contacting 9Router.
+
+```http
+POST https://ai.aurix-mart.tech/v1/images/generations
+Authorization: Bearer ak_live_...
+Content-Type: application/json
+```
+
+```json
+{
+  "model": "image-model-id",
+  "prompt": "A cinematic sunrise over a quiet mountain lake, natural colors",
+  "n": 1,
+  "size": "1024x1024",
+  "response_format": "b64_json",
+  "user_id": "site-user-123",
+  "conversation_id": "image-conversation-456"
+}
+```
+
+Supported portable fields are `model`, `prompt`, `n` (1–4), `size`, `quality`,
+`style`, `response_format` (`url` or `b64_json`), `output_format`, `background`,
+`aspect_ratio`, and provider-compatible edit fields such as `image`, `images`,
+and `image_detail`. The gateway forwards supported values to 9Router and
+rejects malformed values before spending upstream quota.
+
+The normal response is:
+
+```json
+{
+  "created": 1788938051,
+  "model": "image-model-id",
+  "data": [
+    {"b64_json": "..."}
+  ]
+}
+```
+
+For browser display, `b64_json` avoids short-lived provider URL expiry. Convert
+it to a data URL using the image MIME type expected by the selected model. For
+server-side storage or CDN delivery, use `url` and copy the image to the
+site's own storage before the provider URL expires. Image responses may be
+large; keep response limits and timeouts separate from text chat.
+
+For clients that need raw bytes, use the gateway extension:
+
+```http
+POST /v1/images/generations?response_format=binary
+```
+
+The response is the image byte stream with its upstream content type. This is
+not the standard OpenAI JSON response, so use it only when the client explicitly
+expects a file. Image calls are recorded in AuriX usage reports with endpoint
+`/images/generations`, mode `image_generation`, model, account, optional
+`user_id`, and optional `conversation_id`. Image providers often do not return
+token counts; those fields may be zero or unavailable.
+
+The same external route can be used from the command line:
+
+```sh
+python scripts/aurix_media_cli.py --api-key "$AURIX_AI_API_KEY" \
+  models --capability image_generation
+
+python scripts/aurix_media_cli.py --api-key "$AURIX_AI_API_KEY" \
+  image \
+  --model image-model-id \
+  --prompt "A cinematic sunrise over a quiet mountain lake, natural colors" \
+  --size 1024x1024 \
+  --output image.png
+```
+
+See `docs/AURIX_MEDIA_CLI_STUDY.md` for the frontend/API boundary study and
+the recommended future video job API shape.
+
+## 8.2 Video generation
+
+AuriX exposes video generation through `/v1/videos`. Video uses a separate job
+workflow because public providers return asynchronous jobs rather than immediate
+image-style payloads.
+
+```http
+POST https://ai.aurix-mart.tech/v1/videos
+Authorization: Bearer ak_live_...
+Content-Type: application/json
+```
+
+```json
+{
+  "model": "video-model-id",
+  "prompt": "A cinematic 4 second product reveal on a clean tabletop",
+  "seconds": "4",
+  "size": "1280x720",
+  "user_id": "site-user-123",
+  "conversation_id": "video-conversation-456"
+}
+```
+
+Poll status:
+
+```http
+GET https://ai.aurix-mart.tech/v1/videos/video_123
+Authorization: Bearer ak_live_...
+```
+
+Download the completed video:
+
+```http
+GET https://ai.aurix-mart.tech/v1/videos/video_123/content
+Authorization: Bearer ak_live_...
+```
+
+The selected account must be granted `video_generation` mode and the selected
+model. Video submit calls are recorded in AuriX usage reports with endpoint
+`/videos`, mode `video_generation`, model, account, optional `user_id`, and
+optional `conversation_id`.
+
+CLI examples:
+
+```sh
+python scripts/aurix_media_cli.py --api-key "$AURIX_AI_API_KEY" \
+  video \
+  --model video-model-id \
+  --prompt "A cinematic 4 second product reveal on a clean tabletop" \
+  --seconds 4 \
+  --size 1280x720 \
+  --output product-reveal.mp4
+
+OPENAI_API_KEY=sk_... python scripts/aurix_media_cli.py \
+  openai-video \
+  --model sora-2 \
+  --prompt "A cinematic 4 second product reveal on a clean tabletop" \
+  --seconds 4 \
+  --size 1280x720 \
+  --output product-reveal.mp4
+
+GEMINI_API_KEY=... python scripts/aurix_media_cli.py \
+  gemini-veo \
+  --model veo-3.1-generate-preview \
+  --prompt "A cinematic 8 second product reveal on a clean tabletop" \
+  --aspect-ratio 16:9 \
+  --resolution 720p \
+  --output product-reveal.mp4
+```
+
+Do not call ChatGPT or Google Flow private browser endpoints from production
+code. If a request fails because of provider account, region, quota, safety, or
+policy limits, treat that as a real terminal provider condition unless the
+official provider API offers a documented retry or remediation path.
 
 ## 9. Conversation and context management
 

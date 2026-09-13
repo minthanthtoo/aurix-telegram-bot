@@ -18,6 +18,9 @@ from aurix_ai.api_keys import APIKeyStore, APIKeyStoreError  # noqa: E402
 from aurix_ai.router import MODEL_CATALOG, MODE_INSTRUCTIONS  # noqa: E402
 
 
+FEATURE_MODES = {"audio", "embeddings", "image_generation", "video_generation"}
+
+
 def _store(database_path: str | None, database_url: str | None) -> APIKeyStore:
     resolved_url = database_url or os.environ.get("AURIX_AI_DATABASE_URL", "").strip()
     if resolved_url:
@@ -109,7 +112,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.name,
                 account_id=args.account_id,
                 allowed_modes=_scope(
-                    args.modes, name="modes", allowed=set(MODE_INSTRUCTIONS)
+                    args.modes,
+                    name="modes",
+                    allowed=set(MODE_INSTRUCTIONS) | FEATURE_MODES,
                 ),
                 allowed_models=_scope(
                     args.models, name="models", allowed=set(MODEL_CATALOG)
@@ -144,7 +149,11 @@ def main(argv: list[str] | None = None) -> int:
                 args.account_id,
                 name=args.name,
                 allowed_modes=(
-                    _scope(args.modes, name="modes", allowed=set(MODE_INSTRUCTIONS))
+                    _scope(
+                        args.modes,
+                        name="modes",
+                        allowed=set(MODE_INSTRUCTIONS) | FEATURE_MODES,
+                    )
                     if args.modes is not None
                     else None
                 ),

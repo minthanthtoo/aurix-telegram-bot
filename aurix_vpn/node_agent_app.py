@@ -67,17 +67,67 @@ def _object(value: Any, operation: str) -> dict[str, Any]:
 
 
 class NodeAgentService:
-    """Expose one injected provider through the AuriX node-agent contract."""
+    """Expose one injected provider through the AuriX node-agent contract.
 
-    def __init__(self, provider: Any, *, bearer_token: str, max_body_bytes: int = 64 * 1024):
+    ``protocols`` is optional for compatibility with pre-existing dedicated
+    agents. When supplied, it turns the service into an explicit protocol
+    boundary: write routes and provider records must declare one of those
+    transports. This is required when a single agent fronts multiple protocol
+    providers, because inventory without a protocol tag is unsafe to reconcile.
+    """
+
+    def __init__(
+        self,
+        provider: Any,
+        *,
+        bearer_token: str,
+        max_body_bytes: int = 64 * 1024,
+        protocols: tuple[str, ...] | list[str] = (),
+    ):
         token = str(bearer_token or "")
         if not token:
             raise ValueError("node-agent bearer token is required")
         if not 4 * 1024 <= int(max_body_bytes) <= 512 * 1024:
             raise ValueError("node-agent request bound is invalid")
+        normalized_protocols = tuple(
+            dict.fromkeys(str(protocol or "").strip().lower() for protocol in protocols)
+        )
+        if len(normalized_protocols) > 8 or any(
+            not protocol or len(protocol) > 64 or not protocol.replace("-", "").isalnum()
+            for protocol in normalized_protocols
+        ):
+            raise ValueError("node-agent protocols are invalid")
         self.provider = provider
         self.bearer_token = token
         self.max_body_bytes = int(max_body_bytes)
+        self.protocols = normalized_protocols
+
+    def _protocol_for_route(self, route: Mapping[str, Any]) -> str:
+        protocol = str(route.get("protocol") or "").strip().lower()
+        if self.protocols and protocol not in self.protocols:
+            raise NodeAgentHTTPError(400, "route protocol is not enabled for this node agent")
+        return protocol
+
+    def _protocol_record(
+        self, value: Any, operation: str, *, expected_protocol: str = ""
+    ) -> dict[str, Any]:
+        record = _object(value, operation)
+        declared = str(record.get("protocol") or "").strip().lower()
+        if expected_protocol:
+            if declared and declared != expected_protocol:
+                raise NodeAgentHTTPError(502, f"{operation} returned a conflicting protocol")
+            record.setdefault("protocol", expected_protocol)
+            return record
+        if not self.protocols:
+            return record
+        if not declared:
+            if len(self.protocols) != 1:
+                raise NodeAgentHTTPError(502, f"{operation} returned a user without protocol")
+            record["protocol"] = self.protocols[0]
+            return record
+        if declared not in self.protocols:
+            raise NodeAgentHTTPError(502, f"{operation} returned an unsupported protocol")
+        return record
 
     def _authorized(self, environ: Mapping[str, Any]) -> None:
         header = str(environ.get("HTTP_AUTHORIZATION") or "")
@@ -131,7 +181,11 @@ class NodeAgentService:
                 records = records.get("users") or records.get("clients") or records.get("items")
             if not isinstance(records, list):
                 raise NodeAgentHTTPError(502, "list_users returned an invalid user list")
-            return {"users": _safe_json(records)}
+            return {
+                "users": _safe_json(
+                    [self._protocol_record(item, "list_users") for item in records]
+                )
+            }
         if path == "/v1/users" and method == "POST":
             body = self._body(environ)
             external_id = self._id(str(body.get("external_id") or ""))
@@ -140,10 +194,14 @@ class NodeAgentService:
             intent = body.get("intent")
             if not isinstance(route, Mapping) or not isinstance(intent, Mapping):
                 raise NodeAgentHTTPError(400, "route and intent objects are required")
+            protocol = self._protocol_for_route(route)
             value = self._provider_method("create_user")(
                 external_id, name, dict(route), dict(intent)
             )
-            return _safe_json(_object(value, "create_user"), include_credential=True)
+            return _safe_json(
+                self._protocol_record(value, "create_user", expected_protocol=protocol),
+                include_credential=True,
+            )
         prefix = "/v1/users/"
         if path.startswith(prefix):
             tail = path[len(prefix) :]
@@ -156,7 +214,9 @@ class NodeAgentService:
                     value = None
                 if value is None:
                     raise NodeAgentHTTPError(404, "user not found")
-                return _safe_json(_object(value, "get_user"), include_credential=True)
+                return _safe_json(
+                    self._protocol_record(value, "get_user"), include_credential=True
+                )
             if len(parts) == 1 and method == "DELETE":
                 self._provider_method("delete_user", "remove_user")(external_id)
                 return {"deleted": True, "external_id": external_id}

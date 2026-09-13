@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AuriX product status and operating boundary.">
+  <title>AuriX product shell</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="https://aurix-mart.tech/" aria-label="AuriX home">
+      <img src="/brand/v2/aurix-logo-mark-v2.svg" alt="AuriX mark">
+      <span>AuriX</span>
+    </a>
+    <nav class="nav" aria-label="Product navigation">
+      <a href="https://aurix-mart.tech/#products">Products</a>
+      <a href="https://aurix-mart.tech/#how-it-works">How it works</a>
+      <a href="https://aurix-mart.tech/#roadmap">Roadmap</a>
+    </nav>
+    <a class="button button--small button--quiet" href="https://aurix-mart.tech/">Storefront</a>
+  </header>
+
+  <main class="product-page shell" aria-labelledby="product-title">
+    <section class="product-hero">
+      <p class="eyebrow"><span class="eyebrow__dot"></span><span id="product-status">Product shell</span></p>
+      <h1 id="product-title">AuriX product shell</h1>
+      <p class="product-hero__lede" id="product-lede">This page selects its product context from the hostname.</p>
+      <div class="product-meta" aria-label="Product metadata">
+        <span id="product-code">SERVICE / PRODUCT</span>
+        <span id="product-state">Status: see product page</span>
+      </div>
+    </section>
+
+    <section class="product-panels" aria-label="Product details">
+      <article class="product-panel">
+        <p class="eyebrow">What is ready</p>
+        <h2 id="product-section-title">Product context</h2>
+        <ol class="product-steps" id="product-steps">
+          <li><span>01</span><p>Read the current product status and operating boundary.</p></li>
+          <li><span>02</span><p>Use only the customer path that is explicitly marked ready.</p></li>
+          <li><span>03</span><p>Wait for a verified integration before treating a plan as active.</p></li>
+        </ol>
+      </article>
+
+      <aside class="product-panel product-panel--note">
+        <p class="eyebrow">Operating boundary</p>
+        <h2 id="product-boundary-title">Clear status, clear next step.</h2>
+        <p id="product-boundary">This page is a product shell. It does not collect credentials, expose management URLs, or pretend that an unfinished integration is live.</p>
+        <a class="text-link" href="https://aurix-mart.tech/#products">View the product shelf <span aria-hidden="true">→</span></a>
+      </aside>
+    </section>
+
+    <section class="product-actions" aria-label="Product actions">
+      <a class="button button--primary" href="https://aurix-mart.tech/#products">View all products <span aria-hidden="true">↗</span></a>
+      <span class="product-actions__hint" id="product-action-hint">Portal integration remains the next step.</span>
+    </section>
+  </main>
+
+  <footer class="site-footer shell">
+    <div class="brand brand--footer">
+      <img src="/brand/v2/aurix-logo-mark-v2.svg" alt="AuriX mark">
+      <span>AuriX</span>
+    </div>
+    <p>Clear products. Clear status. A network that can grow responsibly.</p>
+    <span class="site-footer__status"><span class="live-pill__dot"></span> <span id="footer-status">storefront online</span></span>
+  </footer>
+
+  <script>
+    const hostnameProduct = window.location.hostname.split(".")[0];
+    const queryProduct = new URLSearchParams(window.location.search).get("product");
+    const product = queryProduct || hostnameProduct || "vpn";
+    const products = {
+      vpn: {
+        name: "AuriX VPN",
+        status: "Live pilot",
+        code: "SERVICE / VPN",
+        state: "Status: live pilot",
+        lede: "A clear access path for the current AuriX VPN pilot.",
+        section: "Telegram-first access flow",
+        boundaryTitle: "Capacity before promises.",
+        boundary: "The pilot remains entitlement-led and capacity-aware. Do not treat this shell as an unlimited plan, public Outline management page, or replacement for the support flow.",
+        hint: "Portal integration remains the next step.",
+        steps: [
+          "Choose an available offer and read its terms.",
+          "Receive an attributable entitlement through the support flow.",
+          "Get the correct product access details after fulfillment."
+        ]
+      },
+      ai: {
+        name: "AuriX AI",
+        status: "Planned",
+        code: "SERVICE / AI ACCESS",
+        state: "Status: planned",
+        lede: "A provider-aware AI access layer under a stable AuriX identity.",
+        section: "Stable customer identity",
+        boundaryTitle: "The implementation may change.",
+        boundary: "The current routing implementation and provider mix are internal details. Provider authorization, consent, authentication, and policy review must pass before activation.",
+        hint: "No provider login or API key is collected on this page.",
+        steps: [
+          "Define an approved offer and its provider terms.",
+          "Authenticate the customer through the AuriX control plane.",
+          "Fulfill access through an isolated, auditable adapter."
+        ]
+      },
+      accounts: {
+        name: "Authorized account services",
+        status: "Planned",
+        code: "SERVICE / ACCOUNTS",
+        state: "Status: supplier-gated",
+        lede: "Account and subscription assistance only where resale or delegated access is allowed.",
+        section: "Supplier-approved fulfillment",
+        boundaryTitle: "Authorization is a product requirement.",
+        boundary: "Compromised credentials, stolen sessions, and unauthorized sharing are not products. An offer stays unavailable until the supplier terms and fulfillment path are verified.",
+        hint: "No account credentials are requested here.",
+        steps: [
+          "Record the supplier permission and regional terms.",
+          "Publish only an approved offer with a clear support boundary.",
+          "Fulfill through a logged, recoverable workflow."
+        ]
+      },
+      games: {
+        name: "Game credits",
+        status: "Planned",
+        code: "SERVICE / GAME CREDITS",
+        state: "Status: supplier-gated",
+        lede: "Digital top-ups through official or authorized channels.",
+        section: "Verified top-up workflow",
+        boundaryTitle: "Recipient and region checks come first.",
+        boundary: "Game-credit offers require an authorized source, correct region, recipient validation, duplicate-redemption protection, and a fulfillment record.",
+        hint: "No payment or game-account details are collected here.",
+        steps: [
+          "Validate product, region, recipient, and amount.",
+          "Confirm an authorized fulfillment route.",
+          "Record the redemption result and support state."
+        ]
+      },
+      solutions: {
+        name: "Custom solutions",
+        status: "Planned",
+        code: "SERVICE / SOLUTIONS",
+        state: "Status: quote-based",
+        lede: "Scoped work for organizations that need a defined outcome and owner.",
+        section: "Quote and delivery boundary",
+        boundaryTitle: "A clear scope protects both sides.",
+        boundary: "Future solution work will use an identified customer, written scope, acceptance criteria, owner, timeline, and support boundary before delivery begins.",
+        hint: "A quote workflow is not live yet.",
+        steps: [
+          "Describe the outcome, constraints, and responsible owner.",
+          "Agree on scope, acceptance criteria, and support.",
+          "Track delivery and changes against the agreed record."
+        ]
+      },
+      status: {
+        name: "AuriX service status",
+        status: "Public shell",
+        code: "SERVICE / STATUS",
+        state: "Status: storefront online",
+        lede: "A public place for service availability and maintenance notices.",
+        section: "Current public surface",
+        boundaryTitle: "Status is not administration.",
+        boundary: "The public status surface will report service state without exposing provider credentials, VPN management URLs, customer data, or operator controls.",
+        hint: "Detailed monitoring integration is not connected yet.",
+        steps: [
+          "Publish only verified availability or maintenance state.",
+          "Keep incident ownership and timestamps attributable.",
+          "Link customers to the correct support boundary."
+        ]
+      }
+    };
+    const copy = products[product] || products.vpn;
+    document.title = `${copy.name} — AuriX`;
+    document.querySelector("#product-status").textContent = copy.status;
+    document.querySelector("#product-title").textContent = copy.name;
+    document.querySelector("#product-code").textContent = copy.code;
+    document.querySelector("#product-state").textContent = copy.state;
+    document.querySelector("#product-lede").textContent = copy.lede;
+    document.querySelector("#product-section-title").textContent = copy.section;
+    document.querySelector("#product-boundary-title").textContent = copy.boundaryTitle;
+    document.querySelector("#product-boundary").textContent = copy.boundary;
+    document.querySelector("#product-action-hint").textContent = copy.hint;
+    document.querySelector("#product-steps").innerHTML = copy.steps.map((step, index) => `<li><span>${String(index + 1).padStart(2, "0")}</span><p>${step}</p></li>`).join("");
+    document.querySelector("#footer-status").textContent = product === "status" ? "status shell online" : "storefront online";
+  </script>
+</body>
+</html>

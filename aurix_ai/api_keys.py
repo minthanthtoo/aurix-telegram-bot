@@ -1165,6 +1165,177 @@ class APIKeyStore:
             "next_offset": bounded_offset + bounded_limit if has_more else None,
         }
 
+    @staticmethod
+    def _usage_metrics(row: Mapping[str, Any]) -> dict[str, Any]:
+        requests = int(row.get("requests") or 0)
+        successful = int(row.get("successful_requests") or 0)
+        return {
+            "requests": requests,
+            "successful_requests": successful,
+            "failed_requests": int(row.get("failed_requests") or 0),
+            "usage_reported_requests": int(row.get("usage_reported_requests") or 0),
+            "input_tokens": int(row.get("input_tokens") or 0),
+            "output_tokens": int(row.get("output_tokens") or 0),
+            "total_tokens": int(row.get("total_tokens") or 0),
+            "cached_tokens": int(row.get("cached_tokens") or 0),
+            "cost": float(row.get("cost") or 0),
+            "last_used_at": row.get("last_used_at"),
+            "success_rate": round(successful / requests * 100, 2) if requests else None,
+        }
+
+    def usage_breakdown(
+        self,
+        *,
+        account_id: str | None = None,
+        start_at: str | None = None,
+        end_at: str | None = None,
+        key_id: str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        status: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return dashboard aggregates without exposing prompt or response content."""
+
+        filters: list[str] = []
+        params: list[Any] = []
+        filter_specs = (
+            ("u.account_id", "=", account_id),
+            ("u.created_at", ">=", start_at),
+            ("u.created_at", "<", end_at),
+            ("u.key_id", "=", key_id),
+            ("u.model_id", "=", model_id),
+            ("u.endpoint", "=", endpoint),
+            ("u.status", "=", status),
+            ("u.user_id", "=", user_id),
+        )
+        for column, operator, value in filter_specs:
+            if value:
+                filters.append(f"{column} {operator} ?")
+                params.append(str(value).strip())
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        cte = f"WITH filtered_usage AS (SELECT u.* FROM api_usage AS u {where})"
+        metric_sql = """COUNT(u.request_id) AS requests,
+                          COALESCE(SUM(CASE WHEN u.status = 'completed' THEN 1 ELSE 0 END), 0)
+                              AS successful_requests,
+                          COALESCE(SUM(CASE WHEN u.status = 'failed' THEN 1 ELSE 0 END), 0)
+                              AS failed_requests,
+                          COALESCE(SUM(CASE WHEN u.input_tokens IS NOT NULL
+                                              OR u.output_tokens IS NOT NULL
+                                              OR u.total_tokens IS NOT NULL THEN 1 ELSE 0 END), 0)
+                              AS usage_reported_requests,
+                          COALESCE(SUM(u.input_tokens), 0) AS input_tokens,
+                          COALESCE(SUM(u.output_tokens), 0) AS output_tokens,
+                          COALESCE(SUM(u.total_tokens), 0) AS total_tokens,
+                          COALESCE(SUM(u.cached_tokens), 0) AS cached_tokens,
+                          COALESCE(SUM(u.cost), 0) AS cost,
+                          MAX(u.created_at) AS last_used_at"""
+
+        def query(sql: str, extra_params: Iterable[Any] = ()) -> list[dict[str, Any]]:
+            with self.connect() as connection:
+                rows = connection.execute(
+                    f"{cte} {sql}",
+                    [*params, *extra_params],
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        summary_rows = query(f"SELECT {metric_sql} FROM filtered_usage AS u")
+        summary = self._usage_metrics(summary_rows[0] if summary_rows else {})
+
+        account_rows = query(
+            f"""SELECT a.id AS account_id, a.name AS account_name, a.status AS account_status,
+                       {metric_sql}
+                FROM api_accounts AS a
+                LEFT JOIN filtered_usage AS u ON u.account_id = a.id
+                {"WHERE a.id = ?" if account_id else ""}
+                GROUP BY a.id, a.name, a.status
+                ORDER BY total_tokens DESC, requests DESC, a.id""",
+            [str(account_id).strip()] if account_id else (),
+        )
+        accounts = []
+        for row in account_rows:
+            item = {
+                "account_id": str(row["account_id"]),
+                "account_name": str(row["account_name"]),
+                "account_status": str(row["account_status"]),
+            }
+            item.update(self._usage_metrics(row))
+            accounts.append(item)
+
+        key_rows = query(
+            f"""SELECT k.id AS key_id, k.label, k.token_prefix, k.status AS key_status,
+                       a.id AS account_id, a.name AS account_name,
+                       {metric_sql}
+                FROM api_keys AS k
+                JOIN api_accounts AS a ON a.id = k.account_id
+                LEFT JOIN filtered_usage AS u ON u.key_id = k.id
+                {"WHERE a.id = ?" if account_id else ""}
+                GROUP BY k.id, k.label, k.token_prefix, k.status, a.id, a.name
+                ORDER BY total_tokens DESC, requests DESC, k.id""",
+            [str(account_id).strip()] if account_id else (),
+        )
+        keys = []
+        for row in key_rows:
+            item = {
+                "key_id": str(row["key_id"]),
+                "label": str(row["label"]),
+                "token_prefix": str(row["token_prefix"]),
+                "key_status": str(row["key_status"]),
+                "account_id": str(row["account_id"]),
+                "account_name": str(row["account_name"]),
+            }
+            item.update(self._usage_metrics(row))
+            keys.append(item)
+
+        model_rows = query(
+            f"""SELECT COALESCE(model_id, 'unknown') AS model_id,
+                       COALESCE(provider, 'unknown') AS provider,
+                       {metric_sql}
+                FROM filtered_usage AS u
+                GROUP BY COALESCE(model_id, 'unknown'), COALESCE(provider, 'unknown')
+                ORDER BY total_tokens DESC, requests DESC, model_id"""
+        )
+        models = []
+        for row in model_rows:
+            item = {"model_id": str(row["model_id"]), "provider": str(row["provider"])}
+            item.update(self._usage_metrics(row))
+            models.append(item)
+
+        endpoint_rows = query(
+            f"""SELECT COALESCE(endpoint, 'unknown') AS endpoint,
+                       {metric_sql}
+                FROM filtered_usage AS u
+                GROUP BY COALESCE(endpoint, 'unknown')
+                ORDER BY total_tokens DESC, requests DESC, endpoint"""
+        )
+        endpoints = []
+        for row in endpoint_rows:
+            item = {"endpoint": str(row["endpoint"])}
+            item.update(self._usage_metrics(row))
+            endpoints.append(item)
+
+        daily_rows = query(
+            f"""SELECT substr(created_at, 1, 10) AS date,
+                       {metric_sql}
+                FROM filtered_usage AS u
+                GROUP BY substr(created_at, 1, 10)
+                ORDER BY date"""
+        )
+        daily = []
+        for row in daily_rows:
+            item = {"date": str(row["date"])}
+            item.update(self._usage_metrics(row))
+            daily.append(item)
+
+        return {
+            "summary": summary,
+            "accounts": accounts,
+            "keys": keys,
+            "models": models,
+            "endpoints": endpoints,
+            "daily": daily,
+        }
+
     def usage_9router_events(
         self,
         *,

@@ -50,6 +50,7 @@
                 <option value="english">English assistant</option>
                 <option value="translate">English ↔ Lisu translator</option>
                 <option value="lisu_assistant">Lisu assistant (experimental)</option>
+                <option value="image_generation">Image generation</option>
               </select>
             </label>
             <label id="direction-control" class="mode-label" for="direction" hidden>Direction
@@ -58,9 +59,21 @@
                 <option value="lisu_to_en">Lisu → English</option>
               </select>
             </label>
-            <label class="mode-label" for="model">AI model
+            <label id="chat-model-control" class="mode-label" for="model">AI model
               <select id="model">
                 <option value="gemini-3.7-flash-high">Gemini 3.7 Flash High</option>
+              </select>
+            </label>
+            <label id="image-model-control" class="mode-label" for="image-model" hidden>Image model
+              <select id="image-model">
+                <option value="">Loading image models…</option>
+              </select>
+            </label>
+            <label id="image-size-control" class="mode-label" for="image-size" hidden>Image size
+              <select id="image-size">
+                <option value="1024x1024">Square · 1024 × 1024</option>
+                <option value="1536x1024">Landscape · 1536 × 1024</option>
+                <option value="1024x1536">Portrait · 1024 × 1536</option>
               </select>
             </label>
           </div>
@@ -92,6 +105,18 @@
           </div>
           <p id="translation-review-state" class="hint" role="status">Waiting for translation</p>
           <p class="hint">The source is frozen when submitted. You may edit the result for review before using it as the next source.</p>
+        </section>
+        <section id="image-workspace" class="image-workspace" hidden aria-labelledby="image-result-title">
+          <div class="translator-panel-heading">
+            <div>
+              <p class="eyebrow">Image result</p>
+              <h3 id="image-result-title">Describe what you want to create</h3>
+            </div>
+            <p id="image-review-state" class="hint" role="status">Waiting for an image prompt</p>
+          </div>
+          <div id="image-result" class="image-result" aria-live="polite">
+            <p class="empty-state">Your generated image will appear here.</p>
+          </div>
         </section>
         <div id="messages" class="messages" aria-live="polite">
           <div class="message assistant">Choose a mode and send a message to begin.</div>

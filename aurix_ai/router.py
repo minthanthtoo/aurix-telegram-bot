@@ -661,17 +661,23 @@ class NineRouterClient:
         account_id: str | None = None,
         user_id: str | None = None,
         conversation_id: str | None = None,
+        method: str = "POST",
     ) -> dict[str, Any]:
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        body = None if method == "GET" else json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
         with self._open(
             path,
             data=body,
-            content_type="application/json",
+            content_type="application/json" if body is not None else None,
             accept="application/json",
             request_id=request_id,
             account_id=account_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            method=method,
         ) as response:
             raw = response.read(32 * 1024 * 1024)
         try:
@@ -694,16 +700,18 @@ class NineRouterClient:
         account_id: str | None = None,
         user_id: str | None = None,
         conversation_id: str | None = None,
+        method: str = "POST",
     ) -> dict[str, Any]:
         with self._open(
             path,
-            data=data,
-            content_type=content_type,
+            data=data if method != "GET" else None,
+            content_type=content_type if method != "GET" else None,
             accept=accept,
             request_id=request_id,
             account_id=account_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            method=method,
         ) as response:
             body = response.read(max_response_bytes + 1)
             if len(body) > max_response_bytes:
