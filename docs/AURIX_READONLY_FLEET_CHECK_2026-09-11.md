@@ -64,3 +64,17 @@ Using the documented DigitalOcean key in batch mode, sg-a
 `139.59.122.170` still timed out on TCP/22. No remote command was executed on
 either Singapore host, and no access key, firewall rule, service, or customer
 state was changed.
+
+## Read-only Singapore access recheck — 2026-09-13
+
+A further single, batch-mode SSH attempt to sg-a `157.245.63.95` used the same
+documented DigitalOcean key with strict host-key checking and an eight-second
+connection bound. Authentication again ended at `Permission denied
+(publickey)`, before any remote command ran. No retry was made against sg-b
+because this result neither restores Singapore administrative access nor
+changes the existing direct-client-path evidence.
+
+This is an access finding, not a server-health result. It blocks only the live
+Singapore inspection/canary gates; it does not justify modifying the local
+control plane, enabling a protocol profile, or treating historical host
+measurements as current capacity evidence.
