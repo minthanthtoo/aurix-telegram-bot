@@ -771,6 +771,11 @@ class IdentityService:
         timestamp = _now_text()
         rows: list[Any] = []
         with self.database.connect() as connection:
+            account = connection.execute(
+                "SELECT status FROM accounts WHERE account_id = ?", (str(account_id),)
+            ).fetchone()
+            if account is None or str(account["status"]) != "active":
+                return []
             telegram_id = self._account_telegram_id(connection, account_id)
             if telegram_id is None:
                 return []
@@ -821,6 +826,11 @@ class IdentityService:
         """Return one active account-owned generation for authenticated config delivery."""
         timestamp = _now_text()
         with self.database.connect() as connection:
+            account = connection.execute(
+                "SELECT status FROM accounts WHERE account_id = ?", (str(account_id),)
+            ).fetchone()
+            if account is None or str(account["status"]) != "active":
+                return None
             telegram_id = self._account_telegram_id(connection, account_id)
             if telegram_id is None:
                 return None

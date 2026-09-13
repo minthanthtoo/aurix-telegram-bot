@@ -184,6 +184,22 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertEqual(job["attempts"], 1)
         self.assertIn("account is not active", job["last_error"])
 
+    def test_inactive_account_does_not_receive_existing_paid_access_url(self):
+        self.service.identity.ensure_account(123, now=self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        account_id = self.service.identity.account_snapshot(123)["account_id"]
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE accounts SET status = 'suspended' WHERE account_id = ?",
+                (account_id,),
+            )
+
+        vpn = self.service.user_vpns(123)[0]
+        self.assertIsNone(vpn["access_url"])
+        self.assertTrue(vpn["access_blocked"])
+
     def test_wallet_topup_requires_exact_verified_amount(self):
         order = self.service.create_wallet_topup(123, "Min", 6000, self.now)
         self.service.select_payment_provider(123, order.order_id, "kpay")

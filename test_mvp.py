@@ -124,6 +124,26 @@ class MvpFeatureTest(unittest.TestCase):
             free.access_url,
         )
 
+    def test_inactive_account_does_not_receive_existing_free_access_url(self):
+        claim_now = datetime.now(UTC) + timedelta(days=1)
+        self.claims.identity.ensure_account(101, now=claim_now)
+        free = self.claims.claim(101, "A", claim_now)
+        account_id = self.claims.identity.account_snapshot(101)["account_id"]
+        with self.free_db.connect() as connection:
+            connection.execute(
+                "UPDATE accounts SET status = 'suspended' WHERE account_id = ?",
+                (account_id,),
+            )
+
+        cached = self.claims.cached_access_urls(101)
+        self.assertEqual(cached["byEndpoint"], {})
+        self.assertTrue(cached["access_blocked"])
+        usage = self.claims.user_usage(101, {}, cached)
+        self.assertEqual(len(usage), 1)
+        self.assertIsNone(usage[0]["access_url"])
+        self.assertTrue(usage[0]["access_blocked"])
+        self.assertTrue(free.access_url)
+
     def test_maintenance_inventory_repairs_legacy_free_url_projection(self):
         free = self.claims.claim(101, "A", self.now)
         with self.commerce.database.connect() as connection:

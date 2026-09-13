@@ -151,6 +151,38 @@ class IdentityAccountingTest(unittest.TestCase):
         )
         self.assertEqual(paired["active_device_count"], 1)
 
+    def test_inactive_account_cannot_receive_route_metadata_or_secret(self):
+        account_id = self.identity.ensure_account(123, now=self.now)
+        entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
+        generation = self.identity.ensure_generation_for_credential(
+            entitlement,
+            "sg-a",
+            credential_id="paid-credential",
+            external_id="paid-credential",
+            protocol="outline",
+            access_url_ciphertext="ss://secret",
+            usage_baseline_provenance="new",
+            now=self.now.isoformat(),
+        )
+
+        self.assertEqual(
+            [item["generation_id"] for item in self.identity.routes_for_account(account_id)],
+            [generation],
+        )
+        self.assertEqual(
+            self.identity.route_secret_record(account_id, generation)["secret_ciphertext"],
+            "ss://secret",
+        )
+
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE accounts SET status = 'suspended' WHERE account_id = ?",
+                (account_id,),
+            )
+
+        self.assertEqual(self.identity.routes_for_account(account_id), [])
+        self.assertIsNone(self.identity.route_secret_record(account_id, generation))
+
     def test_device_revocation_is_audited_once_without_key_material(self):
         token = self.identity.create_pairing_token(123, now=self.now)
         paired = self.identity.consume_pairing_token(

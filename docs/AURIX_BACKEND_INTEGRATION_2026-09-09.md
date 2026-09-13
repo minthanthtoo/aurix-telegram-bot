@@ -898,3 +898,21 @@ as an operator mutation. Legacy databases without the account migrations keep
 their compatibility behavior. Focused identity, entitlement, commerce, and
 worker regressions pass, and no live server, provider, customer, or production
 database was changed.
+
+## 33. Inactive-account access delivery gate — 2026-09-13
+
+The account-status boundary now also applies when an existing entitlement is
+read for customer access. Paid and free customer snapshots retain safe quota,
+expiry, and lifecycle metadata but omit the access URL while a mapped account
+is suspended or closed and mark the entry as `access_blocked`. The encrypted
+free-key cache returns no URLs for an inactive account, so a customer request
+cannot recover a previously issued free key through the maintenance snapshot.
+
+Managed-device route metadata and secret delivery use the same account check:
+inactive accounts receive neither route manifests nor route secret records.
+This is a local delivery gate, not a claim that a previously imported remote
+key has been terminated. Existing paid/free revocation jobs, remote session
+proof, and future account-level revoke-all/reactivation orchestration remain
+separate required work. Focused identity, free-entitlement, commerce, device,
+and web regressions pass; no live server, provider, customer, or production
+database was changed.

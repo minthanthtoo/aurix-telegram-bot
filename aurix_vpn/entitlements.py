@@ -1824,6 +1824,7 @@ class ClaimService:
     ) -> list[dict[str, Any]]:
         """Return this user's current free/trial key state for the customer dashboard."""
         access_by_key = access_by_key or {}
+        account_active = self.identity.account_is_active(telegram_id)
         now = datetime.now(UTC)
         with self.database.connect() as connection:
             rows = connection.execute(
@@ -1900,8 +1901,11 @@ class ClaimService:
                     "expires_at": row["expires_at"],
                     "status": effective_status,
                     "access_url": endpoint_access.get(key_id)
-                    if effective_status == "active"
+                    if account_active and effective_status == "active"
                     else None,
+                    "access_blocked": (
+                        not account_active and effective_status == "active"
+                    ),
                     "created_at": row["created_at"],
                 }
             )
@@ -1979,6 +1983,9 @@ class ClaimService:
         projection; an interactive request never performs provider inventory.
         """
         empty = {"byEndpoint": {}, "errors": {}, "source": "durable_generation"}
+        if not self.identity.account_is_active(telegram_id):
+            empty["access_blocked"] = True
+            return empty
         if self._access_url_cipher is None:
             empty["errors"] = {"cache": "encryption_unavailable"}
             return empty

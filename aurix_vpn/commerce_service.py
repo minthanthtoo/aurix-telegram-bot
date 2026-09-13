@@ -2658,8 +2658,10 @@ class CommerceService(CommerceWorkerMixin):
         """Return all of a user's paid entitlements without exposing secrets.
 
         A customer may own multiple active keys (for devices or parallel
-        plans). Access URLs are decrypted only for active, non-expired keys.
+        plans). Access URLs are decrypted only for active, non-expired keys
+        belonging to an active account.
         """
+        account_active = self.identity.account_is_active(telegram_id)
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT s.id AS subscription_id, s.plan_code, s.plan_name, s.status,
@@ -2677,13 +2679,22 @@ class CommerceService(CommerceWorkerMixin):
         results = []
         for row in rows:
             result = dict(row)
-            result["access_url"] = self._decrypt_access_url(result.get("access_url"))
-            if (
-                result.get("status") != "active"
-                or result.get("key_status") != "active"
-                or str(result.get("expires_at") or "") <= now_text
-            ):
-                result["access_url"] = None
+            encrypted_access_url = result.get("access_url")
+            result["access_url"] = None
+            result["access_blocked"] = False
+            if not account_active:
+                result["access_blocked"] = (
+                    result.get("status") == "active"
+                    and result.get("key_status") == "active"
+                )
+            else:
+                result["access_url"] = self._decrypt_access_url(encrypted_access_url)
+                if (
+                    result.get("status") != "active"
+                    or result.get("key_status") != "active"
+                    or str(result.get("expires_at") or "") <= now_text
+                ):
+                    result["access_url"] = None
             results.append(result)
         return results
 

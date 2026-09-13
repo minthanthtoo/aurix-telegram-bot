@@ -1400,6 +1400,8 @@ class TelegramBot(
                     copy_rows.append([copy_button])
                 else:
                     lines.append("Press and hold the key above to copy it.")
+            elif entry.get("access_blocked"):
+                lines.append("VPN access is paused while your account is inactive.")
             elif status == "active" and entry.get("key_type") != "paid" and not access_available:
                 lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
             elif status == "activation pending":

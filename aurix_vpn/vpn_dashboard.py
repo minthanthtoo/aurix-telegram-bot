@@ -119,6 +119,7 @@ def collect_customer_vpn_state(
                     "expires_at": item.get("expires_at"),
                     "status": status,
                     "access_url": item.get("access_url"),
+                    "access_blocked": bool(item.get("access_blocked")),
                     "created_at": item.get("created_at") or item.get("starts_at"),
                 }
             )

@@ -226,6 +226,7 @@ Completed since the earlier roadmap:
 - [x] Promo/giveaway provisioning uses durable reservations, retryable jobs, deterministic provider identity where supported, and recovery notifications.
 - [x] Endpoint registry, endpoint-scoped Outline resolution, assignments, protocol profiles, capacity observations, and guarded drain/failover seams are implemented locally.
 - [x] Mapped suspended/closed accounts fail closed for new free, promo, and paid credential issuance; queued paid provisioning rechecks status before provider creation.
+- [x] Mapped suspended/closed accounts fail closed for customer URL/config delivery across paid keys, free keys, and managed device route manifests; entitlement metadata remains visible with an explicit access-blocked state.
 
 Still required before or as the first bounded part of V3:
 

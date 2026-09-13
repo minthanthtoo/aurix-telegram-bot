@@ -83,6 +83,7 @@ def _safe_key(entry: dict[str, Any]) -> dict[str, Any]:
         "usage_observed",
         "expires_at",
         "status",
+        "access_blocked",
         "created_at",
     }
     result = {key: entry[key] for key in allowed if key in entry}
