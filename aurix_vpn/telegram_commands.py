@@ -908,7 +908,10 @@ class TelegramCommandMixin:
                                     ("📷 Send Receipt", f"o:r:{order.order_id}"),
                                     ("💰 Pay Wallet", f"o:w:{order.order_id}"),
                                 ],
-                                [("View Order", f"o:v:{order.order_id}")],
+                                [
+                                    ("🧾 View Order", f"o:v:{order.order_id}"),
+                                    ("✖ Close", "n:close"),
+                                ],
                             ]
                         ),
                         message_id=message_id,
@@ -1165,6 +1168,7 @@ class TelegramCommandMixin:
                                 [
                                     ("📷 Send Receipt", f"o:r:{order.order_id}"),
                                     ("View Order", f"o:v:{order.order_id}"),
+                                    ("✖ Close", "n:close"),
                                 ]
                             ]
                         ),

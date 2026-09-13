@@ -789,6 +789,7 @@ class TelegramBot(
                 [("3,000 MMK", "t:a:3000"), ("6,000 MMK", "t:a:6000")],
                 [("10,000 MMK", "t:a:10000"), ("20,000 MMK", "t:a:20000")],
                 [("✍️ Other amount", "t:a:custom")],
+                [("✖ Close", "n:close")],
             ]
         )
 
@@ -1908,7 +1909,7 @@ class TelegramBot(
             "\n\n".join(blocks),
             self._inline_keyboard(
                 [
-                    [("🔄 Refresh Usage", "n:usage"), ("🔐 My VPN", "n:myvpn")],
+                    [("🔄 Refresh My VPN", "n:usage"), ("🔐 My VPN", "n:myvpn")],
                     [("✖ Close", "n:close")],
                 ]
             ),
