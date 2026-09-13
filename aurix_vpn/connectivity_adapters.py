@@ -423,7 +423,19 @@ class _ManagedCredentialAdapter:
             records = records.get("users") or records.get("clients") or records.get("items")
         if not isinstance(records, list):
             raise ConnectivityAdapterError(f"{self.protocol} inventory response is not a list")
-        return [item for item in records if isinstance(item, Mapping)]
+        # A protocol-neutral node agent can expose more than one transport.
+        # Never let an explicitly tagged Xray user enter Hysteria2 inventory
+        # (or the reverse). Dedicated legacy agents may omit the field; retain
+        # those records because their route is already protocol-bound.
+        return [
+            item
+            for item in records
+            if isinstance(item, Mapping)
+            and (
+                not str(item.get("protocol") or "").strip()
+                or str(item.get("protocol") or "").strip().lower() == self.protocol
+            )
+        ]
 
     def _reconcile_secret(self, grant: Mapping[str, Any], external_id: str) -> str:
         """Recover the provider secret needed to recreate a missing user.

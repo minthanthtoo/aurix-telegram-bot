@@ -66,6 +66,7 @@ class _ProtocolClient:
         value = {
             "external_id": str(external_id),
             "name": name,
+            "protocol": str(route.get("protocol") or ""),
             "secret": intent["secret"],
         }
         self.users[str(external_id)] = value
@@ -367,6 +368,36 @@ class ConnectivityAdapterTest(unittest.TestCase):
         restored = adapter.reconcile_credentials(route, [grant])
         self.assertEqual(restored["restored"], 1)
         self.assertEqual(client.users["customer-a"]["secret"], grant["secret"])
+
+    def test_protocol_scoped_inventory_excludes_other_declared_transports(self):
+        client = _ProtocolClient()
+        xray = XrayConnectivityAdapter(client)
+        hysteria2 = Hysteria2ConnectivityAdapter(client)
+        xray_grant = xray.provision(
+            self._xray_route(), {"external_id": "xray-user", "name": "Xray customer"}
+        )
+        hysteria2_route = {
+            "route_id": "hysteria2:sg-a",
+            "endpoint_id": "sg-a",
+            "protocol": "hysteria2",
+            "public_address": "198.51.100.10",
+            "port": 18444,
+            "server_name": "example.com",
+            "auth_mode": "http",
+        }
+        hysteria2_grant = hysteria2.provision(
+            hysteria2_route,
+            {"external_id": "hysteria2-user", "name": "Hysteria customer"},
+        )
+
+        self.assertEqual(xray.reconcile(self._xray_route())["users"], 1)
+        self.assertEqual(hysteria2.reconcile(hysteria2_route)["users"], 1)
+        self.assertEqual(xray.inventory(self._xray_route())["external_ids"], ["xray-user"])
+        self.assertEqual(
+            hysteria2.inventory(hysteria2_route)["external_ids"], ["hysteria2-user"]
+        )
+        self.assertEqual(xray_grant["protocol"], "xray")
+        self.assertEqual(hysteria2_grant["protocol"], "hysteria2")
 
     def test_hysteria2_rejects_shared_or_undeclared_auth_before_user_creation(self):
         route = {

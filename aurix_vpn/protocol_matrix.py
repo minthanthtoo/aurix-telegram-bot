@@ -292,7 +292,10 @@ class ProtocolMatrixRunner:
             == set(self.protocols)
         )
         quota_ok = not errors and set(quotas_before_revoke.values()) == {self.quota_bytes}
-        inventory_ok = all(value == len(grants) for value in reconcile_counts.values())
+        inventory_ok = all(
+            reconcile_counts.get(protocol) == protocol_counts[protocol]
+            for protocol in self.protocols
+        )
         revocation_ok = revoked == len(grants) and not self.provider.users and not self.provider.quotas
         checks = {
             "provisioned_expected": len(grants) == len(jobs),

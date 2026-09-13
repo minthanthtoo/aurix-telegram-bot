@@ -20,19 +20,26 @@ uv run python scripts/aurix_protocol_matrix.py --customers-per-protocol 16 --wor
 These commands exercise only an in-memory provider and the authenticated local
 agent contract. They are safe regression checks, not live server load tests.
 
-Latest bounded stress re-run (2026-09-12 13:50 UTC):
+Latest bounded stress re-run (2026-09-13 04:00 UTC):
 `--customers-per-protocol 200 --workers 64` passed with 400
-provisioned/reconciled/revoked grants, two representative rotations, and no
-errors. Provision latency was mean 0.125 ms, p95 0.132 ms, p99 0.436 ms, and
-max 4.302 ms in the local process. The staged 2/5/16-customer runs also passed
-in the same snapshot. These timings describe the test harness only and must
-not be used as server capacity or customer speed evidence.
+provisioned/revoked grants, two representative rotations, and no errors.
+Reconciliation was correctly protocol-scoped at 200 Xray and 200 Hysteria2
+users. Provision latency was mean 0.795 ms, p95 0.496 ms, p99 32.330 ms, and
+max 33.212 ms in the local process. The staged 2/5/16-customer runs also pass.
+These timings describe the test harness only and must not be used as server
+capacity or customer speed evidence.
 
 The test is deliberately provider-local and deterministic. It proves that the
 controller adapters do not cross customer or protocol state when they share one
 authenticated lifecycle contract. It does **not** prove real Xray or Hysteria2
 behavior, public-network reachability, Myanmar compatibility, restart persistence,
 native quota enforcement, bandwidth, latency, or 24–48-hour soak safety.
+
+When one protocol-neutral node agent serves multiple transports, every
+`list_users` record must include its `protocol`. Managed adapters discard users
+explicitly tagged for another transport before inventory/reconciliation. A
+dedicated single-protocol agent may omit the tag for compatibility, because its
+route boundary already scopes the inventory.
 
 The control plane now applies the same explicit enabled-profile requirement to
 allocation, failover target selection, operator drain, assignment transfer, and

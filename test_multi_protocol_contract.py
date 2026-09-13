@@ -148,7 +148,7 @@ class MultiProtocolContractTest(unittest.TestCase):
         for adapter, route, grant in grants:
             self.assertEqual(adapter.read_usage(grant)["bytes_transferred"], 18)
             self.assertEqual(adapter.probe_data_plane(route)["status"], "healthy")
-            self.assertEqual(adapter.reconcile(route)["users"], 16)
+            self.assertEqual(adapter.reconcile(route)["users"], 8)
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             list(executor.map(lambda item: item[0].revoke_auth(item[2]), grants))

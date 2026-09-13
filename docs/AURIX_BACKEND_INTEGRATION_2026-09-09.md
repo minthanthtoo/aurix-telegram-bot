@@ -948,3 +948,17 @@ The account lifecycle tests and Telegram confirmation tests pass locally. The
 schema contract fingerprints were intentionally advanced for migration 19.
 This step changed no live server, provider, customer credential, BKK-A/Xray or
 Hysteria2 profile, load/speed/soak test, or production database.
+
+## 35. Protocol-scoped shared-agent inventory — 2026-09-13
+
+The protocol-neutral node-agent boundary can serve Xray and Hysteria2 from one
+authenticated lifecycle service, but a shared inventory must not let one
+adapter reconcile the other transport's users. Managed adapters now ignore any
+provider record explicitly tagged for a different protocol. Dedicated legacy
+agents that omit the tag remain compatible because their route is already
+single-protocol; a shared agent must return `protocol` per user. The bounded
+local matrix verifies 200 Xray plus 200 Hysteria2 grants concurrently, with
+separate 200-user inventories, quota/usage checks, rotation, explicit session
+termination, and final revocation. This is local contract evidence only; it
+does not promote either candidate protocol or replace the outstanding real
+daemon, client-path, quota, restart, concurrency, and soak gates.
