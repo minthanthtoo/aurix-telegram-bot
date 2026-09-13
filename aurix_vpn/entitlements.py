@@ -276,6 +276,11 @@ class ClaimService:
             ).fetchone()
 
     @staticmethod
+    def _account_is_active_in_connection(connection: Any, telegram_id: int) -> bool:
+        status = IdentityService.account_status_in_connection(connection, telegram_id)
+        return status in (None, "active")
+
+    @staticmethod
     def _has_active_promo_gift(
         connection: Any, telegram_id: int, now: datetime
     ) -> bool:
@@ -713,6 +718,11 @@ class ClaimService:
                 (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
             )
             self._lock_user(connection, telegram_id)
+            if not self._account_is_active_in_connection(connection, telegram_id):
+                return GiveawayResult(
+                    "ineligible",
+                    reason="This account is not active.",
+                )
             if code == GIVEAWAY_CODE:
                 connection.execute(
                     """INSERT INTO giveaway_campaigns
@@ -927,6 +937,21 @@ class ClaimService:
                 return self._giveaway_result_from_claim(campaign, claim, remaining)
             if str(row["status"]) == "done":
                 raise OutlineError("completed promo provisioning job lacks its claim")
+            if not self._account_is_active_in_connection(connection, int(row["telegram_id"])):
+                connection.execute(
+                    """UPDATE giveaway_provisioning_jobs
+                          SET status = 'pending', locked_at = NULL,
+                              next_attempt_at = ?, last_error = 'account is not active'
+                        WHERE id = ? AND status != 'done'""",
+                    ((now + FREE_PROVISION_RETRY_DELAY).isoformat(), job_id),
+                )
+                return GiveawayResult(
+                    "ineligible",
+                    code=str(campaign["code"]),
+                    quota_bytes=int(campaign["quota_bytes"]),
+                    duration_days=int(campaign["duration_days"]),
+                    reason="This account is not active.",
+                )
             if str(row["status"]) == "running" and row["locked_at"]:
                 try:
                     lock_time = datetime.fromisoformat(str(row["locked_at"])).astimezone(UTC)
@@ -1200,6 +1225,8 @@ class ClaimService:
                 (telegram_id, first_name[:128], (username or "")[:64] or None, now_text),
             )
             self._lock_user(connection, telegram_id)
+            if not self._account_is_active_in_connection(connection, telegram_id):
+                return ClaimResult(denied_reason="account_inactive")
             user = connection.execute(
                 f"SELECT {claim_column} FROM users WHERE telegram_id = ?", (telegram_id,)
             ).fetchone()
@@ -1281,6 +1308,17 @@ class ClaimService:
                     expires_at=datetime.fromisoformat(str(key["expires_at"])),
                     denied_reason="provisioning_completed",
                 )
+            if not self._account_is_active_in_connection(
+                connection, int(row["telegram_id"])
+            ):
+                connection.execute(
+                    """UPDATE free_provisioning_jobs
+                          SET status = 'pending', locked_at = NULL,
+                              next_attempt_at = ?, last_error = 'account is not active'
+                        WHERE id = ? AND status != 'done'""",
+                    ((now + FREE_PROVISION_RETRY_DELAY).isoformat(), job_id),
+                )
+                return ClaimResult(denied_reason="account_inactive")
             if str(row["status"]) == "running" and row["locked_at"]:
                 try:
                     lock_time = datetime.fromisoformat(str(row["locked_at"])).astimezone(UTC)

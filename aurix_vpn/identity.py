@@ -147,6 +147,41 @@ class IdentityService:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    @classmethod
+    def account_status_in_connection(
+        cls, connection: Any, telegram_id: int
+    ) -> str | None:
+        """Return one mapped account's status without creating identity state.
+
+        The free repository is also used by isolated legacy installations
+        which do not have the commerce/account migrations.  ``None`` means
+        that the account control plane is unavailable or this legacy user has
+        not been mapped yet; callers can preserve that compatibility path.
+        """
+        if not cls._table_exists(connection, "accounts") or not cls._table_exists(
+            connection, "account_identities"
+        ):
+            return None
+        row = connection.execute(
+            """SELECT a.status
+                 FROM accounts a
+                 JOIN account_identities i ON i.account_id = a.account_id
+                WHERE i.identity_type = 'telegram' AND i.identity_value = ?""",
+            (str(int(telegram_id)),),
+        ).fetchone()
+        return str(row["status"]) if row is not None else None
+
+    def account_is_active(self, telegram_id: int) -> bool:
+        """Return whether issuance is allowed for a mapped account.
+
+        An unmapped identity is treated as active for legacy databases; the
+        runtime creates the opaque account mapping before normal Telegram
+        traffic reaches the claim path when the account migrations exist.
+        """
+        with self.database.connect() as connection:
+            status = self.account_status_in_connection(connection, telegram_id)
+        return status in (None, "active")
+
     def create_pairing_token(
         self,
         telegram_id: int,

@@ -108,6 +108,26 @@ class ClaimServiceTest(unittest.TestCase):
         self.service.claim_trial(123, "Min", self.now, username="min_user")
         self.assertEqual(self.outline.created[0][0], "min_user-FREE3GB-30day-202608270307")
 
+    def test_inactive_account_blocks_new_free_and_promo_issuance(self):
+        database = CommerceDatabase(Path(self.tmp.name) / "account-controlled.db")
+        database.initialize()
+        outline = FakeOutline()
+        service = ClaimService(database, outline)
+        account_id = service.identity.ensure_account(123, now=self.now)
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE accounts SET status = 'suspended' WHERE account_id = ?",
+                (account_id,),
+            )
+
+        self.assertEqual(
+            service.claim(123, "Min", self.now).denied_reason, "account_inactive"
+        )
+        promo = service.claim_giveaway(123, "Min", self.now)
+        self.assertEqual(promo.outcome, "ineligible")
+        self.assertEqual(promo.reason, "This account is not active.")
+        self.assertEqual(outline.created, [])
+
     def test_second_claim_inside_24_hours_is_rejected(self):
         self.service.claim(123, "Min", self.now)
         result = self.service.claim(123, "Min", self.now + timedelta(hours=23, minutes=59))

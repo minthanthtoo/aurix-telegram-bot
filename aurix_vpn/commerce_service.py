@@ -441,6 +441,12 @@ class CommerceService(CommerceWorkerMixin):
         )
 
     @staticmethod
+    def _assert_account_active(connection: Any, telegram_id: int) -> None:
+        status = IdentityService.account_status_in_connection(connection, telegram_id)
+        if status is not None and status != "active":
+            raise CommerceError("account is not active")
+
+    @staticmethod
     def _audit(
         connection: sqlite3.Connection,
         action: str,
@@ -501,6 +507,7 @@ class CommerceService(CommerceWorkerMixin):
         with self.database.connect() as connection:
             self.database.begin_write(connection)
             self._ensure_user(connection, telegram_id, first_name, username)
+            self._assert_account_active(connection, telegram_id)
             if isinstance(connection, _PostgresConnection):
                 connection.execute(
                     "SELECT telegram_id FROM users WHERE telegram_id = ? FOR UPDATE",
@@ -1017,6 +1024,7 @@ class CommerceService(CommerceWorkerMixin):
             order = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None or order["telegram_id"] != telegram_id:
                 raise CommerceError("Order not found")
+            self._assert_account_active(connection, telegram_id)
             self._assert_no_active_promo(connection, telegram_id)
             if order["status"] == "approved":
                 raise CommerceError("Order is already approved")
@@ -1860,6 +1868,7 @@ class CommerceService(CommerceWorkerMixin):
                 raise CommerceError("Order not found")
             if str(order["plan_code"]) == "wallet_topup":
                 raise CommerceError("A wallet cannot be topped up from the same wallet")
+            self._assert_account_active(connection, telegram_id)
             self._assert_no_active_promo(connection, telegram_id)
             if order["status"] == "approved":
                 return "already_approved"
@@ -2000,6 +2009,7 @@ class CommerceService(CommerceWorkerMixin):
                 raise CommerceError("Order not found")
             is_wallet_topup = str(order["plan_code"]) == "wallet_topup"
             if not is_wallet_topup:
+                self._assert_account_active(connection, int(order["telegram_id"]))
                 self._assert_no_active_promo(connection, int(order["telegram_id"]))
             if order["status"] == "approved":
                 if is_wallet_topup:

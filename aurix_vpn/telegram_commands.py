@@ -898,6 +898,11 @@ class TelegramCommandMixin:
                     "Your promo gift is active. Monthly 3 GB returns automatically when the "
                     "gift or promo season ends.",
                 )
+            elif result.denied_reason == "account_inactive":
+                self.send(
+                    chat["id"],
+                    "This account is not active, so new VPN access cannot be issued. Contact support if this is unexpected.",
+                )
             elif result.denied_reason == "provisioning_pending":
                 self.send(
                     chat["id"],
@@ -1457,6 +1462,11 @@ class TelegramCommandMixin:
                     chat["id"],
                     "Your promo gift is active. Daily 300 MB returns automatically when the "
                     "gift or promo season ends.",
+                )
+            elif result.denied_reason == "account_inactive":
+                self.send(
+                    chat["id"],
+                    "This account is not active, so new VPN access cannot be issued. Contact support if this is unexpected.",
                 )
             elif result.denied_reason == "provisioning_pending":
                 self.send(

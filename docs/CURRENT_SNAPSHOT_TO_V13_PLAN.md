@@ -6,7 +6,7 @@
 
 Status: re-audited implementation roadmap derived from the complete VPN conversations  
 Baseline date: 2026-08-29 (Asia/Rangoon)  
-Current network version: **V2 — hardened single-Outline entitlement platform**  
+Current network version: **V2 product with a V3-preparation control plane**
 Current software baseline: **V2, refactor Phase 8 — modular monolith with compatibility facades**
 
 ## Decision summary
@@ -109,6 +109,12 @@ Important remaining facts:
   Explicit promotion requires fresh non-expired healthy evidence for every
   required signal, declared capabilities, and an audit record when commerce is
   available; automatic health observations cannot promote a profile.
+- Account status is now a fail-closed issuance gate when an identity is mapped:
+  suspended or closed accounts cannot create new free, promo, or paid VPN
+  credentials, and a queued paid job is rechecked before provider creation.
+  Existing remote credentials are deliberately not described as revoked by this
+  local state; complete account suspension still requires a durable,
+  provider-verified revoke-all workflow with an explicit reactivation policy.
 - Startup degrades cleanly when the one Outline management endpoint is unavailable; provisioning remains fail-closed until health returns.
 - Endpoint capacity observations now use bounded failure/recovery hysteresis and
   audit actual `ACTIVE`/`DEGRADED` transitions; normal failover/drain target
@@ -168,7 +174,8 @@ The current repository implements considerably more than the earlier V2 snapshot
 - private receipt-object storage, immutable receipt metadata, untrusted LLM extraction, and human verification;
 - immutable customer wallet ledger;
 - independent paid entitlements with multiple simultaneous keys, activation, expiry, refund, and revocation;
-- one pinned Outline management client;
+- endpoint registry with a durable bootstrap Outline endpoint and endpoint-scoped
+  management proxy;
 - deterministic paid-key creation and ambiguous-response reconciliation;
 - durable provisioning jobs, notification retries, dead-letter state, and audit events;
 - thresholded quota warnings, per-key quota observation, and hard key deletion;
@@ -178,11 +185,19 @@ The current repository implements considerably more than the earlier V2 snapshot
 - shared persistence protocols and numbered migration history;
 - explicit external adapter ports and a separated reliable-worker boundary;
 - modular runtime, commerce, entitlement, Telegram, and adapter code with compatibility facades;
-- CI and local validation covering 132 tests at 67% branch coverage.
+- CI and local VPN validation covering the current split regression suite, with
+  the latest local run at 403 passing tests; this is not live network evidence.
 
 ### What makes it V2 rather than V3
 
-The process loads one `OUTLINE_API_URL`, creates one `OutlineClient`, and injects it into every claim and paid-provisioning path. Keys have no endpoint assignment. There is no endpoint, region, provider, or transport registry.
+The source now contains the endpoint/provider/region/transport registry,
+endpoint-scoped clients, durable assignments, protocol profiles, capacity
+observations, and guarded drain/failover seams. It is still not a production
+V3 fleet: the local deployment has only the bootstrap Outline endpoint
+configured/evidenced, no live second endpoint or second region has passed the
+acceptance gate, and no live migration/customer reconnect evidence exists.
+The compatibility gateway remains for legacy callers, but it resolves the
+durable bootstrap endpoint instead of owning an independent URL or certificate.
 
 Current topology:
 
@@ -191,9 +206,9 @@ Customer
   ↓
 Telegram + AuriX V2 control plane
   ↓
-one Outline API
+endpoint registry + assignment/adapter boundary
   ↓
-one Outline server/IP/region
+one currently evidenced Outline server/IP/region
 ```
 
 ### V2 foundation status
@@ -209,12 +224,28 @@ Completed since the earlier roadmap:
 - [x] Notification delivery uses durable claim leases with stale-worker protection.
 - [x] Daily free and monthly trial provisioning use durable jobs with deterministic provider identity and recovery notifications.
 - [x] Promo/giveaway provisioning uses durable reservations, retryable jobs, deterministic provider identity where supported, and recovery notifications.
+- [x] Endpoint registry, endpoint-scoped Outline resolution, assignments, protocol profiles, capacity observations, and guarded drain/failover seams are implemented locally.
+- [x] Mapped suspended/closed accounts fail closed for new free, promo, and paid credential issuance; queued paid provisioning rechecks status before provider creation.
 
 Still required before or as the first bounded part of V3:
 
 1. Complete the live PostgreSQL/Supabase backup, isolated restore, and receipt-object reconciliation drill; the local SQLite artifact/restore drill is now executable and tested.
 2. Run the documented live one-server acceptance test with known users.
 3. Capture real usage, connection success, support, and contribution-margin evidence.
+
+Current V3-preparation audit:
+
+| Original V3 work package | Snapshot judgment | Evidence boundary |
+|---|---|---|
+| WP0 recoverable baseline and single-node proof | Local recovery baseline complete; live proof pending | Backup/restore artifacts and tests are local; hosted PostgreSQL, object storage, Telegram, and client proof remain outstanding |
+| WP1–WP3 registry, backfill, adapter/factory | Local control-plane implementation complete for the bootstrap endpoint | No live multi-endpoint secret/certificate verification has been performed |
+| WP4–WP5 paid and free assignment/job routing | Local fake-provider paths and failure contracts complete | No real second-node provisioning, quota, restart, or reconnect evidence |
+| WP6–WP8 second Outline endpoint/region and allocation | Not production-complete | Requires approved live nodes, measured Myanmar sessions, capacity/transfer evidence, and cost review |
+| WP9 drain and assisted migration | Local durable seam complete | Two-node migration, customer replacement import, support verification, and rollback remain unproven |
+| WP10 V3 promotion | Not reached | Must wait for the live V3 completion gate below |
+
+Therefore the correct release label is **V2 hardened + V3 control-plane
+foundation**, not “multi-server production” and not “multi-protocol enabled.”
 
 Completed immediately before this remaining-gate list: the recoverable baseline
 was committed in major steps, and the project now declares Python

@@ -1158,6 +1158,13 @@ class CommerceWorkerMixin:
         if subscription is None:
             self._job_done(job["id"])
             return
+        if existing is None and not self.identity.account_is_active(
+            int(subscription["telegram_id"])
+        ):
+            # Account status is a local issuance gate. Keep the durable job
+            # retryable for an eventual reactivation, but never create a new
+            # remote credential while the account is suspended or closed.
+            raise CommerceError("account is not active; provisioning paused")
         desired_quota = (
             subscription["quota_bytes"]
             if subscription["quota_bytes"] is not None

@@ -879,3 +879,22 @@ the endpoint registry used by multi-node allocation. The read-only combined
 web entrypoint may use the supplied bootstrap client only during the short
 startup handoff before the bot persists that record; it is never used once the
 durable capability exists.
+
+## 32. Account status issuance gate — 2026-09-13
+
+When an identity is mapped to the opaque account control plane, `active` is
+now required before issuing new VPN access. Daily free, monthly trial,
+giveaway, and paid order/provisioning paths all check the account status;
+the paid worker repeats the check immediately before remote credential
+creation and leaves a blocked job retryable for a later reactivation. This
+prevents a suspended or closed account from gaining a new credential through
+an already-queued request.
+
+This is intentionally not presented as full account suspension. Existing
+remote keys and protocol generations retain their existing, provider-verified
+revocation workflow; a future revoke-all action must coordinate those paths,
+session termination proof, reactivation, and audit state before it is exposed
+as an operator mutation. Legacy databases without the account migrations keep
+their compatibility behavior. Focused identity, entitlement, commerce, and
+worker regressions pass, and no live server, provider, customer, or production
+database was changed.

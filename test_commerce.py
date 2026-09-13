@@ -151,6 +151,39 @@ class CommerceServiceTest(unittest.TestCase):
                 connection.execute("SELECT COUNT(*) FROM provisioning_jobs").fetchone()[0], 0
             )
 
+    def test_inactive_account_blocks_paid_order_creation(self):
+        account_id = self.service.identity.ensure_account(123, now=self.now)
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE accounts SET status = 'suspended' WHERE account_id = ?",
+                (account_id,),
+            )
+
+        with self.assertRaisesRegex(CommerceError, "account is not active"):
+            self.service.create_order(123, "Min", "basic_50gb", self.now)
+
+    def test_worker_rechecks_account_before_remote_paid_creation(self):
+        self.service.identity.ensure_account(123, now=self.now)
+        order = self._paid_order()
+        approval = self.service.approve_order(order.order_id, 999, self.now)
+        account_id = self.service.identity.account_snapshot(123)["account_id"]
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE accounts SET status = 'suspended' WHERE account_id = ?",
+                (account_id,),
+            )
+
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.assertEqual(self.outline.created, [])
+        with self.database.connect() as connection:
+            job = connection.execute(
+                "SELECT status, attempts, last_error FROM provisioning_jobs WHERE subscription_id = ?",
+                (approval.subscription_id,),
+            ).fetchone()
+        self.assertEqual(job["status"], "pending")
+        self.assertEqual(job["attempts"], 1)
+        self.assertIn("account is not active", job["last_error"])
+
     def test_wallet_topup_requires_exact_verified_amount(self):
         order = self.service.create_wallet_topup(123, "Min", 6000, self.now)
         self.service.select_payment_provider(123, order.order_id, "kpay")
