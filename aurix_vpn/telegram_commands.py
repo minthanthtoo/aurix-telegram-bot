@@ -1198,7 +1198,9 @@ class TelegramCommandMixin:
                     self.send(chat["id"], "Receipt evidence not found.")
                 else:
                     try:
-                        self._send_receipt_review(chat["id"], receipt)
+                        self._send_receipt_review(
+                            chat["id"], receipt, message_id=message_id
+                        )
                     except Exception as exc:
                         print(f"receipt review media error: {type(exc).__name__}", file=sys.stderr)
                         self.send(

@@ -1134,6 +1134,97 @@ class TelegramBotCommerceTest(unittest.TestCase):
         edit = next(payload for method, payload in calls if method == "editMessageText")
         self.assertIn("Cancelled · 1 order(s)", edit["text"])
 
+    def test_myorders_last_pagination_uses_the_real_page_count(self):
+        # Create more than one page while keeping every order terminal so the
+        # single-open-order invariant remains intact.
+        for index in range(7):
+            order = self.commerce.create_order(123, "Min", "basic_50gb")
+            self.commerce.cancel_order(123, order.order_id)
+        self.bot.handle(self.message(123, "/myorders"))
+        all_orders = next(
+            button["callback_data"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["text"].startswith("📚 All")
+        )
+        self.bot.request = lambda _method, _payload: True
+        self.bot.edit_message = (
+            lambda _chat_id, _message_id, _text, reply_markup=None: self.bot.markups.append(
+                reply_markup
+            )
+            or True
+        )
+        self.bot.handle_callback(
+            {
+                "id": "customer-orders-all",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {"chat": {"id": 123, "type": "private"}, "message_id": 82},
+                "data": all_orders,
+            }
+        )
+        last = next(
+            button["callback_data"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["text"] == "⏭"
+        )
+        calls = []
+        self.bot.request = lambda method, payload: calls.append((method, payload)) or True
+        self.bot.edit_message = (
+            lambda chat_id, message_id, text, reply_markup=None: calls.append(
+                (
+                    "editMessageText",
+                    {
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "text": text,
+                        "reply_markup": reply_markup,
+                    },
+                )
+            )
+            or True
+        )
+        self.bot.handle_callback(
+            {
+                "id": "customer-orders-last",
+                "from": {"id": 123, "first_name": "Min"},
+                "message": {"chat": {"id": 123, "type": "private"}, "message_id": 82},
+                "data": last,
+            }
+        )
+        edit = next(payload for method, payload in calls if method == "editMessageText")
+        self.assertIn("Page 2/2", edit["text"])
+        labels = {
+            button["text"]
+            for row in edit["reply_markup"]["inline_keyboard"]
+            for button in row
+        }
+        self.assertIn("Open #7", labels)
+
+    def test_receipt_review_replaces_pressed_admin_card(self):
+        receipt = {
+            "id": "evidence-in-place",
+            "order_id": "order-in-place",
+            "telegram_id": 123,
+            "telegram_file_id": "receipt-photo",
+            "amount_minor": 3000,
+            "currency": "MMK",
+            "extraction": {},
+            "telegram_media_type": "photo",
+        }
+        calls = []
+        self.bot.request = lambda method, payload: calls.append((method, payload)) or True
+        sent_before = len(self.bot.sent)
+
+        self.bot._send_receipt_review(999, receipt, message_id=83)
+
+        self.assertEqual(len(self.bot.sent), sent_before)
+        self.assertEqual(self.bot.media[-1][0:3], ("photo", 999, "receipt-photo"))
+        self.assertIn(
+            ("deleteMessage", {"chat_id": 999, "message_id": 83}),
+            calls,
+        )
+
     def test_wallet_topup_amount_and_provider_flow_uses_buttons(self):
         self.bot.handle(self.message(123, "/wallet"))
         topup = self.bot.markups[-1]["inline_keyboard"][0][0]["callback_data"]

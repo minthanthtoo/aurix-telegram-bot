@@ -414,7 +414,12 @@ class TelegramBot(
         copy_button = self._copy_text_button("📋 Copy Outline Key", access_url)
         if copy_button is not None:
             rows.append([copy_button])
-        rows.append([{"text": "🔐 Open My VPN", "callback_data": "n:myvpn"}])
+        rows.append(
+            [
+                {"text": "✖ Close", "callback_data": "n:close"},
+                {"text": "🔐 Open My VPN", "callback_data": "n:myvpn"},
+            ]
+        )
         return {"inline_keyboard": rows}
 
     def _send_welcome(
@@ -496,7 +501,11 @@ class TelegramBot(
             self._inline_keyboard(
                 [
                     [('➕ Top up wallet', 't:a:menu')],
-                    [('🏠 Main Menu', 'n:start'), ('🔐 My VPN', 'n:myvpn')],
+                    [
+                        ('🏠 Main Menu', 'n:start'),
+                        ('🔐 My VPN', 'n:myvpn'),
+                        ('✖ Close', 'n:close'),
+                    ],
                 ]
             ),
             message_id=message_id,
@@ -546,7 +555,10 @@ class TelegramBot(
                     {"text": "🔐 My VPN", "callback_data": "n:myvpn"},
                     {"text": "💎 Plans & Upgrade", "callback_data": "n:plans"},
                 ],
-                [{"text": "❓ Help", "callback_data": "n:menu"}],
+                [
+                    {"text": "❓ Help", "callback_data": "n:menu"},
+                    {"text": "✖ Close", "callback_data": "n:close"},
+                ],
             ]
         )
         return {"inline_keyboard": rows}
@@ -597,6 +609,7 @@ class TelegramBot(
                         "url": "https://t.me/+oA18TDWAD9NiNWU1",
                     },
                     {"text": "🏠 Main Menu", "callback_data": "n:start"},
+                    {"text": "✖ Close", "callback_data": "n:close"},
                 ],
                 [
                     {"text": "ℹ️ About Outline", "url": "https://getoutline.org/"},
@@ -688,7 +701,10 @@ class TelegramBot(
             [("🔵 KBZPay", f"t:p:{order_id}:kpay"), ("🟡 WavePay", f"t:p:{order_id}:wavepay")],
             [("🔴 AYA Pay", f"t:p:{order_id}:ayapay"), ("🟣 uabpay", f"t:p:{order_id}:uabpay")],
             [("🔷 CB Pay", f"t:p:{order_id}:cbpay")],
-            [("🧾 Back to order", f"o:v:{order_id}")],
+            [
+                ("🧾 Back to order", f"o:v:{order_id}"),
+                ("✖ Close", "n:close"),
+            ],
         ]
 
     def _send_payment_methods(
@@ -743,7 +759,10 @@ class TelegramBot(
         markup = self._inline_keyboard(
             [
                 [("🔁 Other payment method", f"t:m:{order['id']}")],
-                [("🧾 View order", f"o:v:{order['id']}")],
+                [
+                    ("🧾 View order", f"o:v:{order['id']}"),
+                    ("✖ Close", "n:close"),
+                ],
             ]
         )
         if qr:
@@ -874,10 +893,17 @@ class TelegramBot(
             )
         rows.append(navigation)
         rows.append([("🔄 Refresh", f"c2:{token}:refresh")])
-        rows.append([("🏠 Main Menu", "n:start"), ("🔐 My VPN", "n:myvpn")])
+        rows.append(
+            [
+                ("🏠 Main Menu", "n:start"),
+                ("🔐 My VPN", "n:myvpn"),
+                ("✖ Close", "n:close"),
+            ]
+        )
         with self._panel_lock:
             state = self._panels[token]
             state["page"] = page
+            state["pages"] = pages
             state["items"] = current
             state["updated_at"] = time.monotonic()
         return "\n\n".join(blocks)[:4096], self._inline_keyboard(rows)
@@ -1221,7 +1247,12 @@ class TelegramBot(
             "shown with its original aspect ratio; AI output is never proof by itself.</i>"
         )
 
-    def _send_receipt_review(self, chat_id: int, receipt: dict[str, Any]) -> None:
+    def _send_receipt_review(
+        self,
+        chat_id: int,
+        receipt: dict[str, Any],
+        message_id: int | None = None,
+    ) -> None:
         """Send stored evidence, preferring a private Storage signed URL."""
         evidence_id = str(receipt["id"])
         extracted = receipt.get("extraction") or {}
@@ -1264,12 +1295,20 @@ class TelegramBot(
         else:
             primary = self.send_document if media_type == "document" else self.send_photo
             fallback = self.send_photo if media_type == "document" else self.send_document
+        delivered = False
         try:
             primary(chat_id, file_id, caption, markup)
+            delivered = True
         except (RuntimeError, urllib.error.HTTPError):
             # Older rows predate telegram_media_type, and Telegram file IDs can
             # only be reused by the API method matching their original type.
             fallback(chat_id, file_id, caption, markup)
+            delivered = True
+        if delivered and isinstance(message_id, int):
+            # Telegram cannot edit a text card into a photo/document. Remove the
+            # pressed card after the evidence preview is delivered so review
+            # navigation still leaves one canonical screen in the chat.
+            self._delete_message(chat_id, message_id)
 
     def _download_telegram_file(self, file_id: str) -> tuple[bytes, str]:
         info = self.request("getFile", {"file_id": file_id})
@@ -1556,7 +1595,11 @@ class TelegramBot(
         ):
             markup["inline_keyboard"].insert(0, promo_buttons)
         markup["inline_keyboard"].append(
-            [("🏠 Main Menu", "n:start"), ("🔐 My VPN", "n:myvpn")]
+            [
+                ("🏠 Main Menu", "n:start"),
+                ("🔐 My VPN", "n:myvpn"),
+                ("✖ Close", "n:close"),
+            ]
         )
         self._send_screen(chat_id, "\n".join(lines), markup, message_id=message_id)
 
@@ -1782,6 +1825,7 @@ class TelegramBot(
             [
                 {"text": "🏠 Main Menu", "callback_data": "n:start"},
                 {"text": "💰 Wallet", "callback_data": "n:wallet"},
+                {"text": "✖ Close", "callback_data": "n:close"},
             ]
         )
         with self._panel_lock:
@@ -1862,7 +1906,12 @@ class TelegramBot(
         self._send_screen(
             chat_id,
             "\n\n".join(blocks),
-            self._inline_keyboard([[("🔄 Refresh Usage", "n:usage"), ("🔐 My VPN", "n:myvpn")]]),
+            self._inline_keyboard(
+                [
+                    [("🔄 Refresh Usage", "n:usage"), ("🔐 My VPN", "n:myvpn")],
+                    [("✖ Close", "n:close")],
+                ]
+            ),
             message_id=message_id,
         )
 

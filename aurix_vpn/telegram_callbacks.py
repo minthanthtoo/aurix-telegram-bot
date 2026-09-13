@@ -71,6 +71,19 @@ class TelegramCallbackMixin:
                 return
             self.send(chat_id, "This panel expired. Open My VPN or My Orders again.")
             return
+        if data == "n:close":
+            # A child card is disposable UI state. Deleting it keeps the
+            # conversation compact without creating a replacement message.
+            try:
+                self.request(
+                    "deleteMessage",
+                    {"chat_id": chat_id, "message_id": message.get("message_id")},
+                )
+            except Exception:
+                # Deletion is presentation-only; keep the user in the flow if
+                # Telegram rejects an old/non-bot message.
+                pass
+            return
         first_name = str(user.get("first_name") or "")
         username = user.get("username") if isinstance(user.get("username"), str) else None
         synthetic = {
