@@ -423,6 +423,27 @@ class ConnectivityAdapterTest(unittest.TestCase):
         self.assertEqual(set(client.users), {"shared-user"})
         self.assertEqual(client.users["shared-user"]["protocol"], "xray")
 
+    def test_managed_provision_rejects_conflicting_protocol_in_create_response(self):
+        client = _ProtocolClient()
+
+        def conflicting_create(external_id, name, _route, intent):
+            value = {
+                "external_id": str(external_id),
+                "name": str(name),
+                "protocol": "hysteria2",
+                "secret": str(intent["secret"]),
+            }
+            client.users[str(external_id)] = value
+            return dict(value)
+
+        client.create_user = conflicting_create
+        with self.assertRaisesRegex(ConnectivityAdapterError, "already owned by hysteria2"):
+            XrayConnectivityAdapter(client).provision(
+                self._xray_route(), {"external_id": "conflicted-create", "name": "Customer"}
+            )
+        # The controller cannot safely delete a record it did not prove it owns.
+        self.assertEqual(client.users["conflicted-create"]["protocol"], "hysteria2")
+
     def test_hysteria2_rejects_shared_or_undeclared_auth_before_user_creation(self):
         route = {
             "route_id": "hysteria2:sg-a",

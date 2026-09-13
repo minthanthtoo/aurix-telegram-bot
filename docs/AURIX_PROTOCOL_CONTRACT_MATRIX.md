@@ -41,9 +41,12 @@ explicitly tagged for another transport before inventory/reconciliation. A
 dedicated single-protocol agent may omit the tag for compatibility, because its
 route boundary already scopes the inventory.
 
-The same rule applies to idempotent provision/recovery: if a shared agent
-returns an existing external ID tagged for another protocol, the request fails
-closed rather than adopting or deleting that credential.
+The same rule applies to every provision response, including idempotent
+provision/recovery: if a shared agent returns an external ID tagged for another
+protocol, the request fails closed rather than adopting or deleting that
+credential. A conflicting create response is treated as untrusted external
+state and deliberately left for explicit reconciliation, since the controller
+has not proved it owns the remote record.
 
 The control plane now applies the same explicit enabled-profile requirement to
 allocation, failover target selection, operator drain, assignment transfer, and

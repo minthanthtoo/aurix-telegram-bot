@@ -414,12 +414,23 @@ class _ManagedCredentialAdapter:
         record = method(external_id)
         if not isinstance(record, Mapping):
             return None
+        self._assert_record_protocol(record, external_id=external_id)
+        return record
+
+    def _assert_record_protocol(self, record: Mapping[str, Any], *, external_id: str) -> None:
+        """Reject a shared-agent record declared for another transport.
+
+        A create response is external state just like a later lookup.  Do not
+        accept it merely because the controller initiated the request: a
+        protocol-neutral agent can be stale, buggy, or return a conflicting
+        existing credential.  Cleanup is deliberately left to reconciliation,
+        because deleting this record could revoke another transport's user.
+        """
         declared_protocol = str(record.get("protocol") or "").strip().lower()
         if declared_protocol and declared_protocol != self.protocol:
             raise ConnectivityAdapterError(
-                f"{self.protocol} external_id is already owned by {declared_protocol}"
+                f"{self.protocol} external_id {external_id} is already owned by {declared_protocol}"
             )
-        return record
 
     def _inventory(self) -> list[Mapping[str, Any]]:
         method = _provider_method(self.client, ("list_users",))
@@ -550,6 +561,7 @@ class _ManagedCredentialAdapter:
             return grant
         try:
             record = self._create(external_id, name, route, credential_intent, secret)
+            self._assert_record_protocol(record, external_id=external_id)
             created = True
             ownership = "owned"
         except Exception:
