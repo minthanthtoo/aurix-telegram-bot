@@ -238,6 +238,34 @@ class RuntimeCompositionTest(unittest.TestCase):
                     configure_bootstrap=False,
                 )
 
+    def test_readonly_runtime_can_bridge_before_bot_persists_bootstrap_endpoint(self):
+        environment = {
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "OUTLINE_API_URL": "https://outline.invalid/secret",
+            "OUTLINE_CERT_SHA256": "0" * 64,
+            "AURIX_ACCESS_URL_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+            "DATABASE_PATH": "/tmp/aurix-runtime-test.db",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("runtime.Database", _Database),
+            patch("runtime.CommerceDatabase", _CommerceDatabase),
+            patch("runtime.EndpointRegistry", _EndpointRegistry),
+            patch("runtime.OutlineClient", _Outline),
+            patch("runtime.CommerceService", _Commerce),
+            patch("runtime.ClaimService", _ClaimService),
+        ):
+            runtime.build_runtime_services(
+                validate_telegram=False,
+                check_outline=False,
+                reconcile=False,
+                configure_bootstrap=False,
+            )
+
+        gateway = _Commerce.instances[-1].outline
+        self.assertEqual(gateway.endpoint_id, "legacy-default")
+        self.assertEqual(gateway.fallback.api_url, "https://outline.invalid/secret")
+
     def test_managed_node_agent_bindings_are_explicitly_wired_when_configured(self):
         environment = {
             "TELEGRAM_BOT_TOKEN": "test-token",

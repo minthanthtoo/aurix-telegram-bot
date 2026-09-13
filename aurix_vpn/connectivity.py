@@ -53,11 +53,19 @@ class EndpointAssignment:
 class EndpointScopedOutlineGateway:
     """Resolve legacy Outline calls through a durable endpoint record."""
 
-    def __init__(self, registry: "EndpointRegistry", endpoint_id: str = DEFAULT_ENDPOINT_ID):
+    def __init__(
+        self,
+        registry: "EndpointRegistry",
+        endpoint_id: str = DEFAULT_ENDPOINT_ID,
+        fallback: OutlineClient | None = None,
+    ):
         self.registry = registry
         self.endpoint_id = str(endpoint_id)
+        self.fallback = fallback
 
     def _client(self) -> OutlineClient:
+        if self.fallback is not None and not self.registry.has_management_capability(self.endpoint_id):
+            return self.fallback
         return self.registry.client(self.endpoint_id)
 
     def __getattr__(self, name: str) -> Any:

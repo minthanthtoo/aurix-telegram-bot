@@ -875,4 +875,7 @@ process-global management client. A fresh control database still needs
 subsequent starts can use the stored record. Successful startup management
 checks create a health observation only after the API responds. This preserves
 the legacy Outline gateway surface while moving its management capability into
-the endpoint registry used by multi-node allocation.
+the endpoint registry used by multi-node allocation. The read-only combined
+web entrypoint may use the supplied bootstrap client only during the short
+startup handoff before the bot persists that record; it is never used once the
+durable capability exists.

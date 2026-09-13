@@ -24,6 +24,7 @@ from .connectivity import (
 )
 from .entitlements import PUBLIC_LIMIT_BYTES, ClaimService, OutlineError
 from .free_repository import Database
+from .outline_adapter import OutlineClient
 from .node_agent_bindings import ManagedNodeAgentBindings, NodeAgentBindingError
 from supabase_storage import NullReceiptStorage, SupabaseReceiptStorage
 from .telegram_transport import DEFAULT_MAINTENANCE_INTERVAL_SECONDS, TelegramBot
@@ -128,7 +129,12 @@ def build_runtime_services(
         receipt_storage = NullReceiptStorage()
     database.initialize()
     connectivity = EndpointRegistry(commerce_database, access_url_key)
-    outline = EndpointScopedOutlineGateway(connectivity)
+    bootstrap_fallback = (
+        OutlineClient(api_url, fingerprint)
+        if api_url and fingerprint and not configure_bootstrap
+        else None
+    )
+    outline = EndpointScopedOutlineGateway(connectivity, fallback=bootstrap_fallback)
     allow_text_payment = os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").lower() in (
         "1",
         "true",
