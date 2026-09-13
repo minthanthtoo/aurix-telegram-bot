@@ -1362,6 +1362,9 @@ class TelegramBot(
             "🔐 My VPN",
             f"{selected.title()} · {len(filtered)} key(s) · Page {page + 1}/{pages}",
         ]
+        account_status = state.get("account_status")
+        if account_status not in (None, "active"):
+            blocks.insert(1, f"Account: {account_status}. VPN access delivery is paused.")
         copy_rows: list[list[dict[str, Any]]] = []
         for index, entry in enumerate(displayed, start=page * page_size + 1):
             status = str(entry.get("status") or "unknown")

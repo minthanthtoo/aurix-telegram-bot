@@ -17,6 +17,17 @@ def collect_customer_vpn_state(
     usage and free-key URLs come from maintenance-owned durable snapshots; a
     customer request never inventories every provider endpoint.
     """
+    account_status: str | None = None
+    identity = getattr(service, "identity", None)
+    snapshot = getattr(identity, "account_snapshot", None)
+    if callable(snapshot):
+        try:
+            account = snapshot(telegram_id)
+            if isinstance(account, dict):
+                account_status = str(account.get("status") or "") or None
+        except Exception as exc:
+            print(f"customer account snapshot error: {type(exc).__name__}", file=sys.stderr)
+
     giveaway = service.giveaway_status(telegram_id)
     connectivity = getattr(service, "connectivity", None)
     endpoint_snapshot: dict[str, Any] | None = None
@@ -150,6 +161,7 @@ def collect_customer_vpn_state(
     )
     return {
         "all_items": entries,
+        "account_status": account_status,
         "giveaway": giveaway,
         "usage_available": usage_available,
         "access_available": access_available,

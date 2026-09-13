@@ -143,6 +143,17 @@ class VpnWebApplicationTest(unittest.TestCase):
         self.assertEqual(dashboard["user"]["telegram_id"], 12345)
         self.assertEqual(dashboard["keys"][0]["access_url"], "ss://private-key")
 
+    def test_inactive_account_is_visible_and_disables_claim_capabilities(self):
+        self.application.runtime.claim_service.identity = SimpleNamespace(
+            account_snapshot=lambda _telegram_id: {"status": "suspended"}
+        )
+        user = self.application.authenticate(_init_data("bot-token", auth_date=int(time.time())))
+
+        dashboard = self.application.dashboard(user)
+
+        self.assertEqual(dashboard["account_status"], "suspended")
+        self.assertFalse(any(dashboard["claim_capabilities"].values()))
+
     def test_invalid_identity_never_reaches_dashboard(self):
         with self.assertRaises(Exception):
             self.application.authenticate(_init_data("wrong-token"))

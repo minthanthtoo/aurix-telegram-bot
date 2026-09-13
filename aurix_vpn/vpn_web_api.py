@@ -457,6 +457,8 @@ class AuriXVpnWebApplication:
         ]
         paid_active = self._has_active_paid_access(state["subscriptions"])
         promo_locked = bool(state["giveaway"].get("access_lock_active"))
+        account_status = state.get("account_status")
+        account_active = account_status in (None, "active")
         return {
             "user": {
                 "telegram_id": user.telegram_id,
@@ -469,18 +471,20 @@ class AuriXVpnWebApplication:
             "subscriptions": [_safe_subscription(item) for item in state["subscriptions"]],
             "orders": [_safe_order(order) for order in orders],
             "giveaway": _safe_giveaway(state["giveaway"]),
+            "account_status": account_status,
             "usage_available": bool(state["usage_available"]),
             "access_available": bool(state["access_available"]),
             "open_order": _safe_order(state["open_order"]) if state.get("open_order") else None,
             "servers": current_servers,
             "claim_capabilities": {
-                "daily": not paid_active and not promo_locked,
+                "daily": account_active and not paid_active and not promo_locked,
                 "trial": (
-                    not paid_active
+                    account_active
+                    and not paid_active
                     and not promo_locked
                     and (not self.trial_ids or user.telegram_id in self.trial_ids)
                 ),
-                "promo": True,
+                "promo": account_active,
             },
         }
 
