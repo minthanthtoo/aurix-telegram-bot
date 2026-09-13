@@ -240,6 +240,7 @@ class TelegramCommandMixin:
                     self.send(chat["id"], "Account not found.", self._admin_keyboard(telegram_id))
                 else:
                     snapshot = dict(access)
+                    snapshot["access_state"] = snapshot.get("state")
                     snapshot["state"] = "present"
                     self.send(
                         chat["id"],
@@ -268,6 +269,7 @@ class TelegramCommandMixin:
                 return
             if command == "/reactivateaccount" and not access.get("ready_to_reactivate"):
                 snapshot = dict(access)
+                snapshot["access_state"] = snapshot.get("state")
                 snapshot["state"] = "present"
                 self.send(
                     chat["id"],
