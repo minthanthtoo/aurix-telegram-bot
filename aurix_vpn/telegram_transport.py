@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
+import re
 import sys
 import threading
 import time
 import urllib.error
 from urllib.parse import urlsplit
 from datetime import datetime, timedelta, timezone
+from html import escape as html_escape
+from pathlib import Path
 from typing import Any
 
 import urllib3
@@ -143,6 +147,7 @@ class TelegramBot(
         allow_text_payment: bool = True,
         maintenance_interval_seconds: float = DEFAULT_MAINTENANCE_INTERVAL_SECONDS,
         command_scope_cleanup_ids: set[int] | None = None,
+        welcome_image_source: str | None = None,
     ):
         self.api = f"https://api.telegram.org/bot{token}"
         # urllib.request establishes a fresh TLS connection for every Bot API
@@ -175,6 +180,17 @@ class TelegramBot(
         )
         self.maintenance_interval_seconds = max(1.0, float(maintenance_interval_seconds))
         self.command_scope_cleanup_ids = command_scope_cleanup_ids or set()
+        # A welcome image is optional at the transport boundary so unit tests
+        # and lightweight integrations can remain text-only.  The runtime
+        # supplies the repository's generic AuriX brand asset by default, and
+        # operators may override it with a Telegram file_id, HTTPS URL, or a
+        # local image path (the latter is uploaded once and then cached).
+        self.welcome_image_source = (
+            str(welcome_image_source).strip()
+            if welcome_image_source is not None
+            else os.environ.get("AURIX_WELCOME_IMAGE", "").strip()
+        )
+        self._uploaded_media_file_ids: dict[str, str] = {}
         self.offset = 0
         self.running = True
         self._maintenance_stop = threading.Event()
@@ -236,6 +252,71 @@ class TelegramBot(
             raise RuntimeError("Telegram API request failed")
         return result["result"]
 
+    def _request_multipart(
+        self,
+        method: str,
+        payload: dict[str, Any],
+        field_name: str,
+        file_path: Path,
+    ) -> Any:
+        """Call a Bot API media method with a local file upload.
+
+        Telegram accepts a file_id or URL in JSON, but a checked-out asset on
+        Render/DigitalOcean must be uploaded as multipart form data first.  The
+        returned file_id is cached by ``send_photo``/``send_document`` so a
+        restart-free process never uploads the same brand or QR asset twice.
+        """
+        try:
+            data = file_path.read_bytes()
+        except OSError as exc:
+            raise TelegramAPIError("local media could not be read") from exc
+        if not data:
+            raise TelegramAPIError("local media is empty")
+        # Telegram's photo/document upload limit is much larger than this, but
+        # keeping a conservative cap protects the bot from accidentally
+        # uploading a generated multi-hundred-megabyte artifact.
+        if len(data) > 20 * 1024 * 1024:
+            raise TelegramAPIError("local media exceeds the 20 MB upload limit")
+        fields: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key == "reply_markup" and isinstance(value, dict):
+                fields[key] = json.dumps(value, ensure_ascii=False)
+            elif value is not None:
+                fields[key] = str(value)
+        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        fields[field_name] = (file_path.name, data, mime_type)
+        started_at = time.perf_counter()
+        try:
+            response = self._http.request(
+                "POST",
+                f"{self.api}/{method}",
+                fields=fields,
+                encode_multipart=True,
+                timeout=urllib3.Timeout(connect=5.0, read=30.0),
+                retries=False,
+            )
+            try:
+                result = json.loads(response.data.decode("utf-8"))
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                raise TelegramAPIError(
+                    f"{method} returned an invalid JSON response"
+                ) from exc
+            if response.status >= 400:
+                description = "request rejected"
+                candidate = result.get("description") if isinstance(result, dict) else None
+                if isinstance(candidate, str) and candidate.strip():
+                    description = " ".join(candidate.split())[:240]
+                raise TelegramAPIError(
+                    f"{method} failed status={response.status}: {description}"
+                )
+        except urllib3.exceptions.HTTPError as exc:
+            raise TelegramAPIError(f"{method} transport failed: request rejected") from exc
+        finally:
+            _latency_log("telegram_request", started_at, method=method)
+        if not result.get("ok"):
+            raise TelegramAPIError(f"{method} request was rejected")
+        return result["result"]
+
     def send(
         self,
         chat_id: int,
@@ -247,6 +328,7 @@ class TelegramBot(
             "text": text,
             "disable_web_page_preview": True,
         }
+        self._add_html_parse_mode(payload, text)
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         return self.request("sendMessage", payload)
@@ -264,6 +346,7 @@ class TelegramBot(
             "text": text[:4096],
             "disable_web_page_preview": True,
         }
+        self._add_html_parse_mode(payload, text)
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         return self.request("editMessageText", payload)
@@ -276,6 +359,18 @@ class TelegramBot(
             "is_persistent": True,
             "input_field_placeholder": "Choose an AuriX action",
         }
+
+    @staticmethod
+    def _add_html_parse_mode(payload: dict[str, Any], text: str) -> None:
+        """Enable Telegram HTML only for messages that actually use tags.
+
+        Most legacy copy is deliberately plain text.  Opting in only when a
+        supported tag is present avoids breaking help text such as
+        ``/orders <order-id>`` while allowing the new visual hierarchy to use
+        bold, italic, links, and monospace values safely.
+        """
+        if re.search(r"</?(?:b|strong|i|em|u|s|code|pre|a)(?:\s[^>]*)?>", text):
+            payload["parse_mode"] = "HTML"
 
     @staticmethod
     def _inline_keyboard(
@@ -305,6 +400,30 @@ class TelegramBot(
             rows.append([copy_button])
         rows.append([{"text": "🔐 Open My VPN", "callback_data": "n:myvpn"}])
         return {"inline_keyboard": rows}
+
+    def _send_welcome(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        """Send one canonical welcome card, with a text fallback.
+
+        A photo caption is limited to 1,024 characters.  If an operator's
+        custom campaign copy exceeds that limit, text remains the reliable
+        fallback instead of silently truncating safety or eligibility details.
+        """
+        source = str(self.welcome_image_source or "").strip()
+        if source and len(text) <= 1024:
+            try:
+                self.send_photo(chat_id, source, text, reply_markup)
+                return
+            except Exception as exc:
+                print(
+                    f"welcome image delivery error: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
+        self.send(chat_id, text, reply_markup)
 
     def _promo_code_buttons(self, promo_code: str) -> list[dict[str, Any]]:
         """Build reusable one-tap redeem and clipboard controls for a promo."""
@@ -487,13 +606,16 @@ class TelegramBot(
         ]
 
     def _send_payment_methods(self, chat_id: int, order: dict[str, Any]) -> None:
+        plan_name = html_escape(str(order.get("plan_name") or order.get("plan_code") or "AuriX plan"))
+        currency = html_escape(str(order.get("currency") or "MMK"))
         self.send(
             chat_id,
-            "Choose how you will pay\n\n"
-            f"{order.get('plan_name') or order.get('plan_code')} · "
-            f"{int(order['amount_minor']):,} {order['currency']}\n\n"
-            "Tap one provider to see only its payment QR. Then send the completed "
-            "receipt screenshot within 1 hour.",
+            "<b>💳 Choose a payment method</b>\n\n"
+            f"🛒 <b>{plan_name}</b> · "
+            f"<b>{int(order['amount_minor']):,} {currency}</b>\n\n"
+            "Tap one provider to see only its payment QR. Pay the exact amount, then send "
+            "the completed receipt screenshot within <b>1 hour</b>.\n\n"
+            "<i>🔒 Your receipt is private evidence; a QR code is only a payment destination.</i>",
             self._inline_keyboard(self._payment_provider_rows(str(order["id"]))),
         )
 
@@ -515,10 +637,12 @@ class TelegramBot(
         qr = os.environ.get(f"PAYMENT_QR_{env_code}", "").strip()
         recipient = os.environ.get(f"PAYMENT_RECIPIENT_{env_code}", "").strip()
         caption = (
-            f"{provider} · {int(order['amount_minor']):,} {order['currency']}\n"
-            + (f"Recipient: {recipient}\n" if recipient else "")
-            + "\nPay the exact amount, then send the completed receipt screenshot here "
-            "within 1 hour. A QR is payment destination—not proof of payment."
+            f"<b>{html_escape(provider)} · {int(order['amount_minor']):,} "
+            f"{html_escape(str(order['currency']))}</b>\n"
+            + (f"👤 Recipient: <code>{html_escape(recipient)}</code>\n" if recipient else "")
+            + "\n✅ Pay the exact amount, then send the completed receipt screenshot here "
+            "within <b>1 hour</b>.\n"
+            "<i>⚠️ A QR is a payment destination—not proof of payment.</i>"
         )
         markup = self._inline_keyboard(
             [
@@ -869,12 +993,38 @@ class TelegramBot(
         file_id: str,
         caption: str = "",
         reply_markup: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> Any:
+        source = str(file_id)
+        local_path = Path(source).expanduser()
+        if local_path.is_file():
+            cache_key = str(local_path.resolve())
+            cached_file_id = self._uploaded_media_file_ids.get(cache_key)
+            if cached_file_id:
+                source = cached_file_id
+            else:
+                payload: dict[str, Any] = {
+                    "chat_id": chat_id,
+                    "caption": caption[:1024],
+                }
+                self._add_html_parse_mode(payload, caption)
+                if reply_markup is not None:
+                    payload["reply_markup"] = reply_markup
+                result = self._request_multipart(
+                    "sendPhoto", payload, "photo", local_path
+                )
+                if isinstance(result, dict):
+                    photos = result.get("photo")
+                    if isinstance(photos, list) and photos:
+                        final = photos[-1]
+                        if isinstance(final, dict) and isinstance(final.get("file_id"), str):
+                            self._uploaded_media_file_ids[cache_key] = final["file_id"]
+                return result
         payload: dict[str, Any] = {
             "chat_id": chat_id,
-            "photo": file_id,
+            "photo": source,
             "caption": caption[:1024],
         }
+        self._add_html_parse_mode(payload, caption)
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         self.request("sendPhoto", payload)
@@ -885,12 +1035,36 @@ class TelegramBot(
         file_id: str,
         caption: str = "",
         reply_markup: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> Any:
+        source = str(file_id)
+        local_path = Path(source).expanduser()
+        if local_path.is_file():
+            cache_key = str(local_path.resolve())
+            cached_file_id = self._uploaded_media_file_ids.get(cache_key)
+            if cached_file_id:
+                source = cached_file_id
+            else:
+                payload: dict[str, Any] = {
+                    "chat_id": chat_id,
+                    "caption": caption[:1024],
+                }
+                self._add_html_parse_mode(payload, caption)
+                if reply_markup is not None:
+                    payload["reply_markup"] = reply_markup
+                result = self._request_multipart(
+                    "sendDocument", payload, "document", local_path
+                )
+                if isinstance(result, dict):
+                    document = result.get("document")
+                    if isinstance(document, dict) and isinstance(document.get("file_id"), str):
+                        self._uploaded_media_file_ids[cache_key] = document["file_id"]
+                return result
         payload: dict[str, Any] = {
             "chat_id": chat_id,
-            "document": file_id,
+            "document": source,
             "caption": caption[:1024],
         }
+        self._add_html_parse_mode(payload, caption)
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         self.request("sendDocument", payload)
@@ -898,23 +1072,33 @@ class TelegramBot(
     @staticmethod
     def _receipt_review_caption(receipt: dict[str, Any]) -> str:
         extracted = receipt.get("extraction") or {}
-        evidence_id = str(receipt["id"])
+        evidence_id = html_escape(str(receipt["id"]))
         flags = list(extracted.get("flags") or [])
+        flag_text = ", ".join(html_escape(str(flag).replace("_", " ")) for flag in flags)
+        extraction_confidence = extracted.get("confidence")
+        try:
+            confidence_text = f"{float(extraction_confidence or 0):.0%}"
+        except (TypeError, ValueError):
+            confidence_text = "unknown"
+        provider = html_escape(str(receipt.get("provider") or "-"))
+        expected_currency = html_escape(str(receipt.get("currency") or "-"))
+        extracted_currency = html_escape(str(extracted.get("currency") or ""))
         return (
-            "🧾 Receipt awaiting review\n"
-            f"Evidence: {evidence_id}\n"
-            f"Order: {receipt['order_id']}\n"
-            f"Customer: {receipt['telegram_id']}\n"
-            f"Expected: {int(receipt['amount_minor']):,} {receipt['currency']}\n"
-            f"Method: {receipt.get('provider') or '-'}\n\n"
-            f"Extracted ID: {extracted.get('transaction_id') or '-'}\n"
-            f"Extracted amount: {extracted.get('amount_minor') or '-'} "
-            f"{extracted.get('currency') or ''}\n"
-            f"Receipt time: {extracted.get('timestamp') or '-'}\n"
-            f"Recipient: {extracted.get('recipient') or '-'}\n"
-            f"Confidence: {float(extracted.get('confidence') or 0):.0%}\n"
-            f"Checks: {'⚠️ ' + ', '.join(flags) if flags else '✅ parser checks passed'}\n\n"
-            "Final approval still requires matching the receiving account transaction."
+            "<b>🧾 Receipt awaiting review</b>\n"
+            f"🔎 Evidence: <code>{evidence_id}</code>\n"
+            f"🧾 Order: <code>{html_escape(str(receipt.get('order_id') or '-'))}</code>\n"
+            f"👤 Customer: <code>{html_escape(str(receipt.get('telegram_id') or '-'))}</code>\n"
+            f"💰 Expected: <b>{int(receipt['amount_minor']):,} {expected_currency}</b>\n"
+            f"🏦 Method: <b>{provider}</b>\n\n"
+            "<b>AI candidate fields</b>\n"
+            f"🆔 Transaction ID: <code>{html_escape(str(extracted.get('transaction_id') or '-'))}</code>\n"
+            f"💵 Amount: <b>{html_escape(str(extracted.get('amount_minor') or '-'))} {extracted_currency}</b>\n"
+            f"🕒 Receipt time: {html_escape(str(extracted.get('timestamp') or '-'))}\n"
+            f"👤 Recipient: {html_escape(str(extracted.get('recipient') or '-'))}\n"
+            f"🎯 Confidence: {confidence_text}\n"
+            f"Checks: {'⚠️ ' + flag_text if flags else '✅ parser checks passed'}\n\n"
+            "<i>Final approval still requires matching the receiving account. The image is "
+            "shown with its original aspect ratio; AI output is never proof by itself.</i>"
         )
 
     def _send_receipt_review(self, chat_id: int, receipt: dict[str, Any]) -> None:
@@ -933,11 +1117,13 @@ class TelegramBot(
         file_id = str(receipt["telegram_file_id"])
         storage = getattr(self.commerce, "receipt_storage", None)
         storage_path = receipt.get("storage_path")
+        storage_signed = False
         if storage is not None and storage_path and receipt.get("storage_status") == "stored":
             try:
                 signed = storage.signed_url(str(storage_path), expires_in=300)
                 if signed:
                     file_id = str(signed)
+                    storage_signed = True
             except Exception as exc:
                 # Telegram's original file ID remains a compatibility fallback
                 # for legacy rows or a temporary Storage outage.
@@ -947,8 +1133,17 @@ class TelegramBot(
                 )
         caption = self._receipt_review_caption(receipt)
         media_type = receipt.get("telegram_media_type")
-        primary = self.send_document if media_type == "document" else self.send_photo
-        fallback = self.send_photo if media_type == "document" else self.send_document
+        mime_type = str(receipt.get("mime_type") or "").lower()
+        # Supabase gives us a stable URL for the original bytes.  Prefer a
+        # photo preview for stored image evidence—even when the customer sent
+        # it as a Telegram document—so portrait receipts remain readable and
+        # Telegram preserves their natural aspect ratio.  Without storage we
+        # retain the original media method for legacy Telegram file IDs.
+        if storage_signed and mime_type.startswith("image/"):
+            primary, fallback = self.send_photo, self.send_document
+        else:
+            primary = self.send_document if media_type == "document" else self.send_photo
+            fallback = self.send_photo if media_type == "document" else self.send_document
         try:
             primary(chat_id, file_id, caption, markup)
         except (RuntimeError, urllib.error.HTTPError):

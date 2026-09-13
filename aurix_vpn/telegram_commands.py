@@ -7,6 +7,7 @@ import re
 import os
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from html import escape as html_escape
 from typing import Any
 
 from .commerce import CommerceError
@@ -497,30 +498,33 @@ class TelegramCommandMixin:
                         else "⏳ This promo is scheduled; Redeem appears when it starts."
                     )
                     welcome_text = (
-                        "🎉 AuriX VPN မှ ကြိုဆိုပါတယ်!\n\n"
-                        f"🎁 Promo: {giveaway['code']}\n"
-                        f"{quota} Outline VPN • {giveaway['duration_days']} days • Free\n"
+                        "<b>🎉 AuriX VPN မှ ကြိုဆိုပါတယ်!</b>\n\n"
+                        f"🎁 <b>Promo:</b> <code>{html_escape(str(giveaway['code']))}</code>\n"
+                        # Keep the offer line copyable/searchable as one plain
+                        # phrase; the surrounding heading and actions carry
+                        # the visual emphasis.
+                        f"{html_escape(quota)} Outline VPN • {giveaway['duration_days']} days • Free\n"
                         f"{availability}\n\n"
-                        f"👇 Tap Redeem or send {giveaway['code']} exactly. "
+                        f"👇 Tap <b>Redeem</b> or send <code>{html_escape(str(giveaway['code']))}</code> exactly. "
                         "No payment or receipt.\n\n"
                         "While both the promo season and your gift are active, other plans pause. "
                         "Daily 300 MB, monthly 3 GB, and paid plans return automatically when "
                         "the season or your gift ends. One gift per account per campaign.\n\n"
-                        "ℹ️ This is Outline VPN allowance, not SIM/mobile data. Network speed "
-                        "depends on your ISP and server conditions.\n\n"
-                        "အကူအညီ — https://t.me/+oA18TDWAD9NiNWU1\n"
-                        "သတင်း — https://t.me/AurixDigitalStore\n\n"
-                        "AuriX is not an official Outline Foundation partner."
+                        "<i>ℹ️ This is Outline VPN allowance, not SIM/mobile data. Network speed "
+                        "depends on your ISP and server conditions.</i>\n\n"
+                        "🆘 <a href=\"https://t.me/+oA18TDWAD9NiNWU1\">Support group</a> · "
+                        "📣 <a href=\"https://t.me/AurixDigitalStore\">News channel</a>\n\n"
+                        "<i>AuriX is not an official Outline Foundation partner.</i>"
                     )
                 else:
                     welcome_text = (
-                        "🎉 Welcome to AuriX VPN!\n\n"
+                        "<b>🎉 Welcome to AuriX VPN!</b>\n\n"
                         "The seasonal promo is currently closed. Your regular choices are ready: "
                         "daily 300 MB, monthly 3 GB, and paid 50/100 GB plans."
                     )
             else:
                 welcome_text = (
-                    "🧭 Connect with Outline · quick setup\n\n"
+                    "<b>🧭 Connect with Outline · quick setup</b>\n\n"
                     "1️⃣ Install the official Outline app\n"
                     "Choose your device below. Android users can use Google Play or the direct "
                     "APK when Play Store is unavailable.\n\n"
@@ -533,9 +537,9 @@ class TelegramCommandMixin:
                     "4️⃣ Confirm it works\n"
                     "Tap Check My IP after connecting. Your public IP should change from your "
                     "normal mobile/Wi-Fi address.\n\n"
-                    "🛡 Keep the ss:// key private—anyone who has it can use its quota. "
+                    "🛡 <b>Keep the ss:// key private</b>—anyone who has it can use its quota. "
                     "If connection fails, copy the key again without spaces, switch between "
-                    "Wi-Fi/mobile data, then ask AuriX Support."
+                    "Wi‑Fi/mobile data, then ask AuriX Support."
                 )
             if command == "/help":
                 reply_markup = self._outline_help_keyboard()
@@ -543,7 +547,7 @@ class TelegramCommandMixin:
                 reply_markup = self._launch_promo_keyboard(str(giveaway["code"]))
             else:
                 reply_markup = self._customer_keyboard(telegram_id)
-            self.send(chat["id"], welcome_text, reply_markup)
+            self._send_welcome(chat["id"], welcome_text, reply_markup)
         elif command == "/whoami":
             access = "\nAdmin access: enabled" if self._is_admin(telegram_id) else ""
             self.send(

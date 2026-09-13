@@ -93,6 +93,7 @@ Optional:
 - matching `PAYMENT_RECIPIENT_*` values — the expected receiving account name/number shown to the customer and compared with parsed receipt data.
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
+- `AURIX_WELCOME_IMAGE` — optional Telegram file_id, HTTPS image URL, or local image path for the single branded `/start` welcome card. If blank, the runtime uses the checked-in generic AuriX bot avatar; a campaign card can be selected without a code change.
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
 - `AURIX_BOOTSTRAP_ENDPOINT_CODE`, `AURIX_BOOTSTRAP_ENDPOINT_REGION` — identity of the existing Outline server during endpoint backfill.
 - `AURIX_WEB_APP_URL` — optional final HTTPS URL for the authenticated AuriX
@@ -468,6 +469,17 @@ Outline key names are operator-readable and use UTC start time: `<username-or-te
 
 Receipt images are evidence, not proof. AuriX stores each new raw image in a private Supabase Storage bucket and stores only its bucket/path, checksum, MIME type, size, extraction result, and review state in the database. Telegram file metadata remains as a compatibility fallback for older evidence. The upload is completed before the order enters `payment_submitted`; failed uploads remain retryable and are never shown in the admin review queue. The optional LLM output is untrusted and never approves a payment or credits a wallet. Staff must verify recipient, amount/currency, timestamp, and unique transaction ID against the receiving account, record that decision with `/verify`, and only then use `/approve`. In public mode, the commerce service itself rejects approval without verified evidence or a wallet reservation; the legacy text-only approval path exists only for explicit test fixtures.
 Configure the bucket's lifecycle/retention rule separately after confirming the business and payment-record retention policy; the application does not silently delete evidence.
+
+The Telegram presentation layer keeps media intentional: `/start` is one branded
+photo card with dynamic caption copy and inline actions, while child screens stay
+text-first and use an editable inline panel for filters, paging, and refresh. Local
+brand/QR assets are uploaded once per process and reused through Telegram `file_id`
+cache entries. Stored image receipts are sent to staff with `sendPhoto` when a
+private Supabase URL is available, preserving the original portrait/landscape
+aspect ratio; legacy Telegram documents retain their original method as a fallback.
+Telegram does not support arbitrary text colours, so status meaning uses a stable
+emoji vocabulary (🟢 active, 🟡 pending, ✅ approved, ⚠️ review, ❌ rejected,
+🔴 ended) and semantic button colours supplied by Telegram clients.
 
 When a customer submits a receipt, each configured admin receives the screenshot
 immediately with order/review controls. Telegram distinguishes photos from image

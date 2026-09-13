@@ -922,6 +922,16 @@ class TelegramBotCommerceTest(unittest.TestCase):
                 ).fetchone()["last_claim_at"]
             )
 
+    def test_start_can_use_one_branded_photo_card_without_duplicate_text(self):
+        self.bot.welcome_image_source = "telegram-welcome-file-id"
+
+        self.bot.handle(self.message(123, "/start"))
+
+        self.assertEqual(len(self.bot.sent), 0)
+        self.assertEqual(self.bot.media[0][0:3], ("photo", 123, "telegram-welcome-file-id"))
+        self.assertIn("100GBFREE", self.bot.media[0][3])
+        self.assertIn("AuriX VPN", self.bot.media[0][3])
+
     def test_admin_home_message_and_navigation_are_stable_contracts(self):
         self.bot.handle(self.message(999, "/admin"))
 
@@ -1064,6 +1074,26 @@ class TelegramBotCommerceTest(unittest.TestCase):
         }
         self.bot._send_receipt_review(999, receipt)
         self.assertTrue(self.bot.media[-1][2].startswith("https://storage.example/"))
+
+    def test_stored_image_document_is_rendered_as_a_ratio_preserving_photo(self):
+        self.commerce.receipt_storage = FakeReceiptStorage()
+        receipt = {
+            "id": "evidence-image-document",
+            "order_id": "order-image-document",
+            "telegram_id": 123,
+            "telegram_file_id": "legacy-document-id",
+            "storage_path": "orders/order-image-document/evidence.png",
+            "storage_status": "stored",
+            "mime_type": "image/png",
+            "amount_minor": 3000,
+            "currency": "MMK",
+            "extraction": {},
+            "telegram_media_type": "document",
+        }
+
+        self.bot._send_receipt_review(999, receipt)
+
+        self.assertEqual(self.bot.media[-1][0:2], ("photo", 999))
 
     def test_repeated_buy_returns_existing_order_and_myorders_tracks_it(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))

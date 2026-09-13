@@ -314,6 +314,21 @@ def main() -> None:
             "WARNING: receipt vision extraction is disabled; screenshots require manual transaction entry.",
             file=sys.stderr,
         )
+    welcome_image_source = os.environ.get("AURIX_WELCOME_IMAGE", "").strip()
+    if not welcome_image_source:
+        # Keep the default generic and campaign-neutral.  Operators can point
+        # this at a launch/promo card or a Telegram file_id without changing
+        # the bot code; the checked-in avatar also works on Render and the
+        # DigitalOcean systemd deployment because it is a repository asset.
+        default_welcome_image = (
+            Path(__file__).resolve().parents[1]
+            / "brand"
+            / "v4"
+            / "exports"
+            / "aurix-telegram-bot-avatar-v4-1024.png"
+        )
+        if default_welcome_image.is_file():
+            welcome_image_source = str(default_welcome_image)
     bot = TelegramBot(
         token,
         claim_service,
@@ -323,6 +338,7 @@ def main() -> None:
         allow_text_payment=allow_text_payment,
         maintenance_interval_seconds=maintenance_interval_seconds,
         command_scope_cleanup_ids=command_scope_cleanup_ids,
+        welcome_image_source=welcome_image_source,
     )
     # Long polling cannot coexist with a previously configured webhook. Keep
     # queued updates while explicitly converging the bot into polling mode.
