@@ -188,10 +188,20 @@ class TelegramAdminMixin:
             rows.append([(label, f"v2:{token}:item:{index}")])
         navigation: list[tuple[str, str]] = []
         if page > 0:
-            navigation.append(("◀ Previous", f"v2:{token}:prev"))
+            navigation.extend(
+                [
+                    ("⏮ First", f"v2:{token}:first"),
+                    ("◀ Previous", f"v2:{token}:prev"),
+                ]
+            )
         navigation.append((f"{page + 1}/{max(1, pages)}", f"v2:{token}:refresh"))
         if page + 1 < pages:
-            navigation.append(("Next ▶", f"v2:{token}:next"))
+            navigation.extend(
+                [
+                    ("Next ▶", f"v2:{token}:next"),
+                    ("Last ⏭", f"v2:{token}:last"),
+                ]
+            )
         rows.append(navigation)
         rows.append([("🔄 Refresh", f"v2:{token}:refresh"), ("🏠 Admin Home", "a:n:admin")])
         return self._inline_keyboard(rows)
@@ -277,7 +287,15 @@ class TelegramAdminMixin:
                 "failed": "No terminal worker failures.",
                 "enforcement": "No free/trial termination events recorded.",
             }.get(view, "Nothing needs attention.")
-            self.send(chat_id, empty)
+            if isinstance(message_id, int):
+                try:
+                    self.edit_message(chat_id, message_id, empty, self._admin_keyboard(telegram_id))
+                    return
+                except Exception:
+                    pass
+            self.send(chat_id, empty, self._admin_keyboard(telegram_id))
+            if isinstance(message_id, int):
+                self._delete_message(chat_id, message_id)
             return
         with self._panel_lock:
             self._panels[token]["all_items"] = items
@@ -291,6 +309,8 @@ class TelegramAdminMixin:
             except Exception:
                 pass
         result = self.send(chat_id, text, markup)
+        if isinstance(message_id, int):
+            self._delete_message(chat_id, message_id)
         if isinstance(result, dict) and result.get("message_id"):
             with self._panel_lock:
                 self._panels[token]["message_id"] = int(result["message_id"])
@@ -1035,15 +1055,15 @@ class TelegramAdminMixin:
             if order.get("evidence_id"):
                 rows.append([("🧾 Open Receipt", f"a:r:{order['evidence_id']}")])
                 if order.get("receipt_status") == "pending":
-                    rows.append([("🛑 Reject Receipt", f"a:q:{order['evidence_id']}")])
+                    rows.append([("🛑 Reject Receipt", f"a:rq:{order['evidence_id']}")])
             if order.get("status") == "approved" and order.get("provisioning_status") == "failed":
                 rows.append([("🔁 Retry Setup", f"a:h:{order_id}")])
             if order.get("revocation_status") in ("pending", "running"):
                 rows.append([("⏳ Revocation in progress", f"a:o:{order_id}")])
             elif order.get("revocation_status") == "failed":
-                rows.append([("🔁 Retry Revocation", f"a:g:{order_id}")])
+                rows.append([("🔁 Retry Revocation", f"a:rv:{order_id}")])
             if order.get("telegram_id"):
-                rows.append([("💰 View Ledger", f"a:l:{order['telegram_id']}")])
+                rows.append([("💰 View Ledger", f"a:ld:{order['telegram_id']}")])
             if order.get("refund_status") != "refunded" and (
                 order.get("status") == "approved" or order.get("payment_status") == "verified"
             ):
@@ -1121,3 +1141,5 @@ class TelegramAdminMixin:
             except Exception:
                 pass
         self.send(chat_id, text, markup)
+        if isinstance(message_id, int):
+            self._delete_message(chat_id, message_id)

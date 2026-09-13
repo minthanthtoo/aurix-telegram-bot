@@ -13,6 +13,26 @@ UTC = timezone.utc
 
 
 class TelegramCallbackMixin:
+    def _legacy_endpoint_exists(self, telegram_id: int, endpoint_id: str) -> bool:
+        """Recognize the old ``a:q:<endpoint>`` capacity callback safely.
+
+        Early capacity menus reused the short ``q`` action that receipt
+        rejection also uses.  New menus use ``ep``/``pl``; this bounded lookup
+        keeps a stale capacity button from accidentally opening a receipt
+        rejection flow while remaining compatible with messages already sent.
+        """
+        try:
+            snapshot = self._admin_call(telegram_id, "capacity_snapshot")
+        except Exception:
+            return False
+        if not isinstance(snapshot, dict):
+            return False
+        return any(
+            str(item.get("id")) == str(endpoint_id)
+            for item in (snapshot.get("endpoints") or [])
+            if isinstance(item, dict)
+        )
+
     def handle_callback(self, query: dict[str, Any]) -> None:
         query_id = query.get("id")
         user = query.get("from") or {}
@@ -61,6 +81,11 @@ class TelegramCallbackMixin:
                 "username": username,
             },
         }
+        # Every callback originates in a bot-owned message.  Carry its id
+        # through synthetic command routing so a child screen can replace the
+        # pressed card instead of appending a second copy to the transcript.
+        if isinstance(message.get("message_id"), int):
+            synthetic["_message_id"] = int(message["message_id"])
         if data.startswith("a:") and not self._is_admin(telegram_id):
             self._send_customer_fallback(chat_id, telegram_id)
             return
@@ -87,11 +112,6 @@ class TelegramCallbackMixin:
             return
         if data in navigation:
             synthetic["text"] = navigation[data]
-            # Preserve the message the customer just pressed so text child
-            # screens (plans, wallet, orders, VPN, usage) replace that card
-            # instead of appending a duplicate transcript message.
-            if isinstance(message.get("message_id"), int):
-                synthetic["_message_id"] = int(message["message_id"])
             self.handle(synthetic)
             return
         parts = data.split(":", 2)
@@ -123,7 +143,7 @@ class TelegramCallbackMixin:
             if order is None:
                 self.send(chat_id, "Order not found.")
             else:
-                self.send(
+                self._send_screen(
                     chat_id,
                     f"Cancel untouched order {entity_id}?",
                     self._inline_keyboard(
@@ -134,6 +154,7 @@ class TelegramCallbackMixin:
                             ]
                         ]
                     ),
+                    message_id=message.get("message_id"),
                 )
         elif scope == "o" and action == "x":
             synthetic["text"] = f"/cancelorder {entity_id}"
@@ -191,7 +212,12 @@ class TelegramCallbackMixin:
                 except (ValueError, CommerceError) as exc:
                     self.send(chat_id, str(exc) or "Payment method could not be selected.")
                     return
-                self._send_payment_qr(chat_id, order, provider_code)
+                self._send_payment_qr(
+                    chat_id,
+                    order,
+                    provider_code,
+                    message_id=message.get("message_id"),
+                )
             else:
                 self.send(chat_id, "This top-up action is no longer valid.")
         elif scope == "a":
@@ -309,14 +335,14 @@ class TelegramCallbackMixin:
                     self.send(chat_id, str(exc) or "Endpoint capacity could not be updated.")
                     return
                 self._show_capacity(chat_id, telegram_id, message.get("message_id"))
-            elif action == "q":
+            elif action == "ep":
                 try:
                     self._show_endpoint_plans(
                         chat_id, telegram_id, entity_id, message.get("message_id")
                     )
                 except Exception as exc:
                     self.send(chat_id, str(exc) or "Endpoint plans are temporarily unavailable.")
-            elif action == "l":
+            elif action == "pl":
                 try:
                     plan_code, endpoint_id = entity_id.split(",", 1)
                     plans = self._admin_call(
@@ -365,16 +391,16 @@ class TelegramCallbackMixin:
                     f"Retry worker job {entity_id}?",
                     "Confirm Retry",
                 )
-            elif action == "g":
+            elif action == "promo":
                 try:
                     promo_action, promo_code = entity_id.split(":", 1)
                 except ValueError:
                     self.send(chat_id, "This promo action is no longer valid.")
                     return
-                command = "/stoppromo" if promo_action == "stop" else "/resumepromo"
                 if promo_action not in {"stop", "resume"}:
                     self.send(chat_id, "This promo action is no longer valid.")
                     return
+                command = "/stoppromo" if promo_action == "stop" else "/resumepromo"
                 self._queue_admin_confirmation(
                     chat_id,
                     telegram_id,
@@ -384,6 +410,53 @@ class TelegramCallbackMixin:
                     "Confirm Promo Change",
                     cancel_data="a:n:promo",
                 )
+            elif action == "rv":
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/retry",
+                    [entity_id, "revoke"],
+                    f"Retry the failed revocation job for order {entity_id}?",
+                    "Confirm Retry",
+                )
+            elif action == "ld":
+                synthetic["text"] = f"/ledger {entity_id}"
+                self.handle(synthetic)
+            elif action == "rq":
+                self._queue_admin_confirmation(
+                    chat_id,
+                    telegram_id,
+                    "/rejectreceipt",
+                    [entity_id],
+                    f"Reject receipt {entity_id}? The order stays open for a replacement screenshot.",
+                    "Confirm Reject Receipt",
+                    f"a:r:{entity_id}",
+                )
+            elif action == "g":
+                if ":" not in entity_id:
+                    self._queue_admin_confirmation(
+                        chat_id,
+                        telegram_id,
+                        "/retry",
+                        [entity_id, "revoke"],
+                        f"Retry the failed revocation job for order {entity_id}?",
+                        "Confirm Retry",
+                    )
+                else:
+                    promo_action, promo_code = entity_id.split(":", 1)
+                    if promo_action not in {"stop", "resume"}:
+                        self.send(chat_id, "This promo action is no longer valid.")
+                        return
+                    command = "/stoppromo" if promo_action == "stop" else "/resumepromo"
+                    self._queue_admin_confirmation(
+                        chat_id,
+                        telegram_id,
+                        command,
+                        [promo_code],
+                        f"{promo_action.title()} promo {promo_code}?",
+                        "Confirm Promo Change",
+                        cancel_data="a:n:promo",
+                    )
             elif action == "h":
                 self._queue_admin_confirmation(
                     chat_id,
@@ -393,18 +466,46 @@ class TelegramCallbackMixin:
                     f"Retry the failed provisioning job for order {entity_id}?",
                     "Confirm Retry",
                 )
-            elif action == "g":
-                self._queue_admin_confirmation(
-                    chat_id,
-                    telegram_id,
-                    "/retry",
-                    [entity_id, "revoke"],
-                    f"Retry the failed revocation job for order {entity_id}?",
-                    "Confirm Retry",
-                )
             elif action == "l":
-                synthetic["text"] = f"/ledger {entity_id}"
-                self.handle(synthetic)
+                if "," not in entity_id:
+                    synthetic["text"] = f"/ledger {entity_id}"
+                    self.handle(synthetic)
+                else:
+                    # Compatibility for plan-limit buttons produced before
+                    # the explicit ``pl`` action was introduced.
+                    plan_code, endpoint_id = entity_id.split(",", 1)
+                    try:
+                        plans = self._admin_call(
+                            telegram_id, "endpoint_plan_capacity", endpoint_id
+                        )
+                        plan = next(
+                            item for item in plans if str(item.get("plan_code")) == plan_code
+                        )
+                        current = (
+                            plan.get("max_active_assignments")
+                            if bool(plan.get("enabled"))
+                            else 0
+                        )
+                        limits = [None, 5, 10, 25, 50, 0]
+                        try:
+                            index = limits.index(current)
+                        except ValueError:
+                            index = 0
+                        selected = limits[(index + 1) % len(limits)]
+                        self._admin_call(
+                            telegram_id,
+                            "configure_endpoint_plan_limit",
+                            endpoint_id,
+                            plan_code,
+                            telegram_id,
+                            max_active_assignments=None if selected == 0 else selected,
+                            enabled=selected != 0,
+                        )
+                        self._show_endpoint_plans(
+                            chat_id, telegram_id, endpoint_id, message.get("message_id")
+                        )
+                    except Exception as exc:
+                        self.send(chat_id, str(exc) or "Plan capacity could not be updated.")
             elif action == "f":
                 self._queue_admin_confirmation(
                     chat_id,
@@ -471,6 +572,17 @@ class TelegramCallbackMixin:
                     f"a:o:{entity_id}",
                 )
             elif action == "q":
+                if self._legacy_endpoint_exists(telegram_id, entity_id):
+                    try:
+                        self._show_endpoint_plans(
+                            chat_id, telegram_id, entity_id, message.get("message_id")
+                        )
+                    except Exception as exc:
+                        self.send(
+                            chat_id,
+                            str(exc) or "Endpoint plans are temporarily unavailable.",
+                        )
+                    return
                 self._queue_admin_confirmation(
                     chat_id,
                     telegram_id,

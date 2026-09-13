@@ -81,7 +81,7 @@ class TelegramCommandMixin:
                         f"a:e:t,{endpoint_id}",
                     ),
                     (f"🎚 Limit {maximum or '∞'}", f"a:e:m,{endpoint_id}"),
-                    ("📋 Plans", f"a:q:{endpoint_id}"),
+                    ("📋 Plans", f"a:ep:{endpoint_id}"),
                 ]
             )
         endpoint_text = (
@@ -115,6 +115,8 @@ class TelegramCommandMixin:
             except Exception:
                 pass
         self.send(chat_id, text, markup)
+        if isinstance(message_id, int):
+            self._delete_message(chat_id, message_id)
 
     def _show_endpoint_plans(
         self, chat_id: int, telegram_id: int, endpoint_id: str, message_id: int | None = None
@@ -130,7 +132,7 @@ class TelegramCommandMixin:
             blocks.append(
                 f"{code}: {plan['active_assignments']} active / {label}"
             )
-            callback_data = f"a:l:{code},{endpoint_id}"
+            callback_data = f"a:pl:{code},{endpoint_id}"
             if len(callback_data.encode("utf-8")) <= 64:
                 rows.append(
                     [{"text": f"🎚 {code} · {label}", "callback_data": callback_data}]
@@ -138,7 +140,7 @@ class TelegramCommandMixin:
         rows.append(
             [
                 {"text": "◀ Capacity", "callback_data": "a:n:capacity"},
-                {"text": "🔄 Refresh", "callback_data": f"a:q:{endpoint_id}"},
+                {"text": "🔄 Refresh", "callback_data": f"a:ep:{endpoint_id}"},
             ]
         )
         markup = {"inline_keyboard": rows}
@@ -150,6 +152,8 @@ class TelegramCommandMixin:
             except Exception:
                 pass
         self.send(chat_id, text, markup)
+        if isinstance(message_id, int):
+            self._delete_message(chat_id, message_id)
 
     def handle(self, message: dict[str, Any]) -> None:
         chat = message.get("chat") or {}
@@ -624,14 +628,15 @@ class TelegramCommandMixin:
                     telegram_id, first_name, username=username, code=promo_code
                 )
             except OutlineError:
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "The giveaway key could not be provisioned. No winner slot was consumed; try again.",
+                    message_id=message_id,
                 )
                 return
             if result.outcome == "won":
                 quota = self._promo_quota_label(int(result.quota_bytes or 0))
-                self.send(
+                self._send_screen(
                     chat["id"],
                     f"🎉 Promo gift #{result.winner_number}: {result.code}\n\n"
                     f"Your {quota} / {result.duration_days}-day Outline key:\n\n"
@@ -640,35 +645,49 @@ class TelegramCommandMixin:
                     "Normal plans are paused only while both this gift and its promo season "
                     "remain active; they return automatically afterward.",
                     self._key_delivery_keyboard(str(result.access_url)),
+                    message_id=message_id,
                 )
             elif result.outcome == "already_won":
-                self.send(
+                self._send_screen(
                     chat["id"],
                     f"You already won slot #{result.winner_number}. No second key or slot was created.\n"
                     f"Expires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
                     "Open My VPN to retrieve the key and track usage. Regular plans are available "
                     "again after the gift or season ends.",
                     self._customer_keyboard(telegram_id),
+                    message_id=message_id,
                 )
             elif result.outcome == "ineligible":
-                self.send(chat["id"], f"This account is not eligible: {result.reason}")
+                self._send_screen(
+                    chat["id"], f"This account is not eligible: {result.reason}", message_id=message_id
+                )
             elif result.outcome == "provisioning_pending":
-                self.send(
+                self._send_screen(
                     chat["id"],
                     result.reason
                     or "Your promo reservation is being provisioned. Open My VPN shortly to retrieve it.",
                     self._customer_keyboard(telegram_id),
+                    message_id=message_id,
                 )
             elif result.outcome == "scheduled":
-                self.send(chat["id"], "This promo has not started yet. Open Plans later to refresh.")
+                self._send_screen(
+                    chat["id"],
+                    "This promo has not started yet. Open Plans later to refresh.",
+                    message_id=message_id,
+                )
             elif result.outcome in {"ended", "paused", "unavailable"}:
-                self.send(
+                self._send_screen(
                     chat["id"],
                     result.reason or "This promo is not active. Your regular plans remain available.",
                     self._customer_keyboard(telegram_id),
+                    message_id=message_id,
                 )
             else:
-                self.send(chat["id"], "This promo's current giveaway window is fully claimed.")
+                self._send_screen(
+                    chat["id"],
+                    "This promo's current giveaway window is fully claimed.",
+                    message_id=message_id,
+                )
         elif command == "/admin":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -687,7 +706,7 @@ class TelegramCommandMixin:
                         )
                     except Exception as exc:
                         print(f"admin dashboard error: {type(exc).__name__}", file=sys.stderr)
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "AuriX Admin\n\n"
                     "Daily flow: Pending Orders → open receipt → verify the transaction "
@@ -696,13 +715,19 @@ class TelegramCommandMixin:
                     "to inspect its wallet ledger, and run Consistency before taking "
                     "payment decisions." + summary,
                     self._admin_keyboard(telegram_id),
+                    message_id=message_id,
                 )
         elif command == "/promo":
             promo = self._admin_service_call(
                 telegram_id, "giveaway_status", telegram_id
             )
             if not promo["exists"]:
-                self.send(chat["id"], "No promo campaign is configured.")
+                self._send_screen(
+                    chat["id"],
+                    "No promo campaign is configured.",
+                    self._admin_keyboard(telegram_id),
+                    message_id=message_id,
+                )
             else:
                 quota = self._promo_quota_label(promo["quota_bytes"])
                 example = (
@@ -721,12 +746,12 @@ class TelegramCommandMixin:
                     [
                         {
                             "text": "⏸ Stop Promo" if action == "stop" else "▶ Resume Promo",
-                            "callback_data": f"a:g:{action}:{promo['code']}"[:64],
+                            "callback_data": f"a:promo:{action}:{promo['code']}"[:64],
                         },
                         {"text": "🏠 Admin Home", "callback_data": "a:n:admin"},
                     ]
                 )
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "Promo campaign\n\n"
                     f"Code: {promo['code']}\n"
@@ -743,6 +768,7 @@ class TelegramCommandMixin:
                     "Each account can claim once per campaign. Daily/hourly resets the slot count, "
                     "not the same account's eligibility.",
                     {"inline_keyboard": rows},
+                    message_id=message_id,
                 )
         elif command == "/setpromo":
             if len(args) != 7:
@@ -811,16 +837,22 @@ class TelegramCommandMixin:
             self._send_plans(chat["id"], telegram_id, message_id=message_id)
         elif command in ("/buy", "/upgrade"):
             if self.commerce is None:
-                self.send(chat["id"], "Paid plans are not configured in this staging process.")
+                self._send_screen(
+                    chat["id"],
+                    "Paid plans are not configured in this staging process.",
+                    message_id=message_id,
+                )
             elif len(args) != 1:
-                self.send(chat["id"], "Usage: /buy <plan-code>\n\nUse /plans first.")
+                self._send_screen(
+                    chat["id"], "Usage: /buy <plan-code>\n\nUse /plans first.", message_id=message_id
+                )
             else:
                 try:
                     order = self.commerce.create_order(
                         telegram_id, first_name, args[0], username=username
                     )
                 except CommerceError as exc:
-                    self.send(chat["id"], str(exc))
+                    self._send_screen(chat["id"], str(exc), message_id=message_id)
                 else:
                     if order.plan_conflict:
                         detail = self.commerce.order_detail(order.order_id, telegram_id)
@@ -836,9 +868,10 @@ class TelegramCommandMixin:
                                 telegram_id,
                                 order.order_id,
                                 heading="Existing open order",
+                                message_id=message_id,
                             )
                             return
-                        self.send(
+                        self._send_screen(
                             chat["id"],
                             f"You already have an open order for {order.plan.name}. Choose whether to replace that untouched order with {args[0]}.",
                             self._inline_keyboard(
@@ -849,15 +882,20 @@ class TelegramCommandMixin:
                                     ]
                                 ]
                             ),
+                            message_id=message_id,
                         )
                         return
                     if not order.created:
                         self._send_order_detail(
-                            chat["id"], telegram_id, order.order_id, heading="Existing open order"
+                            chat["id"],
+                            telegram_id,
+                            order.order_id,
+                            heading="Existing open order",
+                            message_id=message_id,
                         )
                         return
                     heading = "Order created"
-                    self.send(
+                    self._send_screen(
                         chat["id"],
                         f"{heading}: {order.order_id}\n"
                         f"Plan: {order.plan.name}\n"
@@ -873,6 +911,7 @@ class TelegramCommandMixin:
                                 [("View Order", f"o:v:{order.order_id}")],
                             ]
                         ),
+                        message_id=message_id,
                     )
         elif command == "/paid":
             if self.commerce is None:
@@ -917,7 +956,11 @@ class TelegramCommandMixin:
             self._send_my_vpn(chat["id"], telegram_id, message_id=message_id)
         elif command == "/renew":
             if self.commerce is None:
-                self.send(chat["id"], "Paid plans are not configured in this staging process.")
+                self._send_screen(
+                    chat["id"],
+                    "Paid plans are not configured in this staging process.",
+                    message_id=message_id,
+                )
             else:
                 requested_plan = args[0] if args else None
                 subscriptions = (
@@ -934,10 +977,18 @@ class TelegramCommandMixin:
                     else self.commerce.user_vpn(telegram_id)
                 )
                 if subscription is None and requested_plan:
-                    self.send(chat["id"], "That plan is not one of your previous plans.")
+                    self._send_screen(
+                        chat["id"],
+                        "That plan is not one of your previous plans.",
+                        message_id=message_id,
+                    )
                     return
                 if subscription is None:
-                    self.send(chat["id"], "No previous plan found. Use /plans and /buy first.")
+                    self._send_screen(
+                        chat["id"],
+                        "No previous plan found. Use /plans and /buy first.",
+                        message_id=message_id,
+                    )
                 else:
                     try:
                         order = self.commerce.create_order(
@@ -947,53 +998,65 @@ class TelegramCommandMixin:
                             username=username,
                         )
                     except CommerceError as exc:
-                        self.send(chat["id"], str(exc))
+                        self._send_screen(chat["id"], str(exc), message_id=message_id)
                     else:
                         heading = (
                             "Renewal order created" if order.created else "Existing open order"
                         )
-                        self.send(
+                        self._send_screen(
                             chat["id"],
                             f"{heading}: {order.order_id}\nSend /paid {order.order_id} then the receipt screenshot after payment.",
+                            message_id=message_id,
                         )
         elif command == "/trial":
             if not self._trial_allowed(telegram_id):
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "The monthly trial is currently invite-only. Use /claim or /plans instead.",
+                    message_id=message_id,
                 )
                 return
             if self._free_claim_blocked_by_paid(telegram_id):
-                self.send(
-                    chat["id"], "Your paid account is already active; the free trial is not needed."
+                self._send_screen(
+                    chat["id"],
+                    "Your paid account is already active; the free trial is not needed.",
+                    message_id=message_id,
                 )
                 return
             try:
                 result = self.service.claim_trial(telegram_id, first_name, username=username)
             except OutlineError:
-                self.send(chat["id"], "Trial service temporarily unavailable. Try again later.")
+                self._send_screen(
+                    chat["id"],
+                    "Trial service temporarily unavailable. Try again later.",
+                    message_id=message_id,
+                )
                 return
             if result.denied_reason == "active_promo":
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "Your promo gift is active. Monthly 3 GB returns automatically when the "
                     "gift or promo season ends.",
+                    message_id=message_id,
                 )
             elif result.denied_reason == "account_inactive":
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "This account is not active, so new VPN access cannot be issued. Contact support if this is unexpected.",
+                    message_id=message_id,
                 )
             elif result.denied_reason == "provisioning_pending":
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "Your monthly trial is being prepared. Please try /trial again shortly.",
+                    message_id=message_id,
                 )
             elif result.access_url:
-                self.send(
+                self._send_screen(
                     chat["id"],
                     f"Your monthly 3 GiB key:\n\n{result.access_url}\n\nExpires: {result.expires_at.strftime('%Y-%m-%d %H:%M UTC')}",
                     self._key_delivery_keyboard(str(result.access_url)),
+                    message_id=message_id,
                 )
             else:
                 retry = (
@@ -1001,21 +1064,31 @@ class TelegramCommandMixin:
                     if result.next_claim_at
                     else "later"
                 )
-                self.send(chat["id"], f"Monthly 3 GiB already claimed. Come back after {retry}.")
+                self._send_screen(
+                    chat["id"],
+                    f"Monthly 3 GiB already claimed. Come back after {retry}.",
+                    message_id=message_id,
+                )
         elif command == "/wallet":
             self._send_wallet(chat["id"], telegram_id, message_id=message_id)
             return
         elif command == "/topup":
             if self.commerce is None:
-                self.send(chat["id"], "Wallet is not configured.")
+                self._send_screen(chat["id"], "Wallet is not configured.", message_id=message_id)
             elif not args:
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "Choose a wallet top-up amount, or tap Other amount and type your own.",
                     self._topup_amount_keyboard(),
+                    message_id=message_id,
                 )
             elif len(args) != 1:
-                self.send(chat["id"], "Choose one top-up amount.", self._topup_amount_keyboard())
+                self._send_screen(
+                    chat["id"],
+                    "Choose one top-up amount.",
+                    self._topup_amount_keyboard(),
+                    message_id=message_id,
+                )
             else:
                 try:
                     order = self.commerce.create_wallet_topup(
@@ -1025,18 +1098,23 @@ class TelegramCommandMixin:
                         username=username,
                     )
                 except (ValueError, CommerceError) as exc:
-                    self.send(chat["id"], str(exc) or "Top-up amount is invalid.")
+                    self._send_screen(
+                        chat["id"], str(exc) or "Top-up amount is invalid.", message_id=message_id
+                    )
                 else:
                     detail = self.commerce.order_detail(order.order_id, telegram_id)
                     if detail is None:
-                        self.send(chat["id"], "Top-up request could not be loaded.")
+                        self._send_screen(
+                            chat["id"], "Top-up request could not be loaded.", message_id=message_id
+                        )
                     elif not order.created and order.plan_conflict:
-                        self.send(
+                        self._send_screen(
                             chat["id"],
                             "Finish or cancel your current open order before starting a different top-up.",
                             self._inline_keyboard(
                                 [[("Open current order", f"o:v:{order.order_id}")]]
                             ),
+                            message_id=message_id,
                         )
                     else:
                         self._send_payment_methods(
@@ -1044,22 +1122,29 @@ class TelegramCommandMixin:
                         )
         elif command == "/walletpay":
             if self.commerce is None:
-                self.send(chat["id"], "Wallet is not configured.")
+                self._send_screen(chat["id"], "Wallet is not configured.", message_id=message_id)
             elif len(args) != 1:
-                self.send(chat["id"], "Usage: /walletpay <order-id>")
+                self._send_screen(
+                    chat["id"], "Usage: /walletpay <order-id>", message_id=message_id
+                )
             else:
                 try:
                     result = self.commerce.pay_order_with_wallet(telegram_id, args[0])
                 except CommerceError as exc:
-                    self.send(chat["id"], str(exc))
+                    self._send_screen(chat["id"], str(exc), message_id=message_id)
                 else:
-                    self.send(
+                    self._send_screen(
                         chat["id"],
                         f"Wallet payment {result}; an admin will review and approve the order.",
+                        message_id=message_id,
                     )
         elif command == "/replace":
             if self.commerce is None or len(args) not in (1, 2):
-                self.send(chat["id"], "Usage: /replace <plan-code> [expected-order-id]")
+                self._send_screen(
+                    chat["id"],
+                    "Usage: /replace <plan-code> [expected-order-id]",
+                    message_id=message_id,
+                )
             else:
                 try:
                     order = self.commerce.replace_open_order(
@@ -1070,9 +1155,9 @@ class TelegramCommandMixin:
                         expected_order_id=args[1] if len(args) == 2 else None,
                     )
                 except CommerceError as exc:
-                    self.send(chat["id"], str(exc))
+                    self._send_screen(chat["id"], str(exc), message_id=message_id)
                 else:
-                    self.send(
+                    self._send_screen(
                         chat["id"],
                         f"Order replaced: {order.order_id}\nPlan: {order.plan.name}\nAmount: {order.plan.price_minor:,} {order.plan.currency}\n\nPay through the approved channel, then send the receipt screenshot.",
                         self._inline_keyboard(
@@ -1083,20 +1168,24 @@ class TelegramCommandMixin:
                                 ]
                             ]
                         ),
+                        message_id=message_id,
                     )
         elif command == "/cancelorder":
             if self.commerce is None or len(args) != 1:
-                self.send(chat["id"], "Usage: /cancelorder <order-id>")
+                self._send_screen(
+                    chat["id"], "Usage: /cancelorder <order-id>", message_id=message_id
+                )
             else:
                 try:
                     result = self.commerce.cancel_order(telegram_id, args[0])
                 except CommerceError as exc:
-                    self.send(chat["id"], str(exc))
+                    self._send_screen(chat["id"], str(exc), message_id=message_id)
                 else:
-                    self.send(
+                    self._send_screen(
                         chat["id"],
                         f"Order {args[0]} {result}.",
                         self._customer_keyboard(telegram_id),
+                        message_id=message_id,
                     )
         elif command == "/receipt":
             if not self._is_admin(telegram_id):
@@ -1169,19 +1258,21 @@ class TelegramCommandMixin:
                 view = "receipts" if command == "/receipts" else "orders"
                 items = self._panel_data(telegram_id, view)
                 if not items:
-                    self.send(
+                    self._send_screen(
                         chat["id"],
                         "No unreviewed receipts." if view == "receipts" else "No pending orders.",
+                        self._admin_keyboard(telegram_id),
+                        message_id=message_id,
                     )
                 else:
-                    self._open_admin_panel(chat["id"], telegram_id, view)
+                    self._open_admin_panel(chat["id"], telegram_id, view, message_id=message_id)
         elif command == "/capacity":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
             elif self.commerce is None:
                 self.send(chat["id"], "Commerce is not configured.")
             else:
-                self._show_capacity(chat["id"], telegram_id)
+                self._show_capacity(chat["id"], telegram_id, message_id=message_id)
         elif command == "/failsafety":
             try:
                 controls = self._admin_call(telegram_id, "failover_safety_controls")
@@ -1200,7 +1291,12 @@ class TelegramCommandMixin:
                 if len(lines) == 1:
                     lines.append("No failover safety controls are configured.")
                 lines.append("Use /setsafety with explicit values to change one control.")
-                self.send(chat["id"], "\n".join(lines), self._admin_keyboard(telegram_id))
+                self._send_screen(
+                    chat["id"],
+                    "\n".join(lines),
+                    self._admin_keyboard(telegram_id),
+                    message_id=message_id,
+                )
         elif command == "/reconcile":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -1232,20 +1328,28 @@ class TelegramCommandMixin:
                 lines.extend(
                     f"{key.replace('_', ' ').title()}: {value}" for key, value in report.items()
                 )
-                self.send(chat["id"], "\n".join(lines), self._admin_keyboard(telegram_id))
+                self._send_screen(
+                    chat["id"],
+                    "\n".join(lines),
+                    self._admin_keyboard(telegram_id),
+                    message_id=message_id,
+                )
         elif command == "/enforcement":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
             else:
                 events = self._admin_service_call(telegram_id, "termination_summary")
                 if not events:
-                    self.send(
+                    self._send_screen(
                         chat["id"],
                         "No free/trial termination events recorded.",
                         self._admin_keyboard(telegram_id),
+                        message_id=message_id,
                     )
                 else:
-                    self._open_admin_panel(chat["id"], telegram_id, "enforcement")
+                    self._open_admin_panel(
+                        chat["id"], telegram_id, "enforcement", message_id=message_id
+                    )
         elif command == "/failed":
             if not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat["id"], telegram_id)
@@ -1254,13 +1358,16 @@ class TelegramCommandMixin:
             else:
                 jobs = self._admin_call(telegram_id, "failed_jobs", include_nonterminal=True)
                 if not jobs:
-                    self.send(
+                    self._send_screen(
                         chat["id"],
                         "No terminal worker failures.",
                         self._admin_keyboard(telegram_id),
+                        message_id=message_id,
                     )
                 else:
-                    self._open_admin_panel(chat["id"], telegram_id, "failed")
+                    self._open_admin_panel(
+                        chat["id"], telegram_id, "failed", message_id=message_id
+                    )
         elif command == "/setsafety":
             try:
                 scope, scope_key, paused, maximum, window = self._failover_safety_args(args)
@@ -1553,51 +1660,64 @@ class TelegramCommandMixin:
                     self.send(chat["id"], str(exc))
         elif command == "/claim":
             if self.trial_ids and telegram_id not in self.trial_ids:
-                self.send(
-                    chat["id"], "Free staging claims are limited to the configured test accounts."
+                self._send_screen(
+                    chat["id"],
+                    "Free staging claims are limited to the configured test accounts.",
+                    message_id=message_id,
                 )
                 return
             if self._free_claim_blocked_by_paid(telegram_id):
-                self.send(
-                    chat["id"], "Your paid account is active; free claims are paused until it ends."
+                self._send_screen(
+                    chat["id"],
+                    "Your paid account is active; free claims are paused until it ends.",
+                    message_id=message_id,
                 )
                 return
             try:
                 result = self.service.claim(telegram_id, first_name, username=username)
             except OutlineError:
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "Service temporarily unavailable. Your claim was not consumed. Try again later.",
+                    message_id=message_id,
                 )
                 return
             if result.denied_reason == "active_promo":
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "Your promo gift is active. Daily 300 MB returns automatically when the "
                     "gift or promo season ends.",
+                    message_id=message_id,
                 )
             elif result.denied_reason == "account_inactive":
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "This account is not active, so new VPN access cannot be issued. Contact support if this is unexpected.",
+                    message_id=message_id,
                 )
             elif result.denied_reason == "provisioning_pending":
-                self.send(
+                self._send_screen(
                     chat["id"],
                     "Your daily key is being prepared. Please try /claim again shortly.",
+                    message_id=message_id,
                 )
             elif result.access_url:
                 expiry = result.expires_at.strftime("%Y-%m-%d %H:%M UTC")
                 amount = self.service.limit_bytes / 1024**2
-                self.send(
+                self._send_screen(
                     chat["id"],
                     f"Your {amount:g} MiB Outline key:\n\n{result.access_url}\n\nExpires: {expiry}",
                     self._key_delivery_keyboard(str(result.access_url)),
+                    message_id=message_id,
                 )
             elif result.next_claim_at:
                 retry = result.next_claim_at.strftime("%Y-%m-%d %H:%M UTC")
-                self.send(chat["id"], f"Already claimed. Come back after {retry}.")
+                self._send_screen(
+                    chat["id"], f"Already claimed. Come back after {retry}.", message_id=message_id
+                )
             else:
-                self.send(chat["id"], "Claims are unavailable for this account.")
+                self._send_screen(
+                    chat["id"], "Claims are unavailable for this account.", message_id=message_id
+                )
         else:
             self._send_customer_fallback(chat["id"], telegram_id)

@@ -351,6 +351,22 @@ class TelegramBot(
             payload["reply_markup"] = reply_markup
         return self.request("editMessageText", payload)
 
+    def _delete_message(self, chat_id: int, message_id: int | None) -> None:
+        """Best-effort cleanup for a bot-owned card that cannot be edited.
+
+        Telegram cannot convert every media message to text (or vice versa)
+        with ``editMessageText``.  When a callback originated in one of our
+        cards and we had to send a replacement, remove the stale card so the
+        customer still has one canonical screen.  Failures are intentionally
+        ignored because deletion is only a presentation cleanup.
+        """
+        if not isinstance(message_id, int):
+            return
+        try:
+            self.request("deleteMessage", {"chat_id": int(chat_id), "message_id": message_id})
+        except Exception:
+            return
+
     @staticmethod
     def _reply_keyboard(rows: list[list[str]]) -> dict[str, Any]:
         return {
@@ -419,6 +435,8 @@ class TelegramBot(
         if use_image and source and len(text) <= 1024:
             try:
                 self.send_photo(chat_id, source, text, reply_markup)
+                if isinstance(message_id, int):
+                    self._delete_message(chat_id, message_id)
                 return
             except Exception as exc:
                 print(
@@ -449,6 +467,8 @@ class TelegramBot(
                 if "message is not modified" in str(exc).lower():
                     return
         self.send(chat_id, text, reply_markup)
+        if isinstance(message_id, int):
+            self._delete_message(chat_id, message_id)
 
     def _send_wallet(
         self, chat_id: int, telegram_id: int, message_id: int | None = None
@@ -473,7 +493,12 @@ class TelegramBot(
             f"Balance: <b>{balance:,} MMK</b>\n"
             "Top-ups are credited only after receipt verification."
             f"{history_text}",
-            self._inline_keyboard([[('➕ Top up wallet', 't:a:menu')]]),
+            self._inline_keyboard(
+                [
+                    [('➕ Top up wallet', 't:a:menu')],
+                    [('🏠 Main Menu', 'n:start'), ('🔐 My VPN', 'n:myvpn')],
+                ]
+            ),
             message_id=message_id,
         )
 
@@ -602,6 +627,7 @@ class TelegramBot(
             if time.monotonic() - float(state.get("updated_at", 0)) > 1800:
                 self._panels.pop(token, None)
                 return False
+            item: dict[str, Any] | None = None
             if action == "next":
                 state["page"] = int(state.get("page", 0)) + 1
             elif action == "prev":
@@ -614,28 +640,36 @@ class TelegramBot(
                     item = items[int(arg or "-1")]
                 except (ValueError, IndexError):
                     item = None
-                if item is not None:
-                    view = state["view"]
-                    target = item.get("id") or item.get("job_id")
-                    if view == "orders":
-                        self._send_order_detail(chat_id, telegram_id, str(target), admin_view=True)
-                    elif view == "receipts":
-                        self.handle(
-                            {
-                                "chat": {"id": chat_id, "type": "private"},
-                                "from": {"id": telegram_id},
-                                "text": f"/receipt {target}",
-                            }
-                        )
-                    elif view == "failed":
-                        self.handle(
-                            {
-                                "chat": {"id": chat_id, "type": "private"},
-                                "from": {"id": telegram_id},
-                                "text": f"/order {item.get('order_id')}",
-                            }
-                        )
-                    return True
+            if item is not None:
+                view = state["view"]
+                target = item.get("id") or item.get("job_id")
+                if view == "orders":
+                    self._send_order_detail(
+                        chat_id,
+                        telegram_id,
+                        str(target),
+                        admin_view=True,
+                        message_id=message.get("message_id") or state.get("message_id"),
+                    )
+                elif view == "receipts":
+                    self.handle(
+                        {
+                            "chat": {"id": chat_id, "type": "private"},
+                            "from": {"id": telegram_id},
+                            "text": f"/receipt {target}",
+                            "_message_id": message.get("message_id") or state.get("message_id"),
+                        }
+                    )
+                elif view == "failed":
+                    self.handle(
+                        {
+                            "chat": {"id": chat_id, "type": "private"},
+                            "from": {"id": telegram_id},
+                            "text": f"/order {item.get('order_id')}",
+                            "_message_id": message.get("message_id") or state.get("message_id"),
+                        }
+                    )
+                return True
             state["all_items"] = self._panel_data(telegram_id, state["view"])
             message_id = message.get("message_id") or state.get("message_id")
         text, markup = self._render_panel(token)
@@ -678,7 +712,11 @@ class TelegramBot(
         )
 
     def _send_payment_qr(
-        self, chat_id: int, order: dict[str, Any], provider_code: str
+        self,
+        chat_id: int,
+        order: dict[str, Any],
+        provider_code: str,
+        message_id: int | None = None,
     ) -> None:
         code = provider_code.strip().lower()
         env_code = {
@@ -711,6 +749,8 @@ class TelegramBot(
         if qr:
             try:
                 self.send_photo(chat_id, qr, caption, markup)
+                if isinstance(message_id, int):
+                    self._delete_message(chat_id, message_id)
                 return
             except Exception as exc:
                 print(f"payment QR delivery error: {type(exc).__name__}", file=sys.stderr)
@@ -721,6 +761,8 @@ class TelegramBot(
             "is shown; choose another method or contact support.",
             markup,
         )
+        if isinstance(message_id, int):
+            self._delete_message(chat_id, message_id)
 
     def _topup_amount_keyboard(self) -> dict[str, Any]:
         return self._inline_keyboard(
@@ -816,12 +858,23 @@ class TelegramBot(
             )
         navigation: list[tuple[str, str]] = []
         if page > 0:
-            navigation.append(("◀", f"c2:{token}:prev"))
+            navigation.extend(
+                [
+                    ("⏮", f"c2:{token}:first"),
+                    ("◀", f"c2:{token}:prev"),
+                ]
+            )
         navigation.append((f"{page + 1}/{pages}", f"c2:{token}:refresh"))
         if page + 1 < pages:
-            navigation.append(("▶", f"c2:{token}:next"))
+            navigation.extend(
+                [
+                    ("▶", f"c2:{token}:next"),
+                    ("⏭", f"c2:{token}:last"),
+                ]
+            )
         rows.append(navigation)
         rows.append([("🔄 Refresh", f"c2:{token}:refresh")])
+        rows.append([("🏠 Main Menu", "n:start"), ("🔐 My VPN", "n:myvpn")])
         with self._panel_lock:
             state = self._panels[token]
             state["page"] = page
@@ -852,6 +905,8 @@ class TelegramBot(
             except Exception:
                 pass
         result = self.send(chat_id, text, markup)
+        if isinstance(message_id, int):
+            self._delete_message(chat_id, message_id)
         if isinstance(result, dict) and result.get("message_id"):
             with self._panel_lock:
                 self._panels[token]["message_id"] = int(result["message_id"])
@@ -893,7 +948,12 @@ class TelegramBot(
             view = str(state["view"])
             message_id = message.get("message_id") or state.get("message_id")
         if selected_item is not None:
-            self._send_order_detail(chat_id, telegram_id, str(selected_item["id"]))
+            self._send_order_detail(
+                chat_id,
+                telegram_id,
+                str(selected_item["id"]),
+                message_id=message_id,
+            )
             return True
         if action == "refresh" and view == "customer_orders" and self.commerce is not None:
             fresh = self.commerce.list_user_orders(int(telegram_id), limit=50)
@@ -916,6 +976,8 @@ class TelegramBot(
                 if "message is not modified" in str(exc).lower():
                     return True
         self.send(int(chat_id), text, markup)
+        if isinstance(message_id, int):
+            self._delete_message(int(chat_id), message_id)
         return True
 
     def _customer_keyboard(self, telegram_id: int) -> dict[str, Any]:
@@ -1085,7 +1147,7 @@ class TelegramBot(
         self._add_html_parse_mode(payload, caption)
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        self.request("sendPhoto", payload)
+        return self.request("sendPhoto", payload)
 
     def send_document(
         self,
@@ -1125,7 +1187,7 @@ class TelegramBot(
         self._add_html_parse_mode(payload, caption)
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        self.request("sendDocument", payload)
+        return self.request("sendDocument", payload)
 
     @staticmethod
     def _receipt_review_caption(receipt: dict[str, Any]) -> str:
@@ -1170,7 +1232,7 @@ class TelegramBot(
             and not list(extracted.get("flags") or [])
         ):
             rows.append([("✅ Verify extracted facts…", f"a:v:{evidence_id}")])
-        rows.append([("🛑 Reject Receipt", f"a:q:{evidence_id}")])
+        rows.append([("🛑 Reject Receipt", f"a:rq:{evidence_id}")])
         markup = self._inline_keyboard(rows)
         file_id = str(receipt["telegram_file_id"])
         storage = getattr(self.commerce, "receipt_storage", None)
@@ -1493,6 +1555,9 @@ class TelegramBot(
             and promo_buttons
         ):
             markup["inline_keyboard"].insert(0, promo_buttons)
+        markup["inline_keyboard"].append(
+            [("🏠 Main Menu", "n:start"), ("🔐 My VPN", "n:myvpn")]
+        )
         self._send_screen(chat_id, "\n".join(lines), markup, message_id=message_id)
 
     def _send_status(self, chat_id: int, telegram_id: int, include_key: bool = False) -> None:
@@ -1713,6 +1778,12 @@ class TelegramBot(
             )
         rows.append(navigation)
         rows.append([{"text": "🔄 Refresh", "callback_data": f"c2:{token}:refresh"}])
+        rows.append(
+            [
+                {"text": "🏠 Main Menu", "callback_data": "n:start"},
+                {"text": "💰 Wallet", "callback_data": "n:wallet"},
+            ]
+        )
         with self._panel_lock:
             state = self._panels[token]
             state["page"] = page
@@ -1741,6 +1812,7 @@ class TelegramBot(
                 result = {"message_id": message_id}
             except Exception:
                 result = self.send(chat_id, text, markup)
+                self._delete_message(chat_id, message_id)
         else:
             result = self.send(chat_id, text, markup)
         if isinstance(result, dict) and result.get("message_id"):
