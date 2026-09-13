@@ -506,7 +506,7 @@ class IdentityService:
         # This is entitlement metadata only. Access URLs, provider IDs, and
         # credential material remain outside the operator browser payload.
         result["subscriptions"] = [dict(row) for row in subscriptions]
-        result["routes"] = self.routes_for_account(int(account["telegram_id"])) if account["telegram_id"] else []
+        result["routes"] = self.routes_for_account(account_id) if account["telegram_id"] else []
         return result
 
     def admin_devices(self, *, query: str = "", status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:

@@ -1484,6 +1484,44 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS device_request_receipts_cleanup ON device_request_receipts(created_at)",
         ),
     ),
+    Migration(
+        19,
+        "account_access_lifecycle_actions",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS account_access_actions (
+                   action_id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL REFERENCES accounts(account_id),
+                   target_status TEXT NOT NULL CHECK (target_status IN ('suspended', 'active')),
+                   state TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (state IN ('pending', 'completed')),
+                   actor_id TEXT NOT NULL,
+                   reason TEXT NOT NULL DEFAULT '',
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   last_error TEXT
+               )""",
+            "CREATE INDEX IF NOT EXISTS account_access_actions_account ON account_access_actions(account_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS account_access_actions_pending ON account_access_actions(state, updated_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS account_access_actions (
+                   action_id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL REFERENCES accounts(account_id),
+                   target_status TEXT NOT NULL CHECK (target_status IN ('suspended', 'active')),
+                   state TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (state IN ('pending', 'completed')),
+                   actor_id TEXT NOT NULL,
+                   reason TEXT NOT NULL DEFAULT '',
+                   created_at TIMESTAMPTZ NOT NULL,
+                   updated_at TIMESTAMPTZ NOT NULL,
+                   completed_at TIMESTAMPTZ,
+                   last_error TEXT
+               )""",
+            "CREATE INDEX IF NOT EXISTS account_access_actions_account ON account_access_actions(account_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS account_access_actions_pending ON account_access_actions(state, updated_at)",
+        ),
+    ),
 )
 
 

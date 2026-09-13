@@ -783,6 +783,9 @@ class ManagedMaintenanceCommerceService(MaintenanceCommerceService):
         self.session_termination_calls.append(kwargs)
         return {"status": "completed"}
 
+    def reconcile_account_access_actions(self, **kwargs):
+        return {"status": "completed"}
+
 
 class PartialManagedHealthCommerceService(ManagedMaintenanceCommerceService):
     def collect_managed_protocol_health(self):
@@ -1403,6 +1406,63 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(self.bot.sent[-1][1], "No pending orders.")
         self.bot.handle({"chat": None, "from": None, "text": "/orders"})
         self.assertEqual(self.bot.sent[-1][1], "No pending orders.")
+
+    def test_admin_account_lifecycle_commands_are_confirmed_and_revoke_before_reactivate(self):
+        account_id = self.commerce.identity.ensure_account(123)
+
+        self.bot.handle(self.message(999, f"/accountstatus {account_id}"))
+        self.assertIn(f"Account: {account_id}", self.bot.sent[-1][1])
+        self.assertIn("Status: active", self.bot.sent[-1][1])
+        self.assertIn("Outstanding enforcement: 0", self.bot.sent[-1][1])
+
+        self.bot.handle(self.message(999, f"/suspendaccount {account_id} policy review"))
+        self.assertIn("Result: suspend account", self.bot.sent[-1][1])
+        confirm = next(
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["callback_data"].startswith("a:k:")
+        )
+        self.bot.request = lambda _method, _payload: True
+        self.bot.handle_callback(
+            {
+                "id": "callback-account-suspend",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": confirm["callback_data"],
+            }
+        )
+        self.assertIn("Account suspended.", self.bot.sent[-1][1])
+        self.assertEqual(
+            self.commerce.account_access_status(account_id)["account_status"], "suspended"
+        )
+
+        self.bot.handle(self.message(999, f"/reactivateaccount {account_id}"))
+        self.assertIn("Account", self.bot.sent[-1][1])
+        self.assertIn("Result: reactivate account admission", self.bot.sent[-1][1])
+        reactivate_confirm = next(
+            button
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
+            if button["callback_data"].startswith("a:k:")
+        )
+        self.bot.handle_callback(
+            {
+                "id": "callback-account-reactivate",
+                "from": {"id": 999, "first_name": "Admin"},
+                "message": {"chat": {"id": 999, "type": "private"}},
+                "data": reactivate_confirm["callback_data"],
+            }
+        )
+        self.assertIn("reactivated after verified access revocation", self.bot.sent[-1][1])
+        self.assertEqual(
+            self.commerce.account_access_status(account_id)["account_status"], "active"
+        )
+
+    def test_account_lifecycle_commands_are_hidden_from_customers(self):
+        for command in ("/accountstatus account-id", "/suspendaccount account-id", "/reactivateaccount account-id"):
+            self.bot.handle(self.message(123, command))
+            self.assertEqual(self.bot.sent[-1][1], self.bot.UNKNOWN_ACTION_TEXT)
 
     def test_all_admin_commands_and_callbacks_are_generic_for_customers(self):
         calls = []

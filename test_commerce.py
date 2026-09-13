@@ -200,6 +200,68 @@ class CommerceServiceTest(unittest.TestCase):
         self.assertIsNone(vpn["access_url"])
         self.assertTrue(vpn["access_blocked"])
 
+    def test_account_suspension_queues_revoke_and_completes_after_provider_proof(self):
+        self.service.identity.ensure_account(123, now=self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        account_id = self.service.identity.account_snapshot(123)["account_id"]
+
+        suspended = self.service.request_account_suspension(
+            account_id, 999, "support review", self.now
+        )
+
+        self.assertEqual(suspended["account_status"], "suspended")
+        self.assertEqual(suspended["state"], "pending")
+        self.assertEqual(suspended["counts"]["active_paid_keys"], 1)
+        self.assertEqual(suspended["counts"]["pending_revoke_jobs"], 1)
+        with self.database.connect() as connection:
+            subscription = connection.execute(
+                "SELECT status FROM subscriptions WHERE order_id = ?",
+                (order.order_id,),
+            ).fetchone()
+        self.assertEqual(subscription["status"], "revoked")
+        self.assertEqual(self.outline.deleted, [])
+
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        reconciled = self.service.reconcile_account_access_actions(now=self.now)
+        self.assertEqual(reconciled["completed"], 1)
+        status = self.service.account_access_status(account_id)
+        self.assertEqual(status["state"], "completed")
+        self.assertTrue(status["remote_revoke_complete"])
+        self.assertEqual(status["outstanding"], 0)
+        self.assertEqual(len(self.outline.deleted), 1)
+        with self.database.connect() as connection:
+            notification = connection.execute(
+                """SELECT kind, text FROM notifications
+                    WHERE telegram_id = ? AND kind = 'account_suspended'
+                    ORDER BY created_at DESC LIMIT 1""",
+                (123,),
+            ).fetchone()
+        self.assertEqual(notification["kind"], "account_suspended")
+        self.assertIn("suspended by account policy", notification["text"])
+
+    def test_account_reactivation_requires_completed_remote_revoke(self):
+        self.service.identity.ensure_account(123, now=self.now)
+        order = self._paid_order()
+        self.service.approve_order(order.order_id, 999, self.now)
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        account_id = self.service.identity.account_snapshot(123)["account_id"]
+        self.service.request_account_suspension(account_id, 999, now=self.now)
+
+        with self.assertRaisesRegex(CommerceError, "revocation is not complete"):
+            self.service.reactivate_account(account_id, 999, now=self.now)
+
+        self.assertEqual(self.service.process_jobs(self.now), 1)
+        self.service.reconcile_account_access_actions(now=self.now)
+        reactivated = self.service.reactivate_account(account_id, 999, now=self.now)
+
+        self.assertEqual(reactivated["account_status"], "active")
+        self.assertEqual(reactivated["target_status"], "active")
+        self.assertEqual(reactivated["state"], "completed")
+        self.assertEqual(reactivated["outstanding"], 0)
+        self.assertEqual(self.service.user_vpn(123)["status"], "revoked")
+
     def test_wallet_topup_requires_exact_verified_amount(self):
         order = self.service.create_wallet_topup(123, "Min", 6000, self.now)
         self.service.select_payment_provider(123, order.order_id, "kpay")
@@ -1298,15 +1360,15 @@ class PostgresAdapterTest(unittest.TestCase):
         self.assertEqual(postgres_contract, sqlite_contract)
         self.assertEqual(
             schema_fingerprint(sqlite_contract),
-            "01c550dbe86a8ffe661221d8dd1a4591dfdb34782618d25e5ea9942028515347",
+            "652d563482e15b2f82cac50a724bf6ef67706025f1189d4eb6b0be1e7391ba7a",
         )
         self.assertEqual(
             schema_fingerprint(sqlite_metadata),
-            "e0d37a026fbd1d162565fa69846db3f98a7f5bb6697c745a210b488f653176d9",
+            "ed3f0cf521e369c03b06243d752d5227e8a41e5920adfaa2b9711bf68bbc11b6",
         )
         self.assertEqual(
             postgres_ddl_fingerprint([query for query, _params in raw.calls]),
-            "373600292f086e7abc98d9f9d62cc6be1526e80c17a23b268d5b2abed9b2ff53",
+            "01819dad7ca4ad867dd50711d19a66075aa352b1cf42b3b08cd2f2b6b73a1e45",
         )
 
     def test_qmark_adapter_translates_service_parameters(self):

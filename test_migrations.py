@@ -140,6 +140,7 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 16, "endpoint_key_inventory_reconciliation"),
                     ("commerce", 17, "protocol_scoped_endpoint_key_inventory"),
                     ("commerce", 18, "device_acknowledgement_replay_protection"),
+                    ("commerce", 19, "account_access_lifecycle_actions"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),

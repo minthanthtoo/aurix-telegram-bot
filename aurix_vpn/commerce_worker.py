@@ -1481,6 +1481,11 @@ class CommerceWorkerMixin:
                 and session_result.get("supported")
                 and session_result.get("terminated")
             )
+            if protocol == "outline":
+                # Outline's provider-verified delete is the established
+                # terminal revoke contract. It has no separate session-kick
+                # proof, while managed protocols remain strict below.
+                sessions_terminated = True
             identity.mark_remote_revoked(
                 str(generation["generation_id"]),
                 verified=verified,
@@ -1622,6 +1627,7 @@ class CommerceWorkerMixin:
         }
 
     def _revoke(self, job: dict[str, Any], now: datetime) -> None:
+        account_suspended = False
         with self.database.connect() as connection:
             key = connection.execute(
                 """SELECT k.*, s.status AS subscription_status,
@@ -1633,6 +1639,17 @@ class CommerceWorkerMixin:
                    WHERE k.subscription_id = ?""",
                 (job["subscription_id"],),
             ).fetchone()
+            if key is not None:
+                account_suspended = connection.execute(
+                    """SELECT 1
+                         FROM account_identities i
+                         JOIN account_access_actions a ON a.account_id = i.account_id
+                        WHERE i.identity_type = 'telegram'
+                          AND i.identity_value = ?
+                          AND a.target_status = 'suspended'
+                        ORDER BY a.created_at DESC LIMIT 1""",
+                    (str(key["telegram_id"]),),
+                ).fetchone() is not None
         generation_results = self._revoke_generation_set(f"paid:{job['subscription_id']}", now)
         if key is None or (key["status"] == "revoked" and not generation_results):
             with self.database.connect() as connection:
@@ -1711,7 +1728,13 @@ class CommerceWorkerMixin:
                     termination_summary = (
                         "VPN credential deletion could not be verified and is being retried."
                     )
-                if key["refund_status"] == "refunded":
+                if account_suspended:
+                    notice = (
+                        "Your AuriX VPN access was suspended by account policy. "
+                        + termination_summary
+                    )
+                    notice_kind = "account_suspended"
+                elif key["refund_status"] == "refunded":
                     notice = (
                         "Your AuriX order was refunded to your wallet. "
                         + termination_summary
@@ -1748,6 +1771,8 @@ class CommerceWorkerMixin:
                         (
                             f"access-revoked:{key['order_id']}"
                             if key["refund_status"] == "refunded"
+                            else f"vpn-account-suspended:{job['subscription_id']}"
+                            if account_suspended
                             else f"vpn-{notice_kind}:{job['subscription_id']}"
                         ),
                         key["telegram_id"],
@@ -1767,6 +1792,9 @@ class CommerceWorkerMixin:
                     {
                         "outline_key_id": key["outline_key_id"],
                         "reason": (
+                            "account_suspended"
+                            if account_suspended
+                            else
                             "refund"
                             if key["refund_status"] == "refunded"
                             else (quota_reason or "expiry")

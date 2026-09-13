@@ -1714,6 +1714,401 @@ class CommerceService(CommerceWorkerMixin):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def _account_access_counts(self, connection: Any, telegram_id: int) -> dict[str, int]:
+        """Count durable access that must be settled before reactivation."""
+        paid = connection.execute(
+            """SELECT COUNT(*) AS n
+                 FROM paid_vpn_keys k JOIN subscriptions s ON s.id = k.subscription_id
+                WHERE s.telegram_id = ? AND k.status IN ('active', 'revoke_failed')""",
+            (int(telegram_id),),
+        ).fetchone()
+        free = {"n": 0}
+        if IdentityService._table_exists(connection, "keys"):
+            free = connection.execute(
+                """SELECT COUNT(*) AS n FROM keys
+                    WHERE telegram_id = ? AND status IN ('active', 'revoke_failed')""",
+                (int(telegram_id),),
+            ).fetchone()
+        jobs = connection.execute(
+            """SELECT COUNT(*) AS n
+                 FROM provisioning_jobs j JOIN subscriptions s ON s.id = j.subscription_id
+                WHERE s.telegram_id = ? AND j.operation = 'revoke' AND j.status != 'done'""",
+            (int(telegram_id),),
+        ).fetchone()
+        generations = {"n": 0}
+        if IdentityService._table_exists(connection, "credential_generations"):
+            free_generation_clause = ""
+            generation_parameters: tuple[Any, ...] = (int(telegram_id),)
+            if IdentityService._table_exists(connection, "keys"):
+                free_generation_clause = """
+                    OR (g.source_type = 'free' AND EXISTS (
+                        SELECT 1 FROM keys k2
+                         WHERE CAST(k2.id AS TEXT) = g.source_id
+                           AND k2.telegram_id = ?
+                    ))"""
+                generation_parameters = (int(telegram_id), int(telegram_id))
+            generations = connection.execute(
+                """SELECT COUNT(*) AS n FROM credential_generations g
+                    WHERE g.status IN ('pending', 'active', 'retiring', 'unknown')
+                      AND (
+                        (g.source_type = 'paid' AND EXISTS (
+                            SELECT 1 FROM subscriptions s2
+                             WHERE s2.id = g.source_id AND s2.telegram_id = ?
+                        ))"""
+                + free_generation_clause
+                + ")",
+                generation_parameters,
+            ).fetchone()
+        return {
+            "active_paid_keys": int(paid["n"] or 0),
+            "active_free_keys": int(free["n"] or 0),
+            "pending_revoke_jobs": int(jobs["n"] or 0),
+            "active_generations": int(generations["n"] or 0),
+        }
+
+    def account_access_status(self, account_id: str) -> dict[str, Any] | None:
+        """Return redacted account suspension/revocation progress."""
+        normalized = str(account_id or "").strip()
+        if not normalized or len(normalized) > 128:
+            return None
+        with self.database.connect() as connection:
+            account = connection.execute(
+                """SELECT a.account_id, a.status, i.identity_value AS telegram_id
+                     FROM accounts a
+                     LEFT JOIN account_identities i
+                       ON i.account_id = a.account_id AND i.identity_type = 'telegram'
+                    WHERE a.account_id = ?""",
+                (normalized,),
+            ).fetchone()
+            if account is None:
+                return None
+            try:
+                telegram_id = int(account["telegram_id"])
+            except (TypeError, ValueError):
+                telegram_id = None
+            action = connection.execute(
+                """SELECT action_id, target_status, state, actor_id, reason,
+                          created_at, updated_at, completed_at, last_error
+                     FROM account_access_actions
+                    WHERE account_id = ?
+                    ORDER BY created_at DESC LIMIT 1""",
+                (normalized,),
+            ).fetchone()
+            counts = (
+                self._account_access_counts(connection, telegram_id)
+                if telegram_id is not None
+                else {
+                    "active_paid_keys": 0,
+                    "active_free_keys": 0,
+                    "pending_revoke_jobs": 0,
+                    "active_generations": 0,
+                }
+            )
+        outstanding = sum(counts.values())
+        result = {
+            "account_id": normalized,
+            "account_status": str(account["status"]),
+            "action_id": str(action["action_id"]) if action is not None else None,
+            "target_status": str(action["target_status"]) if action is not None else None,
+            "state": str(action["state"]) if action is not None else "none",
+            "actor_id": str(action["actor_id"]) if action is not None else None,
+            "reason": str(action["reason"]) if action is not None else None,
+            "created_at": str(action["created_at"]) if action is not None else None,
+            "updated_at": str(action["updated_at"]) if action is not None else None,
+            "completed_at": str(action["completed_at"]) if action is not None and action["completed_at"] else None,
+            "last_error": str(action["last_error"]) if action is not None and action["last_error"] else None,
+            "counts": counts,
+            "outstanding": outstanding,
+            "remote_revoke_complete": outstanding == 0,
+            "ready_to_reactivate": str(account["status"]) == "suspended" and outstanding == 0,
+        }
+        return result
+
+    def request_account_suspension(
+        self,
+        account_id: str,
+        admin_id: int,
+        reason: str = "",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Suspend one account and queue every known credential family for revoke."""
+        normalized = str(account_id or "").strip()
+        if not normalized or len(normalized) > 128:
+            raise CommerceError("Account identifier is invalid")
+        reason_text = str(reason or "").strip()[:500]
+        timestamp = _now_text(now)
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            lock_clause = " FOR UPDATE OF a" if isinstance(connection, _PostgresConnection) else ""
+            account = connection.execute(
+                """SELECT a.account_id, a.status, i.identity_value AS telegram_id
+                     FROM accounts a
+                     LEFT JOIN account_identities i
+                       ON i.account_id = a.account_id AND i.identity_type = 'telegram'
+                    WHERE a.account_id = ?""" + lock_clause,
+                (normalized,),
+            ).fetchone()
+            if account is None:
+                raise CommerceError("Account not found")
+            if str(account["status"]) == "closed":
+                raise CommerceError("Closed accounts cannot be suspended")
+            try:
+                telegram_id = int(account["telegram_id"])
+            except (TypeError, ValueError):
+                telegram_id = None
+            if telegram_id is None:
+                raise CommerceError("Account has no verified Telegram identity")
+
+            paid_ids: list[str] = []
+            free_rows: list[Any] = []
+            if telegram_id is not None:
+                paid_ids = [
+                    str(row["id"])
+                    for row in connection.execute(
+                        """SELECT DISTINCT s.id
+                             FROM subscriptions s
+                             LEFT JOIN paid_vpn_keys k ON k.subscription_id = s.id
+                            WHERE s.telegram_id = ?
+                              AND (s.status = 'active' OR k.status IN ('active', 'revoke_failed'))""",
+                        (telegram_id,),
+                    ).fetchall()
+                ]
+                if IdentityService._table_exists(connection, "keys"):
+                    free_rows = connection.execute(
+                        """SELECT id, telegram_id, outline_key_id, data_limit_bytes,
+                                  expires_at, last_usage_bytes
+                             FROM keys
+                            WHERE telegram_id = ? AND status IN ('active', 'revoke_failed')""",
+                        (telegram_id,),
+                    ).fetchall()
+
+            if str(account["status"]) != "suspended":
+                connection.execute(
+                    "UPDATE accounts SET status = 'suspended', updated_at = ? WHERE account_id = ?",
+                    (timestamp, normalized),
+                )
+                epoch = connection.execute(
+                    "SELECT epoch FROM device_revocation_epochs WHERE account_id = ?",
+                    (normalized,),
+                ).fetchone()
+                if epoch is None:
+                    connection.execute(
+                        """INSERT INTO device_revocation_epochs (account_id, epoch, updated_at)
+                           VALUES (?, 1, ?)""",
+                        (normalized, timestamp),
+                    )
+                else:
+                    connection.execute(
+                        """UPDATE device_revocation_epochs
+                              SET epoch = epoch + 1, updated_at = ?
+                            WHERE account_id = ?""",
+                        (timestamp, normalized),
+                    )
+            connection.execute(
+                """UPDATE devices SET status = 'revoked', revoked_at = COALESCE(revoked_at, ?)
+                    WHERE account_id = ? AND status = 'active'""",
+                (timestamp, normalized),
+            )
+            connection.execute(
+                """UPDATE device_sessions SET revoked_at = COALESCE(revoked_at, ?)
+                    WHERE device_id IN (SELECT device_id FROM devices WHERE account_id = ?)
+                      AND revoked_at IS NULL""",
+                (timestamp, normalized),
+            )
+            connection.execute(
+                """UPDATE pairing_tokens SET status = 'revoked'
+                    WHERE account_id = ? AND status = 'pending'""",
+                (normalized,),
+            )
+            if telegram_id is not None:
+                connection.execute(
+                    "UPDATE subscriptions SET status = 'revoked' WHERE telegram_id = ? AND status = 'active'",
+                    (telegram_id,),
+                )
+            for subscription_id in paid_ids:
+                connection.execute(
+                    """INSERT INTO provisioning_jobs
+                       (id, subscription_id, operation, status, next_attempt_at, created_at)
+                       VALUES (?, ?, 'revoke', 'pending', ?, ?)
+                       ON CONFLICT(subscription_id, operation) DO NOTHING""",
+                    (_new_id(), subscription_id, timestamp, timestamp),
+                )
+            for row in free_rows:
+                connection.execute(
+                    """INSERT INTO key_termination_events
+                       (key_id, telegram_id, outline_key_id, reason, used_bytes,
+                        quota_bytes, expires_at, detected_at, remote_state, delete_attempts)
+                       VALUES (?, ?, ?, 'account_suspended', ?, ?, ?, ?, 'retrying', 0)
+                       ON CONFLICT(key_id, reason) DO NOTHING""",
+                    (
+                        row["id"],
+                        row["telegram_id"],
+                        str(row["outline_key_id"]),
+                        row["last_usage_bytes"],
+                        int(row["data_limit_bytes"]),
+                        row["expires_at"],
+                        timestamp,
+                    ),
+                )
+            action = connection.execute(
+                """SELECT action_id FROM account_access_actions
+                    WHERE account_id = ? AND target_status = 'suspended' AND state = 'pending'
+                    ORDER BY created_at DESC LIMIT 1""",
+                (normalized,),
+            ).fetchone()
+            if action is None:
+                action_id = _new_id()
+                connection.execute(
+                    """INSERT INTO account_access_actions
+                       (action_id, account_id, target_status, state, actor_id, reason,
+                        created_at, updated_at)
+                       VALUES (?, ?, 'suspended', 'pending', ?, ?, ?, ?)""",
+                    (action_id, normalized, str(int(admin_id)), reason_text, timestamp, timestamp),
+                )
+                self._audit(
+                    connection,
+                    "account_suspension_requested",
+                    "account",
+                    normalized,
+                    "admin",
+                    str(admin_id),
+                    {"reason": reason_text, "paid_subscriptions": len(paid_ids), "free_keys": len(free_rows)},
+                )
+            else:
+                action_id = str(action["action_id"])
+        self.reconcile_account_access_actions(now=now, limit=20)
+        return self.account_access_status(normalized) or {
+            "account_id": normalized,
+            "state": "pending",
+        }
+
+    def reactivate_account(
+        self,
+        account_id: str,
+        admin_id: int,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Reactivate only after all credential and session-revocation proof is settled."""
+        normalized = str(account_id or "").strip()
+        if not normalized or len(normalized) > 128:
+            raise CommerceError("Account identifier is invalid")
+        timestamp = _now_text(now)
+        with self.database.connect() as connection:
+            self.database.begin_write(connection)
+            lock_clause = " FOR UPDATE OF a" if isinstance(connection, _PostgresConnection) else ""
+            account = connection.execute(
+                """SELECT a.account_id, a.status, i.identity_value AS telegram_id
+                     FROM accounts a
+                     LEFT JOIN account_identities i
+                       ON i.account_id = a.account_id AND i.identity_type = 'telegram'
+                    WHERE a.account_id = ?""" + lock_clause,
+                (normalized,),
+            ).fetchone()
+            if account is None:
+                raise CommerceError("Account not found")
+            current_status = str(account["status"])
+            if current_status == "closed":
+                raise CommerceError("Closed accounts cannot be reactivated")
+            if current_status == "active":
+                return self.account_access_status(normalized) or {"account_id": normalized}
+            try:
+                telegram_id = int(account["telegram_id"])
+            except (TypeError, ValueError) as exc:
+                raise CommerceError("Account has no verified Telegram identity") from exc
+            counts = self._account_access_counts(connection, telegram_id)
+            if sum(counts.values()) != 0:
+                raise CommerceError("Account revocation is not complete")
+            connection.execute(
+                "UPDATE accounts SET status = 'active', updated_at = ? WHERE account_id = ?",
+                (timestamp, normalized),
+            )
+            connection.execute(
+                """UPDATE account_access_actions
+                      SET state = 'completed', completed_at = COALESCE(completed_at, ?), updated_at = ?
+                    WHERE account_id = ? AND target_status = 'suspended' AND state = 'pending'""",
+                (timestamp, timestamp, normalized),
+            )
+            action_id = _new_id()
+            connection.execute(
+                """INSERT INTO account_access_actions
+                   (action_id, account_id, target_status, state, actor_id, reason,
+                    created_at, updated_at, completed_at)
+                   VALUES (?, ?, 'active', 'completed', ?, 'reactivated after verified revoke', ?, ?, ?)""",
+                (action_id, normalized, str(int(admin_id)), timestamp, timestamp, timestamp),
+            )
+            self._audit(
+                connection,
+                "account_reactivated",
+                "account",
+                normalized,
+                "admin",
+                str(admin_id),
+                {"revocation_verified": True},
+            )
+        return self.account_access_status(normalized) or {"account_id": normalized}
+
+    def reconcile_account_access_actions(
+        self, *, now: datetime | None = None, limit: int = 20
+    ) -> dict[str, Any]:
+        """Close suspension actions only after all durable revoke proof is terminal."""
+        timestamp = _now_text(now)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT action_id, account_id FROM account_access_actions
+                    WHERE state = 'pending' AND target_status = 'suspended'
+                    ORDER BY created_at LIMIT ?""",
+                (max(1, min(int(limit), 100)),),
+            ).fetchall()
+        completed = pending = 0
+        errors: dict[str, str] = {}
+        for row in rows:
+            action_id = str(row["action_id"])
+            account_id = str(row["account_id"])
+            try:
+                status = self.account_access_status(account_id)
+                if not status or status.get("account_status") != "suspended":
+                    pending += 1
+                    continue
+                if not status.get("remote_revoke_complete"):
+                    pending += 1
+                    continue
+                with self.database.connect() as connection:
+                    self.database.begin_write(connection)
+                    updated = connection.execute(
+                        """UPDATE account_access_actions
+                              SET state = 'completed', completed_at = ?, updated_at = ?, last_error = NULL
+                            WHERE action_id = ? AND state = 'pending'""",
+                        (timestamp, timestamp, action_id),
+                    )
+                    if int(getattr(updated, "rowcount", 0) or 0) == 1:
+                        self._audit(
+                            connection,
+                            "account_suspension_completed",
+                            "account",
+                            account_id,
+                            "system",
+                            None,
+                            {"action_id": action_id, "remote_revoke_verified": True},
+                        )
+                        completed += 1
+                    else:
+                        pending += 1
+            except Exception as exc:
+                errors[action_id] = type(exc).__name__
+                with self.database.connect() as connection:
+                    connection.execute(
+                        "UPDATE account_access_actions SET last_error = ?, updated_at = ? WHERE action_id = ?",
+                        (type(exc).__name__, timestamp, action_id),
+                    )
+                pending += 1
+        return {
+            "status": "completed" if not errors else "partial",
+            "examined": len(rows),
+            "completed": completed,
+            "pending": pending,
+            "errors": errors,
+        }
+
     def consistency_report(
         self,
         now: datetime | None = None,
@@ -1764,6 +2159,10 @@ class CommerceService(CommerceWorkerMixin):
             failed_revocations = connection.execute(
                 "SELECT COUNT(*) AS n FROM provisioning_jobs WHERE operation = 'revoke' AND status = 'failed'"
             ).fetchone()["n"]
+            pending_account_access_actions = connection.execute(
+                """SELECT COUNT(*) AS n FROM account_access_actions
+                    WHERE target_status = 'suspended' AND state = 'pending'"""
+            ).fetchone()["n"]
             failed_activations = connection.execute(
                 "SELECT COUNT(*) AS n FROM provisioning_jobs WHERE operation = 'provision' AND status = 'failed'"
             ).fetchone()["n"]
@@ -1802,6 +2201,7 @@ class CommerceService(CommerceWorkerMixin):
             "failed_jobs": int(failed_jobs),
             "pending_revocations": int(pending_revocations),
             "failed_revocations": int(failed_revocations),
+            "pending_account_access_actions": int(pending_account_access_actions),
             "failed_activations": int(failed_activations),
             "dead_notifications": int(dead_notifications),
             "verified_reference_mismatches": int(verified_reference_mismatches),

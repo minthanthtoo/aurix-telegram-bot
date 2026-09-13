@@ -186,7 +186,9 @@ The current repository implements considerably more than the earlier V2 snapshot
 - explicit external adapter ports and a separated reliable-worker boundary;
 - modular runtime, commerce, entitlement, Telegram, and adapter code with compatibility facades;
 - CI and local VPN validation covering the current split regression suite, with
-  the latest local run at 403 passing tests; this is not live network evidence.
+  the latest explicit VPN run at 409 passing tests and 1 skipped after three
+  temporary-database storage failures were rerun individually; this is not live
+  network evidence.
 
 ### What makes it V2 rather than V3
 
@@ -227,6 +229,7 @@ Completed since the earlier roadmap:
 - [x] Endpoint registry, endpoint-scoped Outline resolution, assignments, protocol profiles, capacity observations, and guarded drain/failover seams are implemented locally.
 - [x] Mapped suspended/closed accounts fail closed for new free, promo, and paid credential issuance; queued paid provisioning rechecks status before provider creation.
 - [x] Mapped suspended/closed accounts fail closed for customer URL/config delivery across paid keys, free keys, and managed device route manifests; entitlement metadata remains visible with an explicit access-blocked state.
+- [x] Account suspension is a durable, provider-verified revoke-all workflow: device sessions and pairing are closed immediately, paid/free credential termination is queued, and reactivation is blocked until remote revoke proof reaches zero.
 
 Still required before or as the first bounded part of V3:
 
@@ -245,6 +248,33 @@ Current V3-preparation audit:
 | WP9 drain and assisted migration | Local durable seam complete | Two-node migration, customer replacement import, support verification, and rollback remain unproven |
 | WP10 V3 promotion | Not reached | Must wait for the live V3 completion gate below |
 
+### Account-level access enforcement (local completion)
+
+The account control plane now has one bounded operator lifecycle for suspension
+and reactivation. Migration 19 adds `account_access_actions`, an idempotent
+action record with actor, reason, target status, pending/completed state, and
+last reconcile error. A suspension immediately marks the mapped account
+`suspended`, revokes managed devices and sessions, invalidates pending pairing,
+and blocks new issuance and customer URL/config delivery. It then queues paid
+provider revocation jobs and free-key termination events through their existing
+worker paths.
+
+The action is not considered complete merely because a local row changed. Paid
+and free paths must provide their normal remote delete/read-back proof, and
+managed generations must also provide session-termination proof. Maintenance
+reconciles the action and the Control Center exposes redacted progress. The
+Telegram operator path is `/accountstatus`, `/suspendaccount`, and
+`/reactivateaccount`; mutating commands use the existing durable, state-bound
+confirmation challenge.
+
+Reactivation is deliberately conservative: it is rejected while any active
+credential, generation, revoke job, or unresolved termination remains. Once
+verified, the account becomes active, but previously revoked entitlements are
+not silently resurrected; the customer must claim or purchase access again.
+This is a local control-plane implementation and test result only. It does
+not authorize live provider calls, server changes, customer suspension, or
+production rollout; the V3 two-node and real-client evidence gates remain
+unchanged.
 Therefore the correct release label is **V2 hardened + V3 control-plane
 foundation**, not “multi-server production” and not “multi-protocol enabled.”
 

@@ -28,6 +28,15 @@ class ControlCenterTest(unittest.TestCase):
         failover = RouteFailoverService(self.database)
         commerce = SimpleNamespace(
             identity=identity,
+            account_access_status=lambda account_id: {
+                "account_id": account_id,
+                "account_status": "active",
+                "state": "none",
+                "outstanding": 0,
+                "remote_revoke_complete": True,
+                "ready_to_reactivate": False,
+                "counts": {},
+            },
             adapter_registry=ConnectivityAdapterRegistry(),
             consistency_report=lambda: {"failed_jobs": 0, "pending_receipts": 0},
             failover=failover,
@@ -291,6 +300,10 @@ class ControlCenterTest(unittest.TestCase):
                 account_payload = json.load(account_response)
             self.assertEqual(account_payload["account"]["account_id"], account_id)
             self.assertEqual(account_payload["account"]["subscriptions"], [])
+            self.assertEqual(
+                account_payload["account"]["access_enforcement"]["account_status"],
+                "active",
+            )
             self.assertNotIn("public_key", json.dumps(account_payload))
 
             endpoint_request = urllib.request.Request(

@@ -45,6 +45,9 @@ class AdminOperations:
             "protocol_profile_promotion_readiness",
             "promote_protocol_profile",
             "disable_protocol_profile",
+            "request_account_suspension",
+            "reactivate_account",
+            "account_access_status",
             "wallet_balance",
             "wallet_history",
         }

@@ -916,3 +916,35 @@ proof, and future account-level revoke-all/reactivation orchestration remain
 separate required work. Focused identity, free-entitlement, commerce, device,
 and web regressions pass; no live server, provider, customer, or production
 database was changed.
+
+## 34. Account-level access enforcement — 2026-09-13
+
+The local control plane now implements the missing account-level lifecycle
+without creating a second entitlement source of truth. Migration 19 adds the
+`account_access_actions` table, which records a bounded suspension or
+reactivation action, its verified actor and reason, and pending/completed
+reconciliation state. `/accountstatus` is read-only; `/suspendaccount` and
+`/reactivateaccount` are administrator-only commands protected by the existing
+durable state-bound confirmation challenge. The read-only Control Center
+account response includes the same redacted enforcement projection.
+
+Suspension marks the mapped account suspended, increments the device
+revocation epoch, revokes managed devices and sessions, invalidates pending
+pairing tokens, and blocks new issuance and existing customer credential/config
+delivery. It then queues paid revoke jobs and free-key termination events using
+the established worker paths. The action remains pending until every active
+paid/free credential, generation, revoke job, and unresolved remote/session
+termination obligation is gone. Outline's provider-verified delete is the
+terminal session contract already established for that compatibility path;
+managed protocols retain the stricter explicit session-termination proof.
+
+Reactivation is rejected until the redacted projection reports zero
+outstanding enforcement. It does not restore revoked paid subscriptions or
+free keys; a customer must claim or purchase a new entitlement. This prevents
+an operator from reopening account admission while an old credential may still
+be usable, and avoids silently reissuing access after a deliberate suspension.
+
+The account lifecycle tests and Telegram confirmation tests pass locally. The
+schema contract fingerprints were intentionally advanced for migration 19.
+This step changed no live server, provider, customer credential, BKK-A/Xray or
+Hysteria2 profile, load/speed/soak test, or production database.

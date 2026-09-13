@@ -16,9 +16,43 @@ UTC = timezone.utc
 ADMIN_CONFIRMATION_TTL = timedelta(minutes=5)
 _PROTOCOL_TOKEN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _INFRA_TOKEN = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+_ACCOUNT_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
 
 class TelegramAdminMixin:
+    @staticmethod
+    def _account_status_args(args: list[str]) -> str:
+        """Parse one opaque, bounded account identifier for read-only status."""
+        if len(args) != 1:
+            raise ValueError("Usage: /accountstatus <account-id>")
+        account_id = str(args[0]).strip()
+        if not _ACCOUNT_TOKEN.fullmatch(account_id):
+            raise ValueError("Account identifier is invalid")
+        return account_id
+
+    @staticmethod
+    def _account_suspension_args(args: list[str]) -> tuple[str, str]:
+        """Parse an account suspension request without accepting unbounded text."""
+        if not args or len(args) > 65:
+            raise ValueError("Usage: /suspendaccount <account-id> [reason]")
+        account_id = str(args[0]).strip()
+        if not _ACCOUNT_TOKEN.fullmatch(account_id):
+            raise ValueError("Account identifier is invalid")
+        reason = " ".join(str(value) for value in args[1:]).strip()
+        if len(reason) > 500 or any(ord(char) < 32 for char in reason):
+            raise ValueError("Suspension reason must be 500 printable characters or fewer")
+        return account_id, reason
+
+    @staticmethod
+    def _account_reactivation_args(args: list[str]) -> str:
+        """Parse one opaque, bounded account identifier for reactivation."""
+        if len(args) != 1:
+            raise ValueError("Usage: /reactivateaccount <account-id>")
+        account_id = str(args[0]).strip()
+        if not _ACCOUNT_TOKEN.fullmatch(account_id):
+            raise ValueError("Account identifier is invalid")
+        return account_id
+
     @staticmethod
     def _protocol_promotion_args(args: list[str]) -> tuple[str, str, tuple[str, ...], tuple[str, ...]]:
         """Parse the bounded operator syntax for protocol readiness/promotion."""
@@ -318,6 +352,26 @@ class TelegramAdminMixin:
             except Exception as exc:
                 snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
             return snapshot
+        if command in {"/accountstatus", "/suspendaccount", "/reactivateaccount"}:
+            try:
+                if command == "/accountstatus":
+                    account_id = self._account_status_args(args)
+                    reason = ""
+                elif command == "/suspendaccount":
+                    account_id, reason = self._account_suspension_args(args)
+                else:
+                    account_id = self._account_reactivation_args(args)
+                    reason = ""
+                access = self._admin_call(telegram_id, "account_access_status", account_id)
+                if access is None:
+                    snapshot["state"] = "missing"
+                else:
+                    snapshot.update(access)
+                    snapshot["access_state"] = snapshot.get("state")
+                    snapshot.update({"state": "present", "reason": reason})
+            except Exception as exc:
+                snapshot.update({"state": "unavailable", "error_type": type(exc).__name__})
+            return snapshot
         if command in {"/protocolreadiness", "/promoteprotocol"}:
             try:
                 endpoint, protocol, signals, capabilities = self._protocol_promotion_args(args)
@@ -590,6 +644,35 @@ class TelegramAdminMixin:
                 lines.append("Result: stop the season; normal plans return immediately.")
             else:
                 lines.append("Result: resume the saved season if it is within its dates.")
+            return "\n".join(lines)
+        if command in {"/accountstatus", "/suspendaccount", "/reactivateaccount"}:
+            counts = snapshot.get("counts") or {}
+            lines = [
+                f"Account: {snapshot.get('account_id') or (args[0] if args else '-')}",
+                f"Status: {snapshot.get('account_status') or '-'}",
+                f"Access action: {snapshot.get('target_status') or '-'} · {snapshot.get('access_state') or '-'}",
+                f"Active paid keys: {counts.get('active_paid_keys', 0)}",
+                f"Active free keys: {counts.get('active_free_keys', 0)}",
+                f"Pending revoke jobs: {counts.get('pending_revoke_jobs', 0)}",
+                f"Active credential generations: {counts.get('active_generations', 0)}",
+                f"Outstanding enforcement: {snapshot.get('outstanding', 0)}",
+            ]
+            if snapshot.get("last_error"):
+                lines.append(f"Last reconcile error: {snapshot['last_error']}")
+            if command == "/suspendaccount":
+                lines.extend(
+                    [
+                        f"Reason: {snapshot.get('reason') or 'operator-requested suspension'}",
+                        "Result: suspend account, revoke device access, and queue provider-verified credential termination.",
+                        "Reactivation remains blocked until all remote revoke and session proof is complete.",
+                    ]
+                )
+            elif command == "/reactivateaccount":
+                if snapshot.get("ready_to_reactivate"):
+                    lines.append("Result: reactivate account admission after verified revocation.")
+                    lines.append("Previously revoked entitlements are not restored; the customer must claim or purchase access again.")
+                else:
+                    lines.append("Result: BLOCKED until the account has zero outstanding enforcement work.")
             return "\n".join(lines)
         if command == "/drain":
             missing_protocols = sorted(

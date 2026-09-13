@@ -229,6 +229,52 @@ class TelegramCommandMixin:
                 except CommerceError as exc:
                     self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
                     return
+        if command == "/accountstatus":
+            try:
+                account_id = self._account_status_args(args)
+                access = self._admin_call(telegram_id, "account_access_status", account_id)
+            except (CommerceError, ValueError) as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                if access is None:
+                    self.send(chat["id"], "Account not found.", self._admin_keyboard(telegram_id))
+                else:
+                    snapshot = dict(access)
+                    snapshot["state"] = "present"
+                    self.send(
+                        chat["id"],
+                        self._admin_preview_text(command, args, "Account access status", snapshot),
+                        self._admin_keyboard(telegram_id),
+                    )
+            return
+        if command in {"/suspendaccount", "/reactivateaccount"} and not confirmed:
+            try:
+                if command == "/suspendaccount":
+                    account_id, _reason = self._account_suspension_args(args)
+                else:
+                    account_id = self._account_reactivation_args(args)
+                access = self._admin_call(telegram_id, "account_access_status", account_id)
+            except (CommerceError, ValueError) as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+                return
+            if access is None:
+                self.send(chat["id"], "Account not found.", self._admin_keyboard(telegram_id))
+                return
+            if command == "/suspendaccount" and access.get("account_status") == "closed":
+                self.send(chat["id"], "Closed accounts cannot be suspended.", self._admin_keyboard(telegram_id))
+                return
+            if command == "/reactivateaccount" and access.get("account_status") == "active":
+                self.send(chat["id"], "Account is already active.", self._admin_keyboard(telegram_id))
+                return
+            if command == "/reactivateaccount" and not access.get("ready_to_reactivate"):
+                snapshot = dict(access)
+                snapshot["state"] = "present"
+                self.send(
+                    chat["id"],
+                    self._admin_preview_text(command, args, "Account reactivation", snapshot),
+                    self._admin_keyboard(telegram_id),
+                )
+                return
         if command == "/setsafety":
             try:
                 self._failover_safety_args(args)
@@ -362,6 +408,10 @@ class TelegramCommandMixin:
                 pass
             elif command == "/serverstate" and len(args) != 2:
                 pass
+            elif command == "/suspendaccount" and (not args or len(args) > 65):
+                pass
+            elif command == "/reactivateaccount" and len(args) != 1:
+                pass
             else:
                 prompt = {
                     "/approve": lambda: f"Approve order {args[0]} and queue VPN provisioning?",
@@ -379,6 +429,14 @@ class TelegramCommandMixin:
                     + "?"
                 ),
                 "/serverstate": lambda: f"Change endpoint {args[0]} lifecycle to {args[1]}?",
+                "/suspendaccount": lambda: (
+                    f"Suspend account {args[0]} and revoke all VPN access"
+                    + (f" ({' '.join(args[1:])})" if len(args) > 1 else "")
+                    + "?"
+                ),
+                "/reactivateaccount": lambda: (
+                    f"Reactivate account {args[0]} after verified remote revocation?"
+                ),
                 "/promoteprotocol": lambda: (
                     f"Promote protocol {args[1]} on endpoint {args[0]} after rechecking evidence?"
                 ),
@@ -412,6 +470,8 @@ class TelegramCommandMixin:
                         "/resumepromo": "▶ Confirm Resume",
                         "/drain": "🚧 Confirm Drain",
                         "/serverstate": "⚠️ Confirm Endpoint State",
+                        "/suspendaccount": "🔒 Confirm Suspension",
+                        "/reactivateaccount": "🔓 Confirm Reactivation",
                         "/promoteprotocol": "🛡 Confirm Promotion",
                         "/disableprotocol": "⛔ Confirm Disable",
                         "/provisionnode": "🧱 Confirm Node Intent",
@@ -1150,6 +1210,7 @@ class TelegramCommandMixin:
                     "failed_jobs",
                     "failed_activations",
                     "failed_revocations",
+                    "pending_account_access_actions",
                     "pending_revocations",
                     "dead_notifications",
                     "verified_reference_mismatches",
@@ -1298,6 +1359,50 @@ class TelegramCommandMixin:
                     chat["id"],
                     f"Endpoint {result['endpoint_id']} is now {result['current_state']}. "
                     "Only local VPN admission state changed; no provider VM action was performed.",
+                    self._admin_keyboard(telegram_id),
+                )
+        elif command == "/suspendaccount":
+            try:
+                account_id, reason = self._account_suspension_args(args)
+                result = self._admin_call(
+                    telegram_id,
+                    "request_account_suspension",
+                    account_id,
+                    telegram_id,
+                    reason=reason,
+                )
+            except (CommerceError, ValueError) as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                counts = result.get("counts") or {}
+                self.send(
+                    chat["id"],
+                    "Account suspended.\n"
+                    f"Account: {result.get('account_id', account_id)}\n"
+                    f"Outstanding enforcement: {result.get('outstanding', 0)}\n"
+                    f"Paid keys: {counts.get('active_paid_keys', 0)} · "
+                    f"Free keys: {counts.get('active_free_keys', 0)} · "
+                    f"Revoke jobs: {counts.get('pending_revoke_jobs', 0)}\n"
+                    "Provider termination and session proof continue through the worker/maintenance loop.\n"
+                    "Reactivation remains blocked until enforcement reaches zero.",
+                    self._admin_keyboard(telegram_id),
+                )
+        elif command == "/reactivateaccount":
+            try:
+                account_id = self._account_reactivation_args(args)
+                result = self._admin_call(
+                    telegram_id,
+                    "reactivate_account",
+                    account_id,
+                    telegram_id,
+                )
+            except (CommerceError, ValueError) as exc:
+                self.send(chat["id"], str(exc), self._admin_keyboard(telegram_id))
+            else:
+                self.send(
+                    chat["id"],
+                    f"Account {result.get('account_id', account_id)} reactivated after verified access revocation.\n"
+                    "Previously revoked VPN entitlements were not restored; the customer must claim or purchase access again.",
                     self._admin_keyboard(telegram_id),
                 )
         elif command == "/provisionnode":

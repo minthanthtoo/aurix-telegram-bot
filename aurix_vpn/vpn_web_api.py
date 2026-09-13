@@ -853,7 +853,13 @@ class AuriXVpnWebApplication:
     def admin_account(self, account_id: str) -> dict[str, Any] | None:
         identity = getattr(self.runtime.commerce, "identity", None)
         method = getattr(identity, "admin_account", None)
-        return method(account_id) if callable(method) else None
+        account = method(account_id) if callable(method) else None
+        if account is None:
+            return None
+        access_status = getattr(self.runtime.commerce, "account_access_status", None)
+        if callable(access_status):
+            account["access_enforcement"] = access_status(account_id)
+        return account
 
     def admin_devices(
         self, query: str | None = None, status: str | None = None, limit: int = 100

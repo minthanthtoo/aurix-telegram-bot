@@ -66,6 +66,8 @@ class TelegramMaintenanceMixin:
             reason = (
                 "data quota reached"
                 if event["reason"] == "quota"
+                else "account suspended"
+                if event["reason"] == "account_suspended"
                 else "24-hour/monthly access expired"
             )
             remote = (
@@ -291,6 +293,14 @@ class TelegramMaintenanceMixin:
                     ),
                 )
             run_stage("paid_expiry", self.commerce.expire_and_process)
+            reconcile_account_access = getattr(
+                self.commerce, "reconcile_account_access_actions", None
+            )
+            if callable(reconcile_account_access):
+                run_stage(
+                    "account_access_reconciliation",
+                    lambda: reconcile_account_access(now=datetime.now(UTC)),
+                )
             identity = getattr(self.commerce, "identity", None)
             expire_pairing = getattr(identity, "expire_pairing_tokens", None)
             if callable(expire_pairing):

@@ -144,6 +144,29 @@ class MvpFeatureTest(unittest.TestCase):
         self.assertTrue(usage[0]["access_blocked"])
         self.assertTrue(free.access_url)
 
+    def test_account_suspension_queues_and_completes_free_key_termination(self):
+        claim_now = datetime.now(UTC) + timedelta(days=1)
+        self.claims.identity.ensure_account(101, now=claim_now)
+        free = self.claims.claim(101, "A", claim_now)
+        account_id = self.claims.identity.account_snapshot(101)["account_id"]
+
+        suspended = self.commerce.request_account_suspension(account_id, 999, now=claim_now)
+
+        self.assertEqual(suspended["counts"]["active_free_keys"], 1)
+        with self.free_db.connect() as connection:
+            event = connection.execute(
+                "SELECT remote_state FROM key_termination_events WHERE reason = 'account_suspended'"
+            ).fetchone()
+        self.assertEqual(event["remote_state"], "retrying")
+        self.assertEqual(self.claims.reconcile_terminations(claim_now), 1)
+        self.assertEqual(
+            self.commerce.reconcile_account_access_actions(now=claim_now)["completed"], 1
+        )
+        status = self.commerce.account_access_status(account_id)
+        self.assertEqual(status["state"], "completed")
+        self.assertEqual(status["outstanding"], 0)
+        self.assertTrue(free.access_url)
+
     def test_maintenance_inventory_repairs_legacy_free_url_projection(self):
         free = self.claims.claim(101, "A", self.now)
         with self.commerce.database.connect() as connection:
