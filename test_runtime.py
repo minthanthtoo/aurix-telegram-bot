@@ -40,6 +40,7 @@ class _CommerceDatabase(_Database):
 
 class _EndpointRegistry:
     instances = []
+    preconfigured = False
 
     def __init__(self, database, secret_key):
         self.database = database
@@ -49,6 +50,17 @@ class _EndpointRegistry:
 
     def configure_bootstrap(self, api_url, fingerprint, **kwargs):
         self.bootstrap = (api_url, fingerprint, kwargs)
+
+    def has_management_capability(self, _endpoint_id):
+        return self.bootstrap is not None or self.__class__.preconfigured
+
+    @staticmethod
+    def client(_endpoint_id):
+        return _Outline("https://outline.invalid/secret", "0" * 64)
+
+    @staticmethod
+    def record_capacity(*_args, **_kwargs):
+        return {}
 
 
 class _Outline:
@@ -117,6 +129,7 @@ class RuntimeCompositionTest(unittest.TestCase):
     def setUp(self):
         _Bot.instances = []
         _EndpointRegistry.instances = []
+        _EndpointRegistry.preconfigured = False
         _Commerce.instances = []
 
     def test_app_main_remains_the_runtime_entrypoint(self):
@@ -158,7 +171,6 @@ class RuntimeCompositionTest(unittest.TestCase):
             patch("runtime.urllib.request.urlopen", return_value=get_me),
             patch("runtime.Database", _Database),
             patch("runtime.CommerceDatabase", _CommerceDatabase),
-            patch("runtime.OutlineClient", _Outline),
             patch("runtime.EndpointRegistry", _EndpointRegistry),
             patch("runtime.CommerceService", _Commerce),
             patch("runtime.ClaimService", _ClaimService),
@@ -183,16 +195,14 @@ class RuntimeCompositionTest(unittest.TestCase):
     def test_web_composition_can_leave_bootstrap_endpoint_unchanged(self):
         environment = {
             "TELEGRAM_BOT_TOKEN": "test-token",
-            "OUTLINE_API_URL": "https://outline.invalid/secret",
-            "OUTLINE_CERT_SHA256": "0" * 64,
             "AURIX_ACCESS_URL_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
             "DATABASE_PATH": "/tmp/aurix-runtime-test.db",
         }
+        _EndpointRegistry.preconfigured = True
         with (
             patch.dict(os.environ, environment, clear=True),
             patch("runtime.Database", _Database),
             patch("runtime.CommerceDatabase", _CommerceDatabase),
-            patch("runtime.OutlineClient", _Outline),
             patch("runtime.EndpointRegistry", _EndpointRegistry),
             patch("runtime.CommerceService", _Commerce),
             patch("runtime.ClaimService", _ClaimService),
@@ -205,12 +215,32 @@ class RuntimeCompositionTest(unittest.TestCase):
             )
 
         self.assertIsNone(_EndpointRegistry.instances[0].bootstrap)
+        self.assertEqual(_Commerce.instances[-1].outline.endpoint_id, "legacy-default")
+
+    def test_fresh_runtime_requires_bootstrap_outline_settings(self):
+        environment = {
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "AURIX_ACCESS_URL_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+            "DATABASE_PATH": "/tmp/aurix-runtime-test.db",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("runtime.Database", _Database),
+            patch("runtime.CommerceDatabase", _CommerceDatabase),
+            patch("runtime.EndpointRegistry", _EndpointRegistry),
+            patch("runtime.CommerceService", _Commerce),
+        ):
+            with self.assertRaisesRegex(SystemExit, "required to initialize the bootstrap endpoint"):
+                runtime.build_runtime_services(
+                    validate_telegram=False,
+                    check_outline=False,
+                    reconcile=False,
+                    configure_bootstrap=False,
+                )
 
     def test_managed_node_agent_bindings_are_explicitly_wired_when_configured(self):
         environment = {
             "TELEGRAM_BOT_TOKEN": "test-token",
-            "OUTLINE_API_URL": "https://outline.invalid/secret",
-            "OUTLINE_CERT_SHA256": "0" * 64,
             "AURIX_ACCESS_URL_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
             "DATABASE_PATH": "/tmp/aurix-runtime-test.db",
             "AURIX_MANAGED_NODE_AGENTS_JSON": json.dumps([
@@ -229,11 +259,11 @@ class RuntimeCompositionTest(unittest.TestCase):
                 }
             ]),
         }
+        _EndpointRegistry.preconfigured = True
         with (
             patch.dict(os.environ, environment, clear=True),
             patch("runtime.Database", _Database),
             patch("runtime.CommerceDatabase", _CommerceDatabase),
-            patch("runtime.OutlineClient", _Outline),
             patch("runtime.EndpointRegistry", _EndpointRegistry),
             patch("runtime.CommerceService", _Commerce),
             patch("runtime.ClaimService", _ClaimService),

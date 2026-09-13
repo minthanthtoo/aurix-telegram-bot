@@ -54,9 +54,10 @@ At the time of this guide, production uses one SGP1 Droplet for the AuriX bot,
 Outline, 9Router, Caddy, and Watchtower. The commercial database is hosted
 PostgreSQL. This is a migration source, not the desired final security boundary.
 
-The legacy code has two credential tables (`keys` and `paid_vpn_keys`) and one
-process-global Outline client. Historical Outline key IDs are only unique inside
-one server. Multi-node identity is therefore the pair:
+The legacy code has two credential tables (`keys` and `paid_vpn_keys`). The
+compatibility gateway resolves the default Outline route through its durable
+encrypted endpoint record, while historical Outline key IDs remain unique only
+inside one server. Multi-node identity is therefore the pair:
 
 ```text
 (endpoint_id, outline_key_id)

@@ -14,10 +14,16 @@ from pathlib import Path
 from typing import Any
 
 from .commerce import CommerceDatabase, CommerceService, PostgresCommerceDatabase
-from .connectivity import DigitalOceanClient, EndpointRegistry, FleetController
+from .connectivity import (
+    DEFAULT_ENDPOINT_ID,
+    ConnectivityError,
+    DigitalOceanClient,
+    EndpointRegistry,
+    EndpointScopedOutlineGateway,
+    FleetController,
+)
 from .entitlements import PUBLIC_LIMIT_BYTES, ClaimService, OutlineError
 from .free_repository import Database
-from .outline_adapter import OutlineClient
 from .node_agent_bindings import ManagedNodeAgentBindings, NodeAgentBindingError
 from supabase_storage import NullReceiptStorage, SupabaseReceiptStorage
 from .telegram_transport import DEFAULT_MAINTENANCE_INTERVAL_SECONDS, TelegramBot
@@ -30,7 +36,7 @@ class RuntimeServices:
     token: str
     database: Any
     commerce_database: Any
-    outline: OutlineClient
+    outline: Any
     connectivity: EndpointRegistry
     claim_service: ClaimService
     commerce: CommerceService
@@ -58,14 +64,14 @@ def build_runtime_services(
         name
         for name, value in (
             ("TELEGRAM_BOT_TOKEN", token),
-            ("OUTLINE_API_URL", api_url),
-            ("OUTLINE_CERT_SHA256", fingerprint),
             ("AURIX_ACCESS_URL_KEY", access_url_key),
         )
         if not value
     ]
     if missing:
         raise SystemExit("Missing environment variables: " + ", ".join(missing))
+    if bool(api_url) != bool(fingerprint):
+        raise SystemExit("OUTLINE_API_URL and OUTLINE_CERT_SHA256 must be configured together")
     if validate_telegram:
         # Validate token with getMe before starting a transport.
         request = urllib.request.Request(
@@ -121,8 +127,8 @@ def build_runtime_services(
             )
         receipt_storage = NullReceiptStorage()
     database.initialize()
-    outline = OutlineClient(api_url, fingerprint)
     connectivity = EndpointRegistry(commerce_database, access_url_key)
+    outline = EndpointScopedOutlineGateway(connectivity)
     allow_text_payment = os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").lower() in (
         "1",
         "true",
@@ -158,6 +164,21 @@ def build_runtime_services(
         connectivity,
     )
     commerce.initialize()
+    has_bootstrap_management = connectivity.has_management_capability(DEFAULT_ENDPOINT_ID)
+    if not has_bootstrap_management and not (api_url and fingerprint):
+        raise SystemExit(
+            "OUTLINE_API_URL and OUTLINE_CERT_SHA256 are required to initialize the bootstrap endpoint"
+        )
+    if configure_bootstrap and api_url and fingerprint:
+        # Persist bootstrap credentials before any gateway call. Health is
+        # recorded only after the management API itself responds successfully.
+        connectivity.configure_bootstrap(
+            api_url,
+            fingerprint,
+            code=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_CODE", "SGP-01"),
+            region=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_REGION", "sgp1"),
+            mark_healthy=False,
+        )
     if reconcile:
         backfill_assignments = getattr(connectivity, "backfill_free_assignments", None)
         backfilled_free_assignments = (
@@ -173,14 +194,6 @@ def build_runtime_services(
                 "WARNING: duplicate open orders with payment evidence require manual review.",
                 file=sys.stderr,
             )
-    if configure_bootstrap:
-        connectivity.configure_bootstrap(
-            api_url,
-            fingerprint,
-            code=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_CODE", "SGP-01"),
-            region=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_REGION", "sgp1"),
-            mark_healthy=check_outline,
-        )
     # Keep construction compatible with the small test doubles used by the
     # legacy runtime tests, then share the real service seams when present.
     claim_service = ClaimService(
@@ -198,17 +211,26 @@ def build_runtime_services(
         try:
             outline_info = outline.server_info()
             print(f"Outline connected: version {outline_info.get('version', 'unknown')}")
-            connectivity.configure_bootstrap(
-                api_url,
-                fingerprint,
-                code=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_CODE", "SGP-01"),
-                region=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_REGION", "sgp1"),
-                outline_version=str(outline_info.get("version") or "unknown"),
+            if configure_bootstrap and api_url and fingerprint:
+                connectivity.configure_bootstrap(
+                    api_url,
+                    fingerprint,
+                    code=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_CODE", "SGP-01"),
+                    region=os.environ.get("AURIX_BOOTSTRAP_ENDPOINT_REGION", "sgp1"),
+                    outline_version=str(outline_info.get("version") or "unknown"),
+                    mark_healthy=False,
+                )
+            connectivity.record_capacity(
+                DEFAULT_ENDPOINT_ID,
+                healthy=True,
+                active_key_count=None,
+                observed_transfer_bytes=None,
+                management_latency_ms=None,
             )
             promo_limits_reconciled = claim_service.reconcile_giveaway_limits()
             if promo_limits_reconciled:
                 print(f"Promo quotas reconciled: {promo_limits_reconciled} active key(s)")
-        except OutlineError as exc:
+        except (OutlineError, ConnectivityError) as exc:
             # Telegram, wallet, receipt review, and admin inspection remain useful
             # during a VPN management-plane outage. Provisioning fails closed.
             try:

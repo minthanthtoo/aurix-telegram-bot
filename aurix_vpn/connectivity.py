@@ -50,6 +50,20 @@ class EndpointAssignment:
     reserved_quota_bytes: int | None
 
 
+class EndpointScopedOutlineGateway:
+    """Resolve legacy Outline calls through a durable endpoint record."""
+
+    def __init__(self, registry: "EndpointRegistry", endpoint_id: str = DEFAULT_ENDPOINT_ID):
+        self.registry = registry
+        self.endpoint_id = str(endpoint_id)
+
+    def _client(self) -> OutlineClient:
+        return self.registry.client(self.endpoint_id)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client(), name)
+
+
 class EndpointRegistry:
     """PostgreSQL/SQLite-compatible endpoint and assignment repository."""
 
@@ -1224,6 +1238,20 @@ class EndpointRegistry:
         if row is None:
             raise ConnectivityError("VPN endpoint does not exist")
         return dict(row)
+
+    def has_management_capability(self, endpoint_id: str = DEFAULT_ENDPOINT_ID) -> bool:
+        """Return whether the endpoint has the encrypted client fields."""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT management_url_ciphertext, certificate_sha256
+                     FROM vpn_endpoints WHERE id = ?""",
+                (str(endpoint_id),),
+            ).fetchone()
+        return bool(
+            row
+            and str(row["management_url_ciphertext"] or "").strip()
+            and str(row["certificate_sha256"] or "").strip()
+        )
 
     @staticmethod
     def _endpoint_lifecycle_counts(connection: Any, endpoint_id: str) -> dict[str, int]:

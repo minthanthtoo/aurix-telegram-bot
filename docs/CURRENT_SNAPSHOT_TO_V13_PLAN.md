@@ -85,7 +85,7 @@ The refactor delivered eight structural phases:
 
 Important remaining facts:
 
-- `runtime.py` still reads exactly one `OUTLINE_API_URL` and one certificate fingerprint, creates one `OutlineClient`, and injects it into both free and paid services.
+- `runtime.py` accepts `OUTLINE_API_URL` and one certificate fingerprint to initialize or deliberately refresh a bootstrap endpoint; compatibility gateway calls resolve the encrypted default endpoint record after initialization. Free and paid services still retain the legacy gateway interface while endpoint-scoped clients handle assigned routes.
 - `ports.OutlineGateway` remains the compatibility API, while `ConnectivityAdapter` now provides the generic endpoint-scoped lifecycle seam.
 - Legacy `paid_vpn_keys` and free `keys` retain `outline_key_id`; endpoint assignments and credential-generation/quota projections now carry the durable transport-neutral identity.
 - Daily free, monthly trial, and promo/giveaway issuance now persist a durable intent before provider I/O; promo reservations release capacity on provider failure and retry through maintenance.
@@ -330,6 +330,10 @@ secret/certificate lookup
   ↓
 endpoint-scoped OutlineAdapter client
 ```
+
+The legacy gateway surface may remain as a compatibility proxy while all
+management capability is resolved from the durable endpoint record. It must not
+retain an independent process-global management URL or certificate.
 
 Keep the system a modular monolith. Do not introduce microservices.
 

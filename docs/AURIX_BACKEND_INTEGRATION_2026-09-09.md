@@ -865,3 +865,14 @@ with the customer actor and durable device identifier. It stores no pairing
 token, public key, label, session, or route material. Enrollment and revocation
 therefore have a contiguous secret-free lifecycle history in the same audit
 stream.
+
+## 31. Endpoint-scoped bootstrap gateway — 2026-09-13
+
+Runtime compatibility calls for the original Outline endpoint now resolve
+through its encrypted durable endpoint record rather than retaining a
+process-global management client. A fresh control database still needs
+`OUTLINE_API_URL` and `OUTLINE_CERT_SHA256` to initialize that bootstrap record;
+subsequent starts can use the stored record. Successful startup management
+checks create a health observation only after the API responds. This preserves
+the legacy Outline gateway surface while moving its management capability into
+the endpoint registry used by multi-node allocation.
