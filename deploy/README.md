@@ -53,7 +53,9 @@ install -o root -g root -m 0644 deploy/aurix-bot.service /etc/systemd/system/aur
 
 ## 3. Configure secrets outside Git
 
-Create `/etc/aurix-bot/aurix.env` with mode `0640` and owner `root:aurix`:
+Start from the redacted repository template
+[`deploy/aurix.env.example`](aurix.env.example), then create
+`/etc/aurix-bot/aurix.env` with mode `0640` and owner `root:aurix`:
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=replace-with-a-staging-bot-token
@@ -82,6 +84,10 @@ RECEIPT_LLM_MODEL=
 RECEIPT_LLM_API_KEY=
 ALLOW_TEXT_PAYMENT_REFERENCES=0
 ```
+
+The template also lists optional Mini App, endpoint-health, fleet-safety, and
+separate AuriX AI gateway settings. Keep those feature gates disabled unless
+their corresponding service and acceptance tests are being deployed.
 
 Never paste this file into chat, Git, ordinary logs, or a support screenshot.
 Generate `AURIX_ACCESS_URL_KEY` once and preserve it across restarts; it encrypts

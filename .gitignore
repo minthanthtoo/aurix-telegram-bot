@@ -1,5 +1,6 @@
 .env*
 !.env.example
+!deploy/aurix.env.example
 .venv/
 *.db
 *.db-shm
