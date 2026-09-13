@@ -170,6 +170,9 @@ class TelegramCommandMixin:
         username = user.get("username")
         if username is not None and not isinstance(username, str):
             username = str(username)
+        message_id = message.get("_message_id")
+        if not isinstance(message_id, int):
+            message_id = None
         self.service.track_user(telegram_id, first_name, username=username)
         if message.get("photo") or message.get("document"):
             self._handle_receipt(message, chat["id"], telegram_id)
@@ -547,7 +550,13 @@ class TelegramCommandMixin:
                 reply_markup = self._launch_promo_keyboard(str(giveaway["code"]))
             else:
                 reply_markup = self._customer_keyboard(telegram_id)
-            self._send_welcome(chat["id"], welcome_text, reply_markup)
+            self._send_welcome(
+                chat["id"],
+                welcome_text,
+                reply_markup,
+                message_id=message_id,
+                use_image=command == "/start",
+            )
         elif command == "/whoami":
             access = "\nAdmin access: enabled" if self._is_admin(telegram_id) else ""
             self.send(
@@ -784,16 +793,22 @@ class TelegramCommandMixin:
                         self._admin_keyboard(telegram_id),
                     )
         elif command == "/myorders":
-            self._open_customer_orders_panel(chat["id"], telegram_id)
+            self._open_customer_orders_panel(
+                chat["id"], telegram_id, message_id=message_id
+            )
         elif command == "/order":
             if self.commerce is None or len(args) != 1:
                 self.send(chat["id"], "Usage: /order <order-id>")
             else:
                 self._send_order_detail(
-                    chat["id"], telegram_id, args[0], admin_view=self._is_admin(telegram_id)
+                    chat["id"],
+                    telegram_id,
+                    args[0],
+                    admin_view=self._is_admin(telegram_id),
+                    message_id=message_id,
                 )
         elif command == "/plans":
-            self._send_plans(chat["id"], telegram_id)
+            self._send_plans(chat["id"], telegram_id, message_id=message_id)
         elif command in ("/buy", "/upgrade"):
             if self.commerce is None:
                 self.send(chat["id"], "Paid plans are not configured in this staging process.")
@@ -899,7 +914,7 @@ class TelegramCommandMixin:
         elif command in ("/myvpn", "/status", "/usage"):
             # /status and /usage remain safe aliases for links and old Telegram
             # keyboards, but My VPN is the single customer-facing dashboard.
-            self._send_my_vpn(chat["id"], telegram_id)
+            self._send_my_vpn(chat["id"], telegram_id, message_id=message_id)
         elif command == "/renew":
             if self.commerce is None:
                 self.send(chat["id"], "Paid plans are not configured in this staging process.")
@@ -988,23 +1003,8 @@ class TelegramCommandMixin:
                 )
                 self.send(chat["id"], f"Monthly 3 GiB already claimed. Come back after {retry}.")
         elif command == "/wallet":
-            if self.commerce is None:
-                self.send(chat["id"], "Wallet is not configured.")
-            else:
-                balance = self.commerce.wallet_balance(telegram_id)
-                history = self.commerce.wallet_history(telegram_id, limit=5)
-                history_text = ""
-                if history:
-                    history_text = "\n\nRecent wallet events:\n" + "\n".join(
-                        f"{item['created_at']} · {item['kind']} {int(item['amount_minor']):,} {item['currency']} · {item['reference_id']}"
-                        for item in history
-                    )
-                self.send(
-                    chat["id"],
-                    f"💰 AuriX Wallet\n\nBalance: {balance:,} MMK\n"
-                    f"Top-ups are credited only after receipt verification.{history_text}",
-                    self._inline_keyboard([[("➕ Top up wallet", "t:a:menu")]]),
-                )
+            self._send_wallet(chat["id"], telegram_id, message_id=message_id)
+            return
         elif command == "/topup":
             if self.commerce is None:
                 self.send(chat["id"], "Wallet is not configured.")
@@ -1039,7 +1039,9 @@ class TelegramCommandMixin:
                             ),
                         )
                     else:
-                        self._send_payment_methods(chat["id"], detail)
+                        self._send_payment_methods(
+                            chat["id"], detail, message_id=message_id
+                        )
         elif command == "/walletpay":
             if self.commerce is None:
                 self.send(chat["id"], "Wallet is not configured.")

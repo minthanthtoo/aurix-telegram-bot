@@ -1102,6 +1102,7 @@ class TelegramAdminMixin:
         order_id: str,
         admin_view: bool = False,
         heading: str | None = None,
+        message_id: int | None = None,
     ) -> None:
         if self.commerce is None:
             self.send(chat_id, "Order tracking is not configured.")
@@ -1111,8 +1112,12 @@ class TelegramAdminMixin:
         if order is None:
             self.send(chat_id, "Order not found.")
             return
-        self.send(
-            chat_id,
-            ((heading + "\n\n") if heading else "") + self._order_detail_text(order),
-            self._order_actions(order, is_admin),
-        )
+        text = ((heading + "\n\n") if heading else "") + self._order_detail_text(order)
+        markup = self._order_actions(order, is_admin)
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                return
+            except Exception:
+                pass
+        self.send(chat_id, text, markup)

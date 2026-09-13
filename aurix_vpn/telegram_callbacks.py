@@ -87,6 +87,11 @@ class TelegramCallbackMixin:
             return
         if data in navigation:
             synthetic["text"] = navigation[data]
+            # Preserve the message the customer just pressed so text child
+            # screens (plans, wallet, orders, VPN, usage) replace that card
+            # instead of appending a duplicate transcript message.
+            if isinstance(message.get("message_id"), int):
+                synthetic["_message_id"] = int(message["message_id"])
             self.handle(synthetic)
             return
         parts = data.split(":", 2)
@@ -98,13 +103,18 @@ class TelegramCallbackMixin:
             synthetic["text"] = f"/claimpromo {entity_id.upper()}"
             self.handle(synthetic)
         elif scope == "o" and action == "v":
-            self._send_order_detail(chat_id, telegram_id, entity_id)
+            self._send_order_detail(
+                chat_id,
+                telegram_id,
+                entity_id,
+                message_id=message.get("message_id"),
+            )
         elif scope == "o" and action == "r":
             order = self.commerce.order_detail(entity_id, telegram_id) if self.commerce else None
             if order is None:
                 self.send(chat_id, "Order not found.")
             else:
-                self._send_payment_methods(chat_id, order)
+                self._send_payment_methods(chat_id, order, message_id=message.get("message_id"))
         elif scope == "o" and action == "w":
             synthetic["text"] = f"/walletpay {entity_id}"
             self.handle(synthetic)
@@ -169,7 +179,9 @@ class TelegramCallbackMixin:
                 if order is None:
                     self.send(chat_id, "Order not found.")
                 else:
-                    self._send_payment_methods(chat_id, order)
+                    self._send_payment_methods(
+                        chat_id, order, message_id=message.get("message_id")
+                    )
             elif action == "p":
                 try:
                     order_id, provider_code = entity_id.rsplit(":", 1)
@@ -337,7 +349,13 @@ class TelegramCallbackMixin:
                 except Exception as exc:
                     self.send(chat_id, str(exc) or "Plan capacity could not be updated.")
             elif action == "o":
-                self._send_order_detail(chat_id, telegram_id, entity_id, admin_view=True)
+                self._send_order_detail(
+                    chat_id,
+                    telegram_id,
+                    entity_id,
+                    admin_view=True,
+                    message_id=message.get("message_id"),
+                )
             elif action == "p":
                 self._queue_admin_confirmation(
                     chat_id,

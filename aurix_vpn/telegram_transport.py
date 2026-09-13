@@ -406,6 +406,8 @@ class TelegramBot(
         chat_id: int,
         text: str,
         reply_markup: dict[str, Any] | None = None,
+        message_id: int | None = None,
+        use_image: bool = True,
     ) -> None:
         """Send one canonical welcome card, with a text fallback.
 
@@ -414,7 +416,7 @@ class TelegramBot(
         fallback instead of silently truncating safety or eligibility details.
         """
         source = str(self.welcome_image_source or "").strip()
-        if source and len(text) <= 1024:
+        if use_image and source and len(text) <= 1024:
             try:
                 self.send_photo(chat_id, source, text, reply_markup)
                 return
@@ -423,7 +425,57 @@ class TelegramBot(
                     f"welcome image delivery error: {type(exc).__name__}",
                     file=sys.stderr,
                 )
+        self._send_screen(chat_id, text, reply_markup, message_id=message_id)
+
+    def _send_screen(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+        message_id: int | None = None,
+    ) -> None:
+        """Render a text child screen in-place when it came from a button.
+
+        Telegram clients keep the pressed inline keyboard attached to one
+        message.  Editing that message avoids the duplicate transcript seen
+        in long order/wallet sessions; a normal slash command still creates a
+        fresh message, and an edit failure has a safe send fallback.
+        """
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, reply_markup)
+                return
+            except Exception as exc:
+                if "message is not modified" in str(exc).lower():
+                    return
         self.send(chat_id, text, reply_markup)
+
+    def _send_wallet(
+        self, chat_id: int, telegram_id: int, message_id: int | None = None
+    ) -> None:
+        if self.commerce is None:
+            self._send_screen(chat_id, "Wallet is not configured.", message_id=message_id)
+            return
+        balance = self.commerce.wallet_balance(telegram_id)
+        history = self.commerce.wallet_history(telegram_id, limit=5)
+        history_text = ""
+        if history:
+            history_text = "\n\n<b>Recent wallet events</b>\n" + "\n".join(
+                f"{html_escape(str(item['created_at']))} · "
+                f"{html_escape(str(item['kind']))} "
+                f"{int(item['amount_minor']):,} {html_escape(str(item['currency']))} · "
+                f"<code>{html_escape(str(item['reference_id']))}</code>"
+                for item in history
+            )
+        self._send_screen(
+            chat_id,
+            "<b>💰 AuriX Wallet</b>\n\n"
+            f"Balance: <b>{balance:,} MMK</b>\n"
+            "Top-ups are credited only after receipt verification."
+            f"{history_text}",
+            self._inline_keyboard([[('➕ Top up wallet', 't:a:menu')]]),
+            message_id=message_id,
+        )
 
     def _promo_code_buttons(self, promo_code: str) -> list[dict[str, Any]]:
         """Build reusable one-tap redeem and clipboard controls for a promo."""
@@ -605,10 +657,15 @@ class TelegramBot(
             [("🧾 Back to order", f"o:v:{order_id}")],
         ]
 
-    def _send_payment_methods(self, chat_id: int, order: dict[str, Any]) -> None:
+    def _send_payment_methods(
+        self,
+        chat_id: int,
+        order: dict[str, Any],
+        message_id: int | None = None,
+    ) -> None:
         plan_name = html_escape(str(order.get("plan_name") or order.get("plan_code") or "AuriX plan"))
         currency = html_escape(str(order.get("currency") or "MMK"))
-        self.send(
+        self._send_screen(
             chat_id,
             "<b>💳 Choose a payment method</b>\n\n"
             f"🛒 <b>{plan_name}</b> · "
@@ -617,6 +674,7 @@ class TelegramBot(
             "the completed receipt screenshot within <b>1 hour</b>.\n\n"
             "<i>🔒 Your receipt is private evidence; a QR code is only a payment destination.</i>",
             self._inline_keyboard(self._payment_provider_rows(str(order["id"]))),
+            message_id=message_id,
         )
 
     def _send_payment_qr(
@@ -722,7 +780,7 @@ class TelegramBot(
             for name in ("open", "completed", "cancelled", "rejected", "all")
         }
         blocks = [
-            "🧾 My Orders",
+            "<b>🧾 My Orders</b>",
             f"{selected.title()} · {len(filtered)} order(s) · Page {page + 1}/{pages}",
         ]
         for offset, order in enumerate(current, start=page * page_size + 1):
@@ -1374,19 +1432,29 @@ class TelegramBot(
             return True
         return False
 
-    def _send_plans(self, chat_id: int, telegram_id: int | None = None) -> None:
+    def _send_plans(
+        self,
+        chat_id: int,
+        telegram_id: int | None = None,
+        message_id: int | None = None,
+    ) -> None:
         giveaway = self.service.giveaway_status(telegram_id or chat_id)
         if giveaway["access_lock_active"]:
-            self.send(
+            self._send_screen(
                 chat_id,
                 f"Promo gift #{giveaway['winner_number']} · {giveaway['code']}\n\n"
                 "Normal plans are paused while both your gift and its promo season are active. "
                 "They return automatically when either one ends.",
                 self._customer_keyboard(telegram_id or chat_id),
+                message_id=message_id,
             )
             return
         if self.commerce is None:
-            self.send(chat_id, "Paid plans are not configured in this staging process.")
+            self._send_screen(
+                chat_id,
+                "Paid plans are not configured in this staging process.",
+                message_id=message_id,
+            )
             return
         lines = ["AuriX plans:"]
         if giveaway["exists"]:
@@ -1425,7 +1493,7 @@ class TelegramBot(
             and promo_buttons
         ):
             markup["inline_keyboard"].insert(0, promo_buttons)
-        self.send(chat_id, "\n".join(lines), markup)
+        self._send_screen(chat_id, "\n".join(lines), markup, message_id=message_id)
 
     def _send_status(self, chat_id: int, telegram_id: int, include_key: bool = False) -> None:
         giveaway = self.service.giveaway_status(telegram_id)
@@ -1559,7 +1627,7 @@ class TelegramBot(
             for name in ("active", "pending", "ended", "all")
         }
         blocks = [
-            "🔐 My VPN",
+            "<b>🔐 My VPN</b>",
             f"{selected.title()} · {len(filtered)} key(s) · Page {page + 1}/{pages}",
         ]
         account_status = state.get("account_status")
@@ -1658,30 +1726,45 @@ class TelegramBot(
             if token in self._panels:
                 self._panels[token].update(fresh)
 
-    def _send_my_vpn(self, chat_id: int, telegram_id: int) -> None:
+    def _send_my_vpn(
+        self, chat_id: int, telegram_id: int, message_id: int | None = None
+    ) -> None:
         token = self._new_panel(chat_id, telegram_id, "customer_vpn")
         fresh = self._collect_customer_vpn_state(telegram_id)
         with self._panel_lock:
             self._panels[token].update(fresh)
             self._panels[token]["filter"] = "active" if fresh["all_items"] else "all"
         text, markup = self._render_customer_vpn_panel(token)
-        result = self.send(chat_id, text, markup)
+        if isinstance(message_id, int):
+            try:
+                self.edit_message(chat_id, message_id, text, markup)
+                result = {"message_id": message_id}
+            except Exception:
+                result = self.send(chat_id, text, markup)
+        else:
+            result = self.send(chat_id, text, markup)
         if isinstance(result, dict) and result.get("message_id"):
             with self._panel_lock:
                 self._panels[token]["message_id"] = int(result["message_id"])
 
-    def _send_usage(self, chat_id: int, telegram_id: int) -> None:
+    def _send_usage(
+        self, chat_id: int, telegram_id: int, message_id: int | None = None
+    ) -> None:
         state = self._collect_customer_vpn_state(telegram_id)
         entries = list(state.get("all_items") or [])
         entries.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
         if not entries:
-            self.send(
+            self._send_screen(
                 chat_id,
                 "No VPN key usage is available yet. Claim a free tier or activate a paid plan first.",
                 self._inline_keyboard([[("🎁 View Plans", "n:plans")]]),
+                message_id=message_id,
             )
             return
-        blocks = ["📶 Your VPN usage\nOutline transfer accounting (rolling 30-day window)"]
+        blocks = [
+            "<b>📶 Your VPN usage</b>\n"
+            "<i>Outline transfer accounting (rolling 30-day window)</i>"
+        ]
         for entry in entries:
             used = int(entry["used_bytes"])
             quota = int(entry["quota_bytes"])
@@ -1704,10 +1787,11 @@ class TelegramBot(
             "Traffic is bytes reported by Outline for each key. It is not live speed, "
             "and the window is not a calendar-month reset."
         )
-        self.send(
+        self._send_screen(
             chat_id,
             "\n\n".join(blocks),
             self._inline_keyboard([[("🔄 Refresh Usage", "n:usage"), ("🔐 My VPN", "n:myvpn")]]),
+            message_id=message_id,
         )
 
     def run(self) -> None:
