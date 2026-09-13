@@ -956,7 +956,9 @@ authenticated lifecycle service, but a shared inventory must not let one
 adapter reconcile the other transport's users. Managed adapters now ignore any
 provider record explicitly tagged for a different protocol. Dedicated legacy
 agents that omit the tag remain compatible because their route is already
-single-protocol; a shared agent must return `protocol` per user. The bounded
+single-protocol; a shared agent must return `protocol` per user. A tagged
+cross-protocol external-ID collision also fails before it can be treated as an
+idempotent grant or be deleted during recovery. The bounded
 local matrix verifies 200 Xray plus 200 Hysteria2 grants concurrently, with
 separate 200-user inventories, quota/usage checks, rotation, explicit session
 termination, and final revocation. This is local contract evidence only; it

@@ -41,6 +41,10 @@ explicitly tagged for another transport before inventory/reconciliation. A
 dedicated single-protocol agent may omit the tag for compatibility, because its
 route boundary already scopes the inventory.
 
+The same rule applies to idempotent provision/recovery: if a shared agent
+returns an existing external ID tagged for another protocol, the request fails
+closed rather than adopting or deleting that credential.
+
 The control plane now applies the same explicit enabled-profile requirement to
 allocation, failover target selection, operator drain, assignment transfer, and
 target-generation verification. A candidate or disabled profile therefore cannot

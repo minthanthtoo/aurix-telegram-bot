@@ -412,7 +412,14 @@ class _ManagedCredentialAdapter:
         if method is None:
             return None
         record = method(external_id)
-        return record if isinstance(record, Mapping) else None
+        if not isinstance(record, Mapping):
+            return None
+        declared_protocol = str(record.get("protocol") or "").strip().lower()
+        if declared_protocol and declared_protocol != self.protocol:
+            raise ConnectivityAdapterError(
+                f"{self.protocol} external_id is already owned by {declared_protocol}"
+            )
+        return record
 
     def _inventory(self) -> list[Mapping[str, Any]]:
         method = _provider_method(self.client, ("list_users",))

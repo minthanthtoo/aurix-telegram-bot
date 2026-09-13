@@ -399,6 +399,30 @@ class ConnectivityAdapterTest(unittest.TestCase):
         self.assertEqual(xray_grant["protocol"], "xray")
         self.assertEqual(hysteria2_grant["protocol"], "hysteria2")
 
+    def test_managed_provision_rejects_external_id_owned_by_another_protocol(self):
+        client = _ProtocolClient()
+        xray = XrayConnectivityAdapter(client)
+        xray.provision(
+            self._xray_route(), {"external_id": "shared-user", "name": "Xray customer"}
+        )
+        hysteria2_route = {
+            "route_id": "hysteria2:sg-a",
+            "endpoint_id": "sg-a",
+            "protocol": "hysteria2",
+            "public_address": "198.51.100.10",
+            "port": 18444,
+            "server_name": "example.com",
+            "auth_mode": "http",
+        }
+
+        with self.assertRaisesRegex(ConnectivityAdapterError, "already owned by xray"):
+            Hysteria2ConnectivityAdapter(client).provision(
+                hysteria2_route,
+                {"external_id": "shared-user", "name": "Hysteria customer"},
+            )
+        self.assertEqual(set(client.users), {"shared-user"})
+        self.assertEqual(client.users["shared-user"]["protocol"], "xray")
+
     def test_hysteria2_rejects_shared_or_undeclared_auth_before_user_creation(self):
         route = {
             "route_id": "hysteria2:sg-a",
