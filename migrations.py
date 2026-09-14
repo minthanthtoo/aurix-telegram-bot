@@ -1669,23 +1669,178 @@ def _prepare_legacy_table_shapes(connection: Any, component: str, dialect: str) 
     row = connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'endpoint_assignments'"
     ).fetchone()
-    if row is None:
+    if row is not None:
+        columns = {
+            str(item[1])
+            for item in connection.execute("PRAGMA table_info(endpoint_assignments)").fetchall()
+        }
+        if "assignment_id" in columns and "id" not in columns:
+            legacy_name = "endpoint_assignments_legacy"
+            if not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (legacy_name,),
+            ).fetchone():
+                connection.execute(f"ALTER TABLE endpoint_assignments RENAME TO {legacy_name}")
+                print(
+                    "Migration compatibility mode: preserved legacy endpoint_assignments "
+                    "as endpoint_assignments_legacy"
+                )
+
+    # These accounting tables are structurally incompatible (the previous
+    # release keyed them by ``entitlement_id`` while the current release uses
+    # the stable ``paid:<id>``/``free:<id>`` key).  Archive the old shape and
+    # copy its rows into the new tables after the current migrations create
+    # them.  The archive is retained in the same database for audit/recovery.
+    for table in (
+        "credential_generations",
+        "quota_leases",
+        "entitlement_usage_epochs",
+        "entitlement_usage_samples",
+        "entitlement_quota_ledger",
+    ):
+        row = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        if row is None:
+            continue
+        columns = {
+            str(item[1])
+            for item in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if "entitlement_key" in columns:
+            continue
+        legacy_name = f"{table}_legacy_v1"
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (legacy_name,),
+        ).fetchone():
+            continue
+        connection.execute(f"ALTER TABLE {table} RENAME TO {legacy_name}")
+        print(f"Migration compatibility mode: preserved legacy {table} as {legacy_name}")
+
+
+def _migrate_legacy_identity_tables(connection: Any, component: str, dialect: str) -> None:
+    """Copy archived entitlement accounting rows into the current schema."""
+    if dialect != "sqlite" or component != "commerce":
         return
-    columns = {
-        str(item[1])
-        for item in connection.execute("PRAGMA table_info(endpoint_assignments)").fetchall()
-    }
-    if "assignment_id" not in columns or "id" in columns:
-        return
-    legacy_name = "endpoint_assignments_legacy"
-    if connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (legacy_name,),
+    if not connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credential_generations_legacy_v1'"
     ).fetchone():
-        # A prior interrupted reconciliation already moved the table.
         return
-    connection.execute(f"ALTER TABLE endpoint_assignments RENAME TO {legacy_name}")
-    print("Migration compatibility mode: preserved legacy endpoint_assignments as endpoint_assignments_legacy")
+
+    def entitlement_key(entitlement_id: str) -> tuple[str, str, str] | None:
+        row = connection.execute(
+            "SELECT kind, subscription_id, source_ref FROM entitlements WHERE entitlement_id = ?",
+            (entitlement_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        subscription_id = str(row[1] or "").strip()
+        if subscription_id:
+            return (f"paid:{subscription_id}", "paid", subscription_id)
+        source_ref = str(row[2] or "").strip()
+        source_id = source_ref.rsplit(":", 1)[-1] if source_ref else ""
+        if source_id.isdigit():
+            return (f"free:{source_id}", "free", source_id)
+        return None
+
+    def keys_by_entitlement(table: str) -> dict[str, tuple[str, str, str]]:
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone():
+            return {}
+        rows = connection.execute(f"SELECT DISTINCT entitlement_id FROM {table}").fetchall()
+        result: dict[str, tuple[str, str, str]] = {}
+        for row in rows:
+            value = entitlement_key(str(row[0]))
+            if value is not None:
+                result[str(row[0])] = value
+        return result
+
+    mapping = keys_by_entitlement("credential_generations_legacy_v1")
+    for row in connection.execute("SELECT * FROM credential_generations_legacy_v1").fetchall():
+        key_info = mapping.get(str(row[1]))
+        if key_info is None:
+            continue
+        key, source_type, source_id = key_info
+        credential = None
+        credential_id = str(row[3] or "").strip()
+        if credential_id and connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'connectivity_credentials'"
+        ).fetchone():
+            credential = connection.execute(
+                "SELECT external_id, secret_ciphertext FROM connectivity_credentials WHERE credential_id = ?",
+                (credential_id,),
+            ).fetchone()
+        external_id = str((credential[0] if credential else None) or credential_id or row[0])
+        secret = (credential[1] if credential else None)
+        status = str(row[5] or "unknown")
+        if status not in {"pending", "active", "retiring", "unknown", "revoked", "failed"}:
+            status = "unknown"
+        remote_state = "observed" if status in {"active", "retiring"} else "unknown"
+        connection.execute(
+            """INSERT OR IGNORE INTO credential_generations
+               (generation_id, entitlement_key, source_type, source_id, endpoint_id,
+                protocol, external_id, access_url_ciphertext, generation_no, status,
+                remote_state, intent_key, usage_baseline_provenance, usage_baseline_bytes,
+                created_at, revoked_at)
+               VALUES (?, ?, ?, ?, 'legacy-default', 'outline', ?, ?, ?, ?, ?, NULL,
+                       'unknown', NULL, ?, ?)""",
+            (str(row[0]), key, source_type, source_id, external_id, secret,
+             int(row[4] or 1), status, remote_state, str(row[6]), row[7]),
+        )
+
+    def copy_table(table: str, archive: str, columns: tuple[str, ...], select_sql: str) -> None:
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (archive,)
+        ).fetchone():
+            return
+        for row in connection.execute(select_sql).fetchall():
+            info = mapping.get(str(row[1])) if len(row) > 1 else None
+            if info is None:
+                continue
+            values = list(row)
+            values[1] = info[0]
+            if "endpoint_id" in columns:
+                endpoint_index = columns.index("endpoint_id")
+                values[endpoint_index] = "legacy-default"
+            placeholders = ", ".join("?" for _ in columns)
+            connection.execute(
+                f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
+                values,
+            )
+
+    copy_table(
+        "quota_leases",
+        "quota_leases_legacy_v1",
+        ("lease_id", "entitlement_key", "generation_id", "endpoint_id", "lease_bytes",
+         "used_bytes", "expires_at", "status", "created_at", "released_at"),
+        "SELECT lease_id, entitlement_id, generation_id, endpoint_id, lease_bytes, used_bytes, expires_at, status, created_at, released_at FROM quota_leases_legacy_v1",
+    )
+    copy_table(
+        "entitlement_usage_epochs",
+        "entitlement_usage_epochs_legacy_v1",
+        ("epoch_id", "entitlement_key", "generation_id", "endpoint_id", "source_external_id",
+         "epoch_no", "last_remote_bytes", "credited_bytes", "reset_count", "status",
+         "last_observed_at", "created_at", "updated_at"),
+        "SELECT epoch_id, entitlement_id, generation_id, endpoint_id, source_external_id, epoch_no, last_remote_bytes, credited_bytes, reset_count, status, last_observed_at, created_at, updated_at FROM entitlement_usage_epochs_legacy_v1",
+    )
+    copy_table(
+        "entitlement_usage_samples",
+        "entitlement_usage_samples_legacy_v1",
+        ("sample_id", "epoch_id", "entitlement_key", "generation_id", "endpoint_id",
+         "source_external_id", "lease_id", "remote_bytes", "delta_bytes", "accepted",
+         "reason", "observed_at", "created_at"),
+        "SELECT sample_id, epoch_id, entitlement_id, generation_id, endpoint_id, source_external_id, lease_id, remote_bytes, delta_bytes, accepted, reason, observed_at, created_at FROM entitlement_usage_samples_legacy_v1",
+    )
+    copy_table(
+        "entitlement_quota_ledger",
+        "entitlement_quota_ledger_legacy_v1",
+        ("entry_id", "entitlement_key", "generation_id", "endpoint_id", "lease_id", "epoch_id",
+         "event_type", "bytes", "consumed_bytes", "remaining_bytes", "idempotency_key",
+         "details_json", "created_at"),
+        "SELECT entry_id, entitlement_id, generation_id, endpoint_id, lease_id, epoch_id, event_type, bytes, consumed_bytes, remaining_bytes, idempotency_key, details_json, created_at FROM entitlement_quota_ledger_legacy_v1",
+    )
 
 
 def apply_migrations(
@@ -1779,3 +1934,5 @@ def apply_migrations(
                ON CONFLICT(component, version) DO NOTHING""",
             (component, migration.version, migration.name, timestamp),
         )
+    if reconcile_legacy:
+        _migrate_legacy_identity_tables(connection, component, dialect)
