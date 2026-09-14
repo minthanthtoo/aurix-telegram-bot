@@ -1,6 +1,8 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app import Database
 from commerce import CommerceDatabase, PostgresCommerceDatabase
@@ -107,6 +109,62 @@ class MigrationRegistryTest(unittest.TestCase):
                     "SELECT COUNT(*) FROM schema_migrations"
                 ).fetchone()[0]
             self.assertEqual(count, 0)
+
+    def test_explicit_legacy_reconciliation_runs_current_schema_once(self):
+        """A prior release's migration names can be reconciled safely on deploy."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "legacy.db"
+            with open_sqlite_connection(path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE users (
+                        telegram_id INTEGER PRIMARY KEY,
+                        first_name TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL
+                    );
+                    CREATE TABLE keys (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        telegram_id INTEGER NOT NULL,
+                        outline_key_id TEXT NOT NULL,
+                        key_type TEXT NOT NULL DEFAULT 'daily_free',
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        data_limit_bytes INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        quota_warning_percent INTEGER
+                    );
+                    CREATE TABLE schema_migrations (
+                        component TEXT NOT NULL,
+                        version INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL,
+                        PRIMARY KEY (component, version)
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO schema_migrations VALUES (?, ?, ?, ?)",
+                    ("free_access", 4, "staff_access_control", "2026-01-01"),
+                )
+                with patch.dict(os.environ, {"AURIX_ALLOW_LEGACY_MIGRATION_RECONCILE": "1"}):
+                    apply_migrations(
+                        connection,
+                        component="free_access",
+                        dialect="sqlite",
+                        migrations=FREE_ACCESS_MIGRATIONS,
+                    )
+                    self.assertIsNotNone(
+                        connection.execute(
+                            "SELECT 1 FROM sqlite_master WHERE name = 'vpn_endpoints'"
+                        ).fetchone()
+                    )
+                    self.assertEqual(
+                        connection.execute(
+                            "SELECT name FROM schema_migrations "
+                            "WHERE component = 'free_access' AND version = 4"
+                        ).fetchone()[0],
+                        "endpoint_identity_and_capacity",
+                    )
 
     def test_existing_initializers_adopt_component_scoped_version_one(self):
         with tempfile.TemporaryDirectory() as tmp:

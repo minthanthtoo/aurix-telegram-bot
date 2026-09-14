@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
+import sqlite3
 from typing import Any, Iterable
 
 
@@ -1525,6 +1527,133 @@ COMMERCE_MIGRATIONS = (
 )
 
 
+# The Singapore host may still carry a database created by the previous
+# modular release.  That release used the same component namespaces but kept
+# extending its registry after this checkout's migration cut.  Keep those
+# historical records available only for the explicitly enabled reconciliation
+# path below; they are not part of the normal fresh-install registry (and thus
+# do not change the normal migration contract or test fixtures).
+_LEGACY_COMPATIBILITY_MIGRATIONS = {
+    "free_access": (
+        Migration(
+            11,
+            "managed_key_repair_jobs",
+            sqlite_statements=(
+                """CREATE TABLE IF NOT EXISTS managed_key_repair_jobs (
+                       id TEXT PRIMARY KEY,
+                       kind TEXT NOT NULL CHECK (kind IN ('free', 'paid')),
+                       server_id TEXT NOT NULL,
+                       telegram_id INTEGER NOT NULL,
+                       local_key_ref TEXT NOT NULL,
+                       source_external_id TEXT NOT NULL,
+                       target_external_id TEXT NOT NULL,
+                       key_name TEXT NOT NULL,
+                       quota_bytes INTEGER NOT NULL CHECK (quota_bytes > 0),
+                       used_bytes INTEGER,
+                       expires_at TEXT NOT NULL,
+                       status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                           status IN ('pending', 'running', 'done', 'failed', 'manual', 'cancelled')
+                       ),
+                       attempts INTEGER NOT NULL DEFAULT 0,
+                       next_attempt_at TEXT NOT NULL,
+                       locked_at TEXT,
+                       last_error TEXT,
+                       observed_at TEXT NOT NULL,
+                       created_at TEXT NOT NULL,
+                       completed_at TEXT,
+                       UNIQUE (server_id, kind, local_key_ref)
+                   )""",
+                """CREATE INDEX IF NOT EXISTS managed_key_repairs_due
+                   ON managed_key_repair_jobs(status, next_attempt_at)""",
+            ),
+            postgres_statements=(
+                """CREATE TABLE IF NOT EXISTS managed_key_repair_jobs (
+                       id TEXT PRIMARY KEY,
+                       kind TEXT NOT NULL CHECK (kind IN ('free', 'paid')),
+                       server_id TEXT NOT NULL,
+                       telegram_id BIGINT NOT NULL,
+                       local_key_ref TEXT NOT NULL,
+                       source_external_id TEXT NOT NULL,
+                       target_external_id TEXT NOT NULL,
+                       key_name TEXT NOT NULL,
+                       quota_bytes BIGINT NOT NULL CHECK (quota_bytes > 0),
+                       used_bytes BIGINT,
+                       expires_at TEXT NOT NULL,
+                       status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                           status IN ('pending', 'running', 'done', 'failed', 'manual', 'cancelled')
+                       ),
+                       attempts INTEGER NOT NULL DEFAULT 0,
+                       next_attempt_at TIMESTAMPTZ NOT NULL,
+                       locked_at TIMESTAMPTZ,
+                       last_error TEXT,
+                       observed_at TIMESTAMPTZ NOT NULL,
+                       created_at TIMESTAMPTZ NOT NULL,
+                       completed_at TIMESTAMPTZ,
+                       UNIQUE (server_id, kind, local_key_ref)
+                   )""",
+                """CREATE INDEX IF NOT EXISTS managed_key_repairs_due
+                   ON managed_key_repair_jobs(status, next_attempt_at)""",
+            ),
+        ),
+        # This historical migration only widened a SQLite CHECK constraint.
+        # The live database already contains the widened definition; keeping a
+        # no-op compatibility record lets the registry validate it without
+        # rebuilding a table during deploy.
+        Migration(12, "staff_key_repair_notifications"),
+    ),
+    "commerce": tuple(
+        Migration(version, name)
+        for version, name in (
+            (20, "managed_key_repair_observations"),
+            (21, "durable_usage_snapshots"),
+            (22, "fleet_probe_control_loop"),
+            (23, "accounts_entitlements_devices_and_leases"),
+            (24, "entitlement_source_identity"),
+            (25, "aggregate_entitlement_usage_ledger"),
+            (26, "service_routes_and_failover_control"),
+        )
+    ),
+}
+
+
+def _legacy_reconciliation_enabled() -> bool:
+    """Return whether a one-time legacy schema reconciliation is allowed.
+
+    The default remains strict so an accidental schema/version mismatch cannot
+    silently mutate a database.  Operators explicitly opt in for a controlled
+    deployment by setting ``AURIX_ALLOW_LEGACY_MIGRATION_RECONCILE=1``.
+    """
+    return os.environ.get("AURIX_ALLOW_LEGACY_MIGRATION_RECONCILE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _execute_compatibility_statement(connection: Any, statement: str, dialect: str) -> None:
+    """Execute a reconciliation statement, ignoring only duplicate SQLite DDL.
+
+    Current migrations are intentionally idempotent on fresh databases, but a
+    legacy SQLite file can already contain a column added by an older registry.
+    Duplicate-column/table/index errors are safe to ignore during this explicit
+    compatibility pass; all other errors remain fatal and trigger rollback.
+    """
+    try:
+        connection.execute(statement)
+    except Exception as exc:
+        if dialect != "sqlite" or not isinstance(exc, sqlite3.OperationalError):
+            raise
+        message = str(exc).lower()
+        ignorable = (
+            "duplicate column name" in message
+            or "already exists" in message
+            or "duplicate index" in message
+        )
+        if not ignorable:
+            raise
+
+
 def apply_migrations(
     connection: Any,
     *,
@@ -1538,6 +1667,7 @@ def apply_migrations(
     Phase 2 adopts the existing schema as version 1 for each component. Future
     schema changes belong in this registry and must use idempotent statements.
     """
+    reconcile_legacy = _legacy_reconciliation_enabled()
     connection.execute(
         """CREATE TABLE IF NOT EXISTS schema_migrations (
                component TEXT NOT NULL,
@@ -1557,26 +1687,51 @@ def apply_migrations(
         )
         for row in rows
     }
-    ordered = sorted(tuple(migrations), key=lambda migration: migration.version)
+    ordered_migrations = list(migrations)
+    if reconcile_legacy:
+        # Include historical tail records only for the explicit compatibility
+        # path.  Fresh installs keep the compact current registry unchanged.
+        ordered_migrations.extend(_LEGACY_COMPATIBILITY_MIGRATIONS.get(component, ()))
+    ordered = sorted(tuple(ordered_migrations), key=lambda migration: migration.version)
     if len({migration.version for migration in ordered}) != len(ordered):
         raise MigrationError(f"Duplicate migration version for {component}")
     if any(migration.version <= 0 for migration in ordered):
         raise MigrationError(f"Migration versions for {component} must be positive")
     known_versions = {migration.version for migration in ordered}
     unknown_versions = sorted(set(recorded) - known_versions)
-    if unknown_versions:
+    if unknown_versions and not reconcile_legacy:
         versions = ", ".join(str(version) for version in unknown_versions)
         raise MigrationError(
             f"Database has unknown {component} migration version(s): {versions}"
+        )
+    if unknown_versions and reconcile_legacy:
+        # Unknown rows are retained as immutable historical evidence.  The
+        # current registry is reconciled below and future startup continues to
+        # validate the known compatibility tail.
+        versions = ", ".join(str(version) for version in unknown_versions)
+        print(
+            f"Migration compatibility mode: preserving unknown {component} "
+            f"version(s): {versions}"
         )
     timestamp = applied_at or datetime.now(UTC).isoformat()
     for migration in ordered:
         existing_name = recorded.get(migration.version)
         if existing_name is not None:
             if existing_name != migration.name:
-                raise MigrationError(
-                    f"Migration {component}:{migration.version} was renamed "
-                    f"from {existing_name!r} to {migration.name!r}"
+                if not reconcile_legacy:
+                    raise MigrationError(
+                        f"Migration {component}:{migration.version} was renamed "
+                        f"from {existing_name!r} to {migration.name!r}"
+                    )
+                # Run the current statements against the legacy schema.  The
+                # compatibility executor tolerates only duplicate SQLite DDL,
+                # then canonicalizes the metadata once the pass succeeds.
+                for statement in migration.statements_for(dialect):
+                    _execute_compatibility_statement(connection, statement, dialect)
+                connection.execute(
+                    "UPDATE schema_migrations SET name = ?, applied_at = ? "
+                    "WHERE component = ? AND version = ?",
+                    (migration.name, timestamp, component, migration.version),
                 )
             continue
         for statement in migration.statements_for(dialect):

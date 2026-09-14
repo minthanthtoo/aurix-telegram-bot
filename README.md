@@ -93,6 +93,9 @@ Optional:
 - matching `PAYMENT_RECIPIENT_*` values — the expected receiving account name/number shown to the customer and compared with parsed receipt data.
 - `ALLOW_TEXT_PAYMENT_REFERENCES` — defaults to `0`; keep disabled for screenshot-only payments. Enable only for legacy staging tests.
 - `AURIX_MAINTENANCE_INTERVAL_SECONDS` — independent housekeeping interval (default `60`).
+- `AURIX_ALLOW_LEGACY_MIGRATION_RECONCILE` — one-time opt-in (`1`) for upgrading
+  a SQLite database written by the previous modular release; return it to `0`
+  after the first successful start.
 - `AURIX_WELCOME_IMAGE` — optional Telegram file_id, HTTPS image URL, or local image path for the single branded `/start` welcome card. If blank, the runtime uses the checked-in generic AuriX bot avatar; a campaign card can be selected without a code change.
 - `AURIX_LATENCY_LOG` — set to `1` temporarily to log bounded Telegram, Outline, Supabase Storage, Postgres, handler, and maintenance timings.
 - `AURIX_BOOTSTRAP_ENDPOINT_CODE`, `AURIX_BOOTSTRAP_ENDPOINT_REGION` — identity of the existing Outline server during endpoint backfill.
