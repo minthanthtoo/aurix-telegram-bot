@@ -1697,6 +1697,10 @@ def _prepare_legacy_table_shapes(connection: Any, component: str, dialect: str) 
         "entitlement_usage_epochs",
         "entitlement_usage_samples",
         "entitlement_quota_ledger",
+        "route_failover_policies",
+        "route_failover_state",
+        "route_observations",
+        "failover_decisions",
     ):
         row = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
@@ -1707,7 +1711,13 @@ def _prepare_legacy_table_shapes(connection: Any, component: str, dialect: str) 
             str(item[1])
             for item in connection.execute(f"PRAGMA table_info({table})").fetchall()
         }
+        # ``route_failover_state`` has no entitlement column, but its foreign
+        # key points at the legacy credential-generations table.  Archive it
+        # alongside the other identity-keyed tables so the new FK points at
+        # the current generation table after the copy.
         if "entitlement_key" in columns:
+            continue
+        if table == "route_failover_state" and "generation_id" not in columns:
             continue
         legacy_name = f"{table}_legacy_v1"
         if connection.execute(
@@ -1841,6 +1851,78 @@ def _migrate_legacy_identity_tables(connection: Any, component: str, dialect: st
          "details_json", "created_at"),
         "SELECT entry_id, entitlement_id, generation_id, endpoint_id, lease_id, epoch_id, event_type, bytes, consumed_bytes, remaining_bytes, idempotency_key, details_json, created_at FROM entitlement_quota_ledger_legacy_v1",
     )
+
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'route_failover_policies_legacy_v1'"
+    ).fetchone():
+        for row in connection.execute(
+            "SELECT entitlement_id, enabled, failure_threshold, recovery_threshold, cooldown_seconds, standby_lease_bytes, max_attempts, created_at, updated_at FROM route_failover_policies_legacy_v1"
+        ).fetchall():
+            info = mapping.get(str(row[0]))
+            if info is None:
+                continue
+            connection.execute(
+                """INSERT OR IGNORE INTO route_failover_policies
+                   (entitlement_key, enabled, failure_threshold, recovery_threshold,
+                    cooldown_seconds, standby_lease_bytes, max_attempts, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (info[0], *row[1:]),
+            )
+
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'route_failover_state_legacy_v1'"
+    ).fetchone():
+        connection.execute(
+            """INSERT OR IGNORE INTO route_failover_state
+               (generation_id, failure_streak, success_streak, last_outcome,
+                last_observed_at, cooldown_until, updated_at)
+               SELECT generation_id, failure_streak, success_streak, last_outcome,
+                      last_observed_at, cooldown_until, updated_at
+                 FROM route_failover_state_legacy_v1"""
+        )
+
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'route_observations_legacy_v1'"
+    ).fetchone():
+        for row in connection.execute(
+            """SELECT observation_id, generation_id, entitlement_id, network_bucket,
+                      outcome, latency_ms, reason, observed_at, created_at
+                 FROM route_observations_legacy_v1"""
+        ).fetchall():
+            info = mapping.get(str(row[2]))
+            if info is None:
+                continue
+            connection.execute(
+                """INSERT OR IGNORE INTO route_observations
+                   (observation_id, generation_id, entitlement_key, endpoint_id,
+                    network_bucket, outcome, latency_ms, reason, observed_at, created_at)
+                   VALUES (?, ?, ?, 'legacy-default', ?, ?, ?, ?, ?, ?)""",
+                (row[0], row[1], info[0], row[3] or "unknown", row[4], row[5], row[6], row[7], row[8]),
+            )
+
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'failover_decisions_legacy_v1'"
+    ).fetchone():
+        for row in connection.execute(
+            """SELECT decision_id, idempotency_key, entitlement_id,
+                      source_generation_id, target_generation_id, trigger,
+                      network_bucket, state, attempts, next_attempt_at, locked_at,
+                      last_error, created_at, updated_at, completed_at
+                 FROM failover_decisions_legacy_v1"""
+        ).fetchall():
+            info = mapping.get(str(row[2]))
+            if info is None:
+                continue
+            connection.execute(
+                """INSERT OR IGNORE INTO failover_decisions
+                   (decision_id, idempotency_key, entitlement_key, source_generation_id,
+                    source_endpoint_id, target_endpoint_id, target_generation_id, trigger,
+                    network_bucket, state, attempts, next_attempt_at, locked_at,
+                    last_error, created_at, updated_at, completed_at)
+                   VALUES (?, ?, ?, ?, 'legacy-default', 'legacy-default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (row[0], row[1], info[0], row[3], row[4], row[5], row[6] or "unknown",
+                 row[7], row[8], row[9], row[10], row[11], row[12], row[13], row[14]),
+            )
 
 
 def apply_migrations(
