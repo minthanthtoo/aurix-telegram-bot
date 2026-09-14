@@ -1905,7 +1905,7 @@ def _migrate_legacy_identity_tables(connection: Any, component: str, dialect: st
     ).fetchone():
         for row in connection.execute(
             """SELECT decision_id, idempotency_key, entitlement_id,
-                      source_generation_id, target_generation_id, trigger,
+                      source_generation_id, target_endpoint_id, trigger,
                       network_bucket, state, attempts, next_attempt_at, locked_at,
                       last_error, created_at, updated_at, completed_at
                  FROM failover_decisions_legacy_v1"""
@@ -1920,7 +1920,7 @@ def _migrate_legacy_identity_tables(connection: Any, component: str, dialect: st
                     network_bucket, state, attempts, next_attempt_at, locked_at,
                     last_error, created_at, updated_at, completed_at)
                    VALUES (?, ?, ?, ?, 'legacy-default', 'legacy-default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (row[0], row[1], info[0], row[3], row[4], row[5], row[6] or "unknown",
+                (row[0], row[1], info[0], row[3], None, row[5], row[6] or "unknown",
                  row[7], row[8], row[9], row[10], row[11], row[12], row[13], row[14]),
             )
 
