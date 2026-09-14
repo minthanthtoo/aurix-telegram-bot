@@ -1654,6 +1654,40 @@ def _execute_compatibility_statement(connection: Any, statement: str, dialect: s
             raise
 
 
+def _prepare_legacy_table_shapes(connection: Any, component: str, dialect: str) -> None:
+    """Isolate legacy tables whose names collide with the current schema.
+
+    The previous release used ``endpoint_assignments`` for connectivity
+    profile bindings (``assignment_id``/``profile_id``).  The current release
+    uses that name for entitlement leases (``id``/``subscription_id`` or
+    ``free_key_id``).  Keeping both under distinct names preserves the old
+    records while allowing the new registry to create the shape its queries
+    require.  This is deliberately limited to the known SQLite collision.
+    """
+    if dialect != "sqlite" or component != "commerce":
+        return
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'endpoint_assignments'"
+    ).fetchone()
+    if row is None:
+        return
+    columns = {
+        str(item[1])
+        for item in connection.execute("PRAGMA table_info(endpoint_assignments)").fetchall()
+    }
+    if "assignment_id" not in columns or "id" in columns:
+        return
+    legacy_name = "endpoint_assignments_legacy"
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (legacy_name,),
+    ).fetchone():
+        # A prior interrupted reconciliation already moved the table.
+        return
+    connection.execute(f"ALTER TABLE endpoint_assignments RENAME TO {legacy_name}")
+    print("Migration compatibility mode: preserved legacy endpoint_assignments as endpoint_assignments_legacy")
+
+
 def apply_migrations(
     connection: Any,
     *,
@@ -1668,6 +1702,8 @@ def apply_migrations(
     schema changes belong in this registry and must use idempotent statements.
     """
     reconcile_legacy = _legacy_reconciliation_enabled()
+    if reconcile_legacy:
+        _prepare_legacy_table_shapes(connection, component, dialect)
     connection.execute(
         """CREATE TABLE IF NOT EXISTS schema_migrations (
                component TEXT NOT NULL,
