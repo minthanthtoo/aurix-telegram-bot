@@ -753,12 +753,28 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(payload["usage"]["prompt_tokens"], 4)
         self.assertEqual(payload["usage"]["completion_tokens"], 5)
         self.assertEqual(payload["usage"]["total_tokens"], 9)
+        self.assertEqual(payload["aurix"]["requested_model"], "gemini-3.7-flash-high")
+        self.assertEqual(payload["aurix"]["provider_model"], "fake-provider-model")
 
         status, report = self.admin_request("/api/admin/usage", token="admin-secret")
         self.assertEqual(status, 200)
         event = report["requests"][0]
         self.assertEqual(event["user_id"], "standard-user-123")
         self.assertIsNone(event["conversation_id"])
+
+    def test_machine_readable_integration_profile_is_authenticated(self):
+        status, _content_type, body = self.raw_get("/api/v1/integration")
+        self.assertEqual(status, 401)
+        self.assertIn("API key", body.decode("utf-8"))
+
+        status, content_type, body = self.raw_get(
+            "/api/v1/integration", token=self.key
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", content_type)
+        profile = json.loads(body)
+        self.assertEqual(profile["object"], "aurix.integration_profile")
+        self.assertEqual(profile["effective_policy"]["requests_per_minute"], 20)
 
     def test_openai_compatible_streaming_forwards_first_event_immediately(self):
         self.application.router = _FeatureRouter()
@@ -1162,6 +1178,9 @@ class ExternalFeatureForwardingTest(unittest.TestCase):
         self.assertEqual(provider_model, "provider-model")
         self.assertEqual(upstream_id, "upstream")
         self.assertFalse(done)
+        payload = json.loads(normalized.split(b"data: ", 1)[1])
+        self.assertEqual(payload["aurix"]["requested_model"], "public-model")
+        self.assertEqual(payload["aurix"]["provider_model"], "provider-model")
 
     def test_model_discovery_includes_image_capability(self):
         payload = self.application.external_models(f"Bearer {self.key}")
@@ -1172,6 +1191,59 @@ class ExternalFeatureForwardingTest(unittest.TestCase):
         video_models = [item for item in payload["data"] if item["capabilities"] == ["video_generation"]]
         self.assertEqual(len(video_models), 1)
         self.assertEqual(video_models[0]["id"], "video/test")
+
+    def test_model_discovery_exposes_hualogu_metadata_and_accepts_route_alias_policy(self):
+        account_id = self.store.list_accounts()[0]["id"]
+        self.store.update_account(
+            account_id,
+            allowed_models=["gemini-3.7-flash-high"],
+        )
+        self.router.list_models = lambda category=None: [
+            {
+                "id": "ag/gemini-3.7-flash-high",
+                "object": "model",
+                "owned_by": "ag",
+            }
+        ]
+
+        catalog = self.application.external_models(f"Bearer {self.key}")
+        self.assertEqual(len(catalog["data"]), 1)
+        model = catalog["data"][0]
+        self.assertEqual(model["id"], "ag/gemini-3.7-flash-high")
+        self.assertEqual(model["display_name"], "Gemini 3.7 Flash High")
+        self.assertEqual(model["aurix"]["canonical_model_id"], "gemini-3.7-flash-high")
+        self.assertEqual(
+            model["aurix"]["language_quality"]["lisu"],
+            "tested-experimental",
+        )
+
+        response = self.application.external_chat_completions(
+            {
+                "model": "ag/gemini-3.7-flash-high",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            f"Bearer {self.key}",
+        )
+        self.assertEqual(response["model"], "gemini-3.7-flash-high")
+
+    def test_model_discovery_cache_is_bounded_and_profile_is_key_scoped(self):
+        calls = []
+        original = self.router.list_models
+
+        def counted(category=None):
+            calls.append(category)
+            return original(category)
+
+        self.router.list_models = counted
+        self.application.image_models_payload()
+        self.application.image_models_payload()
+        self.assertEqual(calls, ["image"])
+
+        profile = self.application.external_integration_profile(f"Bearer {self.key}")
+        self.assertEqual(profile["schema"], "aurix.external.v1")
+        self.assertEqual(profile["model_discovery"]["cache_ttl_seconds"], 60)
+        self.assertEqual(profile["endpoints"]["chat_completions"]["terminal"], "data: [DONE]")
+        self.assertNotIn("token", json.dumps(profile).lower())
 
     def test_model_discovery_hides_image_models_without_image_scope(self):
         account_id = self.store.list_accounts()[0]["id"]

@@ -21,31 +21,41 @@ class AIRouterError(RuntimeError):
     """The configured upstream model router could not complete a request."""
 
 
-MODEL_CATALOG: dict[str, dict[str, str]] = {
+MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "gemini-3.7-flash-high": {
         "route": "ag/gemini-3.7-flash-high",
         "label": "Gemini 3.7 Flash High",
         "description": "Current AuriX baseline; strongest tested Lisu-script behavior.",
+        "lisu_quality": "tested-experimental",
+        "lisu_guidance": "Preferred comparison baseline; native-speaker review is still required.",
     },
     "gemini-pro-agent": {
         "route": "ag/gemini-pro-agent",
         "label": "Gemini Pro Agent",
         "description": "Gemini comparison route; Lisu quality is experimental.",
+        "lisu_quality": "experimental",
+        "lisu_guidance": "Use for comparison only until representative Lisu evaluation is complete.",
     },
     "claude-sonnet-4-6": {
         "route": "ag/claude-sonnet-4-6",
         "label": "Claude Sonnet 4.6",
         "description": "Anthropic comparison route through 9Router.",
+        "lisu_quality": "unverified",
+        "lisu_guidance": "No AuriX Lisu-quality certification; review output before publication.",
     },
     "gpt-5.6-terra": {
         "route": "gpt-5.6-terra",
         "label": "GPT-5.6 Terra",
         "description": "OpenAI-family comparison route through 9Router.",
+        "lisu_quality": "unverified",
+        "lisu_guidance": "No AuriX Lisu-quality certification; review output before publication.",
     },
     "gemini-3.1-pro-low-legacy": {
         "route": "ag/gemini-3.1-pro-low",
         "label": "Gemini 3.1 Pro Low (legacy)",
         "description": "Previous baseline retained for comparison; generally not recommended.",
+        "lisu_quality": "legacy-unverified",
+        "lisu_guidance": "Legacy route; do not use for production Lisu content without review.",
     },
 }
 
@@ -62,6 +72,67 @@ def model_id_for_route(route: str) -> str | None:
         if item["route"] == route:
             return model_id
     return None
+
+
+def model_profile(
+    model_id: str,
+    *,
+    capabilities: Iterable[str],
+    owned_by: str = "9router",
+) -> dict[str, Any]:
+    """Build safe model metadata for external integrations.
+
+    The provider catalog is authoritative for availability, while this local
+    catalog only supplies AuriX's display and language-review guidance. Unknown
+    models are intentionally marked unverified rather than receiving an
+    optimistic quality claim.
+    """
+
+    canonical_id = model_id_for_route(model_id) or model_id
+    catalog_item = MODEL_CATALOG.get(canonical_id)
+    capabilities_list = sorted({str(value) for value in capabilities if str(value)})
+    label = (
+        str(catalog_item["label"])
+        if catalog_item and catalog_item.get("label")
+        else model_id.replace("/", " / ").replace("-", " ").title()
+    )
+    description = (
+        str(catalog_item["description"])
+        if catalog_item and catalog_item.get("description")
+        else "Discovered from the configured 9Router catalog; feature support is provider-dependent."
+    )
+    lisu_quality = (
+        str(catalog_item.get("lisu_quality", "unverified"))
+        if catalog_item
+        else "unverified"
+    )
+    lisu_guidance = (
+        str(catalog_item.get("lisu_guidance"))
+        if catalog_item and catalog_item.get("lisu_guidance")
+        else "No AuriX Lisu-quality certification; review output before publication."
+    )
+    return {
+        "id": model_id,
+        "object": "model",
+        "owned_by": owned_by or "9router",
+        "display_name": label,
+        "description": description,
+        "capabilities": capabilities_list,
+        "aurix": {
+            "canonical_model_id": canonical_id,
+            "provider_model_id": model_id,
+            "catalog_verified": catalog_item is not None,
+            "language_quality": {
+                "lisu": lisu_quality,
+                "guidance": lisu_guidance,
+            },
+            "feature_notes": {
+                "tools": "Gateway accepts OpenAI function-tool shapes; the selected provider model must support them.",
+                "image_input": "Gateway accepts image message parts; the selected provider model must support vision.",
+                "streaming": "Chat streaming uses text/event-stream and terminates with data: [DONE].",
+            },
+        },
+    }
 
 
 def resolve_model_id(value: Any, *, default_route: str) -> tuple[str, str]:

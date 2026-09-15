@@ -89,6 +89,7 @@ Use the endpoint that matches the product:
 | OpenAI Responses-style SDK/client | `POST /v1/responses` | Yes |
 | Built-in English assistant, English ↔ Lisu translator, or Lisu assistant | `POST /v1/chat` | Yes |
 | Model and capability discovery | `GET /v1/models` | N/A |
+| Machine-readable integration contract | `GET /api/v1/integration` | N/A |
 | Authenticated key policy discovery | `GET /api/v1/key-info` | N/A |
 | Image generation | `POST /v1/images/generations` | No |
 | Text embeddings | `POST /v1/embeddings` | N/A |
@@ -120,7 +121,18 @@ The response is an OpenAI-style model list:
       "id": "gemini-3.7-flash-high",
       "object": "model",
       "owned_by": "aurix",
-      "capabilities": ["chat", "responses", "streaming"]
+      "display_name": "Gemini 3.7 Flash High",
+      "description": "Current AuriX baseline; strongest tested Lisu-script behavior.",
+      "capabilities": ["chat", "responses", "streaming"],
+      "aurix": {
+        "canonical_model_id": "gemini-3.7-flash-high",
+        "provider_model_id": "ag/gemini-3.7-flash-high",
+        "catalog_verified": true,
+        "language_quality": {
+          "lisu": "tested-experimental",
+          "guidance": "Preferred comparison baseline; native-speaker review is still required."
+        }
+      }
     },
     {
       "id": "embedding-model-id",
@@ -148,11 +160,34 @@ Capability meanings:
 - `audio_output`: speech synthesis.
 - `image_generation`: image output through `/v1/images/generations`.
 
+The `aurix.language_quality` object is routing guidance, not a certification.
+`tested-experimental` means this route performed best in the AuriX comparison
+used to select the current baseline; it does not replace native-speaker review.
+Unknown provider models are returned as `unverified`. Use the provider-facing
+`id` when making a request; AuriX also accepts the stable canonical ID when it
+is present in the catalog.
+
 Tools and image understanding are accepted by the chat gateway, but are not
 always declared separately in the model catalog. The selected chat model must
 support the requested feature.
 
-### 4.1 Inspect the key without exposing its secret
+### 4.1 Machine-readable integration profile
+
+An integration backend can retrieve the effective, key-scoped protocol and
+limits without parsing this document:
+
+```http
+GET https://ai.aurix-mart.tech/api/v1/integration
+Authorization: Bearer ak_live_...
+```
+
+The profile describes the model-catalog cache TTL, OpenAI-compatible endpoints,
+SSE terminal events, request limits, attribution fields, and the attachment
+boundary. It contains no prompt, provider credential, or raw API key. Cache the
+profile for the returned TTL, and still treat the live model catalog as the
+authority for availability.
+
+### 4.2 Inspect the key without exposing its secret
 
 The backend can verify which non-secret policy is active for its configured
 key:

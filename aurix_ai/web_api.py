@@ -33,6 +33,7 @@ from .router import (
     MAX_MESSAGE_CHARS,
     MAX_CONTEXT_SUMMARY_CHARS,
     model_id_for_route,
+    model_profile,
     normalize_mode,
     normalize_translation_direction,
     _optional_context_text,
@@ -326,6 +327,7 @@ class AuriXAIApplication:
         operator_allowed_modes: set[str] | None = None,
         operator_allowed_models: set[str] | None = None,
         operator_max_requests_per_minute: int = 600,
+        model_catalog_ttl_seconds: int = 60,
     ) -> None:
         if not allow_anonymous and not access_token and not telegram_bot_token:
             raise AIConfigurationError("Telegram authentication or AURIX_AI_ACCESS_TOKEN is required")
@@ -350,6 +352,13 @@ class AuriXAIApplication:
         self.operator_max_requests_per_minute = _admin_requests_per_minute(
             operator_max_requests_per_minute
         )
+        if not isinstance(model_catalog_ttl_seconds, int) or not 0 <= model_catalog_ttl_seconds <= 3_600:
+            raise AIConfigurationError(
+                "model_catalog_ttl_seconds must be an integer between 0 and 3600"
+            )
+        self.model_catalog_ttl_seconds = model_catalog_ttl_seconds
+        self._model_catalog_cache_lock = threading.Lock()
+        self._model_catalog_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         # Direct construction stays compatible with the old test/client API;
         # environment-based production startup passes an explicit false.
         self.legacy_token_enabled = bool(access_token) if legacy_token_enabled is None else legacy_token_enabled
@@ -479,20 +488,41 @@ class AuriXAIApplication:
         """Return the image-generation catalog exposed by the configured 9Router."""
 
         try:
-            models = self.router.list_models("image")
+            models = self._discovered_models("image")
         except AIRouterError:
             return {"models": [], "available": False}
-        return {
-            "models": [
-                {
-                    **model,
-                    "label": model["id"],
-                    "capabilities": ["image_generation"],
-                }
-                for model in models
-            ],
-            "available": bool(models),
-        }
+        profiles = []
+        for model in models:
+            profile = model_profile(
+                model["id"],
+                capabilities=("image_generation",),
+                owned_by=str(model.get("owned_by") or "9router"),
+            )
+            profiles.append({**profile, "label": profile["display_name"]})
+        return {"models": profiles, "available": bool(profiles)}
+
+    def _discovered_models(self, category: str | None = None) -> list[dict[str, Any]]:
+        """Return a short-lived raw catalog cache without caching key policy."""
+
+        cache_key = category or "*"
+        now = time.monotonic()
+        with self._model_catalog_cache_lock:
+            cached = self._model_catalog_cache.get(cache_key)
+            if (
+                cached is not None
+                and self.model_catalog_ttl_seconds > 0
+                and now - cached[0] < self.model_catalog_ttl_seconds
+            ):
+                return [dict(item) for item in cached[1]]
+        models = self.router.list_models(category)
+        safe_models = [
+            dict(item)
+            for item in models
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        ]
+        with self._model_catalog_cache_lock:
+            self._model_catalog_cache[cache_key] = (now, safe_models)
+        return [dict(item) for item in safe_models]
 
     def chat(self, body: dict[str, Any]) -> dict[str, Any]:
         mode = body.get("mode", "english")
@@ -1102,7 +1132,7 @@ class AuriXAIApplication:
         )
         if not principal.allows_mode(mode):
             raise ExternalAPIAccessDeniedError("API key is not enabled for this mode")
-        if not principal.allows_model(model_id):
+        if not _principal_allows_model(principal, model_id):
             raise ExternalAPIAccessDeniedError("API key is not enabled for this model")
         user_id, conversation_id = _request_context(body)
         if not self.rate_limiter.allow(
@@ -1918,7 +1948,7 @@ class AuriXAIApplication:
 
     def external_models(self, authorization: str | None) -> dict[str, Any]:
         principal = self._authenticate_external_request(authorization, count_request=False)
-        output: list[dict[str, Any]] = []
+        output_by_id: dict[str, dict[str, Any]] = {}
         categories = (
             (None, {"chat", "responses", "streaming"}),
             ("embedding", {"embeddings"}),
@@ -1943,15 +1973,91 @@ class AuriXAIApplication:
             if category_mode and not principal.allows_mode(category_mode):
                 continue
             try:
-                models = self.router.list_models(category)
+                models = self._discovered_models(category)
             except AIRouterError:
                 continue
             for item in models:
                 model_id = item["id"]
-                if not principal.allows_model(model_id):
+                if not _principal_allows_model(principal, model_id):
                     continue
-                output.append({**item, "capabilities": sorted(capabilities)})
-        return {"object": "list", "data": output}
+                profile = model_profile(
+                    model_id,
+                    capabilities=capabilities,
+                    owned_by=str(item.get("owned_by") or "9router"),
+                )
+                existing = output_by_id.get(model_id)
+                if existing is None:
+                    output_by_id[model_id] = profile
+                else:
+                    existing["capabilities"] = sorted(
+                        set(existing.get("capabilities", []))
+                        | set(profile.get("capabilities", []))
+                    )
+        return {"object": "list", "data": list(output_by_id.values())}
+
+    def external_integration_profile(self, authorization: str | None) -> dict[str, Any]:
+        """Return a safe machine-readable contract for a consuming backend."""
+
+        principal = self._authenticate_external_request(authorization, count_request=False)
+        return {
+            "object": "aurix.integration_profile",
+            "schema": "aurix.external.v1",
+            "authentication": {
+                "type": "http_bearer",
+                "header": "Authorization",
+                "key_info_path": "/api/v1/key-info",
+            },
+            "model_discovery": {
+                "path": "/v1/models",
+                "cache_ttl_seconds": self.model_catalog_ttl_seconds,
+                "policy_filtered": True,
+            },
+            "effective_policy": {
+                "allowed_modes": sorted(str(mode) for mode in principal.allowed_modes),
+                "allowed_models": sorted(str(model) for model in principal.allowed_models),
+                "requests_per_minute": principal.requests_per_minute,
+            },
+            "endpoints": {
+                "chat_completions": {
+                    "path": "/v1/chat/completions",
+                    "stream": True,
+                    "content_type": "text/event-stream",
+                    "terminal": "data: [DONE]",
+                },
+                "responses": {
+                    "path": "/v1/responses",
+                    "stream": True,
+                    "content_type": "text/event-stream",
+                    "terminal_event": "response.completed",
+                },
+                "built_in_chat": {"path": "/v1/chat", "stream": False},
+                "embeddings": {"path": "/v1/embeddings", "stream": False},
+                "image_generation": {"path": "/v1/images/generations", "stream": False},
+                "audio": {
+                    "paths": [
+                        "/v1/audio/transcriptions",
+                        "/v1/audio/translations",
+                        "/v1/audio/speech",
+                    ],
+                    "stream": True,
+                },
+            },
+            "limits": {
+                "max_json_bytes": MAX_JSON_BYTES,
+                "max_messages": MAX_STANDARD_MESSAGES,
+                "max_tools": MAX_STANDARD_TOOLS,
+                "max_tool_bytes": MAX_STANDARD_TOOL_BYTES,
+                "max_audio_request_bytes": MAX_AUDIO_REQUEST_BYTES,
+            },
+            "attribution": {
+                "fields": ["user", "user_id", "conversation_id", "metadata.user_id"],
+                "authentication_note": "Attribution fields do not authenticate users.",
+            },
+            "attachments": {
+                "chat_image_parts": "gateway-accepted; provider-model support must be verified",
+                "pdf_docx": "consumer must extract or transform content before sending",
+            },
+        }
 
     def external_key_info(self, authorization: str | None) -> dict[str, Any]:
         """Expose the authenticated key's effective, non-secret policy."""
@@ -2495,6 +2601,26 @@ def _bearer_token(authorization: str | None) -> str | None:
         return None
     token = authorization[7:].strip()
     return token or None
+
+
+def _model_scope_candidates(model_id: str) -> tuple[str, ...]:
+    """Accept both the stable AuriX model ID and its raw provider route."""
+
+    candidates = [str(model_id)]
+    canonical_id = model_id_for_route(str(model_id))
+    if canonical_id:
+        candidates.append(canonical_id)
+    catalog_item = MODEL_CATALOG.get(str(model_id))
+    if catalog_item and catalog_item.get("route"):
+        candidates.append(str(catalog_item["route"]))
+    return tuple(dict.fromkeys(candidates))
+
+
+def _principal_allows_model(principal: Any, model_id: str) -> bool:
+    return any(
+        principal.allows_model(candidate)
+        for candidate in _model_scope_candidates(model_id)
+    )
 
 
 def _admin_requests_per_minute(value: Any) -> int:
@@ -3284,6 +3410,15 @@ def _standard_completion_payload(
         choices = normalized_choices
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else None
         response_model = model_id or result.get("model")
+    provider_model = (
+        result.get("model")
+        or result.get("returned_model")
+        if isinstance(result, dict)
+        else None
+    )
+    requested_model = model_id or (
+        result.get("model_id") if isinstance(result, dict) else None
+    ) or provider_model
     return {
         "id": f"chatcmpl_{completion_id}",
         "object": "chat.completion",
@@ -3291,6 +3426,11 @@ def _standard_completion_payload(
         "model": response_model,
         "choices": choices,
         "usage": usage,
+        "aurix": {
+            "request_id": request_id,
+            "requested_model": requested_model,
+            "provider_model": provider_model,
+        },
     }
 
 
@@ -3417,6 +3557,7 @@ def _standard_response_payload(
         "temperature": request.get("temperature"),
         "top_p": request.get("top_p"),
         "usage": _response_usage(completion.get("usage")),
+        "aurix": completion.get("aurix"),
     }
     # output_text is a convenience field provided by OpenAI SDKs; keeping it
     # in the wire response is useful for lightweight HTTP clients too.
@@ -3477,6 +3618,7 @@ def _normalize_sse_event(
     *,
     public_id: str,
     model_id: str,
+    request_id: str | None = None,
 ) -> tuple[bytes, dict[str, Any] | None, str | None, str | None, bool]:
     lines = event.replace(b"\r\n", b"\n").split(b"\n")
     data_lines = [line[5:].lstrip() for line in lines if line.startswith(b"data:")]
@@ -3497,6 +3639,11 @@ def _normalize_sse_event(
     payload["id"] = public_id
     payload["object"] = "chat.completion.chunk"
     payload["model"] = model_id
+    payload["aurix"] = {
+        "request_id": request_id,
+        "requested_model": model_id,
+        "provider_model": provider_model,
+    }
     done = any(
         isinstance(choice, dict) and choice.get("finish_reason") is not None
         for choice in payload.get("choices", [])
@@ -3945,6 +4092,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     event,
                     public_id=stream.public_completion_id,
                     model_id=stream.model_id,
+                    request_id=stream.request_id,
                 )
                 if event_usage is not None:
                     usage = event_usage
@@ -4678,6 +4826,16 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     request_id=self._request_id,
                 )
                 return
+            if path == "/api/v1/integration" and method == "GET":
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                self._write(
+                    200,
+                    application.external_integration_profile(
+                        self.headers.get("Authorization")
+                    ),
+                    request_id=self._request_id,
+                )
+                return
             if path == "/api/v1/key-info" and method == "GET":
                 self._request_id = f"req_{secrets.token_urlsafe(12)}"
                 self._write(
@@ -5068,6 +5226,18 @@ def build_application_from_environment() -> AuriXAIApplication:
         raise AIConfigurationError(
             "AURIX_AI_PARTNER_MAX_REQUESTS_PER_MINUTE must be an integer between 1 and 600"
         ) from exc
+    try:
+        model_catalog_ttl_seconds = int(
+            os.environ.get("AURIX_AI_MODEL_CATALOG_TTL_SECONDS", "60")
+        )
+    except (TypeError, ValueError) as exc:
+        raise AIConfigurationError(
+            "AURIX_AI_MODEL_CATALOG_TTL_SECONDS must be an integer between 0 and 3600"
+        ) from exc
+    if not 0 <= model_catalog_ttl_seconds <= 3_600:
+        raise AIConfigurationError(
+            "AURIX_AI_MODEL_CATALOG_TTL_SECONDS must be an integer between 0 and 3600"
+        )
     allow_anonymous = os.environ.get("AURIX_AI_ALLOW_ANONYMOUS", "0").strip().lower() in {
         "1",
         "true",
@@ -5130,6 +5300,7 @@ def build_application_from_environment() -> AuriXAIApplication:
         operator_allowed_modes=set(operator_allowed_modes),
         operator_allowed_models=set(operator_allowed_models),
         operator_max_requests_per_minute=operator_max_requests_per_minute,
+        model_catalog_ttl_seconds=model_catalog_ttl_seconds,
     )
 
 
