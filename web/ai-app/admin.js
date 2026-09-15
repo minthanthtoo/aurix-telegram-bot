@@ -4,6 +4,7 @@ const adminAuthCopy = document.querySelector("#admin-auth-copy");
 const adminAuthError = document.querySelector("#admin-auth-error");
 const telegramLogin = document.querySelector("#admin-telegram-login");
 const adminUser = document.querySelector("#admin-user");
+const adminRole = document.querySelector("#admin-role");
 const logoutButton = document.querySelector("#admin-logout");
 const accountsList = document.querySelector("#accounts-list");
 const accountFilter = document.querySelector("#account-filter");
@@ -28,9 +29,15 @@ const breakdownTableBody = document.querySelector("#breakdown-table-body");
 const usageChart = document.querySelector("#usage-chart");
 const chartTokensButton = document.querySelector("#chart-tokens");
 const chartRequestsButton = document.querySelector("#chart-requests");
+const capabilitySummary = document.querySelector("#capability-summary");
+const capabilityList = document.querySelector("#capability-list");
+const capabilityAccount = document.querySelector("#capability-account");
+const refreshCapabilitiesButton = document.querySelector("#refresh-capabilities");
 const flash = document.querySelector("#admin-flash");
 const accountDialog = document.querySelector("#account-dialog");
 const accountForm = document.querySelector("#account-form");
+const policyDialog = document.querySelector("#policy-dialog");
+const policyForm = document.querySelector("#policy-form");
 const issueDialog = document.querySelector("#issue-dialog");
 const issueForm = document.querySelector("#issue-form");
 const secretDialog = document.querySelector("#secret-dialog");
@@ -123,6 +130,19 @@ function showAdmin(user) {
   adminUser.textContent = user.username ? `@${user.username}` : user.first_name || "Telegram admin";
   setHidden(adminUser, false);
   setHidden(logoutButton, false);
+  requestJSON("/api/admin/access").then((access) => {
+    const roleLabels = {
+      platform_owner: "Platform owner · all accounts",
+      operator: "Operator · all accounts",
+      operator_token: "Operator token · all accounts",
+      account_owner: "Account owner · your accounts",
+    };
+    adminRole.textContent = roleLabels[access.role] || "Scoped console";
+    setHidden(adminRole, false);
+  }).catch(() => {
+    adminRole.textContent = "Scoped console";
+    setHidden(adminRole, false);
+  });
 }
 
 async function finishTelegramLogin(user) {
@@ -157,6 +177,14 @@ function exactNumber(value) {
 
 function formatPercent(value) {
   return value == null ? "—" : `${Number(value).toFixed(Number(value) % 1 ? 1 : 0)}%`;
+}
+
+function formatMilliseconds(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  const milliseconds = Number(value);
+  return milliseconds >= 1000
+    ? `${(milliseconds / 1000).toFixed(2)} s`
+    : `${Math.round(milliseconds)} ms`;
 }
 
 function formatCost(value) {
@@ -289,6 +317,8 @@ function renderAnalyticsMetrics(report) {
   document.querySelector("#analytics-cached").textContent = compactNumber(summary.cached_tokens);
   document.querySelector("#analytics-cost").textContent = formatCost(summary.cost);
   document.querySelector("#analytics-last-used").textContent = formatDate(summary.last_used_at);
+  document.querySelector("#analytics-first-event").textContent = formatMilliseconds(summary.avg_first_event_ms);
+  document.querySelector("#analytics-duration").textContent = formatMilliseconds(summary.avg_duration_ms);
   renderUsageChart(report.daily);
 }
 
@@ -353,6 +383,91 @@ async function loadAnalytics() {
   return report;
 }
 
+const capabilityLabels = {
+  chat: "Chat and streaming",
+  embeddings: "Embeddings",
+  speech_to_text: "Speech to text",
+  text_to_speech: "Text to speech",
+  image_generation: "Image generation",
+  video_generation: "Video generation",
+};
+
+function renderCapabilities(report) {
+  capabilitySummary.replaceChildren();
+  capabilityList.replaceChildren();
+  capabilityAccount.replaceChildren();
+  if (!report || report.error) {
+    capabilitySummary.appendChild(element("p", "capability-error", report?.error || "Capability discovery is unavailable."));
+    return;
+  }
+  const summary = report.summary || {};
+  const summaryItems = [
+    `${exactNumber(summary.categories_ok)} / ${exactNumber(summary.categories_total)} categories available`,
+    `${exactNumber(summary.models_discovered)} models discovered`,
+    summary.account_quota_observed ? "Account quota observed" : "Account quota unavailable",
+  ];
+  summaryItems.forEach((text) => capabilitySummary.appendChild(element("span", "capability-summary-item", text)));
+
+  Object.entries(report.categories || {}).forEach(([key, category]) => {
+    const card = element("article", "capability-card");
+    const header = element("div", "capability-card-header");
+    const title = element("h4", "capability-title", capabilityLabels[key] || key);
+    const status = category.status === "ok" ? "available" : "discovery error";
+    header.append(title, element("span", `status-pill ${category.status === "ok" ? "status-active" : "status-revoked"}`, status));
+    card.appendChild(header);
+    const models = Array.isArray(category.models) ? category.models : [];
+    const modelCount = element("p", "capability-model-count", `${models.length} model${models.length === 1 ? "" : "s"}`);
+    card.appendChild(modelCount);
+    if (models.length) {
+      const modelList = element("div", "capability-models");
+      models.forEach((model) => modelList.appendChild(element("code", "capability-model", model.id)));
+      card.appendChild(modelList);
+    } else if (category.error?.message) {
+      card.appendChild(element("p", "capability-error-detail", category.error.message));
+    } else {
+      card.appendChild(element("p", "capability-empty", "No models reported."));
+    }
+    capabilityList.appendChild(card);
+  });
+
+  const accountHeading = element("h4", "capability-account-title", "Account and quota discovery");
+  capabilityAccount.appendChild(accountHeading);
+  const accountItems = Object.entries(report.account || {});
+  if (!accountItems.length) {
+    capabilityAccount.appendChild(element("p", "capability-empty", "No account metadata reported."));
+    return;
+  }
+  const accountGrid = element("div", "capability-account-grid");
+  accountItems.forEach(([key, value]) => {
+    const row = element("div", "capability-account-row");
+    const label = key.replaceAll("_", " ");
+    const ok = value?.status === "ok";
+    let detail = ok ? "Observed" : (value?.error?.message || value?.status || "Unavailable");
+    if (ok && value?.data && Array.isArray(value.data.providers)) {
+      detail = `${value.data.providers.length} provider${value.data.providers.length === 1 ? "" : "s"} reported`;
+    }
+    row.append(
+      element("span", "capability-account-label", label),
+      element("span", `status-pill ${ok ? "status-active" : "status-revoked"}`, ok ? "observed" : "unavailable"),
+      element("span", "capability-account-detail", detail),
+    );
+    accountGrid.appendChild(row);
+  });
+  capabilityAccount.appendChild(accountGrid);
+}
+
+async function loadCapabilities() {
+  try {
+    const report = await requestJSON("/api/admin/capabilities");
+    renderCapabilities(report);
+    return report;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Capability discovery is unavailable.";
+    renderCapabilities({ error: message });
+    return null;
+  }
+}
+
 function renderActivity(events) {
   activityList.replaceChildren();
   if (!Array.isArray(events) || !events.length) {
@@ -368,7 +483,8 @@ function renderActivity(events) {
     );
     const detail = element("div", "activity-detail");
     const tokenText = event.total_tokens == null ? "Usage unavailable" : `${compactNumber(event.total_tokens)} tokens`;
-    detail.textContent = `${event.model_id || "model unavailable"} · ${event.endpoint || "endpoint unavailable"} · ${tokenText}`;
+    const timingText = event.duration_ms == null ? "timing unavailable" : `${formatMilliseconds(event.duration_ms)} total`;
+    detail.textContent = `${event.model_id || "model unavailable"} · ${event.endpoint || "endpoint unavailable"} · ${tokenText} · ${timingText}`;
     const meta = element("div", "activity-meta");
     meta.append(
       element("span", `status-pill ${event.status === "completed" ? "status-active" : "status-revoked"}`, event.status || "unknown"),
@@ -424,6 +540,8 @@ function renderAccount(account) {
   metadata.append(
     element("span", "account-meta", `Owner: ${ownerLabel(account)}`),
     element("span", "account-meta", `${account.requests_per_minute} requests/minute`),
+    element("span", "account-meta", `Modes: ${(account.allowed_modes || ["*"]).join(", ")}`),
+    element("span", "account-meta", `Models: ${(account.allowed_models || ["*"]).join(", ")}`),
     element("span", "account-meta", `${compactNumber(account.requests || 0)} requests this period`),
     element("span", "account-meta", `${compactNumber(account.total_tokens || 0)} tokens`),
   );
@@ -443,6 +561,12 @@ function renderAccount(account) {
     }
   });
   keysHeading.appendChild(activity);
+  if (account.status === "active") {
+    const policy = element("button", "button-quiet", "Edit policy");
+    policy.type = "button";
+    policy.addEventListener("click", () => openPolicyDialog(account));
+    keysHeading.appendChild(policy);
+  }
   if (account.status === "active") {
     const issue = element("button", "button-quiet", "Issue new key");
     issue.type = "button";
@@ -561,7 +685,7 @@ async function loadAdmin() {
       if (config.telegram_login_enabled && config.bot_username) renderLoginWidget(config.bot_username);
       throw new Error("Telegram sign-in is required.");
     }
-    await Promise.all([loadAccounts(), loadActivity(), loadAnalytics()]);
+    await Promise.all([loadAccounts(), loadActivity(), loadAnalytics(), loadCapabilities()]);
     showAdmin(session.user);
   } catch (error) {
     if (error && error.status === 401 && error.message.toLowerCase().includes("admin")) {
@@ -583,6 +707,17 @@ async function refreshAdmin() {
   if (adminCheckInFlight) return adminCheckInFlight;
   adminCheckInFlight = loadAdmin().finally(() => { adminCheckInFlight = null; });
   return adminCheckInFlight;
+}
+
+function openPolicyDialog(account) {
+  document.querySelector("#policy-account-id").value = account.id;
+  document.querySelector("#policy-account-copy").textContent = `${account.name} · changes apply to new requests immediately.`;
+  document.querySelector("#policy-name").value = account.name || "";
+  document.querySelector("#policy-rpm").value = account.requests_per_minute || 60;
+  document.querySelector("#policy-modes").value = (account.allowed_modes || ["*"]).join(", ");
+  document.querySelector("#policy-models").value = (account.allowed_models || ["*"]).join(", ");
+  document.querySelector("#policy-form-error").hidden = true;
+  policyDialog.showModal();
 }
 
 function openIssueDialog(account) {
@@ -646,6 +781,15 @@ refreshAnalyticsButton.addEventListener("click", async () => {
     showFlash("Analytics refreshed.");
   } catch (error) {
     showFlash(error instanceof Error ? error.message : "Analytics refresh failed.", "error");
+  }
+});
+refreshCapabilitiesButton.addEventListener("click", async () => {
+  refreshCapabilitiesButton.disabled = true;
+  try {
+    await loadCapabilities();
+    showFlash("Router capabilities refreshed.");
+  } finally {
+    refreshCapabilitiesButton.disabled = false;
   }
 });
 breakdownDimension.addEventListener("change", () => {
@@ -713,6 +857,8 @@ accountForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         name: document.querySelector("#account-name").value.trim(),
         requests_per_minute: Number(document.querySelector("#account-rpm").value),
+        allowed_modes: document.querySelector("#account-modes").value,
+        allowed_models: document.querySelector("#account-models").value,
         key_label: document.querySelector("#account-key-label").value.trim(),
         expires_in_days: expiryValue === "null" ? null : Number(expiryValue),
       }),
@@ -723,6 +869,34 @@ accountForm.addEventListener("submit", async (event) => {
     await loadAccounts().catch(() => showFlash("Key created. Inventory refresh failed; refresh after saving the key.", "error"));
   } catch (error) {
     errorNode.textContent = error instanceof Error ? error.message : "Account creation failed.";
+    errorNode.hidden = false;
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+policyForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const errorNode = document.querySelector("#policy-form-error");
+  errorNode.hidden = true;
+  const submit = document.querySelector("#policy-submit");
+  submit.disabled = true;
+  try {
+    const accountId = document.querySelector("#policy-account-id").value;
+    await requestJSON(`/api/admin/accounts/${encodeURIComponent(accountId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: document.querySelector("#policy-name").value.trim(),
+        requests_per_minute: Number(document.querySelector("#policy-rpm").value),
+        allowed_modes: document.querySelector("#policy-modes").value,
+        allowed_models: document.querySelector("#policy-models").value,
+      }),
+    });
+    policyDialog.close();
+    showFlash("Account policy updated.");
+    await loadAccounts();
+  } catch (error) {
+    errorNode.textContent = error instanceof Error ? error.message : "Policy update failed.";
     errorNode.hidden = false;
   } finally {
     submit.disabled = false;

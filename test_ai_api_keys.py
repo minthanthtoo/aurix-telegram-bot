@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -66,10 +67,83 @@ class _FakeRouter:
         return [{"id": "gemini-3.7-flash-high", "object": "model", "owned_by": "test"}]
 
 
+class _SSEResponse:
+    def __init__(self):
+        self.closed = False
+        self.finished = False
+        self._lines = iter(
+            [
+                b'data: {"id":"upstream-stream","model":"provider-model","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}\n',
+                b"\n",
+                b'data: {"id":"upstream-stream","model":"provider-model","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}\n',
+                b"\n",
+                b'data: {"id":"upstream-stream","model":"provider-model","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}\n',
+                b"\n",
+                b"data: [DONE]\n",
+                b"\n",
+            ]
+        )
+        self._index = 0
+
+    def readline(self):
+        if self._index == 2:
+            # Leave the first event observable before the provider finishes.
+            time.sleep(0.25)
+        try:
+            line = next(self._lines)
+        except StopIteration:
+            self.finished = True
+            return b""
+        self._index += 1
+        return line
+
+    def close(self):
+        self.closed = True
+
+
+class _RawResponse:
+    def __init__(self, chunks=(b"RI", b"FF-audio"), content_type="audio/wav"):
+        self.headers = {"Content-Type": content_type}
+        self._chunks = iter(chunks)
+        self.closed = False
+
+    def read(self, _size=-1):
+        try:
+            return next(self._chunks)
+        except StopIteration:
+            return b""
+
+    def close(self):
+        self.closed = True
+
+
 class _FeatureRouter:
     model = "ag/gemini-3.7-flash-high"
 
+    def __init__(self):
+        self.response_content = None
+        self.last_chat = None
+
+    def openai_chat_stream(self, payload, **kwargs):
+        self.last_stream = (payload, kwargs)
+        self.stream_response = _SSEResponse()
+        return self.stream_response
+
     def openai_chat(self, payload, **kwargs):
+        self.last_chat = (payload, kwargs)
+        if self.response_content is not None:
+            return {
+                "id": "upstream-chat-text-1",
+                "model": payload["model"],
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": self.response_content},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
+            }
         return {
             "id": "upstream-chat-1",
             "model": payload["model"],
@@ -140,6 +214,11 @@ class _FeatureRouter:
         self.last_audio = (path, data, kwargs)
         return {"body": b"RIFF-audio", "content_type": "audio/wav", "usage": None}
 
+    def request_raw_stream(self, path, data, **kwargs):
+        self.last_audio_stream = (path, data, kwargs)
+        self.audio_stream_response = _RawResponse()
+        return self.audio_stream_response
+
     def list_models(self, category=None):
         return [{"id": f"{category or 'chat'}/test", "object": "model", "owned_by": "test"}]
 
@@ -188,7 +267,7 @@ class APIKeyStoreTest(unittest.TestCase):
             versions = connection.execute(
                 "SELECT version FROM schema_migrations WHERE component = 'ai_api_keys' ORDER BY version"
             ).fetchall()
-        self.assertEqual([row[0] for row in versions], [1, 2, 3, 4, 5, 6])
+        self.assertEqual([row[0] for row in versions], [1, 2, 3, 4, 5, 6, 7])
 
     def test_account_policy_can_be_updated_without_rotating_key(self):
         account = self.store.create_account("Initial site", allowed_modes=["english"])
@@ -309,7 +388,13 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.store.initialize()
         account = self.store.create_account(
             "Translator site",
-            allowed_modes=["translate", "image_generation", "video_generation"],
+            allowed_modes=[
+                "translate",
+                "embeddings",
+                "audio",
+                "image_generation",
+                "video_generation",
+            ],
             allowed_models=["gemini-3.7-flash-high"],
             requests_per_minute=20,
         )
@@ -506,6 +591,34 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertTrue(payload["key"]["token"].startswith("ak_live_"))
         self.assertEqual(payload["account"]["owner_type"], "telegram_admin")
         self.assertEqual(payload["account"]["owner_id"], str(user.telegram_id))
+        account_id = payload["account"]["id"]
+        status, updated = self.user_json_request(
+            "PATCH",
+            f"/api/admin/accounts/{account_id}",
+            {
+                "allowed_modes": ["translate", "audio"],
+                "allowed_models": ["gemini-3.7-flash-high"],
+                "requests_per_minute": 12,
+            },
+            cookie=session_token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["account"]["allowed_modes"], ["audio", "translate"])
+        self.assertEqual(updated["account"]["requests_per_minute"], 12)
+        status, report = self.admin_request("/api/admin/accounts", cookie=session_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(report["accounts"]), 1)
+        self.assertEqual(report["accounts"][0]["owner_id"], str(user.telegram_id))
+        status, analytics = self.admin_request(
+            "/api/admin/usage?format=analytics", cookie=session_token
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(analytics["accounts"]), 1)
+        self.assertEqual(analytics["accounts"][0]["account_id"], payload["account"]["id"])
+        status, access = self.admin_request("/api/admin/access", cookie=session_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(access["role"], "account_owner")
+        self.assertEqual(access["scope"], f"owner:{user.telegram_id}")
 
     def test_external_api_attributes_usage_to_site_user_and_conversation(self):
         status, payload = self.request(
@@ -647,18 +760,173 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(event["user_id"], "standard-user-123")
         self.assertIsNone(event["conversation_id"])
 
-    def test_openai_compatible_streaming_is_explicitly_rejected(self):
+    def test_openai_compatible_streaming_forwards_first_event_immediately(self):
+        self.application.router = _FeatureRouter()
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "POST",
+            "/v1/chat/completions",
+            json.dumps(
+                {
+                    "model": "gemini-3.7-flash-high",
+                    "aurix_mode": "translate",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+            ).encode(),
+            {
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertIn("text/event-stream", response.getheader("Content-Type"))
+        first_line = response.readline().decode("utf-8")
+        self.assertIn('"content":"Hello"', first_line)
+        self.assertFalse(self.application.router.stream_response.finished)
+        remainder = response.read().decode("utf-8")
+        connection.close()
+        self.assertIn('"content":" world"', remainder)
+        self.assertIn('"total_tokens":6', remainder)
+        self.assertIn("data: [DONE]", remainder)
+
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(report["requests"][0]["status"], "completed")
+        self.assertEqual(report["requests"][0]["total_tokens"], 6)
+        status, analytics = self.admin_request(
+            "/api/admin/usage?format=analytics", token="admin-secret"
+        )
+        self.assertEqual(status, 200)
+        self.assertIsNotNone(analytics["summary"]["avg_first_event_ms"])
+        self.assertIsNotNone(analytics["summary"]["avg_duration_ms"])
+        self.assertGreaterEqual(
+            analytics["summary"]["avg_duration_ms"],
+            analytics["summary"]["avg_first_event_ms"],
+        )
+
+    def test_openai_responses_non_streaming_returns_response_shape_and_usage(self):
+        self.application.router = _FeatureRouter()
+        self.application.router.response_content = "A concise answer."
         status, payload = self.request(
             {
                 "model": "gemini-3.7-flash-high",
-                "messages": [{"role": "user", "content": "Hello"}],
-                "stream": True,
+                "aurix_mode": "translate",
+                "instructions": "Be concise.",
+                "input": "Hello",
+                "user": "responses-user-1",
+                "metadata": {"conversation_id": "responses-chat-1"},
             },
             token=self.key,
-            path="/v1/chat/completions",
+            path="/v1/responses",
         )
-        self.assertEqual(status, 400)
-        self.assertIn("streaming is not supported", payload["error"])
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["id"].startswith("resp_"))
+        self.assertEqual(payload["object"], "response")
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["output_text"], "A concise answer.")
+        self.assertEqual(payload["output"][0]["type"], "message")
+        self.assertEqual(payload["usage"]["input_tokens"], 8)
+        self.assertEqual(payload["usage"]["output_tokens"], 3)
+
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        event = report["requests"][0]
+        self.assertEqual(event["endpoint"], "/responses")
+        self.assertEqual(event["user_id"], "responses-user-1")
+        self.assertEqual(event["conversation_id"], "responses-chat-1")
+
+    def test_openai_responses_stream_emits_live_responses_events(self):
+        self.application.router = _FeatureRouter()
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "POST",
+            "/v1/responses",
+            json.dumps(
+                {
+                    "model": "gemini-3.7-flash-high",
+                    "aurix_mode": "translate",
+                    "input": "Hello",
+                    "stream": True,
+                }
+            ).encode(),
+            {
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertIn("text/event-stream", response.getheader("Content-Type"))
+        first_line = response.readline().decode("utf-8")
+        self.assertEqual(first_line.strip(), "event: response.created")
+        body = (first_line + response.read().decode("utf-8"))
+        connection.close()
+        self.assertIn("response.output_text.delta", body)
+        self.assertIn('"delta":"Hello"', body)
+        self.assertIn("response.output_text.done", body)
+        self.assertIn("response.completed", body)
+        self.assertIn("data: [DONE]", body)
+
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(report["requests"][0]["endpoint"], "/responses")
+        self.assertEqual(report["requests"][0]["status"], "completed")
+
+    def test_openai_audio_speech_stream_forwards_bytes_immediately(self):
+        self.application.router = _FeatureRouter()
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "POST",
+            "/v1/audio/speech",
+            json.dumps(
+                {
+                    "model": "gemini-3.7-flash-high",
+                    "input": "Hello",
+                    "voice": "alloy",
+                    "stream": True,
+                }
+            ).encode(),
+            {
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("Content-Type"), "audio/wav")
+        self.assertEqual(response.read(), b"RIFF-audio")
+        connection.close()
+        self.assertEqual(self.application.router.last_audio_stream[0], "/audio/speech")
+
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(report["requests"][0]["endpoint"], "/v1/audio/speech")
+        self.assertEqual(report["requests"][0]["status"], "completed")
+
+    def test_external_key_info_returns_effective_non_secret_policy(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "GET",
+            "/api/v1/key-info",
+            headers={"Authorization": f"Bearer {self.key}"},
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        connection.close()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["object"], "aurix.key_info")
+        self.assertEqual(payload["key"]["status"], "active")
+        self.assertNotIn("token", payload["key"])
+        self.assertIn("audio", payload["policy"]["allowed_modes"])
+
+    def test_admin_access_endpoint_reports_operator_token_scope(self):
+        status, payload = self.admin_request("/api/admin/access", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["role"], "operator_token")
+        self.assertEqual(payload["scope"], "all_accounts")
 
     def test_revoke_prevents_future_external_requests(self):
         principal = self.store.authenticate(self.key)
@@ -723,6 +991,17 @@ class ExternalAPIHTTPTest(unittest.TestCase):
             status, _ = self.admin_json_request("POST", "/api/admin/accounts", {"name": "Invalid", **fields})
             self.assertEqual(status, 400)
 
+    def test_account_policy_cannot_exceed_operator_ceiling(self):
+        account_id = self.store.list_accounts()[0]["id"]
+        self.application.operator_allowed_modes = frozenset({"translate"})
+        status, payload = self.admin_json_request(
+            "PATCH",
+            f"/api/admin/accounts/{account_id}",
+            {"allowed_modes": ["translate", "audio"]},
+        )
+        self.assertEqual(status, 403)
+        self.assertIn("operator policy", payload["error"])
+
 
 class ExternalFeatureForwardingTest(unittest.TestCase):
     def setUp(self):
@@ -773,6 +1052,47 @@ class ExternalFeatureForwardingTest(unittest.TestCase):
         )
         self.assertEqual(payload["choices"][0]["finish_reason"], "tool_calls")
         self.assertTrue(payload["choices"][0]["message"]["tool_calls"])
+
+    def test_responses_input_and_function_tools_translate_to_canonical_chat(self):
+        payload = self.application.external_responses(
+            {
+                "model": "vision-tool-model",
+                "instructions": "Use the tool when needed.",
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Inspect this."},
+                            {
+                                "type": "input_image",
+                                "image_url": "https://example.com/image.png",
+                            },
+                        ],
+                    }
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "lookup",
+                        "description": "Look something up.",
+                        "parameters": {"type": "object"},
+                    }
+                ],
+                "tool_choice": {"type": "function", "name": "lookup"},
+            },
+            f"Bearer {self.key}",
+        )
+        self.assertEqual(payload["object"], "response")
+        self.assertEqual(payload["output"][0]["type"], "function_call")
+        forwarded, _kwargs = self.router.last_chat
+        self.assertEqual(forwarded["messages"][0]["role"], "system")
+        self.assertEqual(forwarded["messages"][1]["content"][0]["type"], "text")
+        self.assertEqual(forwarded["messages"][1]["content"][1]["type"], "image_url")
+        self.assertEqual(forwarded["tools"][0]["function"]["name"], "lookup")
+        self.assertEqual(
+            forwarded["tool_choice"],
+            {"type": "function", "function": {"name": "lookup"}},
+        )
 
     def test_embeddings_and_audio_use_openai_routes(self):
         embedding = self.application.external_embeddings(
@@ -863,6 +1183,26 @@ class ExternalFeatureForwardingTest(unittest.TestCase):
         self.assertFalse(
             any(item["capabilities"] == ["video_generation"] for item in payload["data"])
         )
+
+    def test_model_discovery_and_requests_honor_embedding_audio_scopes(self):
+        account_id = self.store.list_accounts()[0]["id"]
+        self.store.update_account(account_id, allowed_modes=["translate"])
+        payload = self.application.external_models(f"Bearer {self.key}")
+        self.assertFalse(any(item["capabilities"] == ["embeddings"] for item in payload["data"]))
+        self.assertFalse(any(item["capabilities"] == ["audio_input"] for item in payload["data"]))
+        with self.assertRaises(PermissionError):
+            self.application.external_embeddings(
+                {"model": "embedding-model", "input": "hello"},
+                f"Bearer {self.key}",
+            )
+        with self.assertRaises(PermissionError):
+            self.application.external_audio(
+                "/v1/audio/speech",
+                b"{}",
+                "application/json",
+                f"Bearer {self.key}",
+                model="tts-model",
+            )
 
     def test_video_generation_supports_submit_metadata_and_content(self):
         result = self.application.external_video_generation(

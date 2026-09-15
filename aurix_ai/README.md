@@ -50,6 +50,15 @@ turn instead.
 The API console reads the same account ledger without exposing bearer secrets.
 Usage summaries can be filtered by account, key, model, endpoint, outcome, and
 site user; request rows are paginated independently of the full-data summary.
+The OpenAI-compatible boundary supports caller-owned chat/Responses history,
+SSE text streaming, streamed audio forwarding when 9Router exposes a readable
+media response, embeddings, image input/generation, and video job forwarding.
+`GET /api/v1/key-info` reports the authenticated key's non-secret policy. The
+analytics view includes successful/failed counts, token counters, per-key and
+per-model breakdowns, and first-event/total-duration timing where available.
+Native WebSocket/realtime voice is not synthesized by this HTTP server; voice
+clients should use the HTTP STT → text → TTS pipeline unless a compatible
+upstream realtime transport is explicitly added.
 Administrator account/key mutations write non-secret audit events containing
 the actor, target, outcome, timestamp, and HTTP request correlation ID.
 

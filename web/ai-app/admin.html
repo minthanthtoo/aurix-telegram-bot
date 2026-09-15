@@ -18,6 +18,7 @@
         </nav>
         <div class="admin-session">
           <span id="admin-user" class="admin-user" hidden></span>
+          <span id="admin-role" class="admin-user" hidden></span>
           <button id="admin-logout" class="button-quiet" type="button" hidden>Sign out</button>
         </div>
       </header>
@@ -39,6 +40,7 @@
             <nav class="admin-nav">
               <a class="admin-nav-link active" href="#overview">Overview</a>
               <a class="admin-nav-link" href="#analytics">Analytics</a>
+              <a class="admin-nav-link" href="#capabilities">Router capabilities</a>
               <a class="admin-nav-link" href="#sites">Partner sites</a>
               <a class="admin-nav-link" href="#activity">Activity</a>
               <a class="admin-nav-link" href="#guide">Integration guide</a>
@@ -172,6 +174,16 @@
                     <strong id="analytics-last-used">—</strong>
                     <span class="metric-detail">within selected range</span>
                   </div>
+                  <div>
+                    <span class="quick-stat-label">First token / byte</span>
+                    <strong id="analytics-first-event">—</strong>
+                    <span class="metric-detail">average upstream wait</span>
+                  </div>
+                  <div>
+                    <span class="quick-stat-label">Total duration</span>
+                    <strong id="analytics-duration">—</strong>
+                    <span class="metric-detail">average streamed request</span>
+                  </div>
                 </aside>
               </div>
               <div class="breakdown-toolbar">
@@ -205,6 +217,20 @@
                   <tbody id="breakdown-table-body"></tbody>
                 </table>
               </div>
+            </section>
+
+            <section id="capabilities" class="panel admin-section capability-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Live discovery</p>
+                  <h3>Router capabilities</h3>
+                  <p class="hint">What the configured 9Router account currently reports. A listed model is not a guarantee that a provider quota or generation test will succeed.</p>
+                </div>
+                <button id="refresh-capabilities" class="button-quiet" type="button">Refresh</button>
+              </div>
+              <div id="capability-summary" class="capability-summary" aria-live="polite"></div>
+              <div id="capability-list" class="capability-list" aria-live="polite"></div>
+              <div id="capability-account" class="capability-account" aria-live="polite"></div>
             </section>
 
             <section id="sites" class="panel admin-section">
@@ -301,12 +327,20 @@
           </div>
           <button class="dialog-close" type="button" data-close-dialog="account-dialog" aria-label="Close">×</button>
         </div>
-        <p class="hint">This creates an all-capability partner account and issues its first key.</p>
+        <p class="hint">Choose the features and models this site may use. The operator ceiling is enforced server-side.</p>
         <label>Site name
           <input id="account-name" name="name" required maxlength="160" placeholder="Example website">
         </label>
         <label>Requests per minute
           <input id="account-rpm" name="requests_per_minute" type="number" min="1" max="600" value="60" required>
+        </label>
+        <label>Allowed modes
+          <input id="account-modes" name="allowed_modes" required value="*" placeholder="translate, audio, image_generation">
+          <span class="field-hint">Comma-separated, or * for the operator-approved set.</span>
+        </label>
+        <label>Allowed models
+          <input id="account-models" name="allowed_models" required value="*" placeholder="model-id-1, model-id-2">
+          <span class="field-hint">Use model IDs from Router capabilities, or *.</span>
         </label>
         <label>Initial key label
           <input id="account-key-label" name="key_label" required maxlength="160" value="production">
@@ -322,6 +356,37 @@
         <div class="dialog-actions">
           <button class="button-quiet" type="button" data-close-dialog="account-dialog">Cancel</button>
           <button id="account-submit" type="submit">Create and show key</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="policy-dialog" class="admin-dialog">
+      <form id="policy-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Account policy</p>
+            <h2>Control site access</h2>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog="policy-dialog" aria-label="Close">×</button>
+        </div>
+        <p id="policy-account-copy" class="hint"></p>
+        <input id="policy-account-id" type="hidden">
+        <label>Site name
+          <input id="policy-name" required maxlength="160">
+        </label>
+        <label>Requests per minute
+          <input id="policy-rpm" type="number" min="1" max="600" required>
+        </label>
+        <label>Allowed modes
+          <input id="policy-modes" required>
+        </label>
+        <label>Allowed models
+          <input id="policy-models" required>
+        </label>
+        <p id="policy-form-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button class="button-quiet" type="button" data-close-dialog="policy-dialog">Cancel</button>
+          <button id="policy-submit" type="submit">Save policy</button>
         </div>
       </form>
     </dialog>

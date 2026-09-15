@@ -189,19 +189,28 @@ def run_smoke() -> dict[str, object]:
                 "message": "Smoke test 世界",
                 "client_submission_id": "local-smoke-submission-1",
             }
-            status, submitted, _ = _request(
+            status, streamed, _ = _request(
                 port,
                 "POST",
-                f"/api/conversations/{conversation_id}/turns",
+                f"/api/conversations/{conversation_id}/turns/stream",
                 body=turn_body,
                 cookie=cookie,
             )
-            if status != 202:
-                raise RuntimeError("durable turn was not accepted asynchronously")
-            attempt_id = submitted["attempt"]["id"]
-            completed = _wait_for_attempt(port, conversation_id, attempt_id, cookie)
-            if completed["attempt"]["output_text"] != "Hello from AuriX 世界":
+            if status != 200 or not isinstance(streamed, str):
+                raise RuntimeError("direct durable turn stream did not complete")
+            if 'event: delta' not in streamed or '"text":"Hello "' not in streamed:
+                raise RuntimeError("direct stream did not forward provider deltas")
+            if "event: terminal" not in streamed:
+                raise RuntimeError("direct stream did not emit a terminal event")
+            detail_status, detail, _ = _request(
+                port,
+                "GET",
+                f"/api/conversations/{conversation_id}",
+                cookie=cookie,
+            )
+            if detail_status != 200 or detail["turns"][0]["attempts"][0]["output_text"] != "Hello from AuriX 世界":
                 raise RuntimeError("streamed Unicode output was not persisted exactly")
+            attempt_id = detail["turns"][0]["attempts"][0]["id"]
             checks.append("streamed_turn")
 
             status, duplicate, _ = _request(

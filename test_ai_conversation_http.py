@@ -36,6 +36,51 @@ class _ConversationRouter:
         )
 
 
+class _DirectStreamResponse:
+    def __init__(self):
+        self.closed = False
+        self.finished = False
+        self._lines = iter(
+            [
+                b'data: {"id":"direct-upstream","choices":[{"delta":{"content":"Hel"},"finish_reason":null}]}\n',
+                b"\n",
+                b'data: {"id":"direct-upstream","choices":[{"delta":{"content":"lo"},"finish_reason":null}]}\n',
+                b"\n",
+                b'data: {"id":"direct-upstream","choices":[],"usage":{"total_tokens":2}}\n',
+                b"\n",
+                b"data: [DONE]\n",
+                b"\n",
+            ]
+        )
+        self._index = 0
+
+    def readline(self):
+        if self._index == 2:
+            time.sleep(0.25)
+        try:
+            line = next(self._lines)
+        except StopIteration:
+            self.finished = True
+            return b""
+        self._index += 1
+        return line
+
+    def close(self):
+        self.closed = True
+
+
+class _DirectConversationRouter(_ConversationRouter):
+    def __init__(self):
+        super().__init__()
+        self.payload = None
+        self.response = None
+
+    def openai_chat_stream(self, payload, **_kwargs):
+        self.payload = payload
+        self.response = _DirectStreamResponse()
+        return self.response
+
+
 class AIConversationHTTPTest(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
@@ -139,6 +184,53 @@ class AIConversationHTTPTest(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertIn("event: snapshot", events)
         self.assertIn("event: terminal", events)
+
+    def test_first_party_turn_streams_provider_deltas_and_persists_completion(self):
+        self.router = _DirectConversationRouter()
+        self.application.router = self.router
+        status, conversation = self.request(
+            "POST",
+            "/api/conversations",
+            {"mode": "english", "title": "Live chat"},
+            self.cookie,
+        )
+        self.assertEqual(status, 201)
+
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "POST",
+            f"/api/conversations/{conversation['id']}/turns/stream",
+            json.dumps(
+                {
+                    "mode": "english",
+                    "message": "Hello",
+                    "client_submission_id": "direct-stream-1",
+                }
+            ).encode(),
+            {
+                "Content-Type": "application/json",
+                "Cookie": f"aurix_ai_session={self.cookie}",
+            },
+        )
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertIn("text/event-stream", response.getheader("Content-Type"))
+        prefix = b"".join(response.readline() for _ in range(5)).decode("utf-8")
+        self.assertIn("event: start", prefix)
+        self.assertIn('"text":"Hel"', prefix)
+        self.assertFalse(self.router.response.finished)
+        remainder = response.read().decode("utf-8")
+        connection.close()
+        self.assertIn('"text":"lo"', remainder)
+        self.assertIn("event: terminal", remainder)
+
+        detail = self.store.get_conversation(101, conversation["id"])
+        attempt = detail["turns"][0]["attempts"][0]
+        self.assertEqual(attempt["status"], "completed")
+        self.assertEqual(attempt["output_text"], "Hello")
+        self.assertEqual(attempt["usage"]["total_tokens"], 2)
+        self.assertTrue(self.router.response.closed)
+        self.assertTrue(self.router.payload["stream"])
 
     def test_conversation_and_attempts_are_owner_scoped(self):
         status, conversation = self.request(

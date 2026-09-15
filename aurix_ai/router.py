@@ -723,6 +723,38 @@ class NineRouterClient:
                 "usage": None,
             }
 
+    def request_raw_stream(
+        self,
+        path: str,
+        data: bytes,
+        *,
+        content_type: str,
+        accept: str = "*/*",
+        request_id: str | None = None,
+        account_id: str | None = None,
+        user_id: str | None = None,
+        conversation_id: str | None = None,
+        method: str = "POST",
+    ) -> Any:
+        """Open a raw upstream response without buffering its body.
+
+        Media endpoints such as speech generation can produce useful bytes
+        before the provider finishes.  The caller owns the response and must
+        close it on completion or downstream disconnect.
+        """
+
+        return self._open(
+            path,
+            data=data if method != "GET" else None,
+            content_type=content_type if method != "GET" else None,
+            accept=accept,
+            request_id=request_id,
+            account_id=account_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            method=method,
+        )
+
     def list_models(self, category: str | None = None) -> list[dict[str, Any]]:
         """Read a sanitized model list from 9Router for OpenAI-compatible discovery."""
 

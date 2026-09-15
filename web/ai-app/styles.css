@@ -203,7 +203,25 @@ footer { padding: 20px 4px 0; }
 .breakdown-secondary { margin-top: 3px; color: var(--muted); font: .68rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .numeric-cell { font-variant-numeric: tabular-nums; }
 .time-cell { min-width: 130px; }
+.capability-panel { margin-top: 18px; }
+.capability-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: -3px 0 14px; }
+.capability-summary-item { padding: 7px 9px; border: 1px solid #ffffff12; border-radius: 999px; color: var(--muted); background: #ffffff05; font-size: .72rem; }
+.capability-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.capability-card { min-width: 0; padding: 13px; border: 1px solid #ffffff0d; border-radius: 12px; background: #0b1324aa; }
+.capability-card-header { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
+.capability-title, .capability-account-title { margin: 0; color: var(--text); font-size: .82rem; }
+.capability-model-count { margin: 9px 0 8px; color: var(--muted); font-size: .72rem; }
+.capability-models { display: grid; gap: 5px; max-height: 132px; overflow: auto; }
+.capability-model { padding: 5px 6px; border-radius: 6px; color: var(--accent); background: #ffffff05; font-size: .68rem; overflow-wrap: anywhere; }
+.capability-empty, .capability-error-detail, .capability-error { margin: 8px 0 0; color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
+.capability-error, .capability-error-detail { color: #ffd0d0; }
+.capability-account { margin-top: 14px; padding-top: 14px; border-top: 1px solid #ffffff0d; }
+.capability-account-grid { display: grid; gap: 7px; margin-top: 10px; }
+.capability-account-row { display: grid; grid-template-columns: minmax(130px, .7fr) auto minmax(0, 2fr); align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid #ffffff0d; border-radius: 9px; background: #ffffff05; }
+.capability-account-label { color: var(--text); font-size: .76rem; text-transform: capitalize; }
+.capability-account-detail { color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
 .admin-section { margin-top: 0; padding: 20px; }
+.admin-section.capability-panel { margin-top: 18px; }
 .section-heading { display: flex; justify-content: space-between; align-items: start; gap: 16px; margin-bottom: 18px; }
 .section-heading h3, .guide-card h3 { font-size: 1.3rem; }
 .inventory-toolbar { display: grid; grid-template-columns: 190px minmax(220px, 1fr) auto; align-items: end; gap: 10px; margin: 0 0 16px; padding: 12px; border: 1px solid #ffffff0d; border-radius: 12px; background: #ffffff05; }
@@ -248,6 +266,7 @@ footer { padding: 20px 4px 0; }
 .admin-dialog { width: min(520px, calc(100% - 24px)); padding: 24px; border: 1px solid var(--line); border-radius: 18px; background: #121a2df5; color: var(--text); box-shadow: 0 24px 90px #0009; }
 .admin-dialog::backdrop { background: #020611aa; backdrop-filter: blur(5px); }
 .admin-dialog form { display: grid; gap: 14px; }
+.field-hint { display: block; margin-top: 5px; color: var(--muted); font-size: .78rem; }
 .dialog-heading { display: flex; align-items: start; justify-content: space-between; gap: 15px; margin-bottom: 2px; }
 .dialog-heading h2 { font-size: 1.45rem; }
 .dialog-close { padding: 2px 8px; background: transparent; color: var(--muted); font-size: 1.5rem; line-height: 1; }
@@ -277,6 +296,7 @@ footer { padding: 20px 4px 0; }
   .admin-nav { display: flex; flex-wrap: wrap; margin-top: 15px; }
   .sidebar-note { display: none; }
   .analytics-grid { grid-template-columns: 1fr; }
+  .capability-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
   .admin-shell { width: min(100% - 22px, 1440px); }
@@ -293,6 +313,9 @@ footer { padding: 20px 4px 0; }
   .activity-row { grid-template-columns: 1fr auto; }
   .activity-detail { grid-column: 1 / -1; grid-row: 2; }
   .activity-meta { grid-column: 2; grid-row: 1; }
+  .capability-list { grid-template-columns: 1fr; }
+  .capability-account-row { grid-template-columns: 1fr auto; }
+  .capability-account-detail { grid-column: 1 / -1; }
 }
 @media (max-width: 440px) {
   .admin-auth { margin-top: 45px; padding: 20px; }

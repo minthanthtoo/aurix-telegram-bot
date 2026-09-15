@@ -86,8 +86,10 @@ Use the endpoint that matches the product:
 | Need | Endpoint | Own transcript? |
 |---|---|---:|
 | Normal website assistant using standard LLM format | `POST /v1/chat/completions` | Yes |
+| OpenAI Responses-style SDK/client | `POST /v1/responses` | Yes |
 | Built-in English assistant, English ↔ Lisu translator, or Lisu assistant | `POST /v1/chat` | Yes |
 | Model and capability discovery | `GET /v1/models` | N/A |
+| Authenticated key policy discovery | `GET /api/v1/key-info` | N/A |
 | Image generation | `POST /v1/images/generations` | No |
 | Text embeddings | `POST /v1/embeddings` | N/A |
 | Speech-to-text | `POST /v1/audio/transcriptions` | N/A |
@@ -118,7 +120,7 @@ The response is an OpenAI-style model list:
       "id": "gemini-3.7-flash-high",
       "object": "model",
       "owned_by": "aurix",
-      "capabilities": ["chat", "streaming"]
+      "capabilities": ["chat", "responses", "streaming"]
     },
     {
       "id": "embedding-model-id",
@@ -139,6 +141,7 @@ The response is an OpenAI-style model list:
 Capability meanings:
 
 - `chat`: normal chat completion.
+- `responses`: OpenAI Responses-compatible text/image/function-call output.
 - `streaming`: server-sent event chat streaming.
 - `embeddings`: vector embeddings.
 - `audio_input`: transcription or audio translation.
@@ -148,6 +151,20 @@ Capability meanings:
 Tools and image understanding are accepted by the chat gateway, but are not
 always declared separately in the model catalog. The selected chat model must
 support the requested feature.
+
+### 4.1 Inspect the key without exposing its secret
+
+The backend can verify which non-secret policy is active for its configured
+key:
+
+```http
+GET https://ai.aurix-mart.tech/api/v1/key-info
+Authorization: Bearer ak_live_...
+```
+
+The response includes the key and account IDs, status, allowed modes, allowed
+models, and request-per-minute limit. It never includes the raw token. Treat
+this as diagnostic metadata, not as an end-user authorization check.
 
 ## 5. Standard chat completions
 
@@ -228,6 +245,89 @@ Only `n: 1` is supported.
 `usage` can be `null` when the selected upstream model does not return token
 counts. A successful request is still recorded for the partner account.
 
+## 5.1 OpenAI Responses compatibility
+
+Use `POST /v1/responses` when the consuming site uses the modern OpenAI
+Responses SDK shape rather than Chat Completions. AuriX translates this request
+to the same canonical router used by `/v1/chat/completions`; it does not create
+a second provider or conversation database.
+
+### Non-streaming request
+
+```json
+{
+  "model": "gemini-3.7-flash-high",
+  "instructions": "You are the helpful assistant for Example Site.",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "input_text", "text": "How do I reset my password?"}
+      ]
+    }
+  ],
+  "user": "site-user-123",
+  "metadata": {"conversation_id": "conversation-456"}
+}
+```
+
+The response is Responses-shaped:
+
+```json
+{
+  "id": "resp_example",
+  "object": "response",
+  "created_at": 1788938051,
+  "status": "completed",
+  "model": "gemini-3.7-flash-high",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_example",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {"type": "output_text", "text": "Use Account > Security.", "annotations": []}
+      ]
+    }
+  ],
+  "output_text": "Use Account > Security.",
+  "usage": {"input_tokens": 42, "output_tokens": 8, "total_tokens": 50}
+}
+```
+
+Function tools use the Responses form (`type`, `name`, `description`, and
+`parameters`). A returned function call is an `output` item with `call_id`,
+`name`, and JSON `arguments`. Send the result back as an
+`input` item of type `function_call_output`, then include the full relevant
+input history in the next request.
+
+### Responses streaming
+
+Set `stream: true` and read the same `text/event-stream` connection
+incrementally:
+
+```json
+{
+  "model": "gemini-3.7-flash-high",
+  "input": "Explain this in three steps.",
+  "stream": true
+}
+```
+
+The important event types are `response.created`,
+`response.output_text.delta`, `response.output_text.done`, and
+`response.completed`. The data objects contain a `sequence_number`, and the
+terminal `response.completed` object contains the final output and usage. The
+gateway also sends `data: [DONE]` for simple SSE clients. Abort the HTTP
+request to cancel/close the upstream stream.
+
+This compatibility layer intentionally does not claim full Responses parity:
+`previous_response_id`, `conversation`, background execution, built-in tools,
+structured output formats, and server-side response retrieval are not
+available. Use full caller-owned `input` history and Chat Completions when a
+provider-specific advanced feature is required.
+
 ## 6. Streaming
 
 Set `stream: true`:
@@ -261,6 +361,28 @@ tool call is available. Do not assume that every chunk contains text.
 
 Use a request timeout longer than the expected generation time and close the
 stream if the user cancels the response.
+
+### 6.1 Streaming audio
+
+When the selected upstream route supports a readable media response, set
+`stream: true` on `/v1/audio/speech` and read the response body incrementally.
+The gateway forwards bytes as they arrive and records first-byte and total
+duration metrics. Streaming transcription/translation accepts the same field
+in its multipart form. This is transport streaming, not a voice conversation:
+it does not create a WebSocket session or make a non-realtime model realtime.
+If the configured 9Router route cannot stream media, use the normal buffered
+audio request and handle the capability error gracefully.
+
+```json
+{
+  "model": "tts-model-id",
+  "input": "Hello from the assistant.",
+  "voice": "alloy",
+  "stream": true
+}
+```
+
+The response is audio bytes with the upstream `Content-Type`; it is not SSE.
 
 ## 7. Tools and function calling
 
@@ -732,6 +854,33 @@ const response = await fetch("https://ai.aurix-mart.tech/v1/audio/speech", {
 const audioBytes = Buffer.from(await response.arrayBuffer());
 ```
 
+For incremental TTS transport, add `stream: true` to the JSON body and consume
+the response body as a stream. The response remains audio bytes (not SSE):
+
+```js
+const response = await fetch("https://ai.aurix-mart.tech/v1/audio/speech", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.AURIX_API_KEY}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: "audio-output-model-id",
+    input: "Start speaking as soon as audio arrives.",
+    voice: "alloy",
+    stream: true,
+  }),
+});
+for await (const chunk of response.body) {
+  playOrQueueAudioChunk(chunk);
+}
+```
+
+This is HTTP media streaming, not ChatGPT-style realtime voice. AuriX exposes
+native realtime/WebSocket behavior only when the configured upstream provides a
+compatible transport; otherwise build voice with the HTTP STT → text → TTS
+pipeline and show the user that each stage is complete.
+
 Audio output availability is model-dependent. Check `/v1/models` and perform
 a small health request before enabling speech synthesis in production.
 
@@ -871,6 +1020,13 @@ These identifiers are for reporting only. The external website must enforce:
 AuriX records requests and provider token usage when token data is returned.
 Raw audio requests may not include token counts. The website should maintain
 its own user-facing balance or quota ledger if it sells AI usage.
+
+For operator analytics, the authenticated AuriX console exposes aggregate
+request counts, successful/failed counts, input/output/total tokens, usage
+coverage, model/endpoint/key breakdowns, and streaming latency summaries. The
+`format=analytics` view is intentionally prompt-free. A partner site should
+use its own `user` or `user_id` field for end-user attribution; those values do
+not create separate AuriX accounts or bypass the partner key's shared quota.
 
 ## 17. Production implementation checklist
 

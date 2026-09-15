@@ -58,10 +58,12 @@ is not silently guessed.
 
 ## Admin access
 
-Automations may use `AURIX_AI_ADMIN_TOKEN`. Existing AuriX Telegram admins may
-also use their authenticated Telegram session when their IDs are listed in
-`ADMIN_TELEGRAM_IDS`. The admin endpoints are separate from consuming site
-keys and are not available to ordinary API callers.
+Automations may use `AURIX_AI_ADMIN_TOKEN`. Every verified Telegram user may
+use the browser console, but normal users see only accounts they own. IDs in
+`ADMIN_TELEGRAM_IDS` are platform owners with all-account scope; IDs in
+`OPERATOR_TELEGRAM_IDS` are operators with all-account operational scope. The
+admin endpoints are separate from consuming site keys and are not available to
+ordinary API callers.
 
 ## Scaling rule
 

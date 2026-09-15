@@ -95,6 +95,11 @@ because it repeatedly returned task-gating and English fallback text.
   routes own submitted source, reconnectable attempts, cancellation, and
   explicit retry. The older `POST /api/chat` route remains available only as a
   stateless compatibility path for already-integrated callers.
+- `POST /api/conversations/{conversation_id}/turns/stream` is the first-party
+  live path. It returns `text/event-stream` immediately with `start`, `delta`,
+  and `terminal` events while the same attempt is persisted. The original
+  `POST /api/conversations/{conversation_id}/turns` route remains the
+  reconnectable background-job path for recovery and older clients.
 - `POST /api/auth/logout` revokes the browser session in the configured session
   store.
 
@@ -151,6 +156,7 @@ existing AuriX database without touching 9Router tables.
 ```text
 POST /v1/chat
 POST /v1/chat/completions
+POST /v1/responses
 Authorization: Bearer ak_live_...
 ```
 
@@ -162,6 +168,17 @@ OpenAI-compatible audio routes. The model catalog advertises chat, embedding,
 and audio categories; tools and image parts are passed through and may be
 rejected by an upstream model that lacks them. AuriX never executes tools or
 stores audio bytes.
+
+`POST /v1/responses` is the 80/20 OpenAI Responses compatibility layer. It
+accepts `input` text or message items, `instructions`, `input_text` and
+`input_image` parts, function tools, `max_output_tokens`, and `stream: true`.
+Non-streaming responses use `object: "response"` with `output` message or
+function-call items. Streaming emits Responses-style SSE events such as
+`response.created`, `response.output_text.delta`, and `response.completed`,
+while the consuming website remains responsible for conversation history.
+`previous_response_id`, server-side `conversation` state, built-in Responses
+tools, structured output formats, and background Responses are intentionally
+not implemented; send the full `input` each time.
 
 Native request body:
 
@@ -216,8 +233,8 @@ python /app/aurix_ai_keys.py revoke-key key_...
 Store the issued token in the consuming site's backend secret manager. Do not
 put it in browser JavaScript. Browser-direct integrations require an additional
 CORS allowlist and short-lived user tokens; they are intentionally not enabled
-by this patch. The current `ai.aurix-mart.tech` hostname serves both
-`/v1/chat` and `/v1/chat/completions`;
+by this patch. The current `ai.aurix-mart.tech` hostname serves
+`/v1/chat`, `/v1/chat/completions`, and `/v1/responses`;
 an `api.aurix-mart.tech` DNS/Caddy alias may be added later without changing
 the API contract.
 
@@ -228,13 +245,21 @@ and errors include an `X-Request-ID`/`request_id` for support correlation.
 
 ## Account usage and admin reporting
 
-Every authenticated `/v1/chat` or `/v1/chat/completions` request creates a
+Every authenticated `/v1/chat`, `/v1/chat/completions`, or `/v1/responses`
+request creates a
 prompt-free usage record with
 the account, key, mode, model, result status, request ID, and token counters.
 The gateway normalizes common provider fields (`prompt_tokens`/`input_tokens`,
 `completion_tokens`/`output_tokens`, and `total_tokens`). If 9Router does not
 return usage, the request is still counted and `usage_reported_requests` shows
 that token data was unavailable.
+
+`GET /api/admin/capabilities` is an authenticated, read-only live report from
+the configured 9Router. It groups discovered chat, embedding, STT, TTS, image,
+and video models, and includes quota/today-usage data when the router exposes
+those endpoints. Discovery failures are returned per category; an advertised
+model is not treated as healthy until a controlled probe succeeds. The report
+never includes provider keys or prompt/response bodies.
 
 With `AURIX_AI_ADMIN_TOKEN` configured, an operator can query the current UTC
 month's account totals from automation. The same admin routes accept any
@@ -309,7 +334,10 @@ The Caddy configuration routes the AuriX AI hostname to the live container:
 ```caddyfile
 ai.aurix-mart.tech {
   import security_headers
-  reverse_proxy aurix-ai:10000
+  reverse_proxy aurix-ai:10000 {
+    # Do not buffer token SSE events at the edge.
+    flush_interval -1
+  }
 }
 ```
 
@@ -338,7 +366,8 @@ compatibility alias and is not used in customer documentation.
 | `AURIX_AI_MODEL` | Exact verified model route; required, no default alias |
 | `TELEGRAM_BOT_TOKEN` | Server-only bot credential used to verify Telegram signatures |
 | `AURIX_TELEGRAM_BOT_USERNAME` | Public bot username used by the Login Widget |
-| `ADMIN_TELEGRAM_IDS` | Legacy compatibility setting; browser AI administration now requires any authenticated Telegram session |
+| `ADMIN_TELEGRAM_IDS` | Telegram IDs with platform-owner, all-account console scope |
+| `OPERATOR_TELEGRAM_IDS` | Telegram IDs with operator, all-account key/usage console scope |
 | `AURIX_AI_SESSION_MAX_AGE_SECONDS` | Rolling lifetime of Telegram-authenticated browser sessions; production default is 30 days |
 | `AURIX_AI_SESSION_DB_PATH` | Durable SQLite session store; keep it on the persistent AuriX data volume |
 | `AURIX_AI_LEGACY_TOKEN_ENABLED` | Default `0`; temporary migration fallback for the old header |
@@ -350,6 +379,12 @@ compatibility alias and is not used in customer documentation.
 | `AURIX_AI_TIMEOUT_SECONDS` | Upstream timeout, bounded to 5–180 seconds |
 | `AURIX_AI_MAX_OUTPUT_TOKENS` | Upstream output limit, bounded to 64–8192 |
 | `AURIX_AI_MAX_REQUESTS_PER_MINUTE` | Per-process client rate limit |
+
+Every verified Telegram user can open the browser console and create keys, but
+ordinary users are scoped to accounts they own. `ADMIN_TELEGRAM_IDS` and
+`OPERATOR_TELEGRAM_IDS` grant all-account visibility; the bearer admin token is
+the automation/operator-token equivalent. External partner keys remain
+separate from these console roles.
 
 The rate limiter is process-local and intended for the current single-container
 deployment. A shared store is required before running multiple AI replicas;

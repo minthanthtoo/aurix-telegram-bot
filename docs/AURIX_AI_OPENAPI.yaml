@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AuriX AI External API
-  version: 1.0.0
+  version: 1.2.0
   description: Server-to-server AI gateway backed by the existing 9Router.
 servers:
   - url: https://ai.aurix-mart.tech
@@ -67,6 +67,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OpenAIChatResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamFailure'
+  /v1/responses:
+    post:
+      operationId: createOpenAIResponse
+      summary: Generate an OpenAI Responses-compatible response
+      description: >-
+        Portable Responses API compatibility over the AuriX canonical router.
+        Supports text and image input, function tools, non-streaming output,
+        and SSE streaming. The consuming site owns conversation state and must
+        send the full input for each request.
+      security:
+        - aurixApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAIResponsesRequest'
+      responses:
+        '200':
+          description: Responses-compatible result or SSE stream when stream is true
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIResponsesResponse'
+            text/event-stream:
+              schema:
+                type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -182,7 +222,140 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AudioTextResponse'
+  /api/v1/key-info:
+    get:
+      operationId: getAuthenticatedKeyInfo
+      summary: Inspect the authenticated key's non-secret policy
+      description: >-
+        Returns the effective account and key policy without returning the raw
+        bearer token. Use this for backend diagnostics and entitlement discovery.
+      security:
+        - aurixApiKey: []
+      responses:
+        '200':
+          description: Non-secret key, account, and policy metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfoResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/admin/capabilities:
+    get:
+      operationId: getRouterCapabilities
+      summary: Discover live 9Router capabilities and account quota
+      description: >-
+        Returns a read-only administrator report for the configured 9Router.
+        Catalog discovery and health are separate. The response does not
+        contain provider credentials or prompt/response bodies.
+      security:
+        - aurixAdminToken: []
+      responses:
+        '200':
+          description: Capability report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema, observed_at, categories, summary]
+                properties:
+                  schema:
+                    type: string
+                    example: aurix.capabilityReport.v1
+                  observed_at:
+                    type: string
+                    format: date-time
+                  categories:
+                    type: object
+                  account:
+                    type: object
+                  summary:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/admin/access:
+    get:
+      operationId: getAdminAccessContext
+      summary: Describe the authenticated console role and scope
+      security:
+        - aurixAdminToken: []
+      responses:
+        '200':
+          description: Role and account visibility scope
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, role, scope]
+                properties:
+                  object:
+                    type: string
+                    example: aurix.admin_access
+                  role:
+                    type: string
+                    enum: [platform_owner, operator, operator_token, account_owner]
+                  scope:
+                    type: string
+                    example: all_accounts
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/admin/accounts:
+    post:
+      operationId: createPartnerAccount
+      summary: Create a bounded partner account and issue its first key
+      security:
+        - aurixAdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 160
+                key_label:
+                  type: string
+                  maxLength: 160
+                allowed_modes:
+                  type: array
+                  items:
+                    type: string
+                allowed_models:
+                  type: array
+                  items:
+                    type: string
+                requests_per_minute:
+                  type: integer
+                  minimum: 1
+                  maximum: 600
+                expires_in_days:
+                  type: [integer, 'null']
+                  minimum: 1
+                  maximum: 3650
+      responses:
+        '201':
+          description: Account and one-time key secret
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account, key]
+                properties:
+                  account:
+                    type: object
+                    additionalProperties: true
+                  key:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     get:
       operationId: listAccountUsage
       summary: List account usage totals for the admin's selected period
@@ -201,6 +374,59 @@ paths:
                 $ref: '#/components/schemas/AdminAccountsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/admin/accounts/{account_id}:
+    patch:
+      operationId: updateAccountPolicy
+      summary: Update a site account's bounded model and quota policy
+      description: >-
+        Updates account metadata within the operator-configured mode, model,
+        and request-per-minute ceiling. Ordinary Telegram users can update
+        only accounts they own.
+      security:
+        - aurixAdminToken: []
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 160
+                allowed_modes:
+                  type: array
+                  items:
+                    type: string
+                allowed_models:
+                  type: array
+                  items:
+                    type: string
+                requests_per_minute:
+                  type: integer
+                  minimum: 1
+                  maximum: 600
+      responses:
+        '200':
+          description: Updated account policy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account]
+                properties:
+                  account:
+                    $ref: '#/components/schemas/AccountUsage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/admin/usage:
     get:
       operationId: listUsageEvents
@@ -554,6 +780,101 @@ components:
               type: integer
             total_tokens:
               type: integer
+    OpenAIResponsesRequest:
+      type: object
+      required: [input]
+      additionalProperties: false
+      properties:
+        model:
+          type: string
+        input:
+          oneOf:
+            - type: string
+              minLength: 1
+            - type: array
+              minItems: 1
+              items:
+                type: object
+                additionalProperties: true
+        instructions:
+          type: string
+          maxLength: 6000
+        tools:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            required: [type, name]
+            properties:
+              type:
+                type: string
+                enum: [function]
+              name:
+                type: string
+              description:
+                type: string
+              parameters:
+                type: object
+                additionalProperties: true
+        tool_choice:
+          oneOf:
+            - type: string
+              enum: [none, auto, required]
+            - type: object
+              additionalProperties: true
+        stream:
+          type: boolean
+          default: false
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+        max_output_tokens:
+          type: integer
+          minimum: 1
+        user:
+          type: string
+          maxLength: 160
+        metadata:
+          type: object
+          additionalProperties: true
+        conversation_id:
+          type: string
+          maxLength: 160
+        aurix_mode:
+          type: string
+          enum: [english, translate, lisu_assistant]
+          default: english
+    OpenAIResponsesResponse:
+      type: object
+      required: [id, object, created_at, status, model, output]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum: [response]
+        created_at:
+          type: integer
+        status:
+          type: string
+          enum: [completed, failed, in_progress]
+        model:
+          type: string
+        output:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        output_text:
+          type: string
+        usage:
+          type: [object, 'null']
+          additionalProperties: true
     OpenAIModelList:
       type: object
       required: [object, data]
@@ -643,6 +964,10 @@ components:
           type: string
         speed:
           type: number
+        stream:
+          type: boolean
+          default: false
+          description: Forward audio bytes as they arrive when upstream supports it.
     AudioMultipartRequest:
       type: object
       required: [file, model]
@@ -660,6 +985,10 @@ components:
           type: string
         temperature:
           type: number
+        stream:
+          type: boolean
+          default: false
+          description: Multipart boolean field for incremental response forwarding.
     AudioTextResponse:
       type: object
       required: [text]
@@ -765,6 +1094,64 @@ components:
           items:
             type: object
             additionalProperties: true
+    KeyInfoResponse:
+      type: object
+      required: [object, account, key, policy]
+      properties:
+        object:
+          type: string
+          example: aurix.key_info
+        account:
+          type: object
+          required: [id, name]
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            owner_type:
+              type: string
+            owner_id:
+              type: [string, 'null']
+        key:
+          type: object
+          required: [id, label, token_prefix, status]
+          properties:
+            id:
+              type: string
+            label:
+              type: string
+            token_prefix:
+              type: string
+            status:
+              type: string
+              enum: [active, revoked]
+            created_at:
+              type: string
+              format: date-time
+            expires_at:
+              type: [string, 'null']
+              format: date-time
+            last_used_at:
+              type: [string, 'null']
+              format: date-time
+        policy:
+          type: object
+          required: [allowed_modes, allowed_models, requests_per_minute]
+          properties:
+            allowed_modes:
+              type: array
+              items:
+                type: string
+            allowed_models:
+              type: array
+              items:
+                type: string
+            requests_per_minute:
+              type: integer
+            policy_revision:
+              type: string
+              format: date-time
     Error:
       type: object
       required: [error]

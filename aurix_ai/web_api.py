@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from email.parser import BytesParser
 from email.policy import default as email_default_policy
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qs, urlsplit
 
 from .router import (
@@ -31,6 +31,7 @@ from .router import (
     build_messages,
     NineRouterClient,
     MAX_MESSAGE_CHARS,
+    MAX_CONTEXT_SUMMARY_CHARS,
     model_id_for_route,
     normalize_mode,
     normalize_translation_direction,
@@ -39,6 +40,7 @@ from .router import (
     resolve_model_id,
 )
 from .api_keys import APIKeyStore, APIKeyStoreError, normalize_token_usage
+from .capabilities import build_capability_report
 from .conversations import (
     AIConversationStore,
     ConversationNotFoundError,
@@ -68,6 +70,17 @@ MAX_IMAGE_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_VIDEO_RESPONSE_BYTES = 256 * 1024 * 1024
 MAX_IMAGE_URL_CHARS = 16 * 1024
 SESSION_COOKIE_NAME = "aurix_ai_session"
+DEFAULT_PARTNER_MODES = frozenset(
+    {
+        "english",
+        "translate",
+        "lisu_assistant",
+        "embeddings",
+        "audio",
+        "image_generation",
+        "video_generation",
+    }
+)
 
 
 class ExternalAPIUnavailableError(RuntimeError):
@@ -92,6 +105,31 @@ class _ExternalStream:
     conversation_id: str | None
     public_completion_id: str
     mode: str
+    endpoint: str = "/chat/completions"
+    protocol: str = "chat"
+    started_at: float = 0.0
+
+
+@dataclass
+class _RawExternalStream:
+    response: Any
+    request_id: str
+    principal: Any
+    model_id: str
+    endpoint: str
+    mode: str = "audio"
+    started_at: float = 0.0
+    max_bytes: int = MAX_AUDIO_RESPONSE_BYTES
+
+
+@dataclass
+class _DurableStream:
+    """One first-party browser stream and its durable attempt."""
+
+    user: VerifiedTelegramUser
+    conversation_id: str
+    attempt: dict[str, Any]
+    response: Any | None
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:
@@ -284,6 +322,10 @@ class AuriXAIApplication:
         conversation_store: AIConversationStore | None = None,
         admin_token: str = "",
         admin_telegram_ids: set[int] | None = None,
+        operator_telegram_ids: set[int] | None = None,
+        operator_allowed_modes: set[str] | None = None,
+        operator_allowed_models: set[str] | None = None,
+        operator_max_requests_per_minute: int = 600,
     ) -> None:
         if not allow_anonymous and not access_token and not telegram_bot_token:
             raise AIConfigurationError("Telegram authentication or AURIX_AI_ACCESS_TOKEN is required")
@@ -298,16 +340,49 @@ class AuriXAIApplication:
         self.api_keys = api_keys
         self.conversations = conversation_store
         self.conversation_jobs = ConversationJobManager() if conversation_store is not None else None
+        self._durable_stream_lock = threading.Lock()
+        self._durable_streams: dict[str, Any] = {}
         self.admin_token = admin_token.strip()
         self.admin_telegram_ids = frozenset(admin_telegram_ids or set())
+        self.operator_telegram_ids = frozenset(operator_telegram_ids or set())
+        self.operator_allowed_modes = frozenset(operator_allowed_modes or DEFAULT_PARTNER_MODES)
+        self.operator_allowed_models = frozenset(operator_allowed_models or {"*"})
+        self.operator_max_requests_per_minute = _admin_requests_per_minute(
+            operator_max_requests_per_minute
+        )
         # Direct construction stays compatible with the old test/client API;
         # environment-based production startup passes an explicit false.
         self.legacy_token_enabled = bool(access_token) if legacy_token_enabled is None else legacy_token_enabled
         self.rate_limiter = AIRateLimiter(requests_per_minute)
 
     def close(self) -> None:
+        with self._durable_stream_lock:
+            active_streams = list(self._durable_streams.values())
+            self._durable_streams.clear()
+        for response in active_streams:
+            try:
+                response.close()
+            except Exception:
+                pass
         if self.conversation_jobs is not None:
             self.conversation_jobs.close()
+
+    def _register_durable_stream(self, attempt_id: str, response: Any) -> None:
+        with self._durable_stream_lock:
+            self._durable_streams[str(attempt_id)] = response
+
+    def _unregister_durable_stream(self, attempt_id: str) -> None:
+        with self._durable_stream_lock:
+            self._durable_streams.pop(str(attempt_id), None)
+
+    def cancel_durable_stream(self, attempt_id: str) -> None:
+        with self._durable_stream_lock:
+            response = self._durable_streams.get(str(attempt_id))
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
 
     @staticmethod
     def user_payload(user: VerifiedTelegramUser) -> dict[str, Any]:
@@ -394,7 +469,7 @@ class AuriXAIApplication:
                     "label": item["label"],
                     "description": item["description"],
                     "default": item["route"] == self.router.model,
-                    "capabilities": ["chat", "streaming"],
+                    "capabilities": ["chat", "responses", "streaming"],
                 }
                 for model_id, item in MODEL_CATALOG.items()
             ]
@@ -847,6 +922,97 @@ class AuriXAIApplication:
             "mode_result": attempt["status"],
         }
 
+    def durable_chat_stream(
+        self,
+        user: VerifiedTelegramUser,
+        conversation_id: str,
+        body: dict[str, Any],
+    ) -> _DurableStream:
+        """Create a durable turn and open the provider stream before the first byte.
+
+        The existing ``/turns`` endpoint remains an asynchronous, reconnectable
+        job API. This companion path is for the first-party composer: it keeps
+        the same durable turn/attempt records but lets the HTTP handler forward
+        provider deltas immediately instead of waiting for a database snapshot.
+        """
+
+        if self.conversations is None:
+            raise ExternalAPIUnavailableError("Durable AI conversations are not configured")
+        mode = normalize_mode(body.get("mode", "english"))
+        message = _text(body.get("message"), name="message", maximum=MAX_MESSAGE_CHARS)
+        direction = normalize_translation_direction(body.get("direction"))
+        model_route, model_id = resolve_model_id(
+            body.get("model_id"), default_route=self.router.model
+        )
+        client_submission_id = body.get("client_submission_id")
+        if client_submission_id is not None and not isinstance(client_submission_id, str):
+            raise ValueError("client_submission_id must be text")
+        context = self.conversations.context_messages(user.telegram_id, conversation_id)
+        attempt, created = self.conversations.create_turn(
+            user.telegram_id,
+            conversation_id,
+            source=message,
+            mode=mode,
+            direction=direction,
+            model_id=model_id,
+            context=context,
+            client_submission_id=client_submission_id,
+        )
+        if not created or attempt["status"] != "running":
+            return _DurableStream(
+                user=user,
+                conversation_id=conversation_id,
+                attempt=attempt,
+                response=None,
+            )
+
+        stream_method = getattr(self.router, "openai_chat_stream", None)
+        if not callable(stream_method):
+            self.conversations.fail_attempt(
+                user.telegram_id, attempt["id"], error_code="streaming_unavailable"
+            )
+            raise ValueError("live streaming is not supported by the configured router")
+        try:
+            response = stream_method(
+                self._durable_stream_payload(
+                    mode=mode,
+                    message=message,
+                    history=context,
+                    model_route=model_route,
+                    direction=direction,
+                ),
+                request_id=attempt["request_id"],
+                user_id=str(user.telegram_id),
+                conversation_id=conversation_id,
+            )
+        except AIRouterError:
+            self.conversations.fail_attempt(
+                user.telegram_id, attempt["id"], error_code="upstream_error"
+            )
+            raise
+        except Exception:
+            self.conversations.fail_attempt(
+                user.telegram_id, attempt["id"], error_code="internal_error"
+            )
+            raise
+        if response is None or not callable(getattr(response, "readline", None)):
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+            self.conversations.fail_attempt(
+                user.telegram_id, attempt["id"], error_code="invalid_upstream_stream"
+            )
+            raise AIRouterError("9Router returned an invalid stream")
+        self._register_durable_stream(attempt["id"], response)
+        return _DurableStream(
+            user=user,
+            conversation_id=conversation_id,
+            attempt=attempt,
+            response=response,
+        )
+
     def durable_attempt_retry(
         self,
         user: VerifiedTelegramUser,
@@ -1104,6 +1270,87 @@ class AuriXAIApplication:
             request_id=request_id,
         )
 
+    def external_responses(
+        self,
+        body: dict[str, Any],
+        authorization: str | None,
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Serve the portable OpenAI Responses request over the chat transport.
+
+        The Responses surface is deliberately an adapter: AuriX keeps one
+        authorization, routing, usage, and provider transport path rather than
+        maintaining a second model implementation.
+        """
+
+        request = _normalize_responses_request(body)
+        request_id = request_id or f"req_{secrets.token_urlsafe(12)}"
+        principal = self._authenticate_external_request(authorization)
+        model_route, model_id = _resolve_standard_model(
+            request["model"], default_route=self.router.model
+        )
+        self._authorize_external_request(principal, model_id=model_id, mode=request["mode"])
+        try:
+            result = self.router.openai_chat(
+                request["upstream_payload"] | {"model": model_route, "stream": False},
+                request_id=request_id,
+                account_id=principal.account_id,
+                user_id=request["user_id"],
+                conversation_id=request["conversation_id"],
+            )
+        except AIRouterError:
+            self.api_keys.record_usage(
+                request_id=request_id,
+                principal=principal,
+                mode=request["mode"],
+                model_id=model_id,
+                status="failed",
+                http_status=502,
+                provider="9router",
+                endpoint="/responses",
+                user_id=request["user_id"],
+                conversation_id=request["conversation_id"],
+            )
+            raise
+        try:
+            payload = _standard_response_payload(
+                result,
+                request=request,
+                model_id=model_id,
+                request_id=request_id,
+            )
+        except AIRouterError:
+            self.api_keys.record_usage(
+                request_id=request_id,
+                principal=principal,
+                mode=request["mode"],
+                model_id=model_id,
+                status="failed",
+                http_status=502,
+                provider="9router",
+                endpoint="/responses",
+                user_id=request["user_id"],
+                conversation_id=request["conversation_id"],
+            )
+            raise
+        self.api_keys.record_usage(
+            request_id=request_id,
+            principal=principal,
+            mode=request["mode"],
+            model_id=model_id,
+            status="completed",
+            http_status=200,
+            provider_model=result.get("model") if isinstance(result, dict) else None,
+            usage=result.get("usage") if isinstance(result, dict) else None,
+            router_request_id=result.get("id") if isinstance(result, dict) else None,
+            provider="9router",
+            endpoint="/responses",
+            user_id=request["user_id"],
+            conversation_id=request["conversation_id"],
+        )
+        return payload
+
     def openai_chat_stream(
         self,
         body: dict[str, Any],
@@ -1130,6 +1377,7 @@ class AuriXAIApplication:
                 "stream_options": request["stream_options"],
             }
         )
+        started_at = time.monotonic()
         try:
             response = self.router.openai_chat_stream(
                 payload,
@@ -1162,6 +1410,65 @@ class AuriXAIApplication:
             conversation_id=request["conversation_id"],
             public_completion_id=f"chatcmpl_{completion_id}",
             mode=request["mode"],
+            started_at=started_at,
+        )
+
+    def openai_response_stream(
+        self,
+        body: dict[str, Any],
+        authorization: str | None,
+        *,
+        request_id: str | None = None,
+    ) -> _ExternalStream:
+        """Open a Responses-compatible stream over the existing SSE transport."""
+
+        request = _normalize_responses_request(body)
+        if not request["stream"]:
+            raise ValueError("stream must be true for the streaming route")
+        request_id = request_id or f"req_{secrets.token_urlsafe(12)}"
+        principal = self._authenticate_external_request(authorization)
+        model_route, model_id = _resolve_standard_model(
+            request["model"], default_route=self.router.model
+        )
+        self._authorize_external_request(principal, model_id=model_id, mode=request["mode"])
+        payload = dict(request["upstream_payload"])
+        payload.update({"model": model_route, "stream": True, "stream_options": {"include_usage": True}})
+        started_at = time.monotonic()
+        try:
+            response = self.router.openai_chat_stream(
+                payload,
+                request_id=request_id,
+                account_id=principal.account_id,
+                user_id=request["user_id"],
+                conversation_id=request["conversation_id"],
+            )
+        except AIRouterError:
+            self.api_keys.record_usage(
+                request_id=request_id,
+                principal=principal,
+                mode=request["mode"],
+                model_id=model_id,
+                status="failed",
+                http_status=502,
+                provider="9router",
+                endpoint="/responses",
+                user_id=request["user_id"],
+                conversation_id=request["conversation_id"],
+            )
+            raise
+        response_id = _responses_id(request_id)
+        return _ExternalStream(
+            response=response,
+            request_id=request_id,
+            principal=principal,
+            model_id=model_id,
+            user_id=request["user_id"],
+            conversation_id=request["conversation_id"],
+            public_completion_id=response_id,
+            mode=request["mode"],
+            endpoint="/responses",
+            protocol="responses",
+            started_at=started_at,
         )
 
     def record_stream_result(
@@ -1172,6 +1479,8 @@ class AuriXAIApplication:
         provider_model: str | None,
         router_request_id: str | None,
         completed: bool,
+        first_event_ms: float | None = None,
+        duration_ms: float | None = None,
     ) -> None:
         self.api_keys.record_usage(
             request_id=stream.request_id,
@@ -1184,9 +1493,11 @@ class AuriXAIApplication:
             usage=usage,
             router_request_id=router_request_id,
             provider="9router",
-            endpoint="/chat/completions",
+            endpoint=stream.endpoint,
             user_id=stream.user_id,
             conversation_id=stream.conversation_id,
+            first_event_ms=first_event_ms,
+            duration_ms=duration_ms,
         )
 
     def _authenticate_external_request(
@@ -1214,6 +1525,8 @@ class AuriXAIApplication:
             "lisu_assistant",
             "image_generation",
             "video_generation",
+            "embeddings",
+            "audio",
         } and not principal.allows_mode(mode):
             raise ExternalAPIAccessDeniedError("API key is not enabled for this mode")
         if not principal.allows_model(model_id):
@@ -1323,6 +1636,93 @@ class AuriXAIApplication:
             endpoint=path,
         )
         return result
+
+    def external_audio_stream(
+        self,
+        path: str,
+        body: bytes,
+        content_type: str,
+        authorization: str | None,
+        *,
+        model: str,
+        request_id: str | None = None,
+    ) -> _RawExternalStream:
+        """Open a streaming audio or transcription response.
+
+        The upstream must expose a readable response object.  AuriX forwards
+        bytes as they arrive and records timing when the handler completes.
+        """
+
+        model = _feature_model(model, name="model")
+        request_id = request_id or f"req_{secrets.token_urlsafe(12)}"
+        principal = self._authenticate_external_request(authorization)
+        self._authorize_external_request(principal, model_id=model, mode="audio")
+        upstream_path = path[3:] if path.startswith("/v1/") else path
+        stream_method = getattr(self.router, "request_raw_stream", None)
+        if not callable(stream_method):
+            self.api_keys.record_usage(
+                request_id=request_id,
+                principal=principal,
+                mode="audio",
+                model_id=model,
+                status="failed",
+                http_status=501,
+                provider="9router",
+                endpoint=path,
+            )
+            raise AIRouterError("streaming is not supported by the configured router")
+        started_at = time.monotonic()
+        try:
+            response = stream_method(
+                upstream_path,
+                body,
+                content_type=content_type,
+                accept="text/event-stream, audio/*, application/json, */*",
+                request_id=request_id,
+                account_id=principal.account_id,
+            )
+        except AIRouterError:
+            self.api_keys.record_usage(
+                request_id=request_id,
+                principal=principal,
+                mode="audio",
+                model_id=model,
+                status="failed",
+                http_status=502,
+                provider="9router",
+                endpoint=path,
+            )
+            raise
+        return _RawExternalStream(
+            response=response,
+            request_id=request_id,
+            principal=principal,
+            model_id=model,
+            endpoint=path,
+            started_at=started_at,
+            max_bytes=MAX_AUDIO_RESPONSE_BYTES,
+        )
+
+    def record_raw_stream_result(
+        self,
+        stream: _RawExternalStream,
+        *,
+        completed: bool,
+        first_event_ms: float | None,
+        duration_ms: float,
+    ) -> None:
+        self.api_keys.record_usage(
+            request_id=stream.request_id,
+            principal=stream.principal,
+            mode=stream.mode,
+            model_id=stream.model_id,
+            status="completed" if completed else "failed",
+            http_status=200 if completed else 499,
+            provider="9router",
+            endpoint=stream.endpoint,
+            first_event_ms=first_event_ms,
+            duration_ms=duration_ms,
+        )
 
     def external_image_generation(
         self,
@@ -1520,7 +1920,7 @@ class AuriXAIApplication:
         principal = self._authenticate_external_request(authorization, count_request=False)
         output: list[dict[str, Any]] = []
         categories = (
-            (None, {"chat", "streaming"}),
+            (None, {"chat", "responses", "streaming"}),
             ("embedding", {"embeddings"}),
             ("stt", {"audio_input"}),
             ("tts", {"audio_output"}),
@@ -1528,15 +1928,19 @@ class AuriXAIApplication:
             ("video", {"video_generation"}),
         )
         for category, capabilities in categories:
-            if (
-                "image_generation" in capabilities
-                and not principal.allows_mode("image_generation")
+            category_mode = {
+                "embedding": "embeddings",
+                "stt": "audio",
+                "tts": "audio",
+                "image": "image_generation",
+                "video": "video_generation",
+            }.get(category)
+            if category is None and not any(
+                principal.allows_mode(mode)
+                for mode in ("english", "translate", "lisu_assistant")
             ):
                 continue
-            if (
-                "video_generation" in capabilities
-                and not principal.allows_mode("video_generation")
-            ):
+            if category_mode and not principal.allows_mode(category_mode):
                 continue
             try:
                 models = self.router.list_models(category)
@@ -1548,6 +1952,38 @@ class AuriXAIApplication:
                     continue
                 output.append({**item, "capabilities": sorted(capabilities)})
         return {"object": "list", "data": output}
+
+    def external_key_info(self, authorization: str | None) -> dict[str, Any]:
+        """Expose the authenticated key's effective, non-secret policy."""
+
+        principal = self._authenticate_external_request(authorization, count_request=False)
+        info = self.api_keys.key_info(principal.key_id)
+        if info is None:
+            raise PermissionError("AuriX API key is no longer available")
+        return {
+            "object": "aurix.key_info",
+            "account": {
+                "id": info["account_id"],
+                "name": info["account_name"],
+                "owner_type": info["owner_type"],
+                "owner_id": info["owner_id"],
+            },
+            "key": {
+                "id": info["key_id"],
+                "label": info["label"],
+                "token_prefix": info["token_prefix"],
+                "status": info["status"],
+                "created_at": info["created_at"],
+                "expires_at": info["expires_at"],
+                "last_used_at": info["last_used_at"],
+            },
+            "policy": {
+                "allowed_modes": info["allowed_modes"],
+                "allowed_models": info["allowed_models"],
+                "requests_per_minute": info["requests_per_minute"],
+                "policy_revision": info.get("updated_at"),
+            },
+        }
 
     def _chat_for_external(
         self,
@@ -1620,10 +2056,11 @@ class AuriXAIApplication:
         endpoint: str | None = None,
         status: str | None = None,
         user_id: str | None = None,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
-        accounts = self.api_keys.list_accounts()
+        accounts = self.api_keys.list_accounts(owner_id=owner_id)
         summaries = self.api_keys.usage_summary(
             account_id=account_id,
             start_at=start_at,
@@ -1633,6 +2070,7 @@ class AuriXAIApplication:
             endpoint=endpoint,
             status=status,
             user_id=user_id,
+            owner_id=owner_id,
         )
         event_page = self.api_keys.usage_event_page(
             account_id=account_id,
@@ -1645,6 +2083,7 @@ class AuriXAIApplication:
             endpoint=endpoint,
             status=status,
             user_id=user_id,
+            owner_id=owner_id,
         )
         summary_by_id = {item["account_id"]: item for item in summaries}
         keys_by_account: dict[str, list[dict[str, Any]]] = {}
@@ -1709,6 +2148,7 @@ class AuriXAIApplication:
         endpoint: str | None = None,
         status: str | None = None,
         user_id: str | None = None,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         """Return privacy-safe aggregate usage data for the admin dashboard."""
 
@@ -1725,6 +2165,7 @@ class AuriXAIApplication:
                 endpoint=endpoint,
                 status=status,
                 user_id=user_id,
+                owner_id=owner_id,
             ),
             "filters": {
                 key: value
@@ -1754,6 +2195,133 @@ class AuriXAIApplication:
             "request_id": request_id,
         }
 
+    def admin_owner_scope(self, actor: VerifiedTelegramUser | None) -> str | None:
+        """Return the customer scope; platform/operator sessions see all."""
+
+        if (
+            actor is None
+            or actor.telegram_id in self.admin_telegram_ids
+            or actor.telegram_id in self.operator_telegram_ids
+        ):
+            return None
+        return str(actor.telegram_id)
+
+    def admin_access_context(self, actor: VerifiedTelegramUser | None) -> dict[str, Any]:
+        """Describe the authenticated console role without exposing credentials."""
+
+        if actor is None:
+            role = "operator_token"
+            scope = "all_accounts"
+        elif actor.telegram_id in self.admin_telegram_ids:
+            role = "platform_owner"
+            scope = "all_accounts"
+        elif actor.telegram_id in self.operator_telegram_ids:
+            role = "operator"
+            scope = "all_accounts"
+        else:
+            role = "account_owner"
+            scope = f"owner:{actor.telegram_id}"
+        return {
+            "object": "aurix.admin_access",
+            "role": role,
+            "scope": scope,
+            "can_manage_keys": True,
+            "can_view_usage": True,
+            "can_view_capabilities": True,
+        }
+
+    def _assert_customer_account_access(
+        self,
+        actor: VerifiedTelegramUser | None,
+        account_id: str,
+    ) -> None:
+        owner_id = self.admin_owner_scope(actor)
+        if owner_id is None or self.api_keys is None:
+            return
+        account = next(
+            (item for item in self.api_keys.list_accounts(owner_id=owner_id) if item["id"] == account_id),
+            None,
+        )
+        if account is None:
+            raise PermissionError("account is outside the authenticated user's scope")
+
+    def _effective_account_policy(
+        self,
+        body: dict[str, Any],
+        *,
+        current: dict[str, Any] | None = None,
+    ) -> tuple[list[str], list[str], int]:
+        current_modes = current.get("allowed_modes") if current else None
+        current_models = current.get("allowed_models") if current else None
+        modes = _policy_scope_values(
+            body.get("allowed_modes"),
+            name="allowed_modes",
+            ceiling=self.operator_allowed_modes,
+            default=current_modes or self.operator_allowed_modes,
+        )
+        models = _policy_scope_values(
+            body.get("allowed_models"),
+            name="allowed_models",
+            ceiling=self.operator_allowed_models,
+            default=current_models or self.operator_allowed_models,
+        )
+        requested_rpm = body.get(
+            "requests_per_minute",
+            current.get("requests_per_minute", 60) if current else 60,
+        )
+        rpm = _admin_requests_per_minute(requested_rpm)
+        if rpm > self.operator_max_requests_per_minute:
+            raise ExternalAPIAccessDeniedError(
+                "requests_per_minute exceeds the operator policy"
+            )
+        return modes, models, rpm
+
+    def admin_update_account(
+        self,
+        account_id: str,
+        body: dict[str, Any],
+        authorization: str | None,
+        cookie_header: str | None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        actor = self.authenticate_admin(authorization, cookie_header)
+        if self.api_keys is None:
+            raise ExternalAPIUnavailableError("External API is not configured")
+        clean_account_id = _text(account_id, name="account_id", maximum=80)
+        self._assert_customer_account_access(actor, clean_account_id)
+        accounts = self.api_keys.list_accounts()
+        current = next(
+            (item for item in accounts if item["id"] == clean_account_id), None
+        )
+        if current is None:
+            raise APIKeyStoreError("active account not found")
+        name = body.get("name")
+        if name is not None:
+            name = _text(name, name="name", maximum=160)
+        modes, models, rpm = self._effective_account_policy(body, current=current)
+        account = self.api_keys.update_account(
+            clean_account_id,
+            name=name,
+            allowed_modes=modes,
+            allowed_models=models,
+            requests_per_minute=rpm,
+        )
+        self.api_keys.record_audit_event(
+            action="account.policy.update",
+            actor_type="telegram_user" if actor is not None else "operator_token",
+            actor_id=str(actor.telegram_id) if actor is not None else None,
+            target_type="account",
+            target_id=clean_account_id,
+            outcome="success",
+            request_id=request_id,
+            metadata={
+                "allowed_modes": modes,
+                "allowed_models": models,
+                "requests_per_minute": rpm,
+            },
+        )
+        return {"account": account}
+
     def admin_create_account(
         self,
         body: dict[str, Any],
@@ -1767,15 +2335,15 @@ class AuriXAIApplication:
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
         name = _text(body.get("name"), name="name", maximum=160)
-        requests_per_minute = _admin_requests_per_minute(body.get("requests_per_minute", 60))
+        allowed_modes, allowed_models, requests_per_minute = self._effective_account_policy(body)
         label = _text(body.get("key_label", "production"), name="key_label", maximum=160)
         expires_at = _expires_at(body.get("expires_in_days", 90))
         owner_type = "telegram_admin" if actor is not None else "operator"
         owner_id = str(actor.telegram_id) if actor is not None else None
         account = self.api_keys.create_account(
             name,
-            allowed_modes=["*"],
-            allowed_models=["*"],
+            allowed_modes=allowed_modes,
+            allowed_models=allowed_models,
             requests_per_minute=requests_per_minute,
             owner_type=owner_type,
             owner_id=owner_id,
@@ -1821,6 +2389,7 @@ class AuriXAIApplication:
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
         account_id = _text(body.get("account_id"), name="account_id", maximum=80)
+        self._assert_customer_account_access(actor, account_id)
         label = _text(body.get("label", "rotation"), name="label", maximum=160)
         expires_at = _expires_at(body.get("expires_in_days", 90))
         try:
@@ -1857,6 +2426,10 @@ class AuriXAIApplication:
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
         clean_key_id = _text(key_id, name="key_id", maximum=80)
+        key_info = self.api_keys.key_info(clean_key_id)
+        if key_info is None:
+            raise APIKeyStoreError("active API key not found")
+        self._assert_customer_account_access(actor, str(key_info["account_id"]))
         revoked = self.api_keys.revoke_key(
             clean_key_id,
             audit_context=self._admin_audit_context(
@@ -1889,6 +2462,7 @@ class AuriXAIApplication:
         endpoint: str | None = None,
         status: str | None = None,
         user_id: str | None = None,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         if self.api_keys is None:
             raise ExternalAPIUnavailableError("External API is not configured")
@@ -1906,8 +2480,14 @@ class AuriXAIApplication:
                 endpoint=endpoint,
                 status=status,
                 user_id=user_id,
+                owner_id=owner_id,
             ),
         }
+
+    def admin_capability_report(self) -> dict[str, Any]:
+        """Return a live, credential-free capability and quota report."""
+
+        return build_capability_report(self.router)
 
 
 def _bearer_token(authorization: str | None) -> str | None:
@@ -1927,6 +2507,35 @@ def _admin_requests_per_minute(value: Any) -> int:
     if not 1 <= result <= 600:
         raise ValueError("requests_per_minute must be between 1 and 600")
     return result
+
+
+def _policy_scope_values(
+    value: Any,
+    *,
+    name: str,
+    ceiling: frozenset[str],
+    default: Iterable[str],
+) -> list[str]:
+    """Normalize a requested account policy and enforce the operator ceiling."""
+
+    if value is None:
+        requested = {str(item).strip() for item in default if str(item).strip()}
+    elif isinstance(value, str):
+        requested = {item.strip() for item in value.split(",") if item.strip()}
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        requested = {str(item).strip() for item in value if str(item).strip()}
+    else:
+        raise ValueError(f"{name} must be a list of strings or comma-separated text")
+    if not requested:
+        raise ValueError(f"{name} must not be empty")
+    if "*" in requested:
+        requested = set(ceiling) if "*" not in ceiling else {"*"}
+    if "*" not in ceiling and not requested.issubset(ceiling):
+        disallowed = ", ".join(sorted(requested - set(ceiling)))
+        raise ExternalAPIAccessDeniedError(
+            f"{name} exceeds the operator policy: {disallowed}"
+        )
+    return sorted(requested)
 
 
 def _expires_at(value: Any) -> str | None:
@@ -2266,6 +2875,241 @@ def _standard_tools(value: Any) -> list[dict[str, Any]] | None:
     return value
 
 
+def _responses_content(value: Any, *, index: int) -> str | list[dict[str, Any]]:
+    """Translate the portable Responses content blocks to Chat content blocks."""
+
+    if isinstance(value, str):
+        if not value.strip() or len(value) > MAX_MESSAGE_CHARS:
+            raise ValueError(f"input[{index}].content is invalid")
+        return value
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"input[{index}].content is required")
+    parts: list[dict[str, Any]] = []
+    for part_index, part in enumerate(value):
+        if not isinstance(part, dict):
+            raise ValueError(f"input[{index}].content[{part_index}] is invalid")
+        part_type = part.get("type")
+        if part_type in {"input_text", "text"}:
+            text = part.get("text")
+            if not isinstance(text, str) or not text.strip() or len(text) > MAX_MESSAGE_CHARS:
+                raise ValueError(f"input[{index}].content[{part_index}].text is invalid")
+            parts.append({"type": "text", "text": text})
+        elif part_type in {"input_image", "image_url"}:
+            image_value = part.get("image_url")
+            if image_value is None:
+                raise ValueError(
+                    f"input[{index}].content[{part_index}].image_url is required"
+                )
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": _standard_image_url(
+                        image_value, index=index, part_index=part_index
+                    ),
+                }
+            )
+        else:
+            raise ValueError(
+                f"input[{index}].content[{part_index}].type is unsupported; "
+                "use input_text or input_image"
+            )
+    return parts
+
+
+def _responses_input_messages(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        return [{"role": "user", "content": value}]
+    if not isinstance(value, list) or not value:
+        raise ValueError("input must be text or a non-empty list")
+    messages: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError(f"input[{index}] is invalid")
+        item_type = item.get("type", "message")
+        if item_type == "message":
+            role = item.get("role")
+            if role not in {"system", "developer", "user", "assistant", "tool"}:
+                raise ValueError(
+                    f"input[{index}].role must be system, developer, user, assistant, or tool"
+                )
+            message: dict[str, Any] = {
+                "role": role,
+                "content": _responses_content(item.get("content"), index=index),
+            }
+            if role == "assistant" and item.get("tool_calls") is not None:
+                message["tool_calls"] = item["tool_calls"]
+            if role == "tool":
+                call_id = item.get("tool_call_id")
+                if not isinstance(call_id, str) or not call_id.strip():
+                    raise ValueError(f"input[{index}].call_id is required for tool output")
+                message["tool_call_id"] = call_id
+            messages.append(message)
+        elif item_type == "function_call_output":
+            call_id = item.get("call_id")
+            if not isinstance(call_id, str) or not call_id.strip():
+                raise ValueError(f"input[{index}].call_id is required")
+            output = item.get("output", "")
+            if not isinstance(output, str):
+                output = json.dumps(output, ensure_ascii=False, separators=(",", ":"))
+            messages.append(
+                {
+                    "role": "tool",
+                    "content": output or "(empty tool output)",
+                    "tool_call_id": call_id,
+                }
+            )
+        elif item_type == "function_call":
+            name = item.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"input[{index}].name is required")
+            arguments = item.get("arguments", "")
+            if not isinstance(arguments, str):
+                arguments = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+            call_id = item.get("call_id") or item.get("id") or f"call_{index}"
+            if not isinstance(call_id, str) or not call_id.strip():
+                raise ValueError(f"input[{index}].call_id is invalid")
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name.strip(),
+                                "arguments": arguments,
+                            },
+                        }
+                    ],
+                }
+            )
+        else:
+            raise ValueError(
+                f"input[{index}].type is unsupported; use message or function_call_output"
+            )
+    return messages
+
+
+def _responses_tools(value: Any) -> list[dict[str, Any]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("tools must be a list")
+    converted: list[dict[str, Any]] = []
+    for index, tool in enumerate(value):
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            raise ValueError(
+                f"tools[{index}] is unsupported; only type=function is available"
+            )
+        if isinstance(tool.get("function"), dict):
+            converted.append(tool)
+            continue
+        name = tool.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"tools[{index}].name is required")
+        function: dict[str, Any] = {"name": name.strip()}
+        for field in ("description", "parameters", "strict"):
+            if field in tool:
+                function[field] = tool[field]
+        converted.append({"type": "function", "function": function})
+    return _standard_tools(converted)
+
+
+def _responses_tool_choice(value: Any) -> Any:
+    if value is None or isinstance(value, str):
+        if value is not None and value not in {"none", "auto", "required"}:
+            raise ValueError("tool_choice is invalid")
+        return value
+    if not isinstance(value, dict):
+        raise ValueError("tool_choice must be text or an object")
+    if value.get("type") != "function" or not isinstance(value.get("name"), str):
+        raise ValueError("tool_choice function object is invalid")
+    return {"type": "function", "function": {"name": value["name"]}}
+
+
+def _responses_max_output_tokens(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("max_output_tokens must be a positive integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_output_tokens must be a positive integer") from exc
+    if result < 1:
+        raise ValueError("max_output_tokens must be a positive integer")
+    return result
+
+
+def _normalize_responses_request(body: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the 80/20 Responses subset to the existing Chat contract."""
+
+    if body.get("previous_response_id") is not None or body.get("conversation") is not None:
+        raise ValueError(
+            "previous_response_id and conversation state are not supported; send the full input"
+        )
+    if body.get("background"):
+        raise ValueError("background Responses are not supported")
+    if body.get("store") not in (None, False):
+        raise ValueError("store=true is not supported; AuriX Responses are stateless")
+
+    instructions = body.get("instructions")
+    if instructions is not None:
+        instructions = _text(instructions, name="instructions", maximum=MAX_CONTEXT_SUMMARY_CHARS)
+    messages = _responses_input_messages(body.get("input"))
+    if instructions is not None:
+        messages.insert(0, {"role": "system", "content": instructions})
+
+    tools = _responses_tools(body.get("tools"))
+    tool_choice = _responses_tool_choice(body.get("tool_choice"))
+    max_output_tokens = _responses_max_output_tokens(body.get("max_output_tokens"))
+    if body.get("max_tokens") is not None:
+        raise ValueError("use max_output_tokens with the Responses endpoint")
+    stream = body.get("stream", False)
+    if not isinstance(stream, bool):
+        raise ValueError("stream must be a boolean")
+    metadata = body.get("metadata")
+    if metadata is not None and not isinstance(metadata, dict):
+        raise ValueError("metadata must be an object")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    text_config = body.get("text")
+    if text_config is not None:
+        if not isinstance(text_config, dict):
+            raise ValueError("text must be an object")
+        output_format = text_config.get("format")
+        if output_format is not None and (
+            not isinstance(output_format, dict)
+            or output_format.get("type", "text") != "text"
+        ):
+            raise ValueError("structured Responses output is not supported yet")
+
+    standard_body: dict[str, Any] = {
+        "model": body.get("model"),
+        "messages": messages,
+        "stream": stream,
+        "aurix_mode": body.get("aurix_mode", body.get("mode", "english")),
+        "user": body.get("user"),
+        "metadata": metadata,
+        "conversation_id": body.get("conversation_id"),
+        "temperature": body.get("temperature"),
+        "top_p": body.get("top_p"),
+        "tools": tools,
+        "tool_choice": tool_choice,
+        "parallel_tool_calls": body.get("parallel_tool_calls"),
+        "max_tokens": max_output_tokens,
+    }
+    normalized = _normalize_standard_chat_request(standard_body)
+    normalized.update(
+        {
+            "instructions": instructions,
+            "metadata": metadata,
+            "store": False,
+        }
+    )
+    return normalized
+
+
 def _normalize_standard_chat_request(body: dict[str, Any]) -> dict[str, Any]:
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
@@ -2448,6 +3292,136 @@ def _standard_completion_payload(
         "choices": choices,
         "usage": usage,
     }
+
+
+def _responses_id(request_id: str) -> str:
+    suffix = request_id[4:] if request_id.startswith("req_") else request_id
+    return f"resp_{suffix}"
+
+
+def _response_message_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    return ""
+
+
+def _response_usage(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    input_tokens = value.get("input_tokens", value.get("prompt_tokens"))
+    output_tokens = value.get("output_tokens", value.get("completion_tokens"))
+    total_tokens = value.get("total_tokens")
+    if input_tokens is None and output_tokens is None and total_tokens is None:
+        return None
+    usage: dict[str, Any] = {}
+    for key, token_value in (
+        ("input_tokens", input_tokens),
+        ("output_tokens", output_tokens),
+        ("total_tokens", total_tokens),
+    ):
+        if isinstance(token_value, int) and not isinstance(token_value, bool):
+            usage[key] = token_value
+    cached_tokens = None
+    input_details = value.get("input_tokens_details")
+    prompt_details = value.get("prompt_tokens_details")
+    if isinstance(input_details, dict):
+        cached_tokens = input_details.get("cached_tokens")
+    elif isinstance(prompt_details, dict):
+        cached_tokens = prompt_details.get("cached_tokens")
+    if isinstance(cached_tokens, int) and not isinstance(cached_tokens, bool):
+        usage["input_tokens_details"] = {"cached_tokens": cached_tokens}
+    return usage
+
+
+def _response_output_items(message: dict[str, Any], *, response_id: str) -> tuple[list[dict[str, Any]], str]:
+    text = _response_message_text(message)
+    output: list[dict[str, Any]] = []
+    message_id = f"msg_{response_id.removeprefix('resp_')}"
+    if text:
+        output.append(
+            {
+                "type": "message",
+                "id": message_id,
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": text,
+                        "annotations": [],
+                    }
+                ],
+            }
+        )
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for index, tool_call in enumerate(tool_calls):
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+                continue
+            call_id = str(tool_call.get("id") or f"call_{index}")
+            output.append(
+                {
+                    "type": "function_call",
+                    "id": f"fc_{call_id}",
+                    "status": "completed",
+                    "call_id": call_id,
+                    "name": function["name"],
+                    "arguments": str(function.get("arguments") or ""),
+                }
+            )
+    if not output:
+        raise AIRouterError("9Router returned an empty Responses output")
+    return output, text
+
+
+def _standard_response_payload(
+    result: dict[str, Any],
+    *,
+    request: dict[str, Any],
+    model_id: str,
+    request_id: str,
+) -> dict[str, Any]:
+    completion = _standard_completion_payload(
+        result,
+        model_id=model_id,
+        request_id=request_id,
+    )
+    choice = completion["choices"][0]
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        raise AIRouterError("9Router returned an invalid Responses message")
+    response_id = _responses_id(request_id)
+    output, output_text = _response_output_items(message, response_id=response_id)
+    payload: dict[str, Any] = {
+        "id": response_id,
+        "object": "response",
+        "created_at": completion["created"],
+        "status": "completed",
+        "error": None,
+        "incomplete_details": None,
+        "instructions": request.get("instructions"),
+        "metadata": request.get("metadata", {}),
+        "model": completion.get("model") or model_id,
+        "output": output,
+        "parallel_tool_calls": bool(request.get("upstream_payload", {}).get("parallel_tool_calls", False)),
+        "temperature": request.get("temperature"),
+        "top_p": request.get("top_p"),
+        "usage": _response_usage(completion.get("usage")),
+    }
+    # output_text is a convenience field provided by OpenAI SDKs; keeping it
+    # in the wire response is useful for lightweight HTTP clients too.
+    payload["output_text"] = output_text
+    return payload
 
 
 def _standard_embeddings_payload(result: dict[str, Any], *, model: str) -> dict[str, Any]:
@@ -2702,7 +3676,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 raise ValueError("Request body is incomplete")
             return body
 
-        def _read_audio_multipart(self) -> tuple[bytes, str, str]:
+        def _read_audio_multipart(self) -> tuple[bytes, str, str, bool]:
             content_type = self.headers.get("Content-Type", "")
             if not content_type.lower().startswith("multipart/form-data"):
                 raise ValueError("audio endpoint requires multipart/form-data")
@@ -2736,7 +3710,8 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             model = fields.get("model")
             if not model:
                 raise ValueError("model is required")
-            return body, content_type, model
+            stream = fields.get("stream", "false").lower() in {"1", "true", "yes", "on"}
+            return body, content_type, model, stream
 
         def _write_raw(
             self,
@@ -2814,8 +3789,138 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             except (BrokenPipeError, ConnectionResetError, OSError):
                 self.close_connection = True
 
+        def _stream_durable_chat(self, stream: _DurableStream) -> None:
+            """Forward first-party provider deltas while committing the attempt."""
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Request-ID", stream.attempt["request_id"])
+            self.end_headers()
+            self.close_connection = True
+
+            def emit(event: str, payload: dict[str, Any]) -> None:
+                self.wfile.write(
+                    f"event: {event}\n".encode("ascii")
+                    + b"data: "
+                    + json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+                    + b"\n\n"
+                )
+                self.wfile.flush()
+
+            attempt_id = str(stream.attempt["id"])
+            response = stream.response
+            output = str(stream.attempt.get("output_text") or "")
+            usage: dict[str, Any] | None = None
+            upstream_request_id: str | None = None
+
+            try:
+                emit(
+                    "start",
+                    {
+                        "conversation_id": stream.conversation_id,
+                        "turn_id": stream.attempt["turn_id"],
+                        "attempt": application._public_attempt(stream.attempt),
+                    },
+                )
+                if response is None:
+                    # A retried request with the same idempotency key may attach
+                    # to an already-running attempt. Keep that case compatible
+                    # with the reconnectable event API.
+                    last_output = output
+                    deadline = time.monotonic() + 900
+                    while time.monotonic() < deadline:
+                        current = application.conversations.attempt(
+                            stream.user.telegram_id, attempt_id
+                        )
+                        current_output = str(current.get("output_text") or "")
+                        if current_output != last_output:
+                            last_output = current_output
+                            emit(
+                                "snapshot",
+                                {
+                                    "text": current_output,
+                                    "attempt": application._public_attempt(current),
+                                },
+                            )
+                        if current["status"] in {"completed", "failed", "cancelled", "interrupted"}:
+                            emit("terminal", {"attempt": application._public_attempt(current)})
+                            return
+                        time.sleep(0.15)
+                    emit("timeout", {"status": "timeout"})
+                    return
+
+                for payload in application._stream_payloads(response):
+                    current = application.conversations.attempt(
+                        stream.user.telegram_id, attempt_id
+                    )
+                    if current["status"] != "running":
+                        emit("terminal", {"attempt": application._public_attempt(current)})
+                        return
+                    if payload is None:
+                        break
+                    if payload.get("id"):
+                        upstream_request_id = str(payload["id"])
+                    if isinstance(payload.get("usage"), dict):
+                        usage = payload["usage"]
+                    choices = payload.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    choice = choices[0] if isinstance(choices[0], dict) else {}
+                    delta = choice.get("delta") if isinstance(choice, dict) else None
+                    fragment = delta.get("content") if isinstance(delta, dict) else None
+                    if isinstance(fragment, str) and fragment:
+                        output += fragment
+                        application.conversations.update_attempt_output(
+                            stream.user.telegram_id, attempt_id, output_text=output
+                        )
+                        emit("delta", {"text": fragment})
+
+                if not output.strip():
+                    raise AIRouterError("9Router returned an empty stream")
+                completed_attempt = application.conversations.complete_attempt(
+                    stream.user.telegram_id,
+                    attempt_id,
+                    output_text=output,
+                    usage=usage,
+                    upstream_request_id=upstream_request_id,
+                )
+                emit("terminal", {"attempt": application._public_attempt(completed_attempt)})
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                self.close_connection = True
+                try:
+                    application.conversations.cancel_attempt(stream.user.telegram_id, attempt_id)
+                except ConversationStoreError:
+                    pass
+            except AIRouterError:
+                failed = application.conversations.fail_attempt(
+                    stream.user.telegram_id, attempt_id, error_code="upstream_error"
+                )
+                emit("terminal", {"attempt": application._public_attempt(failed)})
+            except ConversationNotFoundError:
+                return
+            except Exception:
+                failed = application.conversations.fail_attempt(
+                    stream.user.telegram_id, attempt_id, error_code="internal_error"
+                )
+                emit("terminal", {"attempt": application._public_attempt(failed)})
+            finally:
+                if response is not None:
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+                application._unregister_durable_stream(attempt_id)
+
         def _stream_chat(self, stream: _ExternalStream) -> None:
             """Normalize upstream SSE metadata while forwarding each event promptly."""
+
+            if stream.protocol == "responses":
+                self._stream_responses(stream)
+                return
 
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -2831,10 +3936,11 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             completed = False
             stream_completed = False
             done_sent = False
+            first_event_ms: float | None = None
             event_lines: list[bytes] = []
 
             def emit_event(event: bytes) -> None:
-                nonlocal usage, provider_model, router_request_id, completed
+                nonlocal usage, provider_model, router_request_id, completed, first_event_ms
                 normalized, event_usage, event_model, event_id, done = _normalize_sse_event(
                     event,
                     public_id=stream.public_completion_id,
@@ -2847,6 +3953,8 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 if event_id:
                     router_request_id = event_id
                 if normalized:
+                    if first_event_ms is None:
+                        first_event_ms = (time.monotonic() - stream.started_at) * 1000
                     self.wfile.write(normalized + b"\n\n")
                     self.wfile.flush()
                 completed = completed or done
@@ -2886,6 +3994,347 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         provider_model=provider_model,
                         router_request_id=router_request_id,
                         completed=stream_completed,
+                        first_event_ms=first_event_ms,
+                        duration_ms=(
+                            (time.monotonic() - stream.started_at) * 1000
+                            if stream.started_at
+                            else None
+                        ),
+                    )
+
+        def _stream_raw(self, stream: _RawExternalStream) -> None:
+            """Forward audio/media bytes without waiting for the full body."""
+
+            response = stream.response
+            headers = getattr(response, "headers", {})
+            content_type = headers.get("Content-Type", "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store, no-transform")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Request-ID", stream.request_id)
+            self.end_headers()
+            completed = False
+            first_event_ms: float | None = None
+            remaining = max(1, int(stream.max_bytes))
+            try:
+                while True:
+                    chunk = response.read(min(64 * 1024, remaining + 1))
+                    if not chunk:
+                        completed = True
+                        break
+                    if len(chunk) > remaining:
+                        if remaining:
+                            self.wfile.write(chunk[:remaining])
+                            self.wfile.flush()
+                        completed = False
+                        break
+                    if first_event_ms is None:
+                        first_event_ms = (time.monotonic() - stream.started_at) * 1000
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                completed = False
+            finally:
+                self.close_connection = True
+                try:
+                    response.close()
+                finally:
+                    application.record_raw_stream_result(
+                        stream,
+                        completed=completed,
+                        first_event_ms=first_event_ms,
+                        duration_ms=(time.monotonic() - stream.started_at) * 1000,
+                    )
+
+        def _stream_responses(self, stream: _ExternalStream) -> None:
+            """Translate provider Chat SSE chunks to OpenAI Responses events."""
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Request-ID", stream.request_id)
+            self.end_headers()
+
+            response_id = stream.public_completion_id
+            message_id = f"msg_{response_id.removeprefix('resp_')}"
+            created_at = int(time.time())
+            usage: dict[str, Any] | None = None
+            provider_model: str | None = None
+            router_request_id: str | None = None
+            text = ""
+            tool_calls: dict[int, dict[str, str]] = {}
+            text_item_started = False
+            tool_items_started: set[int] = set()
+            sequence_number = 0
+            completed = False
+            first_event_ms: float | None = None
+            event_lines: list[bytes] = []
+
+            def emit(event_type: str, payload: dict[str, Any]) -> None:
+                nonlocal sequence_number
+                sequence_number += 1
+                payload = {"type": event_type, **payload}
+                payload.setdefault("sequence_number", sequence_number)
+                self.wfile.write(
+                    f"event: {event_type}\n".encode("ascii")
+                    + b"data: "
+                    + json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                    + b"\n\n"
+                )
+                self.wfile.flush()
+
+            def parse_event(event: bytes) -> tuple[dict[str, Any] | None, bool]:
+                lines = event.replace(b"\r\n", b"\n").split(b"\n")
+                data_lines = [line[5:].lstrip() for line in lines if line.startswith(b"data:")]
+                if not data_lines:
+                    return None, False
+                data = b"\n".join(data_lines).strip()
+                if data == b"[DONE]":
+                    return None, True
+                try:
+                    payload = json.loads(data)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    return None, False
+                return (payload if isinstance(payload, dict) else None), False
+
+            try:
+                emit(
+                    "response.created",
+                    {
+                        "response": {
+                            "id": response_id,
+                            "object": "response",
+                            "created_at": created_at,
+                            "status": "in_progress",
+                            "model": stream.model_id,
+                            "output": [],
+                            "error": None,
+                            "incomplete_details": None,
+                        }
+                    },
+                )
+                while True:
+                    line = stream.response.readline()
+                    if not line:
+                        break
+                    if line in {b"\n", b"\r\n"}:
+                        if not event_lines:
+                            continue
+                        payload, done = parse_event(b"\n".join(event_lines))
+                        event_lines = []
+                        if done:
+                            completed = True
+                            break
+                        if payload is None:
+                            continue
+                    else:
+                        event_lines.append(line.rstrip(b"\r\n"))
+                        continue
+                    if first_event_ms is None:
+                        first_event_ms = (time.monotonic() - stream.started_at) * 1000
+
+                    if payload.get("id") and router_request_id is None:
+                        router_request_id = str(payload["id"])
+                    if payload.get("model"):
+                        provider_model = str(payload["model"])
+                    if isinstance(payload.get("usage"), dict):
+                        usage = payload["usage"]
+                    choices = payload.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    choice = choices[0] if isinstance(choices[0], dict) else {}
+                    delta = choice.get("delta") if isinstance(choice, dict) else None
+                    if not isinstance(delta, dict):
+                        delta = {}
+                    fragment = delta.get("content")
+                    if isinstance(fragment, str) and fragment:
+                        if not text_item_started:
+                            text_item_started = True
+                            emit(
+                                "response.output_item.added",
+                                {
+                                    "output_index": 0,
+                                    "item": {
+                                        "type": "message",
+                                        "id": message_id,
+                                        "status": "in_progress",
+                                        "role": "assistant",
+                                        "content": [],
+                                    },
+                                },
+                            )
+                            emit(
+                                "response.content_part.added",
+                                {
+                                    "item_id": message_id,
+                                    "output_index": 0,
+                                    "content_index": 0,
+                                    "part": {"type": "output_text", "text": "", "annotations": []},
+                                },
+                            )
+                        text += fragment
+                        emit(
+                            "response.output_text.delta",
+                            {
+                                "item_id": message_id,
+                                "output_index": 0,
+                                "content_index": 0,
+                                "delta": fragment,
+                            },
+                        )
+
+                    raw_tool_calls = delta.get("tool_calls")
+                    if isinstance(raw_tool_calls, list):
+                        for raw_call in raw_tool_calls:
+                            if not isinstance(raw_call, dict):
+                                continue
+                            try:
+                                call_index = int(raw_call.get("index", 0))
+                            except (TypeError, ValueError):
+                                call_index = 0
+                            call = tool_calls.setdefault(
+                                call_index,
+                                {"id": "", "name": "", "arguments": ""},
+                            )
+                            if raw_call.get("id"):
+                                call["id"] = str(raw_call["id"])
+                            function = raw_call.get("function")
+                            if not isinstance(function, dict):
+                                function = {}
+                            if function.get("name"):
+                                call["name"] = str(function["name"])
+                            arguments = function.get("arguments")
+                            if isinstance(arguments, str) and arguments:
+                                call["arguments"] += arguments
+                                if call_index not in tool_items_started:
+                                    tool_items_started.add(call_index)
+                                    call_id = call["id"] or f"call_{call_index}"
+                                    emit(
+                                        "response.output_item.added",
+                                        {
+                                            "output_index": call_index,
+                                            "item": {
+                                                "type": "function_call",
+                                                "id": f"fc_{call_id}",
+                                                "status": "in_progress",
+                                                "call_id": call_id,
+                                                "name": call["name"],
+                                                "arguments": "",
+                                            },
+                                        },
+                                    )
+                                emit(
+                                    "response.function_call_arguments.delta",
+                                    {
+                                        "item_id": f"fc_{call['id'] or f'call_{call_index}'}",
+                                        "output_index": call_index,
+                                        "delta": arguments,
+                                    },
+                                )
+                    if any(
+                        isinstance(choice, dict) and choice.get("finish_reason") is not None
+                        for choice in choices
+                    ):
+                        completed = True
+
+                if event_lines:
+                    payload, done = parse_event(b"\n".join(event_lines))
+                    if done:
+                        completed = True
+                    elif payload is not None:
+                        if isinstance(payload.get("usage"), dict):
+                            usage = payload["usage"]
+                        if payload.get("id") and router_request_id is None:
+                            router_request_id = str(payload["id"])
+
+                if not completed:
+                    raise AIRouterError("9Router stream ended before completion")
+                message: dict[str, Any] = {"role": "assistant", "content": text or None}
+                if tool_calls:
+                    message["tool_calls"] = [
+                        {
+                            "id": call["id"] or f"call_{index}",
+                            "type": "function",
+                            "function": {
+                                "name": call["name"],
+                                "arguments": call["arguments"],
+                            },
+                        }
+                        for index, call in sorted(tool_calls.items())
+                    ]
+                response_payload = _standard_response_payload(
+                    {
+                        "id": router_request_id,
+                        "model": provider_model or stream.model_id,
+                        "choices": [{"message": message, "finish_reason": "stop"}],
+                        "usage": usage,
+                    },
+                    request={"instructions": None, "metadata": {}, "upstream_payload": {}},
+                    model_id=stream.model_id,
+                    request_id=stream.request_id,
+                )
+                if text:
+                    emit(
+                        "response.output_text.done",
+                        {"item_id": message_id, "output_index": 0, "content_index": 0, "text": text},
+                    )
+                    emit(
+                        "response.output_item.done",
+                        {"output_index": 0, "item": response_payload["output"][0]},
+                    )
+                for index, call in sorted(tool_calls.items()):
+                    call_id = call["id"] or f"call_{index}"
+                    output_item = next(
+                        (
+                            item
+                            for item in response_payload["output"]
+                            if item.get("type") == "function_call"
+                            and item.get("call_id") == call_id
+                        ),
+                        None,
+                    )
+                    emit(
+                        "response.function_call_arguments.done",
+                        {
+                            "item_id": f"fc_{call_id}",
+                            "output_index": index,
+                            "arguments": call["arguments"],
+                        },
+                    )
+                    emit(
+                        "response.output_item.done",
+                        {
+                            "output_index": index if not text else index + 1,
+                            "item": output_item,
+                        },
+                    )
+                emit("response.completed", {"response": response_payload})
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except AIRouterError:
+                completed = False
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                completed = False
+            finally:
+                self.close_connection = True
+                try:
+                    stream.response.close()
+                finally:
+                    application.record_stream_result(
+                        stream,
+                        usage=usage,
+                        provider_model=provider_model,
+                        router_request_id=router_request_id,
+                        completed=completed,
+                        first_event_ms=first_event_ms,
+                        duration_ms=(time.monotonic() - stream.started_at) * 1000,
                     )
 
         def _identity(self) -> str:
@@ -3025,6 +4474,21 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         raise ConversationNotFoundError("conversation not found")
                     self._write(200, {"deleted": True, "conversation_id": conversation_id})
                     return
+                if (
+                    len(conversation_parts) == 5
+                    and conversation_parts[3] == "turns"
+                    and conversation_parts[4] == "stream"
+                    and method == "POST"
+                ):
+                    identity = f"telegram:{user.telegram_id}"
+                    if not application.rate_limiter.allow(identity):
+                        self._error(429, "AI request rate limit reached", retry_after=60)
+                        return
+                    stream = application.durable_chat_stream(
+                        user, conversation_id, self._read_json()
+                    )
+                    self._stream_durable_chat(stream)
+                    return
                 if len(conversation_parts) == 4 and conversation_parts[3] == "turns" and method == "POST":
                     identity = f"telegram:{user.telegram_id}"
                     if not application.rate_limiter.allow(identity):
@@ -3076,6 +4540,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     cancelled = application.conversations.cancel_attempt(
                         user.telegram_id, conversation_parts[4]
                     )
+                    application.cancel_durable_stream(conversation_parts[4])
                     self._write(200, {"attempt": application._public_attempt(cancelled)})
                     return
                 if (
@@ -3109,6 +4574,18 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 )
                 self._write(201, payload, request_id=self._request_id)
                 return
+            if path.startswith("/api/admin/accounts/") and method == "PATCH":
+                account_id = path[len("/api/admin/accounts/") :].strip("/")
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                payload = application.admin_update_account(
+                    account_id,
+                    self._read_json(),
+                    self.headers.get("Authorization"),
+                    self.headers.get("Cookie"),
+                    request_id=self._request_id,
+                )
+                self._write(200, payload, request_id=self._request_id)
+                return
             if path == "/api/admin/keys" and method == "POST":
                 self._request_id = f"req_{secrets.token_urlsafe(12)}"
                 payload = application.admin_issue_key(
@@ -3130,10 +4607,23 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 )
                 self._write(200, payload, request_id=self._request_id)
                 return
-            if path in {"/api/admin/accounts", "/api/admin/usage"} and method == "GET":
+            if path == "/api/admin/capabilities" and method == "GET":
                 application.authenticate_admin(
                     self.headers.get("Authorization"), self.headers.get("Cookie")
                 )
+                self._write(200, application.admin_capability_report())
+                return
+            if path == "/api/admin/access" and method == "GET":
+                actor = application.authenticate_admin(
+                    self.headers.get("Authorization"), self.headers.get("Cookie")
+                )
+                self._write(200, application.admin_access_context(actor))
+                return
+            if path in {"/api/admin/accounts", "/api/admin/usage"} and method == "GET":
+                admin_actor = application.authenticate_admin(
+                    self.headers.get("Authorization"), self.headers.get("Cookie")
+                )
+                owner_scope = application.admin_owner_scope(admin_actor)
                 start_at, end_at, account_id, limit = _usage_period(query)
                 filters = _usage_filters(query)
                 requested_format = parse_qs(query, keep_blank_values=False).get(
@@ -3146,6 +4636,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                             account_id=account_id,
                             start_at=start_at,
                             end_at=end_at,
+                            owner_id=owner_scope,
                             **{key: value for key, value in filters.items() if key != "offset"},
                         ),
                     )
@@ -3158,6 +4649,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                             start_at=start_at,
                             end_at=end_at,
                             limit=limit,
+                            owner_id=owner_scope,
                             **{key: value for key, value in filters.items() if key != "offset"},
                         ),
                     )
@@ -3167,6 +4659,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     start_at=start_at,
                     end_at=end_at,
                     limit=limit,
+                    owner_id=owner_scope,
                     **filters,
                 )
                 if path == "/api/admin/accounts":
@@ -3182,6 +4675,14 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 self._write(
                     200,
                     application.external_models(self.headers.get("Authorization")),
+                    request_id=self._request_id,
+                )
+                return
+            if path == "/api/v1/key-info" and method == "GET":
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                self._write(
+                    200,
+                    application.external_key_info(self.headers.get("Authorization")),
                     request_id=self._request_id,
                 )
                 return
@@ -3250,7 +4751,18 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 return
             if path in {"/v1/audio/transcriptions", "/v1/audio/translations"} and method == "POST":
                 self._request_id = f"req_{secrets.token_urlsafe(12)}"
-                body, content_type, model = self._read_audio_multipart()
+                body, content_type, model, stream_audio = self._read_audio_multipart()
+                if stream_audio:
+                    stream = application.external_audio_stream(
+                        path,
+                        body,
+                        content_type,
+                        self.headers.get("Authorization"),
+                        model=model,
+                        request_id=self._request_id,
+                    )
+                    self._stream_raw(stream)
+                    return
                 result = application.external_audio(
                     path,
                     body,
@@ -3265,6 +4777,17 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 self._request_id = f"req_{secrets.token_urlsafe(12)}"
                 body = self._read_json()
                 model = _feature_model(body.get("model"), name="model")
+                if body.get("stream") is True:
+                    stream = application.external_audio_stream(
+                        path,
+                        _json_bytes(body),
+                        "application/json",
+                        self.headers.get("Authorization"),
+                        model=model,
+                        request_id=self._request_id,
+                    )
+                    self._stream_raw(stream)
+                    return
                 result = application.external_audio(
                     path,
                     _json_bytes(body),
@@ -3274,6 +4797,25 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     request_id=self._request_id,
                 )
                 self._write_raw(200, result, request_id=self._request_id)
+                return
+            if path == "/v1/responses" and method == "POST":
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                body = self._read_json()
+                normalized = _normalize_responses_request(body)
+                if normalized["stream"] and hasattr(application.router, "openai_chat_stream"):
+                    stream = application.openai_response_stream(
+                        body,
+                        self.headers.get("Authorization"),
+                        request_id=self._request_id,
+                    )
+                    self._stream_chat(stream)
+                    return
+                payload = application.external_responses(
+                    body,
+                    self.headers.get("Authorization"),
+                    request_id=self._request_id,
+                )
+                self._write(200, payload, request_id=self._request_id)
                 return
             if path == "/api/images/generations" and method == "POST":
                 user = application.authenticate(
@@ -3390,7 +4932,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             parsed = urlsplit(self.path)
             path = parsed.path
             try:
-                if path.startswith("/api/admin/") and method == "POST":
+                if path.startswith("/api/admin/") and method in {"POST", "PATCH"}:
                     # Non-simple header prevents cross-origin HTML form mutations.
                     # No CORS permission is granted for this admin surface.
                     origin = self.headers.get("Origin")
@@ -3429,6 +4971,8 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 self._error(404, str(exc))
             except AIRouterError as exc:
                 self._error(502, str(exc))
+            except APIKeyStoreError as exc:
+                self._error(400, str(exc))
             except ValueError as exc:
                 self._error(400, str(exc))
             except Exception as exc:
@@ -3440,6 +4984,9 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
 
         def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             self._dispatch("POST")
+
+        def do_PATCH(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            self._dispatch("PATCH")
 
         def do_HEAD(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             self._dispatch("HEAD")
@@ -3472,6 +5019,9 @@ def build_application_from_environment() -> AuriXAIApplication:
     telegram_bot_username = os.environ.get("AURIX_TELEGRAM_BOT_USERNAME", "").strip()
     admin_token = os.environ.get("AURIX_AI_ADMIN_TOKEN", "").strip()
     raw_admin_ids = os.environ.get("ADMIN_TELEGRAM_IDS", "").strip()
+    raw_operator_ids = os.environ.get("OPERATOR_TELEGRAM_IDS", "").strip()
+    raw_partner_modes = os.environ.get("AURIX_AI_PARTNER_ALLOWED_MODES", "").strip()
+    raw_partner_models = os.environ.get("AURIX_AI_PARTNER_ALLOWED_MODELS", "").strip()
     try:
         admin_telegram_ids = {
             int(value.strip()) for value in raw_admin_ids.split(",") if value.strip()
@@ -3480,6 +5030,44 @@ def build_application_from_environment() -> AuriXAIApplication:
         raise AIConfigurationError("ADMIN_TELEGRAM_IDS must contain numeric IDs") from exc
     if any(value <= 0 for value in admin_telegram_ids):
         raise AIConfigurationError("ADMIN_TELEGRAM_IDS must contain positive IDs")
+    try:
+        operator_telegram_ids = {
+            int(value.strip()) for value in raw_operator_ids.split(",") if value.strip()
+        }
+    except ValueError as exc:
+        raise AIConfigurationError("OPERATOR_TELEGRAM_IDS must contain numeric IDs") from exc
+    if any(value <= 0 for value in operator_telegram_ids):
+        raise AIConfigurationError("OPERATOR_TELEGRAM_IDS must contain positive IDs")
+    try:
+        operator_allowed_modes = frozenset(
+            _policy_scope_values(
+                raw_partner_modes or None,
+                name="AURIX_AI_PARTNER_ALLOWED_MODES",
+                ceiling=frozenset(DEFAULT_PARTNER_MODES),
+                default=DEFAULT_PARTNER_MODES,
+            )
+        )
+        operator_allowed_models = frozenset(
+            _policy_scope_values(
+                raw_partner_models or None,
+                name="AURIX_AI_PARTNER_ALLOWED_MODELS",
+                ceiling=frozenset({"*"}),
+                default={"*"},
+            )
+        )
+    except (ValueError, ExternalAPIAccessDeniedError) as exc:
+        raise AIConfigurationError(str(exc)) from exc
+    try:
+        operator_max_requests_per_minute = int(
+            os.environ.get("AURIX_AI_PARTNER_MAX_REQUESTS_PER_MINUTE", "600")
+        )
+        operator_max_requests_per_minute = _admin_requests_per_minute(
+            operator_max_requests_per_minute
+        )
+    except (TypeError, ValueError) as exc:
+        raise AIConfigurationError(
+            "AURIX_AI_PARTNER_MAX_REQUESTS_PER_MINUTE must be an integer between 1 and 600"
+        ) from exc
     allow_anonymous = os.environ.get("AURIX_AI_ALLOW_ANONYMOUS", "0").strip().lower() in {
         "1",
         "true",
@@ -3538,6 +5126,10 @@ def build_application_from_environment() -> AuriXAIApplication:
         conversation_store=conversation_store,
         admin_token=admin_token,
         admin_telegram_ids=admin_telegram_ids,
+        operator_telegram_ids=operator_telegram_ids,
+        operator_allowed_modes=set(operator_allowed_modes),
+        operator_allowed_models=set(operator_allowed_models),
+        operator_max_requests_per_minute=operator_max_requests_per_minute,
     )
 
 

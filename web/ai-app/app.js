@@ -51,6 +51,7 @@ let activeRequests = 0;
 let durableConversationId = null;
 let durableLoadPromise = null;
 let activeEventStream = null;
+let activeFetchController = null;
 let activeAttempt = null;
 let authCheckInFlight = null;
 let lastAuthCheckAt = 0;
@@ -493,6 +494,8 @@ function rememberConversation(id) {
 function closeActiveEventStream() {
   if (activeEventStream) activeEventStream.close();
   activeEventStream = null;
+  if (activeFetchController) activeFetchController.abort();
+  activeFetchController = null;
   activeAttempt = null;
   cancelAttemptButton.hidden = true;
 }
@@ -501,6 +504,110 @@ function attemptErrorText(attempt) {
   if (attempt.status === "cancelled") return "Generation cancelled. The submitted source is preserved.";
   if (attempt.status === "interrupted") return "Generation was interrupted after a service restart.";
   return "The AI request failed. The submitted source is preserved for retry.";
+}
+
+async function streamTurn(turn, body) {
+  closeActiveEventStream();
+  const controller = new AbortController();
+  activeFetchController = controller;
+  activeAttempt = { id: null, turn: turn };
+  cancelAttemptButton.hidden = false;
+  cancelAttemptButton.disabled = true;
+  let response;
+  try {
+    response = await fetch(
+      "/api/conversations/" + encodeURIComponent(durableConversationId) + "/turns/stream",
+      {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const error = new Error(payload.error || "The live AI stream could not be opened");
+      error.status = response.status;
+      throw error;
+    }
+    if (!response.body) throw new Error("The browser does not support live response streaming");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let output = "";
+    let terminal = null;
+
+    const handleEvent = (block) => {
+      const lines = block.split("\n");
+      let eventName = "message";
+      const data = [];
+      lines.forEach((line) => {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+      });
+      if (!data.length) return;
+      let payload;
+      try { payload = JSON.parse(data.join("\n")); } catch (_error) { return; }
+      if (eventName === "start") {
+        const attempt = payload && payload.attempt;
+        if (attempt && attempt.id) {
+          turn.attemptId = attempt.id;
+          activeAttempt = { id: attempt.id, turn: turn };
+          cancelAttemptButton.disabled = false;
+        }
+      } else if (eventName === "delta") {
+        const fragment = payload && typeof payload.text === "string" ? payload.text : "";
+        if (fragment) {
+          output += fragment;
+          setTurnResponse(turn, "assistant", output);
+        }
+      } else if (eventName === "snapshot") {
+        const snapshot = payload && typeof payload.text === "string" ? payload.text : "";
+        if (snapshot) {
+          output = snapshot;
+          setTurnResponse(turn, "assistant", output);
+        }
+      } else if (eventName === "terminal" && payload && payload.attempt) {
+        terminal = payload.attempt;
+      } else if (eventName === "timeout") {
+        throw new Error("The live response stream timed out; reconnect to resume");
+      }
+    };
+
+    while (!terminal) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r\n/g, "\n");
+      let boundary;
+      while (!terminal && (boundary = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        handleEvent(block);
+      }
+    }
+    if (!terminal && buffer.trim()) handleEvent(buffer);
+    if (!terminal) throw new Error("The live response stream ended before completion");
+
+    const responseText = terminal.output_text || output || "The AI returned no text.";
+    if (terminal.status === "completed") {
+      setTurnResponse(turn, "assistant", responseText);
+      addOrderedAssistantEntry(turn, responseText);
+      modeConversations[turn.modeValue] = turn.workingConversation;
+      setStatus("Completed");
+    } else {
+      setTurnResponse(turn, "error", attemptErrorText(terminal), () => retryTurn(turn));
+      setStatus(terminal.status === "cancelled" ? "Cancelled" : "Request failed");
+    }
+    return terminal;
+  } finally {
+    if (!controller.signal.aborted) controller.abort();
+    if (activeFetchController === controller) activeFetchController = null;
+    if (activeAttempt && activeAttempt.turn === turn) activeAttempt = null;
+    cancelAttemptButton.hidden = true;
+  }
 }
 
 function watchAttempt(turn, attemptId) {
@@ -1010,35 +1117,16 @@ form.addEventListener("submit", async (event) => {
       setStatus("Image ready");
       return;
     }
-    const payload = await requestJSON(
-      "/api/conversations/" + encodeURIComponent(durableConversationId) + "/turns",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: requestMode,
-          model_id: requestModel,
-          message: text,
-          direction: requestMode === "translate" ? directionValue : undefined,
-          client_submission_id: crypto.randomUUID(),
-        }),
-      },
-    );
-    turn.attemptId = payload.attempt.id;
     lastSubmittedMode = requestMode;
     lastSubmittedModelId = requestModel;
     modeConversations[requestMode] = workingConversation;
-    if (payload.attempt.status === "running") {
-      await watchAttempt(turn, turn.attemptId);
-    } else if (payload.attempt.status === "completed") {
-      const responseText = payload.attempt.output_text || "The AI returned no text.";
-      setTurnResponse(turn, "assistant", responseText);
-      addOrderedAssistantEntry(turn, responseText);
-      setStatus("Completed");
-    } else {
-      setTurnResponse(turn, "error", attemptErrorText(payload.attempt), () => retryTurn(turn));
-      setStatus("Request failed");
-    }
+    await streamTurn(turn, {
+      mode: requestMode,
+      model_id: requestModel,
+      message: text,
+      direction: requestMode === "translate" ? directionValue : undefined,
+      client_submission_id: crypto.randomUUID(),
+    });
   } catch (error) {
     if (error && error.status === 401) showAuthRequired();
     if (turn) {

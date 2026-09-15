@@ -127,6 +127,14 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _optional_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(parsed, 2) if parsed >= 0 else None
+
+
 def normalize_token_usage(usage: dict[str, Any] | None) -> dict[str, int | None]:
     """Normalize common OpenAI/Google usage field names for account metering."""
 
@@ -445,6 +453,18 @@ API_KEY_MIGRATIONS = (
                )""",
             "CREATE INDEX IF NOT EXISTS api_admin_audit_target_time ON api_admin_audit(target_type, target_id, created_at)",
             "CREATE INDEX IF NOT EXISTS api_admin_audit_actor_time ON api_admin_audit(actor_type, actor_id, created_at)",
+        ),
+    ),
+    Migration(
+        7,
+        "api_usage_stream_timing",
+        sqlite_statements=(
+            "ALTER TABLE api_usage ADD COLUMN first_event_ms REAL",
+            "ALTER TABLE api_usage ADD COLUMN duration_ms REAL",
+        ),
+        postgres_statements=(
+            "ALTER TABLE api_usage ADD COLUMN IF NOT EXISTS first_event_ms DOUBLE PRECISION",
+            "ALTER TABLE api_usage ADD COLUMN IF NOT EXISTS duration_ms DOUBLE PRECISION",
         ),
     ),
 )
@@ -785,6 +805,42 @@ class APIKeyStore:
             requests_per_minute=int(row["requests_per_minute"]),
         )
 
+    def key_info(self, key_id: str) -> dict[str, Any] | None:
+        """Return non-secret effective key/account metadata for the key owner."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT k.id, k.account_id, k.label, k.token_prefix, k.status,
+                          k.created_at, k.expires_at, k.revoked_at, k.last_used_at,
+                          a.name AS account_name, a.status AS account_status,
+                          a.allowed_modes_json, a.allowed_models_json,
+                          a.requests_per_minute, a.owner_type, a.owner_id, a.updated_at
+                   FROM api_keys AS k JOIN api_accounts AS a ON a.id = k.account_id
+                   WHERE k.id = ?""",
+                (str(key_id).strip(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "key_id": str(row["id"]),
+            "account_id": str(row["account_id"]),
+            "label": str(row["label"]),
+            "token_prefix": str(row["token_prefix"]),
+            "status": str(row["status"]),
+            "created_at": str(row["created_at"]),
+            "expires_at": row["expires_at"],
+            "revoked_at": row["revoked_at"],
+            "last_used_at": row["last_used_at"],
+            "account_name": str(row["account_name"]),
+            "account_status": str(row["account_status"]),
+            "allowed_modes": json.loads(row["allowed_modes_json"]),
+            "allowed_models": json.loads(row["allowed_models_json"]),
+            "requests_per_minute": int(row["requests_per_minute"]),
+            "owner_type": str(row["owner_type"] or "external_site"),
+            "owner_id": row["owner_id"],
+            "updated_at": str(row["updated_at"]),
+        }
+
     def update_account(
         self,
         account_id: str,
@@ -930,6 +986,8 @@ class APIKeyStore:
         cost: float | None = None,
         user_id: str | None = None,
         conversation_id: str | None = None,
+        first_event_ms: float | None = None,
+        duration_ms: float | None = None,
     ) -> None:
         if status not in {"completed", "failed"}:
             raise APIKeyStoreError("usage status is invalid")
@@ -939,16 +997,18 @@ class APIKeyStore:
                    (request_id, account_id, key_id, mode, model_id, status,
                    http_status, provider_model, usage_json, input_tokens,
                    output_tokens, total_tokens, cached_tokens, router_request_id,
-                    provider, endpoint, cost, user_id, conversation_id, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    provider, endpoint, cost, user_id, conversation_id,
+                    first_event_ms, duration_ms, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(request_id) DO NOTHING"""
             if self.uses_postgres
             else """INSERT OR IGNORE INTO api_usage
                    (request_id, account_id, key_id, mode, model_id, status,
                    http_status, provider_model, usage_json, input_tokens,
                    output_tokens, total_tokens, cached_tokens, router_request_id,
-                    provider, endpoint, cost, user_id, conversation_id, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+                    provider, endpoint, cost, user_id, conversation_id,
+                    first_event_ms, duration_ms, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
         )
         with self.connect() as connection:
             connection.execute(
@@ -973,6 +1033,8 @@ class APIKeyStore:
                     cost,
                     user_id,
                     conversation_id,
+                    first_event_ms,
+                    duration_ms,
                     _now(),
                 ),
             )
@@ -988,6 +1050,7 @@ class APIKeyStore:
         endpoint: str | None = None,
         status: str | None = None,
         user_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return account-level request and token totals for a time window."""
 
@@ -998,6 +1061,9 @@ class APIKeyStore:
         if account_id:
             filters.append("a.id = ?")
             where_params.append(str(account_id).strip())
+        if owner_id:
+            filters.append("a.owner_id = ?")
+            where_params.append(str(owner_id).strip())
         if start_at:
             join_filters.append("u.created_at >= ?")
             join_params.append(start_at)
@@ -1072,6 +1138,7 @@ class APIKeyStore:
         endpoint: str | None = None,
         status: str | None = None,
         user_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return prompt-free request records for support/admin inspection."""
 
@@ -1082,6 +1149,9 @@ class APIKeyStore:
         if account_id:
             filters.append("u.account_id = ?")
             params.append(str(account_id).strip())
+        if owner_id:
+            filters.append("a.owner_id = ?")
+            params.append(str(owner_id).strip())
         if start_at:
             filters.append("u.created_at >= ?")
             params.append(start_at)
@@ -1109,7 +1179,7 @@ class APIKeyStore:
                           u.provider_model, u.input_tokens, u.output_tokens,
                           u.total_tokens, u.cached_tokens, u.provider, u.endpoint,
                           u.cost, u.router_request_id, u.user_id, u.conversation_id,
-                          u.usage_json, u.created_at
+                          u.usage_json, u.first_event_ms, u.duration_ms, u.created_at
                    FROM api_usage AS u
                    JOIN api_accounts AS a ON a.id = u.account_id
                    {where}
@@ -1141,6 +1211,7 @@ class APIKeyStore:
         endpoint: str | None = None,
         status: str | None = None,
         user_id: str | None = None,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         bounded_limit = max(1, min(int(limit), 1_000))
         bounded_offset = max(0, int(offset))
@@ -1155,6 +1226,7 @@ class APIKeyStore:
             endpoint=endpoint,
             status=status,
             user_id=user_id,
+            owner_id=owner_id,
         )
         has_more = len(events) > bounded_limit
         return {
@@ -1179,6 +1251,9 @@ class APIKeyStore:
             "total_tokens": int(row.get("total_tokens") or 0),
             "cached_tokens": int(row.get("cached_tokens") or 0),
             "cost": float(row.get("cost") or 0),
+            "avg_first_event_ms": _optional_float(row.get("avg_first_event_ms")),
+            "avg_duration_ms": _optional_float(row.get("avg_duration_ms")),
+            "max_duration_ms": _optional_float(row.get("max_duration_ms")),
             "last_used_at": row.get("last_used_at"),
             "success_rate": round(successful / requests * 100, 2) if requests else None,
         }
@@ -1194,6 +1269,7 @@ class APIKeyStore:
         endpoint: str | None = None,
         status: str | None = None,
         user_id: str | None = None,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         """Return dashboard aggregates without exposing prompt or response content."""
 
@@ -1213,6 +1289,9 @@ class APIKeyStore:
             if value:
                 filters.append(f"{column} {operator} ?")
                 params.append(str(value).strip())
+        if owner_id:
+            filters.append("u.account_id IN (SELECT id FROM api_accounts WHERE owner_id = ?)")
+            params.append(str(owner_id).strip())
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         cte = f"WITH filtered_usage AS (SELECT u.* FROM api_usage AS u {where})"
         metric_sql = """COUNT(u.request_id) AS requests,
@@ -1229,6 +1308,9 @@ class APIKeyStore:
                           COALESCE(SUM(u.total_tokens), 0) AS total_tokens,
                           COALESCE(SUM(u.cached_tokens), 0) AS cached_tokens,
                           COALESCE(SUM(u.cost), 0) AS cost,
+                          AVG(u.first_event_ms) AS avg_first_event_ms,
+                          AVG(u.duration_ms) AS avg_duration_ms,
+                          MAX(u.duration_ms) AS max_duration_ms,
                           MAX(u.created_at) AS last_used_at"""
 
         def query(sql: str, extra_params: Iterable[Any] = ()) -> list[dict[str, Any]]:
@@ -1242,15 +1324,29 @@ class APIKeyStore:
         summary_rows = query(f"SELECT {metric_sql} FROM filtered_usage AS u")
         summary = self._usage_metrics(summary_rows[0] if summary_rows else {})
 
+        account_scope_filters: list[str] = []
+        account_scope_params: list[Any] = []
+        if account_id:
+            account_scope_filters.append("a.id = ?")
+            account_scope_params.append(str(account_id).strip())
+        if owner_id:
+            account_scope_filters.append("a.owner_id = ?")
+            account_scope_params.append(str(owner_id).strip())
+        account_scope = (
+            f"WHERE {' AND '.join(account_scope_filters)}"
+            if account_scope_filters
+            else ""
+        )
+
         account_rows = query(
             f"""SELECT a.id AS account_id, a.name AS account_name, a.status AS account_status,
                        {metric_sql}
                 FROM api_accounts AS a
                 LEFT JOIN filtered_usage AS u ON u.account_id = a.id
-                {"WHERE a.id = ?" if account_id else ""}
+                {account_scope}
                 GROUP BY a.id, a.name, a.status
                 ORDER BY total_tokens DESC, requests DESC, a.id""",
-            [str(account_id).strip()] if account_id else (),
+            account_scope_params,
         )
         accounts = []
         for row in account_rows:
@@ -1269,10 +1365,10 @@ class APIKeyStore:
                 FROM api_keys AS k
                 JOIN api_accounts AS a ON a.id = k.account_id
                 LEFT JOIN filtered_usage AS u ON u.key_id = k.id
-                {"WHERE a.id = ?" if account_id else ""}
+                {account_scope}
                 GROUP BY k.id, k.label, k.token_prefix, k.status, a.id, a.name
                 ORDER BY total_tokens DESC, requests DESC, k.id""",
-            [str(account_id).strip()] if account_id else (),
+            account_scope_params,
         )
         keys = []
         for row in key_rows:
@@ -1348,6 +1444,7 @@ class APIKeyStore:
         endpoint: str | None = None,
         status: str | None = None,
         user_id: str | None = None,
+        owner_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Export prompt-free events using 9Router's usageHistory shape."""
 
@@ -1361,6 +1458,7 @@ class APIKeyStore:
             endpoint=endpoint,
             status=status,
             user_id=user_id,
+            owner_id=owner_id,
         )
         return [
             {
@@ -1392,12 +1490,15 @@ class APIKeyStore:
             for event in events
         ]
 
-    def list_accounts(self) -> list[dict[str, Any]]:
+    def list_accounts(self, owner_id: str | None = None) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT id, name, status, allowed_modes_json, allowed_models_json,
                           requests_per_minute, owner_type, owner_id, created_at, updated_at
-                   FROM api_accounts ORDER BY created_at, id"""
+                   FROM api_accounts
+                   WHERE (? IS NULL OR owner_id = ?)
+                   ORDER BY created_at, id""",
+                (owner_id, owner_id),
             ).fetchall()
         return [
             {
