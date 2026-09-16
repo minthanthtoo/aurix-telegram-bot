@@ -135,6 +135,23 @@ paths:
       summary: List models and exposed capabilities
       security:
         - aurixApiKey: []
+      parameters:
+        - name: category
+          in: query
+          required: false
+          description: >-
+            Request a live category catalog. The default chat catalog is curated;
+            media and embedding categories explicitly use live 9Router discovery.
+          schema:
+            type: string
+            enum: [chat, embedding, embeddings, stt, tts, image, video]
+        - name: view
+          in: query
+          required: false
+          description: Request the full live catalog for diagnostics.
+          schema:
+            type: string
+            enum: [curated, live, full]
       responses:
         '200':
           description: Model catalog filtered by the API key policy

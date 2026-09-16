@@ -1948,8 +1948,31 @@ class AuriXAIApplication:
             method="GET",
         )
 
-    def external_models(self, authorization: str | None) -> dict[str, Any]:
+    def external_models(
+        self,
+        authorization: str | None,
+        *,
+        category: str | None = None,
+        live: bool = True,
+    ) -> dict[str, Any]:
+        """Return a policy-filtered model catalog for an external site.
+
+        Direct callers retain the historical live-discovery behavior. The HTTP
+        endpoint uses the bounded curated chat view by default so a partner's
+        first model-picker request never waits for every 9Router media catalog.
+        Media and full live discovery remain available explicitly through
+        ``?category=...`` or ``?view=live``.
+        """
+
         principal = self._authenticate_external_request(authorization, count_request=False)
+        normalized_category = (str(category).strip().lower() if category else None) or None
+        if normalized_category in {"all", "*"}:
+            normalized_category = None
+            live = True
+
+        if not live and normalized_category in {None, "chat", "responses"}:
+            return self._curated_external_chat_models(principal)
+
         output_by_id: dict[str, dict[str, Any]] = {}
         categories = (
             (None, {"chat", "responses", "streaming"}),
@@ -1959,6 +1982,18 @@ class AuriXAIApplication:
             ("image", {"image_generation"}),
             ("video", {"video_generation"}),
         )
+        if normalized_category not in {None, "chat", "responses"}:
+            category_aliases = {
+                "embeddings": "embedding",
+                "audio_input": "stt",
+                "audio_output": "tts",
+                "image_generation": "image",
+                "video_generation": "video",
+            }
+            selected = category_aliases.get(normalized_category, normalized_category)
+            categories = tuple(item for item in categories if item[0] == selected)
+            if not categories:
+                raise ValueError("category must be chat, embedding, stt, tts, image, or video")
         for category, capabilities in categories:
             category_mode = {
                 "embedding": "embeddings",
@@ -1995,7 +2030,49 @@ class AuriXAIApplication:
                         set(existing.get("capabilities", []))
                         | set(profile.get("capabilities", []))
                     )
-        return {"object": "list", "data": list(output_by_id.values())}
+        return {
+            "object": "list",
+            "data": list(output_by_id.values()),
+            "aurix": {
+                "catalog": "live",
+                "category": normalized_category or "all",
+                "cache_ttl_seconds": self.model_catalog_ttl_seconds,
+                "curated_path": "/v1/models",
+                "live_path": "/v1/models?view=live",
+            },
+        }
+
+    def _curated_external_chat_models(self, principal: Any) -> dict[str, Any]:
+        """Return the small platform-owned chat catalog without upstream I/O."""
+
+        data: list[dict[str, Any]] = []
+        if any(
+            principal.allows_mode(mode)
+            for mode in ("english", "translate", "lisu_assistant")
+        ):
+            for item in MODEL_CATALOG.values():
+                route = str(item["route"])
+                if not _principal_allows_model(principal, route):
+                    continue
+                profile = model_profile(
+                    route,
+                    capabilities=("chat", "responses", "streaming"),
+                    owned_by="9router",
+                )
+                profile["aurix"]["catalog_source"] = "curated"
+                data.append(profile)
+
+        return {
+            "object": "list",
+            "data": data,
+            "aurix": {
+                "catalog": "curated",
+                "category": "chat",
+                "cache_ttl_seconds": self.model_catalog_ttl_seconds,
+                "live_path": "/v1/models?view=live",
+                "category_path": "/v1/models?category=image",
+            },
+        }
 
     def external_integration_profile(self, authorization: str | None) -> dict[str, Any]:
         """Return a safe machine-readable contract for a consuming backend."""
@@ -2013,6 +2090,10 @@ class AuriXAIApplication:
                 "path": "/v1/models",
                 "cache_ttl_seconds": self.model_catalog_ttl_seconds,
                 "policy_filtered": True,
+                "default_catalog": "curated_chat",
+                "live_path": "/v1/models?view=live",
+                "category_path_template": "/v1/models?category={category}",
+                "categories": ["chat", "embedding", "stt", "tts", "image", "video"],
             },
             "effective_policy": {
                 "allowed_modes": sorted(str(mode) for mode in principal.allowed_modes),
@@ -4829,9 +4910,16 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 return
             if path == "/v1/models" and method == "GET":
                 self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                model_query = parse_qs(query, keep_blank_values=False)
+                requested_category = model_query.get("category", [None])[0]
+                requested_view = model_query.get("view", ["curated"])[0].strip().lower()
                 self._write(
                     200,
-                    application.external_models(self.headers.get("Authorization")),
+                    application.external_models(
+                        self.headers.get("Authorization"),
+                        category=requested_category,
+                        live=requested_view in {"live", "full"},
+                    ),
                     request_id=self._request_id,
                 )
                 return

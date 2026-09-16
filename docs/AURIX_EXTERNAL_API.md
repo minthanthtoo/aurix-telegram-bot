@@ -153,6 +153,16 @@ The response is an OpenAI-style model list:
 }
 ```
 
+The default catalog is a fast, policy-filtered curated chat catalog. It is
+served from AuriX's platform catalog and does not wait for every live 9Router
+media catalog, so a partner's first model-picker request remains responsive.
+Each item retains its provider route ID, display name, capabilities, and AuriX
+metadata. To discover a specific live media category, use for example
+`GET /v1/models?category=image`, `embedding`, `stt`, `tts`, or `video`. To
+request the slower full live discovery behavior for diagnostics, use
+`GET /v1/models?view=live`. All variants remain filtered by the API key's
+allowed modes and models.
+
 Capability meanings:
 
 - `chat`: normal chat completion.

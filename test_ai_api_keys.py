@@ -1050,6 +1050,33 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertIn("operator policy", payload["error"])
 
+    def test_http_model_discovery_uses_fast_curated_chat_catalog_by_default(self):
+        def unexpected_live_discovery(_category=None):
+            raise AssertionError("default partner catalog must not call live discovery")
+
+        self.application.router.list_models = unexpected_live_discovery
+        status, content_type, body = self.raw_get("/v1/models", token=self.key)
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", content_type)
+        self.assertLess(len(body), 20_000)
+        payload = json.loads(body)
+        self.assertEqual(payload["aurix"]["catalog"], "curated")
+        self.assertEqual(payload["aurix"]["category"], "chat")
+        self.assertEqual(len(payload["data"]), 1)
+        self.assertEqual(payload["data"][0]["id"], "ag/gemini-3.7-flash-high")
+        self.assertEqual(
+            payload["data"][0]["capabilities"],
+            ["chat", "responses", "streaming"],
+        )
+
+    def test_http_model_discovery_can_request_a_live_category_explicitly(self):
+        status, _content_type, body = self.raw_get(
+            "/v1/models?category=image", token=self.key
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["aurix"]["catalog"], "live")
+
 
 class ExternalFeatureForwardingTest(unittest.TestCase):
     def setUp(self):
