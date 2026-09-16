@@ -96,8 +96,9 @@ Therefore:
 
 ## Latest implementation snapshot recovered
 
-The current checkout is `/Users/min/projects/tg-AuriX-bot`, branch
-`codex/aurix-vpn-portal`, at commit `cdf1516`.
+The VPN implementation head before this recovery document was
+`cdf1516` on branch `codex/aurix-vpn-portal`. This recovery document is
+committed separately as `c6426c1` on the same branch.
 
 Recent VPN implementation steps:
 
@@ -139,4 +140,3 @@ Latest local verification recorded:
 5. Record health, latency, loss, throughput, and relay/direct results separately.
 6. Only after Outline direct-path acceptance, proceed to isolated Xray and
    Hysteria2 canaries and later adapter/accounting work.
-
