@@ -641,37 +641,49 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(export["events"][0]["completionTokens"], 5)
         self.assertIsNone(export["events"][0]["apiKey"])
 
-    def test_openai_route_preserves_upstream_rate_limit_for_partner_retry(self):
-        class _RateLimitedRouter:
-            model = "ag/gemini-3.7-flash-high"
-
-            def openai_chat(self, *_args, **_kwargs):
-                raise AIRouterHTTPError(429, retry_after=9)
-
-        self.application.router = _RateLimitedRouter()
-        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
-        connection.request(
-            "POST",
-            "/v1/chat/completions",
-            json.dumps(
-                {
-                    "messages": [{"role": "user", "content": "Hello"}],
-                    "aurix_mode": "translate",
-                }
-            ).encode(),
-            {
-                "Authorization": f"Bearer {self.key}",
-                "Content-Type": "application/json",
-            },
+    def test_openai_route_maps_upstream_retryable_and_server_errors(self):
+        cases = (
+            (429, 429, "9Router rate limit reached"),
+            (500, 502, "9Router is temporarily unavailable"),
+            (502, 502, "9Router is temporarily unavailable"),
+            (503, 503, "9Router is temporarily unavailable"),
+            (504, 504, "9Router is temporarily unavailable"),
         )
-        response = connection.getresponse()
-        payload = json.loads(response.read())
-        retry_after = response.getheader("Retry-After")
-        connection.close()
-        self.assertEqual(response.status, 429)
-        self.assertEqual(retry_after, "9")
-        self.assertEqual(payload["error"], "9Router rate limit reached")
-        self.assertTrue(payload["request_id"].startswith("req_"))
+        for upstream_status, public_status, public_error in cases:
+            with self.subTest(upstream_status=upstream_status):
+                class _FailingRouter:
+                    model = "ag/gemini-3.7-flash-high"
+
+                    def openai_chat(self, *_args, **_kwargs):
+                        raise AIRouterHTTPError(upstream_status, retry_after=9)
+
+                self.application.router = _FailingRouter()
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", self.port, timeout=3
+                )
+                connection.request(
+                    "POST",
+                    "/v1/chat/completions",
+                    json.dumps(
+                        {
+                            "messages": [{"role": "user", "content": "Hello"}],
+                            "aurix_mode": "translate",
+                        }
+                    ).encode(),
+                    {
+                        "Authorization": f"Bearer {self.key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                response = connection.getresponse()
+                payload = json.loads(response.read())
+                retry_after = response.getheader("Retry-After")
+                connection.close()
+
+                self.assertEqual(response.status, public_status)
+                self.assertEqual(retry_after, "9")
+                self.assertEqual(payload["error"], public_error)
+                self.assertTrue(payload["request_id"].startswith("req_"))
 
     def test_any_authenticated_telegram_user_can_open_admin_console(self):
         session_token = self.application.sessions.issue(
@@ -926,6 +938,64 @@ class ExternalAPIHTTPTest(unittest.TestCase):
             analytics["summary"]["avg_first_event_ms"],
         )
 
+    def test_partner_stream_eof_without_finish_or_done_is_incomplete(self):
+        class _IncompleteSSEResponse:
+            def __init__(self):
+                self._lines = iter(
+                    [
+                        b'data: {"id":"partial","model":"test-model","choices":[{"index":0,"delta":{"content":"partial answer"},"finish_reason":null}]}\n',
+                        b"\n",
+                    ]
+                )
+                self.closed = False
+
+            def readline(self):
+                return next(self._lines, b"")
+
+            def close(self):
+                self.closed = True
+
+        upstream = _IncompleteSSEResponse()
+
+        class _EOFRouter(_FeatureRouter):
+            def openai_chat_stream(self, payload, **kwargs):
+                self.last_stream = (payload, kwargs)
+                self.stream_response = upstream
+                return upstream
+
+        router = _EOFRouter()
+        self.application.router = router
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "POST",
+            "/v1/chat/completions",
+            json.dumps(
+                {
+                    "model": "gemini-3.7-flash-high",
+                    "aurix_mode": "translate",
+                    "messages": [{"role": "user", "content": "Incomplete stream"}],
+                    "stream": True,
+                }
+            ).encode(),
+            {
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertIn('"content":"partial answer"', body)
+        self.assertNotIn("data: [DONE]", body)
+        self.assertTrue(upstream.closed)
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(report["requests"]), 1)
+        self.assertEqual(report["requests"][0]["status"], "failed")
+        self.assertEqual(report["requests"][0]["endpoint"], "/chat/completions")
+
     def test_partner_stream_disconnect_closes_upstream_and_records_499(self):
         disconnected = threading.Event()
         upstream = _GatedSSEResponse()
@@ -1031,9 +1101,13 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         status, report = self.admin_request("/api/admin/usage", token="admin-secret")
         self.assertEqual(status, 200)
         self.assertEqual(len(report["requests"]), 1)
-        self.assertEqual(report["requests"][0]["status"], "failed")
-        self.assertEqual(report["requests"][0]["http_status"], 499)
-        self.assertEqual(report["requests"][0]["endpoint"], "/chat/completions")
+        usage_event = report["requests"][0]
+        self.assertEqual(usage_event["status"], "failed")
+        self.assertEqual(usage_event["http_status"], 499)
+        self.assertEqual(usage_event["endpoint"], "/chat/completions")
+        self.assertNotIn("prompt", usage_event)
+        self.assertNotIn("messages", usage_event)
+        self.assertNotIn("request_body", usage_event)
 
     def test_openai_responses_non_streaming_returns_response_shape_and_usage(self):
         self.application.router = _FeatureRouter()
