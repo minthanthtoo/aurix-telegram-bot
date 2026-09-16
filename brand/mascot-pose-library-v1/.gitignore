@@ -1,0 +1,5 @@
+*.png
+*.zip
+preview-*.svg
+exports/
+previews/

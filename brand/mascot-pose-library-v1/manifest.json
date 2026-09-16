@@ -1,0 +1,229 @@
+{
+  "status": "static production candidates; not rigged model",
+  "items": [
+    {
+      "id": "01-neutral",
+      "title": "Neutral",
+      "image": "exports/aurix-auri-01-neutral.png",
+      "use": "Default identity, quiet introductions",
+      "avoid": "Do not use as evidence of service status",
+      "width": 1122,
+      "height": 1402,
+      "mode": "RGBA",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        25,
+        36,
+        1060,
+        1386
+      ],
+      "visible_alpha_gt32_bbox": [
+        298,
+        106,
+        822,
+        1285
+      ],
+      "alpha_note": "Low-alpha generation residue extends beyond the visible silhouette; original pixels preserved.",
+      "bytes": 658413
+    },
+    {
+      "id": "02-present-left",
+      "title": "Present left",
+      "image": "exports/aurix-auri-02-present-left.png",
+      "use": "Character on right; copy on left",
+      "avoid": "Keep clear space beyond extended wing",
+      "width": 1122,
+      "height": 1402,
+      "mode": "RGBA",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        0,
+        23,
+        1072,
+        1402
+      ],
+      "visible_alpha_gt32_bbox": [
+        48,
+        116,
+        1066,
+        1259
+      ],
+      "alpha_note": "Low-alpha generation residue extends beyond the visible silhouette; original pixels preserved.",
+      "bytes": 777642
+    },
+    {
+      "id": "03-present-right",
+      "title": "Present right",
+      "image": "exports/aurix-auri-03-present-right.png",
+      "use": "Character on left; copy on right",
+      "avoid": "Do not mirror the other file",
+      "width": 1122,
+      "height": 1402,
+      "mode": "RGBA",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        25,
+        36,
+        1104,
+        1402
+      ],
+      "visible_alpha_gt32_bbox": [
+        86,
+        133,
+        1071,
+        1281
+      ],
+      "alpha_note": "Low-alpha generation residue extends beyond the visible silhouette; original pixels preserved.",
+      "bytes": 724711
+    },
+    {
+      "id": "04-inspect",
+      "title": "Inspect / think",
+      "image": "exports/aurix-auri-04-inspect.png",
+      "use": "Quota explanation, checking, FAQs",
+      "avoid": "Not payment-confirmed or error messaging",
+      "width": 1122,
+      "height": 1402,
+      "mode": "RGBA",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        0,
+        19,
+        1094,
+        1402
+      ],
+      "visible_alpha_gt32_bbox": [
+        154,
+        72,
+        939,
+        1291
+      ],
+      "alpha_note": "Low-alpha generation residue extends beyond the visible silhouette; original pixels preserved.",
+      "bytes": 783520
+    },
+    {
+      "id": "05-reminder",
+      "title": "Gentle reminder",
+      "image": "exports/aurix-auri-05-reminder.png",
+      "use": "Low-quota notice, useful heads-up",
+      "avoid": "Not severe outage, fraud warning or blame",
+      "width": 1122,
+      "height": 1402,
+      "mode": "RGBA",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        25,
+        36,
+        1092,
+        1378
+      ],
+      "visible_alpha_gt32_bbox": [
+        166,
+        41,
+        1010,
+        1337
+      ],
+      "alpha_note": "Low-alpha generation residue extends beyond the visible silhouette; original pixels preserved.",
+      "bytes": 875024
+    },
+    {
+      "id": "06-listening",
+      "title": "Listening / help",
+      "image": "exports/aurix-auri-06-listening.png",
+      "use": "Setup guidance, group support",
+      "avoid": "Does not imply human or 24/7 live support",
+      "width": 1122,
+      "height": 1402,
+      "mode": "RGBA",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        25,
+        23,
+        1106,
+        1386
+      ],
+      "visible_alpha_gt32_bbox": [
+        263,
+        61,
+        850,
+        1328
+      ],
+      "alpha_note": "Low-alpha generation residue extends beyond the visible silhouette; original pixels preserved.",
+      "bytes": 693354
+    },
+    {
+      "id": "07-thank-you",
+      "title": "Thank you",
+      "image": "exports/aurix-auri-07-thank-you.png",
+      "use": "Gratitude, welcome-back, appreciation",
+      "avoid": "Not standalone proof of payment success",
+      "width": 1122,
+      "height": 1402,
+      "mode": "RGBA",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        25,
+        37,
+        1056,
+        1376
+      ],
+      "visible_alpha_gt32_bbox": [
+        319,
+        78,
+        826,
+        1274
+      ],
+      "alpha_note": "Low-alpha generation residue extends beyond the visible silhouette; original pixels preserved.",
+      "bytes": 617031
+    },
+    {
+      "id": "08-celebrate",
+      "title": "Celebrate",
+      "image": "exports/aurix-auri-08-celebrate.png",
+      "use": "Giveaway, launch, real milestone",
+      "avoid": "Not quota warning, outage or failed payment",
+      "width": 1122,
+      "height": 1402,
+      "mode": "RGBA",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        0,
+        27,
+        1104,
+        1376
+      ],
+      "visible_alpha_gt32_bbox": [
+        93,
+        156,
+        1075,
+        1187
+      ],
+      "alpha_note": "Low-alpha generation residue extends beyond the visible silhouette; original pixels preserved.",
+      "bytes": 789712
+    }
+  ]
+}
