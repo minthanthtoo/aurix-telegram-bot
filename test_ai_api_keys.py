@@ -1,6 +1,9 @@
 import http.client
 import json
+import queue
+import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -99,6 +102,74 @@ class _SSEResponse:
 
     def close(self):
         self.closed = True
+
+
+class _GatedSSEResponse:
+    """A provider stream held open until the HTTP client disconnects."""
+
+    def __init__(self):
+        self._lines = queue.Queue()
+        self._lock = threading.Lock()
+        self._readline_calls = 0
+        self._active_readlines = 0
+        self.waiting_after_first_event = threading.Event()
+        self.closed = threading.Event()
+
+    def feed_event(self, payload):
+        encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        self._lines.put(b"data: " + encoded + b"\n")
+        self._lines.put(b"\n")
+
+    def readline(self):
+        with self._lock:
+            self._readline_calls += 1
+            call_number = self._readline_calls
+            self._active_readlines += 1
+        if call_number == 3:
+            self.waiting_after_first_event.set()
+        try:
+            line = self._lines.get(timeout=5)
+            return b"" if line is None else line
+        finally:
+            with self._lock:
+                self._active_readlines -= 1
+
+    @property
+    def active_readlines(self):
+        with self._lock:
+            return self._active_readlines
+
+    def close(self):
+        self.closed.set()
+        self._lines.put(None)
+
+
+class _DisconnectingWriter:
+    """Deterministically surface the next write failure after a real client RST."""
+
+    def __init__(self, writer, disconnected):
+        self._writer = writer
+        self._disconnected = disconnected
+        self._broken = False
+
+    def write(self, data):
+        if self._disconnected.is_set() and not self._broken:
+            self._broken = True
+            raise BrokenPipeError("downstream test client disconnected")
+        if self._broken:
+            return len(data)
+        return self._writer.write(data)
+
+    def flush(self):
+        if self._broken:
+            return None
+        return self._writer.flush()
+
+    def close(self):
+        return self._writer.close()
+
+    def __getattr__(self, name):
+        return getattr(self._writer, name)
 
 
 class _RawResponse:
@@ -854,6 +925,115 @@ class ExternalAPIHTTPTest(unittest.TestCase):
             analytics["summary"]["avg_duration_ms"],
             analytics["summary"]["avg_first_event_ms"],
         )
+
+    def test_partner_stream_disconnect_closes_upstream_and_records_499(self):
+        disconnected = threading.Event()
+        upstream = _GatedSSEResponse()
+        upstream.feed_event(
+            {
+                "choices": [
+                    {"index": 0, "delta": {"content": "first chunk"}, "finish_reason": None}
+                ]
+            }
+        )
+
+        class _DisconnectRouter(_FeatureRouter):
+            def openai_chat_stream(self, payload, **kwargs):
+                self.last_stream = (payload, kwargs)
+                self.stream_response = upstream
+                return upstream
+
+        router = _DisconnectRouter()
+        self.application.router = router
+        handler_base = make_handler(self.application)
+
+        class _DisconnectHandler(handler_base):
+            def setup(self):
+                super().setup()
+                self.wfile = _DisconnectingWriter(self.wfile, disconnected)
+
+        class _TrackedHTTPServer(ThreadingHTTPServer):
+            daemon_threads = True
+
+            def __init__(self, address, handler):
+                super().__init__(address, handler)
+                self.request_finished = threading.Event()
+
+            def process_request_thread(self, request, client_address):
+                try:
+                    super().process_request_thread(request, client_address)
+                finally:
+                    self.request_finished.set()
+
+        server = _TrackedHTTPServer(("127.0.0.1", 0), _DisconnectHandler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+        try:
+            connection.connect()
+            client_socket = connection.sock
+            self.assertIsNotNone(client_socket)
+            client_socket.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_LINGER,
+                struct.pack("ii", 1, 0),
+            )
+            connection.request(
+                "POST",
+                "/v1/chat/completions",
+                json.dumps(
+                    {
+                        "model": "gemini-3.7-flash-high",
+                        "aurix_mode": "translate",
+                        "messages": [{"role": "user", "content": "Stream then disconnect"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                {
+                    "Authorization": f"Bearer {self.key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertIn("text/event-stream", response.getheader("Content-Type"))
+            first_event = response.readline().decode("utf-8")
+            self.assertIn('"content":"first chunk"', first_event)
+            self.assertTrue(upstream.waiting_after_first_event.wait(2))
+
+            connection.close()
+            disconnected.set()
+            started = time.monotonic()
+            upstream.feed_event(
+                {
+                    "choices": [
+                        {"index": 0, "delta": {"content": "after disconnect"}, "finish_reason": None}
+                    ]
+                }
+            )
+
+            self.assertTrue(upstream.closed.wait(2), "upstream response was not closed promptly")
+            self.assertTrue(server.request_finished.wait(2), "HTTP handler remained active")
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertEqual(upstream.active_readlines, 0)
+            self.assertEqual(router.last_stream[0]["stream"], True)
+        finally:
+            disconnected.set()
+            connection.close()
+            if not upstream.closed.is_set():
+                upstream.close()
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=2)
+
+        self.assertFalse(server_thread.is_alive(), "HTTP listener thread leaked")
+        self.assertTrue(server.request_finished.is_set(), "request worker leaked")
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(report["requests"]), 1)
+        self.assertEqual(report["requests"][0]["status"], "failed")
+        self.assertEqual(report["requests"][0]["http_status"], 499)
+        self.assertEqual(report["requests"][0]["endpoint"], "/chat/completions")
 
     def test_openai_responses_non_streaming_returns_response_shape_and_usage(self):
         self.application.router = _FeatureRouter()
