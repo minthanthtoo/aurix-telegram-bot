@@ -135,6 +135,10 @@ em { color: var(--cyan); font-style: normal; }
 .settings-row strong { display: block; font-size: .85rem; }
 .settings-row p { max-width: 440px; margin: 4px 0 0; color: var(--muted); font-size: .75rem; }
 .settings-row > span { color: var(--cyan); font-size: .72rem; font-weight: 800; }
+.settings-description { margin: 0 0 14px; color: var(--muted); font-size: .75rem; }
+.ssconf-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ssconf-actions .button { min-height: 37px; padding-inline: 13px; font-size: .75rem; }
+.ssconf-actions .fine-print { margin: 0; }
 .client-links { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 0 10px; }
 .client-links a { padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: .72rem; }
 .client-links a:hover { color: var(--cyan); border-color: rgba(99, 216, 247, .4); }

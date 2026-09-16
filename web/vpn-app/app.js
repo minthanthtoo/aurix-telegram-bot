@@ -19,6 +19,8 @@
     selectedProtocol: "outline",
     protocolSelectionTouched: false,
     selectedKeyId: null,
+    ssconf: null,
+    ssconfLoading: false,
   };
   const $ = (selector) => document.querySelector(selector);
   const escapeHtml = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
@@ -110,6 +112,65 @@
     $("#settings-method-note").textContent = method === "Outline" ? "Use the official Outline app with your AuriX access key." : `Use a client that supports your ${method} configuration.`;
     renderCatalogLinks();
   };
+  const renderSsconf = () => {
+    const button = $("#issue-ssconf");
+    const stateLabel = $("#ssconf-state");
+    const note = $("#ssconf-note");
+    const actions = $("#ssconf-actions");
+    const secret = $("#ssconf-url");
+    if (!button || !stateLabel || !note || !actions || !secret) return;
+    button.disabled = !state.initData || state.ssconfLoading;
+    button.textContent = state.ssconfLoading ? "Creating…" : state.ssconf ? "Refresh status" : "Create profile";
+    if (!state.initData) {
+      stateLabel.textContent = "Telegram only";
+      stateLabel.className = "state-pill";
+      note.textContent = "Open AuriX VPN inside Telegram to create a stable profile for your account.";
+      secret.hidden = true;
+      return;
+    }
+    if (!state.ssconf) {
+      stateLabel.textContent = "Optional";
+      stateLabel.className = "state-pill";
+      note.textContent = "Create one stable profile link. AuriX selects the healthiest eligible Outline route whenever the Outline client refreshes it.";
+      secret.hidden = true;
+      return;
+    }
+    const count = Number(state.ssconf.compatible_route_count || 0);
+    stateLabel.textContent = count > 1 ? `${count} routes` : count === 1 ? "1 route" : "No route";
+    stateLabel.className = `state-pill ${count ? "state-pill--ready" : "state-pill--gold"}`;
+    note.textContent = count > 1
+      ? `${count} eligible Outline routes are in the pool. The official Outline client receives one route per refresh; this does not provide seamless in-session failover.`
+      : count === 1
+        ? "One eligible Outline route is available. Refresh the profile if AuriX changes the assigned location."
+        : "The profile exists, but no compatible active Outline route is available yet.";
+    secret.hidden = false;
+    secret.textContent = state.ssconf.profile_url || "Profile URL unavailable";
+    actions.innerHTML = `<button class="button button--primary" id="copy-ssconf" type="button">Copy profile link</button><button class="button button--quiet" id="issue-ssconf" type="button">Refresh status</button>`;
+    $("#copy-ssconf").addEventListener("click", async () => {
+      if (!navigator.clipboard || !state.ssconf.profile_url) return;
+      await navigator.clipboard.writeText(state.ssconf.profile_url);
+      $("#copy-ssconf").textContent = "Copied";
+      setTimeout(() => { if ($("#copy-ssconf")) $("#copy-ssconf").textContent = "Copy profile link"; }, 1400);
+    });
+    $("#issue-ssconf").addEventListener("click", issueSsconf);
+  };
+  const issueSsconf = async () => {
+    if (!state.initData || state.ssconfLoading) return;
+    state.ssconfLoading = true;
+    renderSsconf();
+    try {
+      state.ssconf = await api("/api/ssconf");
+      renderSsconf();
+      showNotice(state.ssconf.multi_server_pool ? "Stable multi-server profile is ready. Copy it into Outline." : "Stable Outline profile is ready. Copy it into Outline.");
+    } catch (error) {
+      state.ssconf = null;
+      showNotice(escapeHtml(error.message));
+      renderSsconf();
+    } finally {
+      state.ssconfLoading = false;
+      renderSsconf();
+    }
+  };
   const renderCurrentServer = () => {
     const key = selectedKey();
     const server = key && serverFor(key.endpoint_id);
@@ -174,7 +235,7 @@
     $("#package-count").textContent = `${subscriptions.length} package${subscriptions.length === 1 ? "" : "s"}`;
     $("#package-summary-list").innerHTML = subscriptions.length ? subscriptions.slice(0, 3).map((item) => `<div class="summary-row"><div><strong>${escapeHtml(item.plan_name || item.plan_code || "AuriX VPN")}</strong><span>${escapeHtml(serverLabel(serverFor(item.endpoint_id)))} · ${escapeHtml(titleCase(item.preferred_protocol || "outline"))} · ${escapeHtml(titleCase(item.status))}</span></div><span>${escapeHtml(formatDate(item.expires_at))}</span></div>`).join("") : `<div class="empty-state">No active package yet. Choose a location and package to start.</div>`;
   };
-  const renderHome = () => { renderIdentity(); renderCurrentServer(); renderUsage(); renderPackagesSummary(); };
+  const renderHome = () => { renderIdentity(); renderCurrentServer(); renderUsage(); renderPackagesSummary(); renderSsconf(); };
   const renderServers = () => {
     const list = $("#server-list");
     if (!state.initData) { list.innerHTML = `<div class="empty-state">Open this page inside Telegram to see live server availability.</div>`; return; }
@@ -355,6 +416,7 @@
     } catch (error) { showNotice(escapeHtml(error.message)); }
   });
   $("#settings-button").addEventListener("click", () => go("settings"));
+  $("#issue-ssconf").addEventListener("click", issueSsconf);
   $("#servers-refresh").addEventListener("click", async () => { try { await loadServers(); showNotice("Server availability refreshed."); } catch (error) { showNotice(escapeHtml(error.message)); } });
   window.addEventListener("hashchange", () => {
     const requested = window.location.hash.slice(1);

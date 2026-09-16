@@ -82,6 +82,12 @@
         <div class="page-heading"><div><p class="eyebrow">Account</p><h1 id="settings-title">Settings</h1></div></div>
         <article class="profile-card card"><span class="avatar avatar--large" id="settings-avatar">A</span><div><h2 id="settings-name">Telegram account</h2><p id="settings-handle">Verified session required</p></div><span class="state-pill" id="settings-state">Locked</span></article>
         <article class="settings-panel card"><div class="settings-row"><div><strong>Connection method</strong><p id="settings-method-note">Use the client that supports your AuriX access configuration.</p></div><span id="settings-method">Outline</span></div><div class="client-links" id="client-links"></div></article>
+        <article class="settings-panel card" id="ssconf-panel">
+          <div class="card-heading"><div><p class="eyebrow">Multi-server access</p><h2>Refreshable Outline profile</h2></div><span class="state-pill" id="ssconf-state">Optional</span></div>
+          <p class="settings-description" id="ssconf-note">Create one stable profile link. AuriX selects the healthiest eligible Outline route whenever the Outline client refreshes it.</p>
+          <div class="ssconf-actions" id="ssconf-actions"><button class="button button--quiet" id="issue-ssconf" type="button">Create profile</button></div>
+          <div class="key-secret" id="ssconf-url" hidden></div>
+        </article>
         <article class="settings-panel card"><div class="card-heading"><div><p class="eyebrow">Order history</p><h2>Orders</h2></div></div><div class="order-list" id="order-list"><div class="empty-state">Open this app from Telegram to load orders.</div></div></article>
         <article class="support-card card"><p class="eyebrow">Need help?</p><h2>Talk to AuriX support.</h2><p>Use Telegram for receipt upload, activation review, and account ownership questions.</p><a class="button button--primary" id="telegram-link" href="#">Open Telegram <span>↗</span></a></article>
         <p class="fine-print">Your Telegram identity is verified server-side. Access keys are never stored in browser local storage.</p>
