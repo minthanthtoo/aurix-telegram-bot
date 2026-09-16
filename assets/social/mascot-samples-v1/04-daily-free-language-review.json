@@ -1,0 +1,6 @@
+{
+  "id": "04-daily-free",
+  "requested": "ag/gemini-3.8-flash-tiered(high)",
+  "returned": "gemini-3.8-flash-tiered",
+  "review": "**Verdict:** PASS (minor copy polish needed).\n\n**Issues and Replacements:**\n\n1. Phrasing \"အခမဲ့ VPN Plan\" conflates data quota with subscription tier.\n* Current: `Bot မှာ နေ့စဉ် 300 MB အခမဲ့ VPN Plan ရယူနိုင်ပါတယ်။`\n* Replace: `Bot မှာ နေ့စဉ် အခမဲ့ VPN ဒေတာ 300 MB ရယူနိုင်ပါတယ်။`\n\n2. Particle \"တော့\" in disclaimer creates clunky rhythm.\n* Current: `Wi-Fi ဒါမှမဟုတ် မိုဘိုင်းအင်တာနက်တော့ ရှိဖို့လိုပါတယ်။`\n* Replace: `Wi-Fi ဒါမှမဟုတ် မိုဘိုင်းဒေတာ ရှိထားဖို့ လိုပါမယ်။`\n\n3. Ambiguous action word \"ရယူပေးနော်\" for paid plans. Needs clear purchase context.\n* Current: `ရရှိနိုင်တဲ့ Plan နဲ့ သက်တမ်းကို Bot ထဲမှာ စစ်ပြီးမှ ရယူပေးနော်။`\n* Replace: `ရနိုင်တဲ့ Plan တွေနဲ့ သက်တမ်းကို Bot ထဲမှာ အရင်စစ်ဆေးပြီးမှ ဝယ်ယူပေးပါနော်။`\n\n**Score:** 9/10"
+}

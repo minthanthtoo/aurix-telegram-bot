@@ -1,0 +1,46 @@
+{
+  "campaign": "auri-mascot-samples-v1",
+  "stamp": "20260916-170000",
+  "format": "1080x1350 PNG + UTF-8 TXT + SVG",
+  "recommended_order": [
+    "01-quota-control",
+    "02-receipt-to-key",
+    "03-setup-help",
+    "04-daily-free"
+  ],
+  "finals": [
+    {
+      "id": "01-quota-control",
+      "role": "chosen: retention",
+      "image": "exports/20260916-170000_aurix-01-quota-control_r2.png",
+      "caption": "exports/20260916-170000_aurix-01-quota-control_r2.txt",
+      "source": "exports/20260916-170000_aurix-01-quota-control_r2.svg"
+    },
+    {
+      "id": "02-receipt-to-key",
+      "role": "chosen: paid conversion",
+      "image": "exports/20260916-170000_aurix-02-receipt-to-key_r2.png",
+      "caption": "exports/20260916-170000_aurix-02-receipt-to-key_r2.txt",
+      "source": "exports/20260916-170000_aurix-02-receipt-to-key_r2.svg"
+    },
+    {
+      "id": "03-setup-help",
+      "role": "new execution: onboarding and support",
+      "image": "exports/20260916-170000_aurix-03-setup-help_r2.png",
+      "caption": "exports/20260916-170000_aurix-03-setup-help_r2.txt",
+      "source": "exports/20260916-170000_aurix-03-setup-help_r2.svg"
+    },
+    {
+      "id": "04-daily-free",
+      "role": "new execution: low-risk trial",
+      "image": "exports/20260916-170000_aurix-04-daily-free_r2.png",
+      "caption": "exports/20260916-170000_aurix-04-daily-free_r2.txt",
+      "source": "exports/20260916-170000_aurix-04-daily-free_r2.svg"
+    }
+  ],
+  "publication_gates": [
+    "Sample creative: confirm live daily free eligibility and automatic receipt flow before publishing.",
+    "No exact reminder thresholds advertised; older sources conflict.",
+    "Gemini audit availability recorded separately."
+  ]
+}

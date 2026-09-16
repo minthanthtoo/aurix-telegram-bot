@@ -1,0 +1,6 @@
+{
+  "id": "04-daily-free",
+  "requested": "ag/gemini-3.8-flash-tiered(high)",
+  "returned": "gemini-3.8-flash-tiered",
+  "review": "**Verdict**: Approved with minor revisions. Fact-accurate, clear tone, locked constraints respected.\n\n**Issues & Replacements**:\n\n1. Image lines duplicate brand: Line 1 and Line 7 both say \"Outline VPN\".\n   * Fix: Drop Line 7. Image text becomes clean: Line 6 `အခမဲ့`, Line 8 `Bot မှာ ရယူပါ`.\n\n2. Caption sentence 1 phrasing stiff: `အခမဲ့ VPN Plan ရယူနိုင်ပါတယ်။`\n   * Fix: Change to `အခမဲ့ စမ်းသုံးခွင့် ရယူနိုင်ပါတယ်။` Fits trial intent better than calling 300 MB \"Plan\".\n\n3. Caption sentence 3 register mismatch: `စစ်ပြီးမှ ရယူပေးနော်။` shifts tone abruptly.\n   * Fix: Change to `Bot ထဲမှာ အရင်စစ်ဆေးပြီးမှ ဝယ်ယူပေးပါနော်။` Smoother consumer phrasing.\n\n**Score**: 8.5/10"
+}

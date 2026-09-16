@@ -1,0 +1,6 @@
+{
+  "id": "03-setup-help",
+  "requested": "ag/gemini-3.8-flash-tiered(high)",
+  "returned": "gemini-3.8-flash-tiered",
+  "review": "Verdict: PASS (minor polish needed).\n\nIssues:\n1. Image lines 2-4: Disjointed flow and stray punctuation. Standalone `?` redundant.\nFix: Merge lines 2-3 to `Key ရပြီး စသုံးဖို့ အကူအညီလိုနေလား?`, delete line 4 `?`.\n\n2. Image line 5-6: `တစ်ယောက်တည်း စမ်းနေစရာမလိုပါဘူး` awkward phrasing.\nFix: Change to `တစ်ယောက်တည်း ခေါင်းစားမနေပါနဲ့` or `တစ်ယောက်တည်း စမ်းမနေပါနဲ့`.\n\n3. Caption tone shift: `ဖုံးထားပေးနော်` colloquial particle clashes with polite `အကူအညီတောင်းနိုင်ပါတယ်။` and `မတင်ပါနဲ့`.\nFix: Change `ဖုံးထားပေးနော်။` to `ဖုံးထားပေးပါ။`.\n\nScore: 8.5/10"
+}

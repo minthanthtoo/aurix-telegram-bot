@@ -1,0 +1,6 @@
+{
+  "id": "03-setup-help",
+  "requested": "ag/gemini-3.8-flash-tiered(high)",
+  "returned": "gemini-3.8-flash-tiered",
+  "review": "Verdict: Pass. Minor polish needed.\n\nIssues and replacements:\n\n1. Caption line 1 grammar: Terminal particle `ပြီ` breaks mid-sentence clause.\nFix: Change `Outline VPN Key ရထားပြီ၊ ဘယ်ကစသုံးရမလဲ` to `Outline VPN Key ရထားပြီး ဘယ်ကစသုံးရမလဲ`.\n\n2. Support CTA link label: `အကူအညီမေးရန်` awkward phrasing.\nFix: Change to `အကူအညီရယူရန်` or `မေးမြန်းရန်`.\n\n3. Image line 1-2 connection: `Key ရပြီ။ စသုံးဖို့ အကူအညီလိုလား?` choppy.\nFix: Change to `Key ရပြီး စသုံးဖို့ အကူအညီလိုနေလား?` (or keep split: Line 1: `Key ရထားပြီး`, Line 2: `စသုံးဖို့ အကူအညီလိုလား?`).\n\nScore: 9/10"
+}

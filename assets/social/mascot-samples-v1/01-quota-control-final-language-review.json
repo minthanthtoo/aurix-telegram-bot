@@ -1,0 +1,6 @@
+{
+  "id": "01-quota-control",
+  "requested": "ag/gemini-3.8-flash-tiered(high)",
+  "returned": "gemini-3.8-flash-tiered",
+  "review": "**Verdict**: PASS (Approved with minor polish). Copy honors all locked rules. Tone fits friendly adult audience.\n\n**Issues & Replacements**:\n\n1. Image lines 4–5 repeat line 2.\n   * *Issue*: \"Quota\" and \"လက်ကျန်\" duplicate \"VPN Quota လက်ကျန်\". Clutters visual space.\n   * *Fix*: Drop lines 4 and 5 from image copy. Keep line 2 only.\n\n2. Spoken phrasing in caption.\n   * *Issue*: \"ကိုယ်တိုင်ဝင်စစ်နိုင်ပါတယ်\" too casual for brand post.\n   * *Fix*: Replace with \"ကိုယ်တိုင် စစ်ဆေးနိုင်ပါတယ်\".\n\n3. Abrupt connective particle in caption.\n   * *Issue*: \"သတိပေးလို့\" sounds slightly broken in written prose.\n   * *Fix*: Replace with \"သတိပေးမှာဖြစ်လို့\" for natural flow.\n\n**Score**: 9/10"
+}
