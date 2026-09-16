@@ -164,7 +164,11 @@ def model_profile(
 def resolve_model_id(value: Any, *, default_route: str) -> tuple[str, str]:
     model_id = str(value or "").strip()
     if not model_id:
-        return default_route, model_id_for_route(default_route) or "configured-default"
+        configured_route = str(default_route or "").strip()
+        configured_id = model_id_for_route(configured_route)
+        if not configured_id:
+            raise ValueError("configured default model is not available")
+        return configured_route, configured_id
     item = MODEL_CATALOG.get(model_id)
     if item is not None:
         return item["route"], model_id

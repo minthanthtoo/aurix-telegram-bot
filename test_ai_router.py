@@ -18,6 +18,7 @@ from aurix_ai.router import (
     _english_translation_only,
     build_messages,
     normalize_translation_direction,
+    resolve_model_id,
 )
 from aurix_ai.web_api import AuriXAIApplication, make_handler
 
@@ -152,6 +153,14 @@ class AIRouterTest(unittest.TestCase):
             NineRouterClient(base_url="http://router.invalid", api_key="", model="model")
         with self.assertRaises(AIConfigurationError):
             NineRouterClient(base_url="http://router.invalid", api_key="secret", model="")
+
+    def test_default_model_must_be_in_the_curated_catalog(self):
+        self.assertEqual(
+            resolve_model_id(None, default_route="ag/gemini-3.7-flash-high"),
+            ("ag/gemini-3.7-flash-high", "gemini-3.7-flash-high"),
+        )
+        with self.assertRaisesRegex(ValueError, "configured default model"):
+            resolve_model_id(None, default_route="ag/removed-model")
 
     def test_router_calls_openai_compatible_endpoint_and_records_returned_model(self):
         seen = {}
