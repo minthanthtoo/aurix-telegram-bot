@@ -98,6 +98,10 @@ class ExternalAPIRateLimitError(RuntimeError):
     """The external account has exceeded its configured request rate."""
 
 
+class _DownstreamStreamDisconnected(Exception):
+    """A client stopped accepting bytes after an SSE response was opened."""
+
+
 @dataclass
 class _ExternalStream:
     response: Any
@@ -1511,16 +1515,23 @@ class AuriXAIApplication:
         provider_model: str | None,
         router_request_id: str | None,
         completed: bool,
+        failure_http_status: int = 499,
         first_event_ms: float | None = None,
         duration_ms: float | None = None,
     ) -> None:
+        """Record stream outcome; failure status describes why delivery failed.
+
+        The public SSE HTTP status is already committed as 200 by the time the
+        provider stream is consumed.  The usage event retains the mapped
+        upstream failure (normally 502) or 499 for a downstream disconnect.
+        """
         self.api_keys.record_usage(
             request_id=stream.request_id,
             principal=stream.principal,
             mode=stream.mode,
             model_id=stream.model_id,
             status="completed" if completed else "failed",
-            http_status=200 if completed else 499,
+            http_status=200 if completed else failure_http_status,
             provider_model=provider_model,
             usage=usage,
             router_request_id=router_request_id,
@@ -4173,8 +4184,18 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             completed = False
             stream_completed = False
             done_sent = False
+            failure_http_status = _router_error_status(
+                AIRouterError("9Router stream ended before completion")
+            )
             first_event_ms: float | None = None
             event_lines: list[bytes] = []
+
+            def write_downstream(data: bytes) -> None:
+                try:
+                    self.wfile.write(data)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+                    raise _DownstreamStreamDisconnected from exc
 
             def emit_event(event: bytes) -> None:
                 nonlocal usage, provider_model, router_request_id, completed, first_event_ms
@@ -4193,13 +4214,18 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 if normalized:
                     if first_event_ms is None:
                         first_event_ms = (time.monotonic() - stream.started_at) * 1000
-                    self.wfile.write(normalized + b"\n\n")
-                    self.wfile.flush()
+                    write_downstream(normalized + b"\n\n")
                 completed = completed or done
 
             try:
                 while True:
-                    line = stream.response.readline()
+                    try:
+                        line = stream.response.readline()
+                    except Exception:
+                        # The upstream stream opened successfully but failed
+                        # before a terminal marker; persist it as a gateway
+                        # failure, not as a downstream client cancellation.
+                        break
                     if not line:
                         break
                     if line in {b"\n", b"\r\n"}:
@@ -4215,12 +4241,12 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 if event_lines:
                     emit_event(b"\n".join(event_lines))
                 if completed and not done_sent:
-                    self.wfile.write(b"data: [DONE]\n\n")
-                    self.wfile.flush()
+                    write_downstream(b"data: [DONE]\n\n")
                     done_sent = True
                 stream_completed = completed
-            except (BrokenPipeError, ConnectionResetError, OSError):
+            except _DownstreamStreamDisconnected:
                 stream_completed = False
+                failure_http_status = 499
             finally:
                 self.close_connection = True
                 try:
@@ -4232,6 +4258,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         provider_model=provider_model,
                         router_request_id=router_request_id,
                         completed=stream_completed,
+                        failure_http_status=failure_http_status,
                         first_event_ms=first_event_ms,
                         duration_ms=(
                             (time.monotonic() - stream.started_at) * 1000
@@ -4312,21 +4339,30 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             tool_items_started: set[int] = set()
             sequence_number = 0
             completed = False
+            failure_http_status = _router_error_status(
+                AIRouterError("9Router stream ended before completion")
+            )
             first_event_ms: float | None = None
             event_lines: list[bytes] = []
+
+            def write_downstream(data: bytes) -> None:
+                try:
+                    self.wfile.write(data)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+                    raise _DownstreamStreamDisconnected from exc
 
             def emit(event_type: str, payload: dict[str, Any]) -> None:
                 nonlocal sequence_number
                 sequence_number += 1
                 payload = {"type": event_type, **payload}
                 payload.setdefault("sequence_number", sequence_number)
-                self.wfile.write(
+                write_downstream(
                     f"event: {event_type}\n".encode("ascii")
                     + b"data: "
                     + json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                     + b"\n\n"
                 )
-                self.wfile.flush()
 
             def parse_event(event: bytes) -> tuple[dict[str, Any] | None, bool]:
                 lines = event.replace(b"\r\n", b"\n").split(b"\n")
@@ -4554,11 +4590,17 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         },
                     )
                 emit("response.completed", {"response": response_payload})
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-            except AIRouterError:
+                write_downstream(b"data: [DONE]\n\n")
+            except _DownstreamStreamDisconnected:
+                failure_http_status = 499
                 completed = False
-            except (BrokenPipeError, ConnectionResetError, OSError):
+            except AIRouterError as exc:
+                failure_http_status = _router_error_status(exc)
+                completed = False
+            except Exception:
+                failure_http_status = _router_error_status(
+                    AIRouterError("9Router stream failed")
+                )
                 completed = False
             finally:
                 self.close_connection = True
@@ -4571,6 +4613,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         provider_model=provider_model,
                         router_request_id=router_request_id,
                         completed=completed,
+                        failure_http_status=failure_http_status,
                         first_event_ms=first_event_ms,
                         duration_ms=(time.monotonic() - stream.started_at) * 1000,
                     )

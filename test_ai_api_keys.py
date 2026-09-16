@@ -104,6 +104,25 @@ class _SSEResponse:
         self.closed = True
 
 
+class _IncompleteSSEResponse:
+    """A deterministic provider stream that EOFs before any terminal marker."""
+
+    def __init__(self):
+        self._lines = iter(
+            [
+                b'data: {"id":"partial","model":"test-model","choices":[{"index":0,"delta":{"content":"partial answer"},"finish_reason":null}]}\n',
+                b"\n",
+            ]
+        )
+        self.closed = False
+
+    def readline(self):
+        return next(self._lines, b"")
+
+    def close(self):
+        self.closed = True
+
+
 class _GatedSSEResponse:
     """A provider stream held open until the HTTP client disconnects."""
 
@@ -939,22 +958,6 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         )
 
     def test_partner_stream_eof_without_finish_or_done_is_incomplete(self):
-        class _IncompleteSSEResponse:
-            def __init__(self):
-                self._lines = iter(
-                    [
-                        b'data: {"id":"partial","model":"test-model","choices":[{"index":0,"delta":{"content":"partial answer"},"finish_reason":null}]}\n',
-                        b"\n",
-                    ]
-                )
-                self.closed = False
-
-            def readline(self):
-                return next(self._lines, b"")
-
-            def close(self):
-                self.closed = True
-
         upstream = _IncompleteSSEResponse()
 
         class _EOFRouter(_FeatureRouter):
@@ -993,8 +996,61 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         status, report = self.admin_request("/api/admin/usage", token="admin-secret")
         self.assertEqual(status, 200)
         self.assertEqual(len(report["requests"]), 1)
-        self.assertEqual(report["requests"][0]["status"], "failed")
-        self.assertEqual(report["requests"][0]["endpoint"], "/chat/completions")
+        usage_event = report["requests"][0]
+        self.assertEqual(usage_event["status"], "failed")
+        self.assertEqual(usage_event["http_status"], 502)
+        self.assertEqual(usage_event["endpoint"], "/chat/completions")
+        self.assertNotIn("prompt", usage_event)
+        self.assertNotIn("messages", usage_event)
+        self.assertNotIn("request_body", usage_event)
+
+    def test_partner_responses_stream_eof_records_upstream_failure_status(self):
+        upstream = _IncompleteSSEResponse()
+
+        class _EOFRouter(_FeatureRouter):
+            def openai_chat_stream(self, payload, **kwargs):
+                self.last_stream = (payload, kwargs)
+                self.stream_response = upstream
+                return upstream
+
+        self.application.router = _EOFRouter()
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "POST",
+            "/v1/responses",
+            json.dumps(
+                {
+                    "model": "gemini-3.7-flash-high",
+                    "aurix_mode": "translate",
+                    "input": "Incomplete response stream",
+                    "stream": True,
+                }
+            ).encode(),
+            {
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("response.output_text.delta", body)
+        self.assertIn('"delta":"partial answer"', body)
+        self.assertNotIn("response.completed", body)
+        self.assertNotIn("data: [DONE]", body)
+        self.assertTrue(upstream.closed)
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(report["requests"]), 1)
+        usage_event = report["requests"][0]
+        self.assertEqual(usage_event["status"], "failed")
+        self.assertEqual(usage_event["http_status"], 502)
+        self.assertEqual(usage_event["endpoint"], "/responses")
+        self.assertNotIn("prompt", usage_event)
+        self.assertNotIn("messages", usage_event)
+        self.assertNotIn("request_body", usage_event)
 
     def test_partner_stream_disconnect_closes_upstream_and_records_499(self):
         disconnected = threading.Event()
