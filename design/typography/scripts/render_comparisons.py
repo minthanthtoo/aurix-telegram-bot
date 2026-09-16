@@ -255,6 +255,82 @@ def board_numerals() -> str:
     return shell(title, subtitle, 1200, "".join(parts))
 
 
+def board_app_style_gallery() -> str:
+    title = "App-style type scan"
+    subtitle = "24 display directions + one Burmese companion line."
+    entries = [
+        ("Inter", "neutral / platform", "Clear access", 700, CYAN),
+        ("Manrope", "humanist / clean", "Clear access", 700, CYAN),
+        ("Space Grotesk", "tech / contemporary", "FAST SETUP", 700, VIOLET),
+        ("Rubik", "rounded / practical", "Clear access", 700, GOLD),
+        ("Avenir Next", "warm / polished", "Clear access", 700, CYAN),
+        ("Arial Rounded MT Bold", "friendly / native", "HELLO AuriX", 700, GOLD),
+        ("Oswald", "condensed / utility", "100 GB", 700, VIOLET),
+        ("Bebas Neue", "condensed / impact", "1 MIN", 400, GOLD),
+        ("Anton", "heavy / poster", "START NOW", 400, CYAN),
+        ("Arial Narrow", "compact / system", "3 GB MONTHLY", 700, VIOLET),
+        ("Comfortaa", "rounded / soft", "Hello AuriX", 700, CYAN),
+        ("Fredoka", "bubble / friendly", "TRY FREE", 700, GOLD),
+        ("Baloo 2", "playful / regional", "AuriX", 700, VIOLET),
+        ("Lilita One", "bold / playful", "GO", 400, CYAN),
+        ("Bungee", "sticker / display", "ON", 400, GOLD),
+        ("Fraunces", "soft / editorial", "Clear access", 700, CYAN),
+        ("DM Serif Display", "editorial / classic", "AuriX", 400, VIOLET),
+        ("Playfair Display", "luxury / editorial", "Clear access", 700, GOLD),
+        ("Bodoni Moda", "high contrast / fashion", "AuriX", 800, CYAN),
+        ("Space Mono", "mono / data", "50 GB", 700, VIOLET),
+        ("JetBrains Mono", "mono / technical", "quota 50%", 700, GOLD),
+        ("Caveat", "handwritten / note", "try AuriX", 700, CYAN),
+        ("Pacifico", "script / celebratory", "Hello!", 400, VIOLET),
+        ("Permanent Marker", "marker / sticker", "FREE", 400, GOLD),
+    ]
+    left = 64
+    card_w = 226
+    gap = 16
+    card_h = 218
+    row_gap = 14
+    parts = []
+    for idx, (family, category, sample, weight, accent) in enumerate(entries):
+        col = idx % 4
+        row = idx // 4
+        x = left + col * (card_w + gap)
+        y = 184 + row * (card_h + row_gap)
+        parts.append(rect(x, y, card_w, card_h, WHITE, 18, stroke=MUTED, stroke_width=2))
+        parts.append(rect(x, y, 8, card_h, accent, 4))
+        parts.append(text(x + 22, y + 31, family, size=15, family="Inter", fill=DEEP, weight=700))
+        parts.append(text(x + 22, y + 56, category, size=12, family="Inter", fill=SLATE, weight=550))
+        parts.append(text(x + 22, y + 122, sample, size=28, family=family, fill=INK, weight=weight))
+        parts.append(text(x + 22, y + 166, "AuriX / access", size=15, family=family, fill=accent, weight=weight))
+        parts.append(text(x + 22, y + 198, "မြန်မာစာ companion", size=15, family="Noto Sans Myanmar", fill=SLATE, weight=500, lang="my"))
+    height = 184 + 6 * (card_h + row_gap) + 54
+    return shell(title, subtitle, height, "".join(parts))
+
+
+def board_burmese_roles() -> str:
+    title = "Burmese role scan"
+    subtitle = "Character in the hook; facts in tested Myanmar faces."
+    entries = [
+        ("Noto Sans Myanmar / 400", "Noto Sans Myanmar", 400, "Body / explanation", CYAN),
+        ("Noto Sans Myanmar / 650", "Noto Sans Myanmar", 650, "Headline / benefit", VIOLET),
+        ("Noto Sans Myanmar / 800", "Noto Sans Myanmar", 800, "Hook / large number", GOLD),
+        ("Noto Sans Myanmar UI", "Noto Sans Myanmar UI", 650, "Compact UI label only", CYAN),
+        ("Noto Serif Myanmar", "Noto Serif Myanmar", 700, "Short editorial hook", VIOLET),
+        ("Padauk / Regular", "Padauk", 400, "Open alternative / retest", GOLD),
+        ("Padauk / Bold", "Padauk", 700, "Warm display alternative", CYAN),
+        ("Myanmar MN / system", "Myanmar MN", 500, "Platform contrast only", SLATE),
+    ]
+    parts = []
+    y = 184
+    for idx, (label, family, weight, role, accent) in enumerate(entries):
+        parts.append(rect(64, y, 952, 174, WHITE, 20, stroke=MUTED, stroke_width=2))
+        parts.append(rect(64, y, 10, 174, accent, 5))
+        parts.append(text(102, y + 40, label, size=21, family="Inter", fill=DEEP, weight=700))
+        parts.append(text(102, y + 71, role, size=17, family="Inter", fill=SLATE, weight=550))
+        parts.append(text(102, y + 124, "Quota လက်ကျန်ကို အချိန်မရွေး စစ်နိုင်ပြီ", size=35, family=family, fill=INK, weight=weight, lang="my"))
+        y += 190
+    return shell(title, subtitle, y + 58, "".join(parts))
+
+
 BOARDS = {
     "01-myanmar-families": board_myanmar,
     "02-bilingual-pairings": board_pairings,
@@ -262,6 +338,8 @@ BOARDS = {
     "04-motion-storyboard": board_motion,
     "05-feed-scale-composite": board_mobile_stress_test,
     "06-numeral-systems": board_numerals,
+    "07-app-style-display-scan": board_app_style_gallery,
+    "08-burmese-role-scan": board_burmese_roles,
 }
 
 
@@ -277,19 +355,26 @@ def main() -> None:
     system_config = next((path for path in system_configs if path.exists()), None)
     if system_config is None:
         raise RuntimeError("No base Fontconfig config found; install Fontconfig or use installed fonts.")
+    extra_dirs = [
+        Path(raw_path)
+        for raw_path in os.environ.get("AURIX_EXTRA_FONT_DIRS", "").split(os.pathsep)
+        if raw_path
+    ]
+    font_dirs = [FONT_DIR, *extra_dirs]
+    dir_xml = "".join(f"  <dir>{escape(str(path))}</dir>\n" for path in font_dirs)
     FONTCONFIG.write_text(
         "<?xml version=\"1.0\"?>\n"
         "<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n"
         "<fontconfig>\n"
         f"  <cachedir>{escape(str(cache_dir))}</cachedir>\n"
         f"  <include>{escape(str(system_config))}</include>\n"
-        f"  <dir>{escape(str(FONT_DIR))}</dir>\n"
-        "</fontconfig>\n",
+        + dir_xml
+        + "</fontconfig>\n",
         encoding="utf-8",
     )
     env = os.environ.copy()
     env["FONTCONFIG_FILE"] = str(FONTCONFIG)
-    subprocess.run(["fc-cache", "-f", str(FONT_DIR)], check=True, env=env)
+    subprocess.run(["fc-cache", "-f", *[str(path) for path in font_dirs]], check=True, env=env)
     for name, make_svg in BOARDS.items():
         svg_path = PROOFS / f"{name}.svg"
         png_path = PROOFS / f"{name}.png"

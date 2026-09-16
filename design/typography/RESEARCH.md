@@ -1,6 +1,6 @@
 # Burmese + English typography for AuriX social content
 
-Research date: 2026-09-16. Scope: AuriX's Myanmar-first social identity, but with rules intended to transfer to other local brands and scripts.
+Research date: 2026-09-17. Scope: AuriX's Myanmar-first social identity, but with rules intended to transfer to other local brands and scripts. This revision expands the earlier shortlist into a 24-direction app-style landscape scan.
 
 ## Decision in one minute
 
@@ -14,11 +14,51 @@ Research date: 2026-09-16. Scope: AuriX's Myanmar-first social identity, but wit
 
 The best way to give AuriX typographic character is not to add a stroke to every glyph. Use a disciplined contrast of **scale + real weight + one semantic color accent**, with an occasional Burmese serif hook when the campaign deserves it. Keep the official AuriX logo artwork unchanged; a font specimen is not a logo redraw.
 
+## Why the shortlist had to expand
+
+The earlier comparison was a useful production shortlist, but it was not a broad survey of the visual language that creators encounter in TikTok or CapCut. CapCut's current help and product pages describe a searchable font/template gallery, style keywords, adjustable font/color/animation/layout controls, AI-generated handwritten treatments, balloon/bubble treatments, and broader typography effects such as 3D and dynamic transitions. These are a mixture of typefaces, templates, and effects—not a stable list of fonts that should be copied into a brand system. [CapCut font/material help](https://www.capcut.com/help/material-of-text) · [CapCut text tools](https://www.capcut.com/tools/add-text-to-video) · [CapCut typography effects](https://www.capcut.com/explore/typography-effects?templateType=image)
+
+TikTok's official Creative Center is primarily a trends, ad-example, and creative-resource surface rather than a fixed type catalogue; TikTok's own creative materials describe using text in varied fonts and colours alongside effects and transitions. The correct response is therefore a **category scan**—impact, rounded, editorial, handwritten, mono, sticker, and clean platform styles—followed by Myanmar-aware testing, not a claim that one app's current regional library is exhaustive. [TikTok Creative Center](https://ads.tiktok.com/resources/help/article/creative-center) · [TikTok creative tools playbook](https://ads.tiktok.com/business/library/TikTok_Follow_Me_Best_Practices_Playbook_EN.pdf)
+
+### Expanded 24-direction scan
+
+Every Latin candidate below was rendered beside the same Burmese companion line. This tests pairing and hierarchy; it does **not** imply that the Latin family supplies Burmese glyphs. The board is [07-app-style-display-scan.png](proofs/07-app-style-display-scan.png). The Burmese-role board is [08-burmese-role-scan.png](proofs/08-burmese-role-scan.png).
+
+| Direction | Families tested | What it is useful for | AuriX judgment |
+|---|---|---|---|
+| **Clean / platform** | Inter, Manrope, Space Grotesk, Rubik, Avenir Next, Arial Rounded MT Bold | Product truth, service promises, onboarding, calm trust | Keep Inter + Noto Sans Myanmar as default; Manrope or Space Grotesk can be a controlled Latin accent. Avenir/Arial Rounded are system-only comparisons. |
+| **Condensed / impact** | Oswald, Bebas Neue, Anton, Arial Narrow | Short Latin labels, quota numbers, giveaway urgency, one-word badges | Good for a compact numeral or English badge; never compress Burmese to imitate it. Oswald remains the safest bundled choice. |
+| **Rounded / playful** | Comfortaa, Fredoka, Baloo 2, Lilita One | Free-trial, giveaway, community, lighter campaign energy | Use only for one short accent or badge. It can make a paid reliability offer feel unserious if it owns the whole post. |
+| **Sticker / graphic** | Bungee, Caveat, Pacifico, Permanent Marker | Social-native callouts, celebratory posts, motion title experiments | Useful as a visual reference, not as AuriX factual copy. Keep it away from prices, terms, bot instructions, and Burmese body text. |
+| **Editorial serif** | Fraunces, DM Serif Display, Playfair Display, Bodoni Moda | Human story, founder note, reflective hook, premium restraint | One expressive hook only. Pair with Noto Sans Myanmar; never stack several editorial voices. |
+| **Mono / technical** | Space Mono, JetBrains Mono | Quota/status data, key metadata, timing, technical proof | Strong utility role; not a headline and not a replacement for the human service voice. |
+
+### What survives the scan
+
+- The *variety* is valuable as a campaign-direction library, not as a 24-font brand kit.
+- Clean sans, real weight contrast, and a single app-style accent produced the clearest AuriX signal at feed scale.
+- Condensed and mono faces improved numeric scanning when the unit stayed attached (`50 GB`, `3 GB`, `6,000 MMK`); they did not improve Burmese copy.
+- Rounded and handwritten faces were expressive but quickly changed the perceived offer from reliable service to casual entertainment. Reserve them for free/community/giveaway content.
+- Serif contrast can give the brand more character without the noisy “AI text” look, but only when the phrase is short and the line box has generous Myanmar clearance.
+- Sticker/outline/glow treatments are effects, not font solutions. On Burmese, they remain high risk because they crowd upper/lower marks and close counters. Put personality in composition, color, a contained badge, or motion around a complete phrase.
+
+### Campaign role matrix
+
+| Content direction | Burmese face | Latin accent | Treatment guardrail |
+|---|---|---|---|
+| Paid/professional reliability | Noto Sans Myanmar 650–800 | Inter or Space Grotesk | Dark field, clear hierarchy, no playful sticker treatment. |
+| Free plan / community giveaway | Noto Sans Myanmar 650–800 | Fredoka, Lilita One, or Oswald | One accent word/number; keep terms and links in the default system. |
+| Pricing / quota comparison | Noto Sans Myanmar 500–650 | Oswald or Space Mono for numbers | Align values and units; no condensed Burmese; no decorative labels. |
+| Human story / brand note | Noto Serif Myanmar for one short hook | Fraunces or DM Serif Display | One hook only; body and CTA return to the sans system. |
+| Bot status / usage proof | Noto Sans Myanmar 500–650 | JetBrains Mono or Space Mono | Mono is data, not personality; keep the Telegram bot destination warm and plain. |
+
+The production decision is unchanged but better justified: **a compact AuriX system with a broad exploration shelf**. Choose the font role from the campaign matrix, then return to two main families and one optional accent. Do not expose the entire app-style scan in one static post.
+
 ## What was tested
 
-The same short Burmese/English content was rendered in deterministic SVG at 1080 px width using librsvg/Pango with explicit Myanmar families and `xml:lang="my"`. Six specimens cover Myanmar families, Latin/Myanmar pairings, static treatments, a motion storyboard, an integrated 1080×1350 type composition, and numeral systems. The integrated composition was also rendered at 324×405 for a feed-scale reading pass. Fontconfig sees the bundled comparison fonts from this project only; no system-wide font installation was performed.
+The same short Burmese/English content was rendered in deterministic SVG at 1080 px width using librsvg/Pango with explicit Myanmar families and `xml:lang="my"`. Eight specimens cover Myanmar families, Latin/Myanmar pairings, static treatments, a motion storyboard, an integrated 1080×1350 type composition, numeral systems, the 24-direction app-style display scan, and a Burmese role scan. The integrated composition was also rendered at 324×405 for a feed-scale reading pass. Fontconfig sees the bundled comparison fonts from this project only; no system-wide font installation was performed.
 
-All five Burmese SVGs pass the strict local Myanmar SVG audit. HarfBuzz shaping was also run on a stacked-mark phrase in Noto Sans Myanmar, Noto Serif Myanmar, and Padauk. The images were visually inspected at native size; the integrated composition was inspected at 324×405.
+All eight SVG boards pass the strict local Myanmar SVG audit. HarfBuzz shaping was also run on a stacked-mark phrase in Noto Sans Myanmar, Noto Serif Myanmar, and Padauk. The images were visually inspected at native size; the integrated composition was inspected at 324×405.
 
 These are **directional judgments from one renderer, one machine, and a controlled specimen**, not a nationally representative preference study. Before changing AuriX's master family, test the finalist artwork on several actual Myanmar Android phones, Facebook compression, and with fluent readers from the intended audience.
 
@@ -113,12 +153,14 @@ Myanmar is not Latin with unusual ascenders. Shaping divides text into syllable 
 - [Motion storyboard](proofs/04-motion-storyboard.png)
 - [Integrated feed-scale type study](proofs/05-feed-scale-composite.png)
 - [Price and numeral comparison](proofs/06-numeral-systems.png)
+- [Expanded app-style display scan](proofs/07-app-style-display-scan.png)
+- [Burmese role scan](proofs/08-burmese-role-scan.png)
 
 The integrated study is not approved advertising copy; it exists to stress-test a hierarchy, the palette, Myanmar line spacing, and feed-scale legibility.
 
 ## Sources and asset provenance
 
-See [FONT_ASSETS.md](FONT_ASSETS.md) for downloaded font versions, licenses, hashes, system-only specimens, and retrieval links. Key technical sources are linked above; other consulted sources:
+See [FONT_ASSETS.md](FONT_ASSETS.md) for downloaded font versions, licenses, hashes, system-only specimens, and retrieval links. The 24-direction market scan began with temporary Google Fonts downloads, then bundled the checked files and licenses for reproducible comparison; the exact retrieval note is recorded there. Key technical sources are linked above; other consulted sources:
 
 - [Noto Myanmar project and QA](https://github.com/notofonts/myanmar)
 - [SIL Padauk current download and release](https://software.sil.org/padauk/download/) · [character coverage and features](https://software.sil.org/padauk/)

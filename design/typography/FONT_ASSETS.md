@@ -26,12 +26,33 @@ The font binaries and their unmodified upstream `OFL.txt` files are intentionall
 
 `Inter` was specified in the brand guide but was not installed in the local Fontconfig view when this study began. The project bundle makes the specimen reproducible without changing system fonts. A future export workstation should verify the actual resolved face (`fc-match` or equivalent) and not assume that a font-family name means the intended file rendered.
 
+## Bundled app-style market scan
+
+On 2026-09-17, a broader comparison set was fetched into `/private/tmp/aurix-font-explore`, checked, and copied into `fonts/market-scan/` for reproducible rendering of the committed 24-direction board. These files were not installed system-wide or treated as approved AuriX production assets. The families came from the Google Fonts CSS delivery/repository; check the current family license and notice before any future redistribution.
+
+| Direction | Families | Google Fonts source index |
+|---|---|---|
+| Clean / rounded | Manrope, Space Grotesk, Rubik, Arial Rounded MT Bold (system specimen) | [Manrope](https://fonts.google.com/specimen/Manrope) · [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk) · [Rubik](https://fonts.google.com/specimen/Rubik) |
+| Condensed / impact | Anton, Bebas Neue, Arial Narrow (system specimen) | [Anton](https://fonts.google.com/specimen/Anton) · [Bebas Neue](https://fonts.google.com/specimen/Bebas+Neue) |
+| Rounded / playful | Baloo 2, Comfortaa, Fredoka, Lilita One | [Baloo 2](https://fonts.google.com/specimen/Baloo+2) · [Comfortaa](https://fonts.google.com/specimen/Comfortaa) · [Fredoka](https://fonts.google.com/specimen/Fredoka) · [Lilita One](https://fonts.google.com/specimen/Lilita+One) |
+| Sticker / handwritten | Bungee, Caveat, Pacifico, Permanent Marker | [Bungee](https://fonts.google.com/specimen/Bungee) · [Caveat](https://fonts.google.com/specimen/Caveat) · [Pacifico](https://fonts.google.com/specimen/Pacifico) · [Permanent Marker](https://fonts.google.com/specimen/Permanent+Marker) |
+| Editorial serif | DM Serif Display, Playfair Display, Bodoni Moda | [DM Serif Display](https://fonts.google.com/specimen/DM+Serif+Display) · [Playfair Display](https://fonts.google.com/specimen/Playfair+Display) · [Bodoni+Moda](https://fonts.google.com/specimen/Bodoni+Moda) |
+| Technical mono | Space Mono | [Space Mono](https://fonts.google.com/specimen/Space+Mono) |
+
+The scan also re-used the already-bundled Inter, Oswald, Fraunces, and the system-only Avenir Next / JetBrains Mono specimens. Permanent Marker is the one bundled market-scan exception with an Apache 2.0 `LICENSE.txt`; the other downloaded market-scan families carry their upstream Google Fonts license files in their family folders. Because app libraries can be region-, account-, license-, and version-dependent, the research records **categories and production behavior**, not a promise that every named family is visible in every CapCut or TikTok build.
+
 ## Re-rendering
 
 From the repository root:
 
 ```sh
 python3 design/typography/scripts/render_comparisons.py
+```
+
+To reproduce the expanded market board with a locally obtained comparison folder, add it through Fontconfig without installing fonts:
+
+```sh
+AURIX_EXTRA_FONT_DIRS=/private/tmp/aurix-font-explore python3 design/typography/scripts/render_comparisons.py
 ```
 
 The script creates a temporary project-local Fontconfig file/cache, renders SVG/PNG comparison boards, and does not install fonts system-wide. Temporary Fontconfig data and generated SVG proofs are ignored by the local `.gitignore`; the rendered PNG boards are the concise visual evidence set.
