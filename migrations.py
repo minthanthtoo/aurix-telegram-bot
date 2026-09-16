@@ -1524,6 +1524,40 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS account_access_actions_pending ON account_access_actions(state, updated_at)",
         ),
     ),
+    Migration(
+        20,
+        "dynamic_shadowsocks_profiles",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS dynamic_shadowsocks_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL UNIQUE REFERENCES accounts(account_id),
+                   token_hash TEXT NOT NULL UNIQUE,
+                   token_ciphertext TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active', 'revoked')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   last_served_at TEXT,
+                   served_count INTEGER NOT NULL DEFAULT 0 CHECK (served_count >= 0)
+               )""",
+            "CREATE INDEX IF NOT EXISTS dynamic_shadowsocks_profiles_status ON dynamic_shadowsocks_profiles(status, updated_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS dynamic_shadowsocks_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL UNIQUE REFERENCES accounts(account_id),
+                   token_hash TEXT NOT NULL UNIQUE,
+                   token_ciphertext TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active', 'revoked')),
+                   created_at TIMESTAMPTZ NOT NULL,
+                   updated_at TIMESTAMPTZ NOT NULL,
+                   last_served_at TIMESTAMPTZ,
+                   served_count BIGINT NOT NULL DEFAULT 0 CHECK (served_count >= 0)
+               )""",
+            "CREATE INDEX IF NOT EXISTS dynamic_shadowsocks_profiles_status ON dynamic_shadowsocks_profiles(status, updated_at)",
+        ),
+    ),
 )
 
 

@@ -26,6 +26,7 @@ from .entitlements import PUBLIC_LIMIT_BYTES, ClaimService, OutlineError
 from .free_repository import Database
 from .outline_adapter import OutlineClient
 from .node_agent_bindings import ManagedNodeAgentBindings, NodeAgentBindingError
+from .ssconfig import SsconfError, SsconfProfileService
 from supabase_storage import NullReceiptStorage, SupabaseReceiptStorage
 from .telegram_transport import DEFAULT_MAINTENANCE_INTERVAL_SECONDS, TelegramBot
 
@@ -42,6 +43,7 @@ class RuntimeServices:
     claim_service: ClaimService
     commerce: CommerceService
     allow_text_payment: bool
+    ssconf_profiles: SsconfProfileService | None = None
 
 
 def build_runtime_services(
@@ -252,6 +254,33 @@ def build_runtime_services(
                 pass
             print(f"WARNING: Outline endpoint is degraded at startup: {exc}", file=sys.stderr)
 
+    ssconf_profiles: SsconfProfileService | None = None
+    ssconf_public_base_url = os.environ.get("AURIX_SSCONF_PUBLIC_BASE_URL", "").strip()
+    if ssconf_public_base_url:
+        try:
+            def ssconf_route_health(endpoint_id: str) -> bool | None:
+                rows = connectivity.list_customer_endpoints(None, "outline")
+                match = next(
+                    (item for item in rows if str(item.get("id") or "") == str(endpoint_id)),
+                    None,
+                )
+                return (
+                    bool(match["healthy"])
+                    if isinstance(match, dict) and "healthy" in match
+                    else None
+                )
+
+            ssconf_profiles = SsconfProfileService(
+                commerce_database,
+                identity=commerce.identity,
+                secret_encryptor=commerce._encrypt_access_url,
+                secret_decryptor=commerce._decrypt_access_url,
+                public_base_url=ssconf_public_base_url,
+                route_health=ssconf_route_health,
+            )
+        except SsconfError as exc:
+            raise SystemExit(f"Invalid AURIX_SSCONF_PUBLIC_BASE_URL: {exc}") from exc
+
     return RuntimeServices(
         token=token,
         database=database,
@@ -261,6 +290,7 @@ def build_runtime_services(
         claim_service=claim_service,
         commerce=commerce,
         allow_text_payment=allow_text_payment,
+        ssconf_profiles=ssconf_profiles,
     )
 
 
