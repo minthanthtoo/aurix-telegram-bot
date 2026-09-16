@@ -46,10 +46,11 @@ The attached DO Cloud Firewall permits:
 - TCP/UDP `45525` publicly for the standalone Outline data service;
 - TCP `61604` only from `157.245.63.95/32` for the sg-a management relay.
 
-The host UFW remains an independent enforcement layer. Direct sg-b TCP
-`45525` and SSH are currently blocked by host policy, while sg-a can reach the
-Outline data and management relay targets. Do not advertise sg-b as a new
-customer route until its canonical direct client path passes acceptance tests.
+The host UFW remains an independent enforcement layer. The later live recheck
+below supersedes the earlier finding that host UFW blocked direct sg-b TCP
+`45525`: UFW currently allows TCP/UDP `45525` from Anywhere, and the Outline
+process listens on both transports. Do not advertise sg-b as a new customer
+route until its canonical direct client path passes acceptance tests.
 
 ### bkk-a
 
@@ -87,3 +88,26 @@ The customer-facing inventory should contain exactly these active nodes:
 or allocation candidate. The portal/admin directory may expose BKK's code,
 region, health, capacity, and protocol profile, but must never expose its
 management URL, certificate, or provider identifiers.
+
+## Live recheck — 2026-09-16
+
+The following direct checks supersede the stale sg-b host-firewall statement
+above; they do not establish successful customer-key use:
+
+- `sg-b-outline` remains attached to exactly one droplet and allows public
+  TCP/UDP `45525`; management TCP `61604` remains restricted to sg-a.
+- On sg-b, UFW reports public allow rules for TCP/UDP `45525`. The Outline
+  process listens on wildcard TCP and UDP `45525`; its management service
+  listens on TCP `61604`.
+- TCP connection probes to sg-b public `45525` and private `10.104.0.2:45525`
+  succeed from sg-a. A probe to public `45525` from the operator Mac timed out.
+  This isolates the remaining failure to the Mac-to-sg-b path or another
+  upstream/network-path difference; it does not prove which network device is
+  dropping the packets. Run a real Outline-client session from the affected
+  client network before declaring keys fixed.
+- TCP `61604` on sg-b remains unreachable directly from the Mac, as intended;
+  sg-a can administer sg-b through the restricted management path.
+- A temporary DO Cloud Firewall rule was added to allow SSH TCP `22` from
+  `157.245.63.95/32` to sg-b for this diagnosis. Remove that exact rule after
+  operator access to the DO account is restored; retain the existing
+  operator-only SSH rule. Do not broaden management access or expose `61604`.
