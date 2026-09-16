@@ -40,6 +40,10 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '502':
           $ref: '#/components/responses/UpstreamFailure'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
   /v1/chat/completions:
     post:
       operationId: createOpenAICompatibleChatCompletion
@@ -77,6 +81,10 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '502':
           $ref: '#/components/responses/UpstreamFailure'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
   /v1/responses:
     post:
       operationId: createOpenAIResponse
@@ -117,6 +125,10 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '502':
           $ref: '#/components/responses/UpstreamFailure'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
   /v1/models:
     get:
       operationId: listOpenAIModels
@@ -1248,6 +1260,18 @@ components:
             $ref: '#/components/schemas/Error'
     UpstreamFailure:
       description: 9Router or selected model failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UpstreamUnavailable:
+      description: 9Router is temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UpstreamTimeout:
+      description: 9Router or the selected model timed out.
       content:
         application/json:
           schema:

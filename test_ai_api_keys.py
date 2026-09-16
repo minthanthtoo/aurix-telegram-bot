@@ -12,7 +12,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from aurix_ai.api_keys import APIKeyStore, reconcile_usage_events
-from aurix_ai.router import AIChatResult
+from aurix_ai.router import AIChatResult, AIRouterHTTPError
 from aurix_ai.web_api import (
     AISessionStore,
     AuriXAIApplication,
@@ -569,6 +569,38 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(export["events"][0]["promptTokens"], 4)
         self.assertEqual(export["events"][0]["completionTokens"], 5)
         self.assertIsNone(export["events"][0]["apiKey"])
+
+    def test_openai_route_preserves_upstream_rate_limit_for_partner_retry(self):
+        class _RateLimitedRouter:
+            model = "ag/gemini-3.7-flash-high"
+
+            def openai_chat(self, *_args, **_kwargs):
+                raise AIRouterHTTPError(429, retry_after=9)
+
+        self.application.router = _RateLimitedRouter()
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "POST",
+            "/v1/chat/completions",
+            json.dumps(
+                {
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "aurix_mode": "translate",
+                }
+            ).encode(),
+            {
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        retry_after = response.getheader("Retry-After")
+        connection.close()
+        self.assertEqual(response.status, 429)
+        self.assertEqual(retry_after, "9")
+        self.assertEqual(payload["error"], "9Router rate limit reached")
+        self.assertTrue(payload["request_id"].startswith("req_"))
 
     def test_any_authenticated_telegram_user_can_open_admin_console(self):
         session_token = self.application.sessions.issue(

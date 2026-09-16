@@ -28,6 +28,8 @@ from .router import (
     AIChatResult,
     AIConfigurationError,
     AIRouterError,
+    AIRouterHTTPError,
+    AIRouterTimeoutError,
     build_messages,
     NineRouterClient,
     MAX_MESSAGE_CHARS,
@@ -1153,14 +1155,14 @@ class AuriXAIApplication:
                 temperature=temperature,
                 top_p=top_p,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=mode,
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -1265,14 +1267,14 @@ class AuriXAIApplication:
                 user_id=user_id,
                 conversation_id=conversation_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/chat/completions",
                 user_id=user_id,
@@ -1329,14 +1331,14 @@ class AuriXAIApplication:
                 user_id=request["user_id"],
                 conversation_id=request["conversation_id"],
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/responses",
                 user_id=request["user_id"],
@@ -1350,14 +1352,14 @@ class AuriXAIApplication:
                 model_id=model_id,
                 request_id=request_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/responses",
                 user_id=request["user_id"],
@@ -1416,14 +1418,14 @@ class AuriXAIApplication:
                 user_id=request["user_id"],
                 conversation_id=request["conversation_id"],
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/chat/completions",
                 user_id=request["user_id"],
@@ -1472,14 +1474,14 @@ class AuriXAIApplication:
                 user_id=request["user_id"],
                 conversation_id=request["conversation_id"],
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/responses",
                 user_id=request["user_id"],
@@ -1589,14 +1591,14 @@ class AuriXAIApplication:
                 request_id=request_id,
                 account_id=principal.account_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="embeddings",
                 model_id=model,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/embeddings",
             )
@@ -1641,14 +1643,14 @@ class AuriXAIApplication:
                 request_id=request_id,
                 account_id=principal.account_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="audio",
                 model_id=model,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint=path,
             )
@@ -1711,14 +1713,14 @@ class AuriXAIApplication:
                 request_id=request_id,
                 account_id=principal.account_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="audio",
                 model_id=model,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint=path,
             )
@@ -1796,14 +1798,14 @@ class AuriXAIApplication:
                     user_id=user_id,
                     conversation_id=conversation_id,
                 )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="image_generation",
                 model_id=request["model_id"],
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/images/generations",
                 user_id=user_id,
@@ -1816,14 +1818,14 @@ class AuriXAIApplication:
                 if binary
                 else _standard_image_payload(result, model=request["model_id"])
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="image_generation",
                 model_id=request["model_id"],
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/images/generations",
                 user_id=user_id,
@@ -1874,14 +1876,14 @@ class AuriXAIApplication:
                 user_id=user_id,
                 conversation_id=conversation_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="video_generation",
                 model_id=request["model_id"],
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/videos",
                 user_id=user_id,
@@ -2601,6 +2603,13 @@ def _bearer_token(authorization: str | None) -> str | None:
         return None
     token = authorization[7:].strip()
     return token or None
+
+
+def _router_error_status(error: AIRouterError) -> int:
+    """Return the safe HTTP status to persist for an upstream failure."""
+
+    status = getattr(error, "public_status", 502)
+    return status if status in {429, 502, 503, 504} else 502
 
 
 def _model_scope_candidates(model_id: str) -> tuple[str, ...]:
@@ -5127,6 +5136,15 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 self._error(401, str(exc))
             except ConversationNotFoundError as exc:
                 self._error(404, str(exc))
+            except AIRouterTimeoutError as exc:
+                self._error(exc.public_status, str(exc))
+            except AIRouterHTTPError as exc:
+                message = (
+                    "9Router rate limit reached"
+                    if exc.public_status == 429
+                    else "9Router is temporarily unavailable"
+                )
+                self._error(exc.public_status, message, retry_after=exc.retry_after)
             except AIRouterError as exc:
                 self._error(502, str(exc))
             except APIKeyStoreError as exc:

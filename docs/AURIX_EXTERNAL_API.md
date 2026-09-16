@@ -30,7 +30,10 @@ The external website must:
 3. Send the relevant conversation history with each chat request.
 4. Authenticate its own users before allowing them to spend AI quota.
 5. Store the AuriX request ID for support and troubleshooting.
-6. Retry only temporary failures (`429`, `502`, and `503`).
+6. Retry only temporary failures (`429`, `502`, `503`, and `504`). Honor
+   `Retry-After` when present. Do not retry a stream after output has already
+   been received unless the application has an explicit resume/idempotency
+   strategy.
 7. Keep the AuriX API key in the backend environment or secret manager.
 
 AuriX does not own the external website's user login or conversation database.
@@ -1013,9 +1016,10 @@ Error responses are JSON:
 | `400` | Invalid request or unsupported field | Fix the request; do not retry unchanged |
 | `401` | Missing, invalid, expired, or revoked key | Check backend configuration |
 | `403` | Key is not allowed to use the requested model or mode | Ask for the required entitlement |
-| `429` | Partner account rate limit reached | Wait for `Retry-After`, then retry |
+| `429` | Partner account or upstream rate limit reached | Wait for `Retry-After`, then retry |
 | `502` | Temporary model/provider failure | Retry with bounded backoff |
 | `503` | API temporarily unavailable | Retry with bounded backoff |
+| `504` | Upstream model/provider timeout | Retry before committing output, with bounded backoff |
 | `500` | Unexpected AuriX failure | Save the request ID and report it |
 
 Use exponential backoff with jitter, for example 1 second, 2 seconds, and 4
@@ -1074,7 +1078,7 @@ Before launch, the external website should verify:
 - [ ] Context is bounded and old turns are summarized or dropped.
 - [ ] Tool arguments are validated and authorized locally.
 - [ ] Streaming cancellation closes the upstream request.
-- [ ] `429`, `502`, and `503` use bounded retries.
+- [ ] `429`, `502`, `503`, and `504` use bounded retries; `Retry-After` is honored.
 - [ ] Request IDs are saved for failed requests.
 - [ ] Prompts, responses, media, and credentials are excluded from normal logs.
 - [ ] Embedding dimensions are checked before inserting vectors.
@@ -1101,7 +1105,7 @@ parts. Add embeddings and multipart audio routes only after selecting models
 from /v1/models. Use the native POST /v1/chat route only when the built-in
 english, translate, or lisu_assistant mode is required.
 
-Retry only 429, 502, and 503 with bounded exponential backoff. Preserve the
+Retry only 429, 502, 503, and 504 with bounded exponential backoff. Preserve the
 request ID for support. Do not expose credentials or log sensitive content.
 ```
 

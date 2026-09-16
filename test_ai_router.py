@@ -1,14 +1,18 @@
 import http.client
+import io
 import json
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 from aurix_ai.router import (
     AIChatResult,
     AIConfigurationError,
     AIRouterError,
+    AIRouterHTTPError,
+    AIRouterTimeoutError,
     NineRouterClient,
     _lisu_script_only,
     _english_translation_only,
@@ -320,6 +324,44 @@ class AIRouterTest(unittest.TestCase):
                     api_key="secret",
                     model="model",
                 ).chat(mode="english", message="Tell me something")
+
+    def test_router_preserves_retryable_status_and_retry_after(self):
+        upstream_error = HTTPError(
+            "http://router.invalid/chat/completions",
+            429,
+            "too many requests",
+            {"Retry-After": "7"},
+            io.BytesIO(b"provider error"),
+        )
+        with patch("urllib.request.urlopen", side_effect=upstream_error):
+            with self.assertRaises(AIRouterHTTPError) as raised:
+                NineRouterClient(
+                    base_url="http://router.invalid",
+                    api_key="secret",
+                    model="model",
+                ).openai_chat(
+                    {"model": "model", "messages": [{"role": "user", "content": "Hi"}]}
+                )
+
+        self.assertEqual(raised.exception.upstream_status, 429)
+        self.assertEqual(raised.exception.public_status, 429)
+        self.assertEqual(raised.exception.retry_after, 7)
+
+    def test_router_classifies_upstream_timeout_as_gateway_timeout(self):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=URLError(TimeoutError("timed out")),
+        ):
+            with self.assertRaises(AIRouterTimeoutError) as raised:
+                NineRouterClient(
+                    base_url="http://router.invalid",
+                    api_key="secret",
+                    model="model",
+                ).openai_chat(
+                    {"model": "model", "messages": [{"role": "user", "content": "Hi"}]}
+                )
+
+        self.assertEqual(raised.exception.public_status, 504)
 
 
 class AIWebTest(unittest.TestCase):

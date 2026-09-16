@@ -21,6 +21,32 @@ class AIRouterError(RuntimeError):
     """The configured upstream model router could not complete a request."""
 
 
+class AIRouterHTTPError(AIRouterError):
+    """A safe, classified HTTP failure returned by the upstream router."""
+
+    def __init__(self, status: int, *, retry_after: int | None = None) -> None:
+        self.upstream_status = int(status)
+        self.retry_after = retry_after
+        # Do not expose arbitrary upstream status codes as if they were part
+        # of AuriX's public contract. Preserve the retry-relevant statuses;
+        # classify provider/client errors as a gateway failure instead.
+        self.public_status = (
+            self.upstream_status
+            if self.upstream_status in {429, 502, 503, 504}
+            else 502
+        )
+        super().__init__(f"9Router returned HTTP {self.upstream_status}")
+
+
+class AIRouterTimeoutError(AIRouterError):
+    """The upstream router did not respond within AuriX's bounded timeout."""
+
+    public_status = 504
+
+    def __init__(self) -> None:
+        super().__init__("9Router request timed out")
+
+
 MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "gemini-3.7-flash-high": {
         "route": "ag/gemini-3.7-flash-high",
@@ -665,8 +691,20 @@ class NineRouterClient:
                 exc.read(64 * 1024)
             finally:
                 exc.close()
-            raise AIRouterError(f"9Router returned HTTP {exc.code}") from exc
+            retry_after: int | None = None
+            header = exc.headers.get("Retry-After") if exc.headers else None
+            if header is not None:
+                try:
+                    parsed_retry_after = int(str(header).strip())
+                except (TypeError, ValueError):
+                    parsed_retry_after = None
+                if parsed_retry_after is not None and 0 <= parsed_retry_after <= 3_600:
+                    retry_after = parsed_retry_after
+            raise AIRouterHTTPError(exc.code, retry_after=retry_after) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            reason = getattr(exc, "reason", None)
+            if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
+                raise AIRouterTimeoutError() from exc
             raise AIRouterError("9Router is temporarily unavailable") from exc
 
     def openai_chat(
