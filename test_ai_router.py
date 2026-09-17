@@ -20,7 +20,12 @@ from aurix_ai.router import (
     normalize_translation_direction,
     resolve_model_id,
 )
-from aurix_ai.web_api import AuriXAIApplication, _normalize_standard_chat_request, make_handler
+from aurix_ai.web_api import (
+    AuriXAIApplication,
+    _normalize_standard_chat_request,
+    _resolve_standard_model,
+    make_handler,
+)
 
 
 class _Response:
@@ -161,6 +166,8 @@ class AIRouterTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "configured default model"):
             resolve_model_id(None, default_route="ag/removed-model")
+        with self.assertRaisesRegex(ValueError, "configured default model"):
+            _resolve_standard_model(None, default_route="ag/removed-model")
 
     def test_standard_api_rejects_unknown_entitlement_mode(self):
         with self.assertRaisesRegex(ValueError, "aurix_mode is invalid"):

@@ -2938,8 +2938,11 @@ def _feature_path_segment(value: Any, *, name: str) -> str:
 
 def _resolve_standard_model(value: Any, *, default_route: str) -> tuple[str, str]:
     if value is None or (isinstance(value, str) and not value.strip()):
-        route = default_route
-        return route, model_id_for_route(route) or route
+        route = str(default_route or "").strip()
+        model_id = model_id_for_route(route)
+        if not model_id:
+            raise ValueError("configured default model is not available")
+        return route, model_id
     requested = _feature_model(value, name="model")
     catalog_item = MODEL_CATALOG.get(requested)
     if catalog_item is not None:
