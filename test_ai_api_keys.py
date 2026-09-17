@@ -660,6 +660,31 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(export["events"][0]["completionTokens"], 5)
         self.assertIsNone(export["events"][0]["apiKey"])
 
+    def test_standard_api_rejects_unknown_mode_before_routing(self):
+        status, payload = self.request(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "aurix_mode": "unrecognized-mode",
+            },
+            token=self.key,
+            path="/v1/chat/completions",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"], "aurix_mode is invalid")
+
+    def test_standard_api_rejects_an_unlisted_configured_default(self):
+        self.application.router.model = "ag/removed-model"
+        status, payload = self.request(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "aurix_mode": "translate",
+            },
+            token=self.key,
+            path="/v1/chat/completions",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"], "configured default model is not available")
+
     def test_openai_route_maps_upstream_retryable_and_server_errors(self):
         cases = (
             (429, 429, "9Router rate limit reached"),
