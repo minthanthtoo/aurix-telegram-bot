@@ -20,7 +20,7 @@ from aurix_ai.router import (
     normalize_translation_direction,
     resolve_model_id,
 )
-from aurix_ai.web_api import AuriXAIApplication, make_handler
+from aurix_ai.web_api import AuriXAIApplication, _normalize_standard_chat_request, make_handler
 
 
 class _Response:
@@ -161,6 +161,15 @@ class AIRouterTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "configured default model"):
             resolve_model_id(None, default_route="ag/removed-model")
+
+    def test_standard_api_rejects_unknown_entitlement_mode(self):
+        with self.assertRaisesRegex(ValueError, "aurix_mode is invalid"):
+            _normalize_standard_chat_request(
+                {
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "aurix_mode": "unrecognized-mode",
+                }
+            )
 
     def test_router_calls_openai_compatible_endpoint_and_records_returned_model(self):
         seen = {}

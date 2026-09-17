@@ -3403,7 +3403,8 @@ def _normalize_standard_chat_request(body: dict[str, Any]) -> dict[str, Any]:
     mode = body.get("aurix_mode", body.get("mode", "english"))
     if not isinstance(mode, str):
         raise ValueError("aurix_mode must be text")
-    if len(mode) > 40:
+    mode = mode.strip().lower()
+    if mode not in {"english", "translate", "lisu_assistant"}:
         raise ValueError("aurix_mode is invalid")
     if body.get("user") is not None and not isinstance(body.get("user"), str):
         raise ValueError("user must be text")
