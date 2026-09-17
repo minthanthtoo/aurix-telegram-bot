@@ -19,6 +19,7 @@ from .connectivity import ConnectivityError
 from .device_api import DeviceAPIService, ManifestSigner, create_device_wsgi_app
 from .entitlements import OutlineError
 from .runtime import RuntimeServices, build_runtime_services
+from .ssconfig import SsconfError
 from telegram_web_app import TelegramWebAppAuthError, VerifiedTelegramUser, verify_init_data
 from .vpn_dashboard import collect_customer_vpn_state
 
@@ -440,6 +441,23 @@ class AuriXVpnWebApplication:
             "plan_code": str(plan_code or "").strip() or None,
             "selection_policy": "Only enabled endpoint profiles with registered adapters and managed route bindings can be purchased.",
         }
+
+    def issue_ssconf_profile(self, user: VerifiedTelegramUser) -> dict[str, Any]:
+        """Issue the account's stable dynamic Shadowsocks profile URL."""
+        service = getattr(self.runtime, "ssconf_profiles", None)
+        if service is None or not bool(getattr(service, "configured", False)):
+            raise CommerceError("Dynamic Shadowsocks profiles are not configured")
+        try:
+            return service.issue_for_telegram(user.telegram_id, label="AuriX VPN")
+        except SsconfError as exc:
+            raise CommerceError(str(exc)) from exc
+
+    def ssconf_document(self, token: str) -> dict[str, Any] | None:
+        """Return a public dynamic-key document for a bearer token."""
+        service = getattr(self.runtime, "ssconf_profiles", None)
+        if service is None or not bool(getattr(service, "configured", False)):
+            return None
+        return service.document(token)
 
     def dashboard(self, user: VerifiedTelegramUser) -> dict[str, Any]:
         state = collect_customer_vpn_state(
@@ -1230,6 +1248,21 @@ def make_handler(
             self.end_headers()
             self.wfile.write(response_body)
 
+        def _ssconf_api(self, method: str, path: str) -> None:
+            if method != "GET":
+                self._error(405, "Method not allowed")
+                return
+            prefix = "/api/ssconf/"
+            token = unquote(path[len(prefix) :])
+            if not token or "/" in token or "\\" in token:
+                self._error(404, "Not found")
+                return
+            document = application.ssconf_document(token)
+            if document is None:
+                self._error(404, "Not found")
+                return
+            self._write(200, document)
+
         def _read_json(self) -> dict[str, Any]:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -1360,6 +1393,9 @@ def make_handler(
                 plan_code = str(plan_values[0])[:64] if plan_values else None
                 self._write(200, application.protocols_payload(plan_code))
                 return
+            if path == "/api/ssconf" and method == "GET":
+                self._write(200, application.issue_ssconf_profile(user))
+                return
             if path in ("/api/me", "/api/dashboard") and method == "GET":
                 self._write(200, application.dashboard(user))
                 return
@@ -1455,6 +1491,9 @@ def make_handler(
             try:
                 if path.startswith("/v1/devices/"):
                     self._device_api(method)
+                    return
+                if path.startswith("/api/ssconf/"):
+                    self._ssconf_api(method, path)
                     return
                 if path.startswith("/api/"):
                     self._route_api(method, path)

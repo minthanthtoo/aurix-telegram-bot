@@ -181,6 +181,7 @@ Required environment values:
 | `OUTLINE_CERT_SHA256` | 64 hexadecimal characters |
 | `AURIX_ACCESS_URL_KEY` | One persistent Fernet key |
 | `AURIX_MANAGED_NODE_AGENTS_JSON` | Keep blank; only set for an approved isolated node-agent canary |
+| `AURIX_SSCONF_PUBLIC_BASE_URL` | Optional public HTTPS origin for dynamic Shadowsocks profiles |
 | `DATABASE_PATH` | Keep Blueprint value `/var/data/bot.db` |
 | `SUPABASE_URL` | HTTPS URL of the Singapore Supabase project |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only service-role secret; never publish it |

@@ -28,11 +28,14 @@ from .router import (
     AIChatResult,
     AIConfigurationError,
     AIRouterError,
+    AIRouterHTTPError,
+    AIRouterTimeoutError,
     build_messages,
     NineRouterClient,
     MAX_MESSAGE_CHARS,
     MAX_CONTEXT_SUMMARY_CHARS,
     model_id_for_route,
+    model_profile,
     normalize_mode,
     normalize_translation_direction,
     _optional_context_text,
@@ -93,6 +96,10 @@ class ExternalAPIAccessDeniedError(PermissionError):
 
 class ExternalAPIRateLimitError(RuntimeError):
     """The external account has exceeded its configured request rate."""
+
+
+class _DownstreamStreamDisconnected(Exception):
+    """A client stopped accepting bytes after an SSE response was opened."""
 
 
 @dataclass
@@ -326,6 +333,7 @@ class AuriXAIApplication:
         operator_allowed_modes: set[str] | None = None,
         operator_allowed_models: set[str] | None = None,
         operator_max_requests_per_minute: int = 600,
+        model_catalog_ttl_seconds: int = 60,
     ) -> None:
         if not allow_anonymous and not access_token and not telegram_bot_token:
             raise AIConfigurationError("Telegram authentication or AURIX_AI_ACCESS_TOKEN is required")
@@ -350,6 +358,13 @@ class AuriXAIApplication:
         self.operator_max_requests_per_minute = _admin_requests_per_minute(
             operator_max_requests_per_minute
         )
+        if not isinstance(model_catalog_ttl_seconds, int) or not 0 <= model_catalog_ttl_seconds <= 3_600:
+            raise AIConfigurationError(
+                "model_catalog_ttl_seconds must be an integer between 0 and 3600"
+            )
+        self.model_catalog_ttl_seconds = model_catalog_ttl_seconds
+        self._model_catalog_cache_lock = threading.Lock()
+        self._model_catalog_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         # Direct construction stays compatible with the old test/client API;
         # environment-based production startup passes an explicit false.
         self.legacy_token_enabled = bool(access_token) if legacy_token_enabled is None else legacy_token_enabled
@@ -479,20 +494,41 @@ class AuriXAIApplication:
         """Return the image-generation catalog exposed by the configured 9Router."""
 
         try:
-            models = self.router.list_models("image")
+            models = self._discovered_models("image")
         except AIRouterError:
             return {"models": [], "available": False}
-        return {
-            "models": [
-                {
-                    **model,
-                    "label": model["id"],
-                    "capabilities": ["image_generation"],
-                }
-                for model in models
-            ],
-            "available": bool(models),
-        }
+        profiles = []
+        for model in models:
+            profile = model_profile(
+                model["id"],
+                capabilities=("image_generation",),
+                owned_by=str(model.get("owned_by") or "9router"),
+            )
+            profiles.append({**profile, "label": profile["display_name"]})
+        return {"models": profiles, "available": bool(profiles)}
+
+    def _discovered_models(self, category: str | None = None) -> list[dict[str, Any]]:
+        """Return a short-lived raw catalog cache without caching key policy."""
+
+        cache_key = category or "*"
+        now = time.monotonic()
+        with self._model_catalog_cache_lock:
+            cached = self._model_catalog_cache.get(cache_key)
+            if (
+                cached is not None
+                and self.model_catalog_ttl_seconds > 0
+                and now - cached[0] < self.model_catalog_ttl_seconds
+            ):
+                return [dict(item) for item in cached[1]]
+        models = self.router.list_models(category)
+        safe_models = [
+            dict(item)
+            for item in models
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        ]
+        with self._model_catalog_cache_lock:
+            self._model_catalog_cache[cache_key] = (now, safe_models)
+        return [dict(item) for item in safe_models]
 
     def chat(self, body: dict[str, Any]) -> dict[str, Any]:
         mode = body.get("mode", "english")
@@ -1034,7 +1070,9 @@ class AuriXAIApplication:
                 requested_model, default_route=self.router.model
             )
         else:
-            model_route, model_id = self.router.model, previous["model_id"]
+            model_route, model_id = resolve_model_id(
+                previous["model_id"], default_route=self.router.model
+            )
         attempt, context = self.conversations.retry_attempt(
             user.telegram_id,
             attempt_id,
@@ -1102,7 +1140,7 @@ class AuriXAIApplication:
         )
         if not principal.allows_mode(mode):
             raise ExternalAPIAccessDeniedError("API key is not enabled for this mode")
-        if not principal.allows_model(model_id):
+        if not _principal_allows_model(principal, model_id):
             raise ExternalAPIAccessDeniedError("API key is not enabled for this model")
         user_id, conversation_id = _request_context(body)
         if not self.rate_limiter.allow(
@@ -1123,14 +1161,14 @@ class AuriXAIApplication:
                 temperature=temperature,
                 top_p=top_p,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=mode,
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -1235,14 +1273,14 @@ class AuriXAIApplication:
                 user_id=user_id,
                 conversation_id=conversation_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/chat/completions",
                 user_id=user_id,
@@ -1299,14 +1337,14 @@ class AuriXAIApplication:
                 user_id=request["user_id"],
                 conversation_id=request["conversation_id"],
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/responses",
                 user_id=request["user_id"],
@@ -1320,14 +1358,14 @@ class AuriXAIApplication:
                 model_id=model_id,
                 request_id=request_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/responses",
                 user_id=request["user_id"],
@@ -1386,14 +1424,14 @@ class AuriXAIApplication:
                 user_id=request["user_id"],
                 conversation_id=request["conversation_id"],
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/chat/completions",
                 user_id=request["user_id"],
@@ -1442,14 +1480,14 @@ class AuriXAIApplication:
                 user_id=request["user_id"],
                 conversation_id=request["conversation_id"],
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode=request["mode"],
                 model_id=model_id,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/responses",
                 user_id=request["user_id"],
@@ -1479,16 +1517,23 @@ class AuriXAIApplication:
         provider_model: str | None,
         router_request_id: str | None,
         completed: bool,
+        failure_http_status: int = 499,
         first_event_ms: float | None = None,
         duration_ms: float | None = None,
     ) -> None:
+        """Record stream outcome; failure status describes why delivery failed.
+
+        The public SSE HTTP status is already committed as 200 by the time the
+        provider stream is consumed.  The usage event retains the mapped
+        upstream failure (normally 502) or 499 for a downstream disconnect.
+        """
         self.api_keys.record_usage(
             request_id=stream.request_id,
             principal=stream.principal,
             mode=stream.mode,
             model_id=stream.model_id,
             status="completed" if completed else "failed",
-            http_status=200 if completed else 499,
+            http_status=200 if completed else failure_http_status,
             provider_model=provider_model,
             usage=usage,
             router_request_id=router_request_id,
@@ -1559,14 +1604,14 @@ class AuriXAIApplication:
                 request_id=request_id,
                 account_id=principal.account_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="embeddings",
                 model_id=model,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/embeddings",
             )
@@ -1611,14 +1656,14 @@ class AuriXAIApplication:
                 request_id=request_id,
                 account_id=principal.account_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="audio",
                 model_id=model,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint=path,
             )
@@ -1681,14 +1726,14 @@ class AuriXAIApplication:
                 request_id=request_id,
                 account_id=principal.account_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="audio",
                 model_id=model,
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint=path,
             )
@@ -1766,14 +1811,14 @@ class AuriXAIApplication:
                     user_id=user_id,
                     conversation_id=conversation_id,
                 )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="image_generation",
                 model_id=request["model_id"],
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/images/generations",
                 user_id=user_id,
@@ -1786,14 +1831,14 @@ class AuriXAIApplication:
                 if binary
                 else _standard_image_payload(result, model=request["model_id"])
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="image_generation",
                 model_id=request["model_id"],
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/images/generations",
                 user_id=user_id,
@@ -1844,14 +1889,14 @@ class AuriXAIApplication:
                 user_id=user_id,
                 conversation_id=conversation_id,
             )
-        except AIRouterError:
+        except AIRouterError as exc:
             self.api_keys.record_usage(
                 request_id=request_id,
                 principal=principal,
                 mode="video_generation",
                 model_id=request["model_id"],
                 status="failed",
-                http_status=502,
+                http_status=_router_error_status(exc),
                 provider="9router",
                 endpoint="/videos",
                 user_id=user_id,
@@ -1916,9 +1961,32 @@ class AuriXAIApplication:
             method="GET",
         )
 
-    def external_models(self, authorization: str | None) -> dict[str, Any]:
+    def external_models(
+        self,
+        authorization: str | None,
+        *,
+        category: str | None = None,
+        live: bool = True,
+    ) -> dict[str, Any]:
+        """Return a policy-filtered model catalog for an external site.
+
+        Direct callers retain the historical live-discovery behavior. The HTTP
+        endpoint uses the bounded curated chat view by default so a partner's
+        first model-picker request never waits for every 9Router media catalog.
+        Media and full live discovery remain available explicitly through
+        ``?category=...`` or ``?view=live``.
+        """
+
         principal = self._authenticate_external_request(authorization, count_request=False)
-        output: list[dict[str, Any]] = []
+        normalized_category = (str(category).strip().lower() if category else None) or None
+        if normalized_category in {"all", "*"}:
+            normalized_category = None
+            live = True
+
+        if not live and normalized_category in {None, "chat", "responses"}:
+            return self._curated_external_chat_models(principal)
+
+        output_by_id: dict[str, dict[str, Any]] = {}
         categories = (
             (None, {"chat", "responses", "streaming"}),
             ("embedding", {"embeddings"}),
@@ -1927,6 +1995,18 @@ class AuriXAIApplication:
             ("image", {"image_generation"}),
             ("video", {"video_generation"}),
         )
+        if normalized_category not in {None, "chat", "responses"}:
+            category_aliases = {
+                "embeddings": "embedding",
+                "audio_input": "stt",
+                "audio_output": "tts",
+                "image_generation": "image",
+                "video_generation": "video",
+            }
+            selected = category_aliases.get(normalized_category, normalized_category)
+            categories = tuple(item for item in categories if item[0] == selected)
+            if not categories:
+                raise ValueError("category must be chat, embedding, stt, tts, image, or video")
         for category, capabilities in categories:
             category_mode = {
                 "embedding": "embeddings",
@@ -1943,15 +2023,137 @@ class AuriXAIApplication:
             if category_mode and not principal.allows_mode(category_mode):
                 continue
             try:
-                models = self.router.list_models(category)
+                models = self._discovered_models(category)
             except AIRouterError:
                 continue
             for item in models:
                 model_id = item["id"]
-                if not principal.allows_model(model_id):
+                if not _principal_allows_model(principal, model_id):
                     continue
-                output.append({**item, "capabilities": sorted(capabilities)})
-        return {"object": "list", "data": output}
+                profile = model_profile(
+                    model_id,
+                    capabilities=capabilities,
+                    owned_by=str(item.get("owned_by") or "9router"),
+                )
+                existing = output_by_id.get(model_id)
+                if existing is None:
+                    output_by_id[model_id] = profile
+                else:
+                    existing["capabilities"] = sorted(
+                        set(existing.get("capabilities", []))
+                        | set(profile.get("capabilities", []))
+                    )
+        return {
+            "object": "list",
+            "data": list(output_by_id.values()),
+            "aurix": {
+                "catalog": "live",
+                "category": normalized_category or "all",
+                "cache_ttl_seconds": self.model_catalog_ttl_seconds,
+                "curated_path": "/v1/models",
+                "live_path": "/v1/models?view=live",
+            },
+        }
+
+    def _curated_external_chat_models(self, principal: Any) -> dict[str, Any]:
+        """Return the small platform-owned chat catalog without upstream I/O."""
+
+        data: list[dict[str, Any]] = []
+        if any(
+            principal.allows_mode(mode)
+            for mode in ("english", "translate", "lisu_assistant")
+        ):
+            for item in MODEL_CATALOG.values():
+                route = str(item["route"])
+                if not _principal_allows_model(principal, route):
+                    continue
+                profile = model_profile(
+                    route,
+                    capabilities=("chat", "responses", "streaming"),
+                    owned_by="9router",
+                )
+                profile["aurix"]["catalog_source"] = "curated"
+                data.append(profile)
+
+        return {
+            "object": "list",
+            "data": data,
+            "aurix": {
+                "catalog": "curated",
+                "category": "chat",
+                "cache_ttl_seconds": self.model_catalog_ttl_seconds,
+                "live_path": "/v1/models?view=live",
+                "category_path": "/v1/models?category=image",
+            },
+        }
+
+    def external_integration_profile(self, authorization: str | None) -> dict[str, Any]:
+        """Return a safe machine-readable contract for a consuming backend."""
+
+        principal = self._authenticate_external_request(authorization, count_request=False)
+        return {
+            "object": "aurix.integration_profile",
+            "schema": "aurix.external.v1",
+            "authentication": {
+                "type": "http_bearer",
+                "header": "Authorization",
+                "key_info_path": "/api/v1/key-info",
+            },
+            "model_discovery": {
+                "path": "/v1/models",
+                "cache_ttl_seconds": self.model_catalog_ttl_seconds,
+                "policy_filtered": True,
+                "default_catalog": "curated_chat",
+                "live_path": "/v1/models?view=live",
+                "category_path_template": "/v1/models?category={category}",
+                "categories": ["chat", "embedding", "stt", "tts", "image", "video"],
+            },
+            "effective_policy": {
+                "allowed_modes": sorted(str(mode) for mode in principal.allowed_modes),
+                "allowed_models": sorted(str(model) for model in principal.allowed_models),
+                "requests_per_minute": principal.requests_per_minute,
+            },
+            "endpoints": {
+                "chat_completions": {
+                    "path": "/v1/chat/completions",
+                    "stream": True,
+                    "content_type": "text/event-stream",
+                    "terminal": "data: [DONE]",
+                },
+                "responses": {
+                    "path": "/v1/responses",
+                    "stream": True,
+                    "content_type": "text/event-stream",
+                    "terminal_event": "response.completed",
+                },
+                "built_in_chat": {"path": "/v1/chat", "stream": False},
+                "embeddings": {"path": "/v1/embeddings", "stream": False},
+                "image_generation": {"path": "/v1/images/generations", "stream": False},
+                "audio": {
+                    "paths": [
+                        "/v1/audio/transcriptions",
+                        "/v1/audio/translations",
+                        "/v1/audio/speech",
+                    ],
+                    "stream": True,
+                },
+            },
+            "limits": {
+                "max_json_bytes": MAX_JSON_BYTES,
+                "max_messages": MAX_STANDARD_MESSAGES,
+                "max_tools": MAX_STANDARD_TOOLS,
+                "max_tool_bytes": MAX_STANDARD_TOOL_BYTES,
+                "max_audio_request_bytes": MAX_AUDIO_REQUEST_BYTES,
+            },
+            "attribution": {
+                "fields": ["user", "user_id", "conversation_id", "metadata.user_id"],
+                "authentication_note": "Attribution fields do not authenticate users.",
+            },
+            "attachments": {
+                "chat_image_parts": "gateway-accepted; provider-model support must be verified",
+                "pdf_docx": "consumer must extract or transform content before sending",
+            },
+        }
 
     def external_key_info(self, authorization: str | None) -> dict[str, Any]:
         """Expose the authenticated key's effective, non-secret policy."""
@@ -2497,6 +2699,33 @@ def _bearer_token(authorization: str | None) -> str | None:
     return token or None
 
 
+def _router_error_status(error: AIRouterError) -> int:
+    """Return the safe HTTP status to persist for an upstream failure."""
+
+    status = getattr(error, "public_status", 502)
+    return status if status in {429, 502, 503, 504} else 502
+
+
+def _model_scope_candidates(model_id: str) -> tuple[str, ...]:
+    """Accept both the stable AuriX model ID and its raw provider route."""
+
+    candidates = [str(model_id)]
+    canonical_id = model_id_for_route(str(model_id))
+    if canonical_id:
+        candidates.append(canonical_id)
+    catalog_item = MODEL_CATALOG.get(str(model_id))
+    if catalog_item and catalog_item.get("route"):
+        candidates.append(str(catalog_item["route"]))
+    return tuple(dict.fromkeys(candidates))
+
+
+def _principal_allows_model(principal: Any, model_id: str) -> bool:
+    return any(
+        principal.allows_model(candidate)
+        for candidate in _model_scope_candidates(model_id)
+    )
+
+
 def _admin_requests_per_minute(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise ValueError("requests_per_minute must be an integer")
@@ -2711,8 +2940,11 @@ def _feature_path_segment(value: Any, *, name: str) -> str:
 
 def _resolve_standard_model(value: Any, *, default_route: str) -> tuple[str, str]:
     if value is None or (isinstance(value, str) and not value.strip()):
-        route = default_route
-        return route, model_id_for_route(route) or route
+        route = str(default_route or "").strip()
+        model_id = model_id_for_route(route)
+        if not model_id:
+            raise ValueError("configured default model is not available")
+        return route, model_id
     requested = _feature_model(value, name="model")
     catalog_item = MODEL_CATALOG.get(requested)
     if catalog_item is not None:
@@ -3176,7 +3408,8 @@ def _normalize_standard_chat_request(body: dict[str, Any]) -> dict[str, Any]:
     mode = body.get("aurix_mode", body.get("mode", "english"))
     if not isinstance(mode, str):
         raise ValueError("aurix_mode must be text")
-    if len(mode) > 40:
+    mode = mode.strip().lower()
+    if mode not in {"english", "translate", "lisu_assistant"}:
         raise ValueError("aurix_mode is invalid")
     if body.get("user") is not None and not isinstance(body.get("user"), str):
         raise ValueError("user must be text")
@@ -3284,6 +3517,15 @@ def _standard_completion_payload(
         choices = normalized_choices
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else None
         response_model = model_id or result.get("model")
+    provider_model = (
+        result.get("model")
+        or result.get("returned_model")
+        if isinstance(result, dict)
+        else None
+    )
+    requested_model = model_id or (
+        result.get("model_id") if isinstance(result, dict) else None
+    ) or provider_model
     return {
         "id": f"chatcmpl_{completion_id}",
         "object": "chat.completion",
@@ -3291,6 +3533,11 @@ def _standard_completion_payload(
         "model": response_model,
         "choices": choices,
         "usage": usage,
+        "aurix": {
+            "request_id": request_id,
+            "requested_model": requested_model,
+            "provider_model": provider_model,
+        },
     }
 
 
@@ -3417,6 +3664,7 @@ def _standard_response_payload(
         "temperature": request.get("temperature"),
         "top_p": request.get("top_p"),
         "usage": _response_usage(completion.get("usage")),
+        "aurix": completion.get("aurix"),
     }
     # output_text is a convenience field provided by OpenAI SDKs; keeping it
     # in the wire response is useful for lightweight HTTP clients too.
@@ -3477,6 +3725,7 @@ def _normalize_sse_event(
     *,
     public_id: str,
     model_id: str,
+    request_id: str | None = None,
 ) -> tuple[bytes, dict[str, Any] | None, str | None, str | None, bool]:
     lines = event.replace(b"\r\n", b"\n").split(b"\n")
     data_lines = [line[5:].lstrip() for line in lines if line.startswith(b"data:")]
@@ -3497,6 +3746,11 @@ def _normalize_sse_event(
     payload["id"] = public_id
     payload["object"] = "chat.completion.chunk"
     payload["model"] = model_id
+    payload["aurix"] = {
+        "request_id": request_id,
+        "requested_model": model_id,
+        "provider_model": provider_model,
+    }
     done = any(
         isinstance(choice, dict) and choice.get("finish_reason") is not None
         for choice in payload.get("choices", [])
@@ -3936,8 +4190,18 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             completed = False
             stream_completed = False
             done_sent = False
+            failure_http_status = _router_error_status(
+                AIRouterError("9Router stream ended before completion")
+            )
             first_event_ms: float | None = None
             event_lines: list[bytes] = []
+
+            def write_downstream(data: bytes) -> None:
+                try:
+                    self.wfile.write(data)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+                    raise _DownstreamStreamDisconnected from exc
 
             def emit_event(event: bytes) -> None:
                 nonlocal usage, provider_model, router_request_id, completed, first_event_ms
@@ -3945,6 +4209,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                     event,
                     public_id=stream.public_completion_id,
                     model_id=stream.model_id,
+                    request_id=stream.request_id,
                 )
                 if event_usage is not None:
                     usage = event_usage
@@ -3955,13 +4220,18 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 if normalized:
                     if first_event_ms is None:
                         first_event_ms = (time.monotonic() - stream.started_at) * 1000
-                    self.wfile.write(normalized + b"\n\n")
-                    self.wfile.flush()
+                    write_downstream(normalized + b"\n\n")
                 completed = completed or done
 
             try:
                 while True:
-                    line = stream.response.readline()
+                    try:
+                        line = stream.response.readline()
+                    except Exception:
+                        # The upstream stream opened successfully but failed
+                        # before a terminal marker; persist it as a gateway
+                        # failure, not as a downstream client cancellation.
+                        break
                     if not line:
                         break
                     if line in {b"\n", b"\r\n"}:
@@ -3977,12 +4247,12 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 if event_lines:
                     emit_event(b"\n".join(event_lines))
                 if completed and not done_sent:
-                    self.wfile.write(b"data: [DONE]\n\n")
-                    self.wfile.flush()
+                    write_downstream(b"data: [DONE]\n\n")
                     done_sent = True
                 stream_completed = completed
-            except (BrokenPipeError, ConnectionResetError, OSError):
+            except _DownstreamStreamDisconnected:
                 stream_completed = False
+                failure_http_status = 499
             finally:
                 self.close_connection = True
                 try:
@@ -3994,6 +4264,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         provider_model=provider_model,
                         router_request_id=router_request_id,
                         completed=stream_completed,
+                        failure_http_status=failure_http_status,
                         first_event_ms=first_event_ms,
                         duration_ms=(
                             (time.monotonic() - stream.started_at) * 1000
@@ -4074,21 +4345,30 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
             tool_items_started: set[int] = set()
             sequence_number = 0
             completed = False
+            failure_http_status = _router_error_status(
+                AIRouterError("9Router stream ended before completion")
+            )
             first_event_ms: float | None = None
             event_lines: list[bytes] = []
+
+            def write_downstream(data: bytes) -> None:
+                try:
+                    self.wfile.write(data)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+                    raise _DownstreamStreamDisconnected from exc
 
             def emit(event_type: str, payload: dict[str, Any]) -> None:
                 nonlocal sequence_number
                 sequence_number += 1
                 payload = {"type": event_type, **payload}
                 payload.setdefault("sequence_number", sequence_number)
-                self.wfile.write(
+                write_downstream(
                     f"event: {event_type}\n".encode("ascii")
                     + b"data: "
                     + json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                     + b"\n\n"
                 )
-                self.wfile.flush()
 
             def parse_event(event: bytes) -> tuple[dict[str, Any] | None, bool]:
                 lines = event.replace(b"\r\n", b"\n").split(b"\n")
@@ -4316,11 +4596,17 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         },
                     )
                 emit("response.completed", {"response": response_payload})
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-            except AIRouterError:
+                write_downstream(b"data: [DONE]\n\n")
+            except _DownstreamStreamDisconnected:
+                failure_http_status = 499
                 completed = False
-            except (BrokenPipeError, ConnectionResetError, OSError):
+            except AIRouterError as exc:
+                failure_http_status = _router_error_status(exc)
+                completed = False
+            except Exception:
+                failure_http_status = _router_error_status(
+                    AIRouterError("9Router stream failed")
+                )
                 completed = False
             finally:
                 self.close_connection = True
@@ -4333,6 +4619,7 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                         provider_model=provider_model,
                         router_request_id=router_request_id,
                         completed=completed,
+                        failure_http_status=failure_http_status,
                         first_event_ms=first_event_ms,
                         duration_ms=(time.monotonic() - stream.started_at) * 1000,
                     )
@@ -4672,9 +4959,26 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 return
             if path == "/v1/models" and method == "GET":
                 self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                model_query = parse_qs(query, keep_blank_values=False)
+                requested_category = model_query.get("category", [None])[0]
+                requested_view = model_query.get("view", ["curated"])[0].strip().lower()
                 self._write(
                     200,
-                    application.external_models(self.headers.get("Authorization")),
+                    application.external_models(
+                        self.headers.get("Authorization"),
+                        category=requested_category,
+                        live=requested_view in {"live", "full"},
+                    ),
+                    request_id=self._request_id,
+                )
+                return
+            if path == "/api/v1/integration" and method == "GET":
+                self._request_id = f"req_{secrets.token_urlsafe(12)}"
+                self._write(
+                    200,
+                    application.external_integration_profile(
+                        self.headers.get("Authorization")
+                    ),
                     request_id=self._request_id,
                 )
                 return
@@ -4969,6 +5273,15 @@ def make_handler(application: AuriXAIApplication, static_root: Path = STATIC_ROO
                 self._error(401, str(exc))
             except ConversationNotFoundError as exc:
                 self._error(404, str(exc))
+            except AIRouterTimeoutError as exc:
+                self._error(exc.public_status, str(exc))
+            except AIRouterHTTPError as exc:
+                message = (
+                    "9Router rate limit reached"
+                    if exc.public_status == 429
+                    else "9Router is temporarily unavailable"
+                )
+                self._error(exc.public_status, message, retry_after=exc.retry_after)
             except AIRouterError as exc:
                 self._error(502, str(exc))
             except APIKeyStoreError as exc:
@@ -5068,6 +5381,18 @@ def build_application_from_environment() -> AuriXAIApplication:
         raise AIConfigurationError(
             "AURIX_AI_PARTNER_MAX_REQUESTS_PER_MINUTE must be an integer between 1 and 600"
         ) from exc
+    try:
+        model_catalog_ttl_seconds = int(
+            os.environ.get("AURIX_AI_MODEL_CATALOG_TTL_SECONDS", "60")
+        )
+    except (TypeError, ValueError) as exc:
+        raise AIConfigurationError(
+            "AURIX_AI_MODEL_CATALOG_TTL_SECONDS must be an integer between 0 and 3600"
+        ) from exc
+    if not 0 <= model_catalog_ttl_seconds <= 3_600:
+        raise AIConfigurationError(
+            "AURIX_AI_MODEL_CATALOG_TTL_SECONDS must be an integer between 0 and 3600"
+        )
     allow_anonymous = os.environ.get("AURIX_AI_ALLOW_ANONYMOUS", "0").strip().lower() in {
         "1",
         "true",
@@ -5130,6 +5455,7 @@ def build_application_from_environment() -> AuriXAIApplication:
         operator_allowed_modes=set(operator_allowed_modes),
         operator_allowed_models=set(operator_allowed_models),
         operator_max_requests_per_minute=operator_max_requests_per_minute,
+        model_catalog_ttl_seconds=model_catalog_ttl_seconds,
     )
 
 

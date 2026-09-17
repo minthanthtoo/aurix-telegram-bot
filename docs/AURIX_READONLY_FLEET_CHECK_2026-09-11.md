@@ -78,3 +78,36 @@ This is an access finding, not a server-health result. It blocks only the live
 Singapore inspection/canary gates; it does not justify modifying the local
 control plane, enabling a protocol profile, or treating historical host
 measurements as current capacity evidence.
+
+## Singapore repair and verification — 2026-09-16
+
+The operator workstation's current public address was `45.41.106.60`. The
+documented historical allowlist contained `.67`, so the primary management
+port was filtered for the current operator path. A narrow sg-a UFW allow was
+added for the current address on TCP `61603` (sg-a management) and `61604`
+(the existing sg-b management relay). No management port was opened to the
+world.
+
+The sg-a relay units had been manually stopped and disabled since 2026-09-09,
+while their firewall rules remained present. Both were started and enabled at
+boot:
+
+- `aurix-sgb-data-tcp-relay.service` — active, enabled, TCP `45525`;
+- `aurix-sgb-data-udp-relay.service` — active, enabled, UDP `45525`.
+
+From sg-a, both relay targets were reachable: sg-b data TCP `45525` and sg-b
+management TCP `61604`. The sg-b management relay was already active and
+enabled. Through a pinned TLS check over the relay, sg-b returned HTTP 200 for
+`/server`, `/access-keys`, and `/metrics/transfer`; the primary sg-a API passed
+the same three checks through its management path. No access URLs, certificates,
+tokens, or customer identifiers were printed.
+
+The repair also reduced sg-a archived journald data from about 1.1 GiB to a
+bounded ~272 MiB, raising free root space from about 502 MiB (98% full) to
+about 1.4 GiB (95% full). At verification, AuriX, Xray, Hysteria2, Outline,
+the sg-b management relay, and both sg-b data relays were active.
+
+This restores the intended operator/relay path, but it is not an authenticated
+customer-session or throughput result. Direct sg-b management remains
+intentionally firewalled; Outline Manager must use sg-a's relay endpoint for
+sg-b. A full customer-path check still requires a declared client vantage.

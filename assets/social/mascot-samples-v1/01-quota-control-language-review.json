@@ -1,0 +1,6 @@
+{
+  "id": "01-quota-control",
+  "requested": "ag/gemini-3.8-flash-tiered(high)",
+  "returned": "gemini-3.8-flash-tiered",
+  "review": "**Verdict:** Approved with minor copy polish. Locked facts intact. Register friendly adult.\n\n**Issues & Replacements:**\n\n1. **Image Line 2:** `သိချင်တဲ့အချိန် စစ်လိုက်ပါ`\n   * **Issue:** Phrasing stiff for poster hook.\n   * **Replacement:** `အချိန်မရွေး စစ်ကြည့်လိုက်ပါ`\n\n2. **Caption Line 1:** `ကိုယ်တိုင်ဝင်စစ်နိုင်ပါတယ်။`\n   * **Issue:** `ဝင်စစ်` colloquial clutter with `ကိုယ်တိုင်`.\n   * **Replacement:** `ကိုယ်တိုင် စစ်ဆေးနိုင်ပါတယ်။`\n\n3. **Caption Line 2:** `သတိပေးလို့`\n   * **Issue:** Grammatically weak for future feature promise. Sound like past excuse.\n   * **Replacement:** `အသိပေးမှာမို့` (or `သတိပေးချက် ပို့ပေးမှာမို့`)\n\n**Score:** 8.8/10"
+}

@@ -1,0 +1,6 @@
+{
+  "id": "02-receipt-to-key",
+  "requested": "ag/gemini-3.8-flash-tiered(high)",
+  "returned": "gemini-3.8-flash-tiered",
+  "review": "Verdict: Approved with minor text adjustments. Complies with locked facts. No fake claims.\n\nLanguage Issues:\n\n1. Image register clash. Line 2 use polite diminutive (\"ပြေစာပုံလေး ပို့လိုက်ပါ\"), lines 3 and 5 switch to casual speech (\"စစ်ပေးမယ်\", \"ရမယ်\").\nReplacement:\n\"ပြေစာပုံ ပို့လိုက်ပါ\"\n\"AI က စစ်ပေးပြီး\"\n\"အတည်ပြုတာနဲ့\"\n\"Key ရပါမယ်\"\n\n2. Translationese in caption paragraph 2. \"အတည်ပြုနိုင်တာနဲ့\" mirror English \"as soon as it can verify\". Awkward native flow.\nReplacement: Change to \"စစ်ဆေးအတည်ပြုပြီးတာနဲ့\".\n\n3. Cutesy suffix in Line 2 image. \"ပြေစာပုံလေး\" too soft for adult utility tool.\nReplacement: Drop \"လေး\", use \"ပြေစာပုံ\" or \"ငွေလွှဲပြေစာ\".\n\nScore: 8.5/10"
+}

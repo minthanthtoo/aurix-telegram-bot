@@ -17,6 +17,7 @@ __all__ = [
     "provider_backends",
     "route_failover",
     "outline_adapter",
+    "ssconfig",
     "runtime",
     "telegram_transport",
     "vpn_web_api",

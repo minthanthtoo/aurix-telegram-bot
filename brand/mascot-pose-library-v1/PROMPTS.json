@@ -1,0 +1,37 @@
+{
+  "core": "Use the attached AuriX bird as the STRICT character identity reference, not a loose inspiration. Create one isolated production-quality 3D mascot pose. IDENTICAL navy tapered body, pale CYAN cheek mask ending at chin with navy throat, brown eyes, small navy beak, single short swept amber crest, cyan wing leading feathers with restrained violet lower feathers, short dark forked tail, two short dark bird feet. Same head/body proportion and soft finely textured matte feather material, restrained studio key/fill illumination. Adult-friendly attentive warmth, no giant baby eyes, no human hands/fingers, no costume, headset, logo, text or symbols. Exactly one character, full body fully visible, 12% clear margin on all sides. TRANSPARENT BACKGROUND: genuine RGBA alpha cutout, no white canvas, no checkered pattern, no floor, no cast shadow or glow baked into the background. Preserve sharp clean natural antialiased contour. Pose must be clearly different in silhouette, gaze and body weight, but no character redesign. ",
+  "poses": [
+    {
+      "id": "01-neutral",
+      "prompt": "Stand almost front-facing with wings comfortably folded flush against sides, both feet planted, upright relaxed attentive face looking toward viewer, tiny friendly closed-beak smile. Calm anchor reference, not waving."
+    },
+    {
+      "id": "02-present-left",
+      "prompt": "Three-quarter body turned toward viewer LEFT. Look left at imaginary adjacent headline, extend the near wing toward LEFT in an open low presenting gesture, other wing folded. Grounded relaxed stance. Viewer-left direction is essential, do not reuse right-facing reference pose."
+    },
+    {
+      "id": "03-present-right",
+      "prompt": "Three-quarter body turned toward viewer RIGHT, eyes looking right at imaginary adjacent headline, one wing open low presenting toward RIGHT, other wing folded. Grounded relaxed stance, pleasant attentive expression."
+    },
+    {
+      "id": "04-inspect",
+      "prompt": "Lean forward slightly from hips, head tilted DOWN toward empty space in front, brows subtly focused but friendly, one wing tip tucked close under the beak in thoughtful inspecting gesture, other wing folded. Both feet grounded, no props or floating icons. Clearly communicates checking/considering, not angry or worried."
+    },
+    {
+      "id": "05-reminder",
+      "prompt": "Upright stance, raise ONE folded wing near shoulder height in a gentle attention gesture, feather tips together, no human index finger. Slight knowing head tilt, attentive neutral smile and eyes toward viewer. Other wing folded. Friendly heads-up, no panic or scolding."
+    },
+    {
+      "id": "06-listening",
+      "prompt": "Lean slightly toward viewer with head distinctly tilted sideways, wings relaxed softly in front of lower torso without hands or crossed fingers, soft empathetic attentive eye contact. Feet grounded. Body language says I am listening and ready to help, not sad, apologetic or celebrating."
+    },
+    {
+      "id": "07-success",
+      "prompt": "Quiet satisfied small bow/nod, eyes gently closed with contentment, both wings folded across upper chest like a modest thankful acknowledgment, no hands or thumbs-up. Feet together and grounded. Clearly calm completion/thank-you, not exuberant party."
+    },
+    {
+      "id": "08-celebrate",
+      "prompt": "Joyful small airborne hop, both wings spread upward in a broad open V with bird feathers not fingers, both feet visible tucked slightly below body, bright open eyes and small naturally open beak smile. Compact controlled celebratory motion, no confetti or props, no glow or floating platform. Entire wings and crest within generous margins."
+    }
+  ]
+}

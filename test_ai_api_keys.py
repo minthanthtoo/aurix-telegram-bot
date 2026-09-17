@@ -1,6 +1,9 @@
 import http.client
 import json
+import queue
+import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -12,7 +15,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from aurix_ai.api_keys import APIKeyStore, reconcile_usage_events
-from aurix_ai.router import AIChatResult
+from aurix_ai.router import AIChatResult, AIRouterHTTPError
 from aurix_ai.web_api import (
     AISessionStore,
     AuriXAIApplication,
@@ -99,6 +102,93 @@ class _SSEResponse:
 
     def close(self):
         self.closed = True
+
+
+class _IncompleteSSEResponse:
+    """A deterministic provider stream that EOFs before any terminal marker."""
+
+    def __init__(self):
+        self._lines = iter(
+            [
+                b'data: {"id":"partial","model":"test-model","choices":[{"index":0,"delta":{"content":"partial answer"},"finish_reason":null}]}\n',
+                b"\n",
+            ]
+        )
+        self.closed = False
+
+    def readline(self):
+        return next(self._lines, b"")
+
+    def close(self):
+        self.closed = True
+
+
+class _GatedSSEResponse:
+    """A provider stream held open until the HTTP client disconnects."""
+
+    def __init__(self):
+        self._lines = queue.Queue()
+        self._lock = threading.Lock()
+        self._readline_calls = 0
+        self._active_readlines = 0
+        self.waiting_after_first_event = threading.Event()
+        self.closed = threading.Event()
+
+    def feed_event(self, payload):
+        encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        self._lines.put(b"data: " + encoded + b"\n")
+        self._lines.put(b"\n")
+
+    def readline(self):
+        with self._lock:
+            self._readline_calls += 1
+            call_number = self._readline_calls
+            self._active_readlines += 1
+        if call_number == 3:
+            self.waiting_after_first_event.set()
+        try:
+            line = self._lines.get(timeout=5)
+            return b"" if line is None else line
+        finally:
+            with self._lock:
+                self._active_readlines -= 1
+
+    @property
+    def active_readlines(self):
+        with self._lock:
+            return self._active_readlines
+
+    def close(self):
+        self.closed.set()
+        self._lines.put(None)
+
+
+class _DisconnectingWriter:
+    """Deterministically surface the next write failure after a real client RST."""
+
+    def __init__(self, writer, disconnected):
+        self._writer = writer
+        self._disconnected = disconnected
+        self._broken = False
+
+    def write(self, data):
+        if self._disconnected.is_set() and not self._broken:
+            self._broken = True
+            raise BrokenPipeError("downstream test client disconnected")
+        if self._broken:
+            return len(data)
+        return self._writer.write(data)
+
+    def flush(self):
+        if self._broken:
+            return None
+        return self._writer.flush()
+
+    def close(self):
+        return self._writer.close()
+
+    def __getattr__(self, name):
+        return getattr(self._writer, name)
 
 
 class _RawResponse:
@@ -570,6 +660,75 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(export["events"][0]["completionTokens"], 5)
         self.assertIsNone(export["events"][0]["apiKey"])
 
+    def test_standard_api_rejects_unknown_mode_before_routing(self):
+        status, payload = self.request(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "aurix_mode": "unrecognized-mode",
+            },
+            token=self.key,
+            path="/v1/chat/completions",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"], "aurix_mode is invalid")
+
+    def test_standard_api_rejects_an_unlisted_configured_default(self):
+        self.application.router.model = "ag/removed-model"
+        status, payload = self.request(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "aurix_mode": "translate",
+            },
+            token=self.key,
+            path="/v1/chat/completions",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"], "configured default model is not available")
+
+    def test_openai_route_maps_upstream_retryable_and_server_errors(self):
+        cases = (
+            (429, 429, "9Router rate limit reached"),
+            (500, 502, "9Router is temporarily unavailable"),
+            (502, 502, "9Router is temporarily unavailable"),
+            (503, 503, "9Router is temporarily unavailable"),
+            (504, 504, "9Router is temporarily unavailable"),
+        )
+        for upstream_status, public_status, public_error in cases:
+            with self.subTest(upstream_status=upstream_status):
+                class _FailingRouter:
+                    model = "ag/gemini-3.7-flash-high"
+
+                    def openai_chat(self, *_args, **_kwargs):
+                        raise AIRouterHTTPError(upstream_status, retry_after=9)
+
+                self.application.router = _FailingRouter()
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", self.port, timeout=3
+                )
+                connection.request(
+                    "POST",
+                    "/v1/chat/completions",
+                    json.dumps(
+                        {
+                            "messages": [{"role": "user", "content": "Hello"}],
+                            "aurix_mode": "translate",
+                        }
+                    ).encode(),
+                    {
+                        "Authorization": f"Bearer {self.key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                response = connection.getresponse()
+                payload = json.loads(response.read())
+                retry_after = response.getheader("Retry-After")
+                connection.close()
+
+                self.assertEqual(response.status, public_status)
+                self.assertEqual(retry_after, "9")
+                self.assertEqual(payload["error"], public_error)
+                self.assertTrue(payload["request_id"].startswith("req_"))
+
     def test_any_authenticated_telegram_user_can_open_admin_console(self):
         session_token = self.application.sessions.issue(
             VerifiedTelegramUser(987654321, "Regular", "User", "regular_user", "en")
@@ -753,12 +912,28 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(payload["usage"]["prompt_tokens"], 4)
         self.assertEqual(payload["usage"]["completion_tokens"], 5)
         self.assertEqual(payload["usage"]["total_tokens"], 9)
+        self.assertEqual(payload["aurix"]["requested_model"], "gemini-3.7-flash-high")
+        self.assertEqual(payload["aurix"]["provider_model"], "fake-provider-model")
 
         status, report = self.admin_request("/api/admin/usage", token="admin-secret")
         self.assertEqual(status, 200)
         event = report["requests"][0]
         self.assertEqual(event["user_id"], "standard-user-123")
         self.assertIsNone(event["conversation_id"])
+
+    def test_machine_readable_integration_profile_is_authenticated(self):
+        status, _content_type, body = self.raw_get("/api/v1/integration")
+        self.assertEqual(status, 401)
+        self.assertIn("API key", body.decode("utf-8"))
+
+        status, content_type, body = self.raw_get(
+            "/api/v1/integration", token=self.key
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", content_type)
+        profile = json.loads(body)
+        self.assertEqual(profile["object"], "aurix.integration_profile")
+        self.assertEqual(profile["effective_policy"]["requests_per_minute"], 20)
 
     def test_openai_compatible_streaming_forwards_first_event_immediately(self):
         self.application.router = _FeatureRouter()
@@ -806,6 +981,214 @@ class ExternalAPIHTTPTest(unittest.TestCase):
             analytics["summary"]["avg_duration_ms"],
             analytics["summary"]["avg_first_event_ms"],
         )
+
+    def test_partner_stream_eof_without_finish_or_done_is_incomplete(self):
+        upstream = _IncompleteSSEResponse()
+
+        class _EOFRouter(_FeatureRouter):
+            def openai_chat_stream(self, payload, **kwargs):
+                self.last_stream = (payload, kwargs)
+                self.stream_response = upstream
+                return upstream
+
+        router = _EOFRouter()
+        self.application.router = router
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "POST",
+            "/v1/chat/completions",
+            json.dumps(
+                {
+                    "model": "gemini-3.7-flash-high",
+                    "aurix_mode": "translate",
+                    "messages": [{"role": "user", "content": "Incomplete stream"}],
+                    "stream": True,
+                }
+            ).encode(),
+            {
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertIn('"content":"partial answer"', body)
+        self.assertNotIn("data: [DONE]", body)
+        self.assertTrue(upstream.closed)
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(report["requests"]), 1)
+        usage_event = report["requests"][0]
+        self.assertEqual(usage_event["status"], "failed")
+        self.assertEqual(usage_event["http_status"], 502)
+        self.assertEqual(usage_event["endpoint"], "/chat/completions")
+        self.assertNotIn("prompt", usage_event)
+        self.assertNotIn("messages", usage_event)
+        self.assertNotIn("request_body", usage_event)
+
+    def test_partner_responses_stream_eof_records_upstream_failure_status(self):
+        upstream = _IncompleteSSEResponse()
+
+        class _EOFRouter(_FeatureRouter):
+            def openai_chat_stream(self, payload, **kwargs):
+                self.last_stream = (payload, kwargs)
+                self.stream_response = upstream
+                return upstream
+
+        self.application.router = _EOFRouter()
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request(
+            "POST",
+            "/v1/responses",
+            json.dumps(
+                {
+                    "model": "gemini-3.7-flash-high",
+                    "aurix_mode": "translate",
+                    "input": "Incomplete response stream",
+                    "stream": True,
+                }
+            ).encode(),
+            {
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("response.output_text.delta", body)
+        self.assertIn('"delta":"partial answer"', body)
+        self.assertNotIn("response.completed", body)
+        self.assertNotIn("data: [DONE]", body)
+        self.assertTrue(upstream.closed)
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(report["requests"]), 1)
+        usage_event = report["requests"][0]
+        self.assertEqual(usage_event["status"], "failed")
+        self.assertEqual(usage_event["http_status"], 502)
+        self.assertEqual(usage_event["endpoint"], "/responses")
+        self.assertNotIn("prompt", usage_event)
+        self.assertNotIn("messages", usage_event)
+        self.assertNotIn("request_body", usage_event)
+
+    def test_partner_stream_disconnect_closes_upstream_and_records_499(self):
+        disconnected = threading.Event()
+        upstream = _GatedSSEResponse()
+        upstream.feed_event(
+            {
+                "choices": [
+                    {"index": 0, "delta": {"content": "first chunk"}, "finish_reason": None}
+                ]
+            }
+        )
+
+        class _DisconnectRouter(_FeatureRouter):
+            def openai_chat_stream(self, payload, **kwargs):
+                self.last_stream = (payload, kwargs)
+                self.stream_response = upstream
+                return upstream
+
+        router = _DisconnectRouter()
+        self.application.router = router
+        handler_base = make_handler(self.application)
+
+        class _DisconnectHandler(handler_base):
+            def setup(self):
+                super().setup()
+                self.wfile = _DisconnectingWriter(self.wfile, disconnected)
+
+        class _TrackedHTTPServer(ThreadingHTTPServer):
+            daemon_threads = True
+
+            def __init__(self, address, handler):
+                super().__init__(address, handler)
+                self.request_finished = threading.Event()
+
+            def process_request_thread(self, request, client_address):
+                try:
+                    super().process_request_thread(request, client_address)
+                finally:
+                    self.request_finished.set()
+
+        server = _TrackedHTTPServer(("127.0.0.1", 0), _DisconnectHandler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+        try:
+            connection.connect()
+            client_socket = connection.sock
+            self.assertIsNotNone(client_socket)
+            client_socket.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_LINGER,
+                struct.pack("ii", 1, 0),
+            )
+            connection.request(
+                "POST",
+                "/v1/chat/completions",
+                json.dumps(
+                    {
+                        "model": "gemini-3.7-flash-high",
+                        "aurix_mode": "translate",
+                        "messages": [{"role": "user", "content": "Stream then disconnect"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                {
+                    "Authorization": f"Bearer {self.key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertIn("text/event-stream", response.getheader("Content-Type"))
+            first_event = response.readline().decode("utf-8")
+            self.assertIn('"content":"first chunk"', first_event)
+            self.assertTrue(upstream.waiting_after_first_event.wait(2))
+
+            connection.close()
+            disconnected.set()
+            started = time.monotonic()
+            upstream.feed_event(
+                {
+                    "choices": [
+                        {"index": 0, "delta": {"content": "after disconnect"}, "finish_reason": None}
+                    ]
+                }
+            )
+
+            self.assertTrue(upstream.closed.wait(2), "upstream response was not closed promptly")
+            self.assertTrue(server.request_finished.wait(2), "HTTP handler remained active")
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertEqual(upstream.active_readlines, 0)
+            self.assertEqual(router.last_stream[0]["stream"], True)
+        finally:
+            disconnected.set()
+            connection.close()
+            if not upstream.closed.is_set():
+                upstream.close()
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=2)
+
+        self.assertFalse(server_thread.is_alive(), "HTTP listener thread leaked")
+        self.assertTrue(server.request_finished.is_set(), "request worker leaked")
+        status, report = self.admin_request("/api/admin/usage", token="admin-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(report["requests"]), 1)
+        usage_event = report["requests"][0]
+        self.assertEqual(usage_event["status"], "failed")
+        self.assertEqual(usage_event["http_status"], 499)
+        self.assertEqual(usage_event["endpoint"], "/chat/completions")
+        self.assertNotIn("prompt", usage_event)
+        self.assertNotIn("messages", usage_event)
+        self.assertNotIn("request_body", usage_event)
 
     def test_openai_responses_non_streaming_returns_response_shape_and_usage(self):
         self.application.router = _FeatureRouter()
@@ -1002,6 +1385,33 @@ class ExternalAPIHTTPTest(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertIn("operator policy", payload["error"])
 
+    def test_http_model_discovery_uses_fast_curated_chat_catalog_by_default(self):
+        def unexpected_live_discovery(_category=None):
+            raise AssertionError("default partner catalog must not call live discovery")
+
+        self.application.router.list_models = unexpected_live_discovery
+        status, content_type, body = self.raw_get("/v1/models", token=self.key)
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", content_type)
+        self.assertLess(len(body), 20_000)
+        payload = json.loads(body)
+        self.assertEqual(payload["aurix"]["catalog"], "curated")
+        self.assertEqual(payload["aurix"]["category"], "chat")
+        self.assertEqual(len(payload["data"]), 1)
+        self.assertEqual(payload["data"][0]["id"], "ag/gemini-3.7-flash-high")
+        self.assertEqual(
+            payload["data"][0]["capabilities"],
+            ["chat", "responses", "streaming"],
+        )
+
+    def test_http_model_discovery_can_request_a_live_category_explicitly(self):
+        status, _content_type, body = self.raw_get(
+            "/v1/models?category=image", token=self.key
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["aurix"]["catalog"], "live")
+
 
 class ExternalFeatureForwardingTest(unittest.TestCase):
     def setUp(self):
@@ -1162,6 +1572,9 @@ class ExternalFeatureForwardingTest(unittest.TestCase):
         self.assertEqual(provider_model, "provider-model")
         self.assertEqual(upstream_id, "upstream")
         self.assertFalse(done)
+        payload = json.loads(normalized.split(b"data: ", 1)[1])
+        self.assertEqual(payload["aurix"]["requested_model"], "public-model")
+        self.assertEqual(payload["aurix"]["provider_model"], "provider-model")
 
     def test_model_discovery_includes_image_capability(self):
         payload = self.application.external_models(f"Bearer {self.key}")
@@ -1172,6 +1585,59 @@ class ExternalFeatureForwardingTest(unittest.TestCase):
         video_models = [item for item in payload["data"] if item["capabilities"] == ["video_generation"]]
         self.assertEqual(len(video_models), 1)
         self.assertEqual(video_models[0]["id"], "video/test")
+
+    def test_model_discovery_exposes_hualogu_metadata_and_accepts_route_alias_policy(self):
+        account_id = self.store.list_accounts()[0]["id"]
+        self.store.update_account(
+            account_id,
+            allowed_models=["gemini-3.7-flash-high"],
+        )
+        self.router.list_models = lambda category=None: [
+            {
+                "id": "ag/gemini-3.7-flash-high",
+                "object": "model",
+                "owned_by": "ag",
+            }
+        ]
+
+        catalog = self.application.external_models(f"Bearer {self.key}")
+        self.assertEqual(len(catalog["data"]), 1)
+        model = catalog["data"][0]
+        self.assertEqual(model["id"], "ag/gemini-3.7-flash-high")
+        self.assertEqual(model["display_name"], "Gemini 3.7 Flash High")
+        self.assertEqual(model["aurix"]["canonical_model_id"], "gemini-3.7-flash-high")
+        self.assertEqual(
+            model["aurix"]["language_quality"]["lisu"],
+            "tested-experimental",
+        )
+
+        response = self.application.external_chat_completions(
+            {
+                "model": "ag/gemini-3.7-flash-high",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            f"Bearer {self.key}",
+        )
+        self.assertEqual(response["model"], "gemini-3.7-flash-high")
+
+    def test_model_discovery_cache_is_bounded_and_profile_is_key_scoped(self):
+        calls = []
+        original = self.router.list_models
+
+        def counted(category=None):
+            calls.append(category)
+            return original(category)
+
+        self.router.list_models = counted
+        self.application.image_models_payload()
+        self.application.image_models_payload()
+        self.assertEqual(calls, ["image"])
+
+        profile = self.application.external_integration_profile(f"Bearer {self.key}")
+        self.assertEqual(profile["schema"], "aurix.external.v1")
+        self.assertEqual(profile["model_discovery"]["cache_ttl_seconds"], 60)
+        self.assertEqual(profile["endpoints"]["chat_completions"]["terminal"], "data: [DONE]")
+        self.assertNotIn("token", json.dumps(profile).lower())
 
     def test_model_discovery_hides_image_models_without_image_scope(self):
         account_id = self.store.list_accounts()[0]["id"]

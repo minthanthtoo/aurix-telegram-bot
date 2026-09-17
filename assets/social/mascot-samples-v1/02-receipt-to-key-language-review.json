@@ -1,0 +1,6 @@
+{
+  "id": "02-receipt-to-key",
+  "requested": "ag/gemini-3.8-flash-tiered(high)",
+  "returned": "gemini-3.8-flash-tiered",
+  "review": "**Verdict**: Pass. Facts accurate. Tone fits. Minor phrasing tweaks optimize flow.\n\n**Language Issues and Replacements**:\n\n1. Image Line 2: `ပြေစာပုံလေး ပို့လိုက်ပါ`\n   * Reason: Diminutive `~လေး` too childish for adult consumer register.\n   * Fix: `ငွေလွှဲပြေစာ ပို့လိုက်ပါ`\n\n2. Image Line 4: `အတည်ပြုပြီးတာနဲ့ Key ရပါပြီ`\n   * Reason: `ရပါပြီ` signals already completed event. Instruction flow needs prospective state.\n   * Fix: `အတည်ပြုပြီးတာနဲ့ Key ရပါမည်` (or `အတည်ပြုပြီးတာနဲ့ Key တန်းရမယ်`)\n\n3. Caption Line 4: `စစ်ဆေးလို့မရတဲ့ အော်ဒါတွေကိုတော့`\n   * Reason: AI checks receipt, but verification fails due to blurry input. \"Cannot inspect\" inaccurate; \"cannot verify\" correct.\n   * Fix: `အတည်မပြုနိုင်တဲ့ အော်ဒါတွေကိုတော့`\n\n**Score**: 9/10"
+}

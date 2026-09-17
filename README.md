@@ -77,6 +77,8 @@ Required variables:
 - `AURIX_DEVICE_MANIFEST_PRIVATE_KEY` — persistent urlsafe-base64 Ed25519 seed for
   signed managed-device manifests; keep it stable or enrolled devices will no
   longer be able to verify future manifests
+- `AURIX_SSCONF_PUBLIC_BASE_URL` — optional public HTTPS origin used for the
+  account-scoped dynamic Shadowsocks profile; leave blank to disable it
 
 Optional:
 

@@ -238,6 +238,10 @@ Gold should signal value or action. Cyan should signal connection or movement. D
 - Latin and numerals: **Inter**.
 - Burmese: **Noto Sans Myanmar**.
 - Fallback Burmese: **Padauk**.
+- Optional Burmese display accent: **Noto Serif Myanmar** for one short campaign hook only, after mark-clearance and feed-size review. Keep explanations, product facts, and instructions in Noto Sans Myanmar.
+- Compact interface labels: **Noto Sans Myanmar UI** may be used when genuinely space-constrained; never use it to justify shrinking ad copy.
+
+See the [tested typography research and comparison boards](../design/typography/RESEARCH.md) for the evidence, limitations, and allowed treatments. These options do not replace the default families above.
 
 ### Hierarchy
 

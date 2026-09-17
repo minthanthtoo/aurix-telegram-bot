@@ -132,6 +132,31 @@ class _ProtocolRegistry(_Registry):
         }]
 
 
+class _SsconfProfiles:
+    configured = True
+
+    def issue_for_telegram(self, telegram_id, label="AuriX VPN"):
+        return {
+            "protocol": "ssconf",
+            "profile_url": "ssconf://vpn.example.test/api/ssconf/test-token",
+            "access_url": "ssconf://vpn.example.test/api/ssconf/test-token",
+            "selection_mode": "single-active-route",
+            "compatible_route_count": 2,
+            "multi_server_pool": True,
+        }
+
+    def document(self, token):
+        if token != "test-token":
+            return None
+        return {
+            "server": "bkk-a.example",
+            "server_port": 443,
+            "method": "chacha20-ietf-poly1305",
+            "password": "customer-secret",
+            "remarks": "Bangkok",
+        }
+
+
 class VpnWebApplicationTest(unittest.TestCase):
     def setUp(self):
         self.runtime = SimpleNamespace(token="bot-token", claim_service=_Claims(), commerce=_Commerce())
@@ -230,6 +255,32 @@ class VpnWebApplicationTest(unittest.TestCase):
                 ["outline", "xray"],
             )
             self.assertNotIn("public_address", json.dumps(payload))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_ssconf_issue_is_authenticated_but_document_is_public_bearer_delivery(self):
+        self.application.runtime.ssconf_profiles = _SsconfProfiles()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.application))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            issue = Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/ssconf",
+                headers={"X-Telegram-Init-Data": _init_data("bot-token")},
+            )
+            with urlopen(issue, timeout=3) as response:
+                issued = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(issued["protocol"], "ssconf")
+            self.assertTrue(issued["multi_server_pool"])
+
+            with urlopen(
+                f"http://127.0.0.1:{server.server_address[1]}/api/ssconf/test-token",
+                timeout=3,
+            ) as response:
+                document = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(document["server"], "bkk-a.example")
+            self.assertNotIn("X-Telegram-Init-Data", json.dumps(document))
         finally:
             server.shutdown()
             server.server_close()

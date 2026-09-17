@@ -1,0 +1,4 @@
+iterations/
+exports/*.png
+exports/*.svg
+__pycache__/

@@ -1,21 +1,31 @@
 import http.client
+import io
 import json
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 from aurix_ai.router import (
     AIChatResult,
     AIConfigurationError,
     AIRouterError,
+    AIRouterHTTPError,
+    AIRouterTimeoutError,
     NineRouterClient,
     _lisu_script_only,
     _english_translation_only,
     build_messages,
     normalize_translation_direction,
+    resolve_model_id,
 )
-from aurix_ai.web_api import AuriXAIApplication, make_handler
+from aurix_ai.web_api import (
+    AuriXAIApplication,
+    _normalize_standard_chat_request,
+    _resolve_standard_model,
+    make_handler,
+)
 
 
 class _Response:
@@ -148,6 +158,25 @@ class AIRouterTest(unittest.TestCase):
             NineRouterClient(base_url="http://router.invalid", api_key="", model="model")
         with self.assertRaises(AIConfigurationError):
             NineRouterClient(base_url="http://router.invalid", api_key="secret", model="")
+
+    def test_default_model_must_be_in_the_curated_catalog(self):
+        self.assertEqual(
+            resolve_model_id(None, default_route="ag/gemini-3.7-flash-high"),
+            ("ag/gemini-3.7-flash-high", "gemini-3.7-flash-high"),
+        )
+        with self.assertRaisesRegex(ValueError, "configured default model"):
+            resolve_model_id(None, default_route="ag/removed-model")
+        with self.assertRaisesRegex(ValueError, "configured default model"):
+            _resolve_standard_model(None, default_route="ag/removed-model")
+
+    def test_standard_api_rejects_unknown_entitlement_mode(self):
+        with self.assertRaisesRegex(ValueError, "aurix_mode is invalid"):
+            _normalize_standard_chat_request(
+                {
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "aurix_mode": "unrecognized-mode",
+                }
+            )
 
     def test_router_calls_openai_compatible_endpoint_and_records_returned_model(self):
         seen = {}
@@ -320,6 +349,44 @@ class AIRouterTest(unittest.TestCase):
                     api_key="secret",
                     model="model",
                 ).chat(mode="english", message="Tell me something")
+
+    def test_router_preserves_retryable_status_and_retry_after(self):
+        upstream_error = HTTPError(
+            "http://router.invalid/chat/completions",
+            429,
+            "too many requests",
+            {"Retry-After": "7"},
+            io.BytesIO(b"provider error"),
+        )
+        with patch("urllib.request.urlopen", side_effect=upstream_error):
+            with self.assertRaises(AIRouterHTTPError) as raised:
+                NineRouterClient(
+                    base_url="http://router.invalid",
+                    api_key="secret",
+                    model="model",
+                ).openai_chat(
+                    {"model": "model", "messages": [{"role": "user", "content": "Hi"}]}
+                )
+
+        self.assertEqual(raised.exception.upstream_status, 429)
+        self.assertEqual(raised.exception.public_status, 429)
+        self.assertEqual(raised.exception.retry_after, 7)
+
+    def test_router_classifies_upstream_timeout_as_gateway_timeout(self):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=URLError(TimeoutError("timed out")),
+        ):
+            with self.assertRaises(AIRouterTimeoutError) as raised:
+                NineRouterClient(
+                    base_url="http://router.invalid",
+                    api_key="secret",
+                    model="model",
+                ).openai_chat(
+                    {"model": "model", "messages": [{"role": "user", "content": "Hi"}]}
+                )
+
+        self.assertEqual(raised.exception.public_status, 504)
 
 
 class AIWebTest(unittest.TestCase):

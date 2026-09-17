@@ -30,7 +30,10 @@ The external website must:
 3. Send the relevant conversation history with each chat request.
 4. Authenticate its own users before allowing them to spend AI quota.
 5. Store the AuriX request ID for support and troubleshooting.
-6. Retry only temporary failures (`429`, `502`, and `503`).
+6. Retry only temporary failures (`429`, `502`, `503`, and `504`). Honor
+   `Retry-After` when present. Do not retry a stream after output has already
+   been received unless the application has an explicit resume/idempotency
+   strategy.
 7. Keep the AuriX API key in the backend environment or secret manager.
 
 AuriX does not own the external website's user login or conversation database.
@@ -89,6 +92,7 @@ Use the endpoint that matches the product:
 | OpenAI Responses-style SDK/client | `POST /v1/responses` | Yes |
 | Built-in English assistant, English ↔ Lisu translator, or Lisu assistant | `POST /v1/chat` | Yes |
 | Model and capability discovery | `GET /v1/models` | N/A |
+| Machine-readable integration contract | `GET /api/v1/integration` | N/A |
 | Authenticated key policy discovery | `GET /api/v1/key-info` | N/A |
 | Image generation | `POST /v1/images/generations` | No |
 | Text embeddings | `POST /v1/embeddings` | N/A |
@@ -120,7 +124,18 @@ The response is an OpenAI-style model list:
       "id": "gemini-3.7-flash-high",
       "object": "model",
       "owned_by": "aurix",
-      "capabilities": ["chat", "responses", "streaming"]
+      "display_name": "Gemini 3.7 Flash High",
+      "description": "Current AuriX baseline; strongest tested Lisu-script behavior.",
+      "capabilities": ["chat", "responses", "streaming"],
+      "aurix": {
+        "canonical_model_id": "gemini-3.7-flash-high",
+        "provider_model_id": "ag/gemini-3.7-flash-high",
+        "catalog_verified": true,
+        "language_quality": {
+          "lisu": "tested-experimental",
+          "guidance": "Preferred comparison baseline; native-speaker review is still required."
+        }
+      }
     },
     {
       "id": "embedding-model-id",
@@ -138,6 +153,16 @@ The response is an OpenAI-style model list:
 }
 ```
 
+The default catalog is a fast, policy-filtered curated chat catalog. It is
+served from AuriX's platform catalog and does not wait for every live 9Router
+media catalog, so a partner's first model-picker request remains responsive.
+Each item retains its provider route ID, display name, capabilities, and AuriX
+metadata. To discover a specific live media category, use for example
+`GET /v1/models?category=image`, `embedding`, `stt`, `tts`, or `video`. To
+request the slower full live discovery behavior for diagnostics, use
+`GET /v1/models?view=live`. All variants remain filtered by the API key's
+allowed modes and models.
+
 Capability meanings:
 
 - `chat`: normal chat completion.
@@ -148,11 +173,34 @@ Capability meanings:
 - `audio_output`: speech synthesis.
 - `image_generation`: image output through `/v1/images/generations`.
 
+The `aurix.language_quality` object is routing guidance, not a certification.
+`tested-experimental` means this route performed best in the AuriX comparison
+used to select the current baseline; it does not replace native-speaker review.
+Unknown provider models are returned as `unverified`. Use the provider-facing
+`id` when making a request; AuriX also accepts the stable canonical ID when it
+is present in the catalog.
+
 Tools and image understanding are accepted by the chat gateway, but are not
 always declared separately in the model catalog. The selected chat model must
 support the requested feature.
 
-### 4.1 Inspect the key without exposing its secret
+### 4.1 Machine-readable integration profile
+
+An integration backend can retrieve the effective, key-scoped protocol and
+limits without parsing this document:
+
+```http
+GET https://ai.aurix-mart.tech/api/v1/integration
+Authorization: Bearer ak_live_...
+```
+
+The profile describes the model-catalog cache TTL, OpenAI-compatible endpoints,
+SSE terminal events, request limits, attribution fields, and the attachment
+boundary. It contains no prompt, provider credential, or raw API key. Cache the
+profile for the returned TTL, and still treat the live model catalog as the
+authority for availability.
+
+### 4.2 Inspect the key without exposing its secret
 
 The backend can verify which non-secret policy is active for its configured
 key:
@@ -978,9 +1026,10 @@ Error responses are JSON:
 | `400` | Invalid request or unsupported field | Fix the request; do not retry unchanged |
 | `401` | Missing, invalid, expired, or revoked key | Check backend configuration |
 | `403` | Key is not allowed to use the requested model or mode | Ask for the required entitlement |
-| `429` | Partner account rate limit reached | Wait for `Retry-After`, then retry |
+| `429` | Partner account or upstream rate limit reached | Wait for `Retry-After`, then retry |
 | `502` | Temporary model/provider failure | Retry with bounded backoff |
 | `503` | API temporarily unavailable | Retry with bounded backoff |
+| `504` | Upstream model/provider timeout | Retry before committing output, with bounded backoff |
 | `500` | Unexpected AuriX failure | Save the request ID and report it |
 
 Use exponential backoff with jitter, for example 1 second, 2 seconds, and 4
@@ -1039,7 +1088,7 @@ Before launch, the external website should verify:
 - [ ] Context is bounded and old turns are summarized or dropped.
 - [ ] Tool arguments are validated and authorized locally.
 - [ ] Streaming cancellation closes the upstream request.
-- [ ] `429`, `502`, and `503` use bounded retries.
+- [ ] `429`, `502`, `503`, and `504` use bounded retries; `Retry-After` is honored.
 - [ ] Request IDs are saved for failed requests.
 - [ ] Prompts, responses, media, and credentials are excluded from normal logs.
 - [ ] Embedding dimensions are checked before inserting vectors.
@@ -1066,7 +1115,7 @@ parts. Add embeddings and multipart audio routes only after selecting models
 from /v1/models. Use the native POST /v1/chat route only when the built-in
 english, translate, or lisu_assistant mode is required.
 
-Retry only 429, 502, and 503 with bounded exponential backoff. Preserve the
+Retry only 429, 502, 503, and 504 with bounded exponential backoff. Preserve the
 request ID for support. Do not expose credentials or log sensitive content.
 ```
 
