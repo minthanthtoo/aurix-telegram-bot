@@ -1070,7 +1070,9 @@ class AuriXAIApplication:
                 requested_model, default_route=self.router.model
             )
         else:
-            model_route, model_id = self.router.model, previous["model_id"]
+            model_route, model_id = resolve_model_id(
+                previous["model_id"], default_route=self.router.model
+            )
         attempt, context = self.conversations.retry_attempt(
             user.telegram_id,
             attempt_id,

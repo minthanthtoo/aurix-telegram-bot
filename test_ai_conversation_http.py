@@ -291,7 +291,7 @@ class AIConversationHTTPTest(unittest.TestCase):
             source="Frozen source",
             mode="english",
             direction=None,
-            model_id="gemini-test",
+            model_id="gemini-3.7-flash-high",
             context=[{"role": "user", "content": "Frozen context"}],
         )
         self.store.fail_attempt(101, first["id"], error_code="upstream_error")
@@ -319,6 +319,28 @@ class AIConversationHTTPTest(unittest.TestCase):
         self.assertEqual(self.router.calls[0]["history"], [{
             "role": "user", "content": "Frozen context"
         }])
+
+    def test_retry_rejects_a_removed_stored_model_instead_of_using_current_default(self):
+        conversation = self.store.create_conversation(101, title="Removed model")
+        first, _ = self.store.create_turn(
+            101,
+            conversation["id"],
+            source="Frozen source",
+            mode="english",
+            direction=None,
+            model_id="removed-model",
+            context=[],
+        )
+        self.store.fail_attempt(101, first["id"], error_code="upstream_error")
+        status, payload = self.request(
+            "POST",
+            f"/api/conversations/{conversation['id']}/attempts/{first['id']}/retry",
+            {},
+            self.cookie,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"], "model_id is not available")
+        self.assertEqual(self.router.calls, [])
 
     def test_delete_hides_conversation_and_unauthenticated_requests_fail(self):
         status, _ = self.request("GET", "/api/conversations")
