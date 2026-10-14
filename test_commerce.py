@@ -1,11 +1,13 @@
 import hashlib
 import json
+import os
 import re
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
@@ -1343,6 +1345,7 @@ class FakePostgresPool:
 
 
 class PostgresAdapterTest(unittest.TestCase):
+    @patch.dict(os.environ, {"AURIX_ALLOW_LEGACY_MIGRATION_RECONCILE": "0"})
     def test_sqlite_and_postgres_schema_contracts_match_frozen_baseline(self):
         with tempfile.TemporaryDirectory() as tmp:
             sqlite_path = Path(tmp) / "contract.db"

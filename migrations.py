@@ -1525,7 +1525,7 @@ COMMERCE_MIGRATIONS = (
         ),
     ),
     Migration(
-        20,
+        27,
         "dynamic_shadowsocks_profiles",
         sqlite_statements=(
             """CREATE TABLE IF NOT EXISTS dynamic_shadowsocks_profiles (
@@ -1559,7 +1559,7 @@ COMMERCE_MIGRATIONS = (
         ),
     ),
     Migration(
-        21,
+        28,
         "entitlement_scoped_dynamic_profiles",
         sqlite_statements=(
             """CREATE TABLE IF NOT EXISTS dynamic_shadowsocks_entitlement_profiles (
@@ -1597,7 +1597,7 @@ COMMERCE_MIGRATIONS = (
         ),
     ),
     Migration(
-        22,
+        29,
         "endpoint_regional_routing_pools",
         sqlite_statements=(
             "ALTER TABLE vpn_endpoints ADD COLUMN routing_pool TEXT NOT NULL DEFAULT 'sea'",

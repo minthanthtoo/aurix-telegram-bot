@@ -56,6 +56,7 @@ class MigrationRegistryTest(unittest.TestCase):
             )
             self.assertEqual(table[0], "sample")
 
+    @patch.dict(os.environ, {"AURIX_ALLOW_LEGACY_MIGRATION_RECONCILE": "0"})
     def test_history_rejects_renamed_unknown_duplicate_and_nonpositive_versions(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "history.db"
@@ -166,6 +167,7 @@ class MigrationRegistryTest(unittest.TestCase):
                         "endpoint_identity_and_capacity",
                     )
 
+    @patch.dict(os.environ, {"AURIX_ALLOW_LEGACY_MIGRATION_RECONCILE": "0"})
     def test_existing_initializers_adopt_component_scoped_version_one(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "application.db"
@@ -199,9 +201,9 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("commerce", 17, "protocol_scoped_endpoint_key_inventory"),
                     ("commerce", 18, "device_acknowledgement_replay_protection"),
                     ("commerce", 19, "account_access_lifecycle_actions"),
-                    ("commerce", 20, "dynamic_shadowsocks_profiles"),
-                    ("commerce", 21, "entitlement_scoped_dynamic_profiles"),
-                    ("commerce", 22, "endpoint_regional_routing_pools"),
+                    ("commerce", 27, "dynamic_shadowsocks_profiles"),
+                    ("commerce", 28, "entitlement_scoped_dynamic_profiles"),
+                    ("commerce", 29, "endpoint_regional_routing_pools"),
                     ("free_access", 1, "legacy_free_access_schema"),
                     ("free_access", 2, "giveaway_campaigns"),
                     ("free_access", 3, "configurable_promo_campaigns"),
@@ -214,6 +216,19 @@ class MigrationRegistryTest(unittest.TestCase):
                     ("free_access", 10, "endpoint_usage_snapshot_status"),
                 ],
             )
+
+    def test_new_commerce_migrations_follow_the_legacy_version_tail(self):
+        versions = [migration.version for migration in COMMERCE_MIGRATIONS]
+        self.assertEqual(len(versions), len(set(versions)))
+        self.assertTrue(set(range(20, 27)).isdisjoint(versions))
+        self.assertEqual(
+            [(migration.version, migration.name) for migration in COMMERCE_MIGRATIONS if migration.version >= 27],
+            [
+                (27, "dynamic_shadowsocks_profiles"),
+                (28, "entitlement_scoped_dynamic_profiles"),
+                (29, "endpoint_regional_routing_pools"),
+            ],
+        )
 
     def test_endpoint_migration_upgrades_populated_legacy_free_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
