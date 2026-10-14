@@ -15,7 +15,7 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -273,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("COMMERCE_DATABASE_URL is required; it is never accepted as a CLI argument")
     result = migrate(source, target_url)
     report = {
-        "completed_at": datetime.now(UTC).isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
         "source_sha256": source_sha256,
         "source_counts": counts,
         "target_counts": result["target_counts"],
