@@ -16,7 +16,7 @@ import re
 import secrets
 import uuid
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
@@ -189,7 +189,7 @@ class SsconfProfileService:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(UTC).isoformat()
+        return datetime.now(timezone.utc).isoformat()
 
     def _require_configured(self) -> None:
         if not self.configured:
