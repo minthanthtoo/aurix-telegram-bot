@@ -1,0 +1,532 @@
+#!/usr/bin/env python3
+"""Fail-closed DigitalOcean release checks without disclosing secrets."""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import os
+import re
+import sqlite3
+import urllib.error
+import urllib.request
+from pathlib import Path
+from urllib.parse import quote, urlsplit
+
+from cryptography.fernet import Fernet
+
+try:
+    from deploy.fleet_config import (
+        FleetError,
+        load_dotenv,
+        materialize_trust_files,
+        parse_manifest,
+    )
+    from deploy import dns_records
+except ModuleNotFoundError:  # Direct execution sets deploy/ as sys.path[0].
+    from fleet_config import FleetError, load_dotenv, materialize_trust_files, parse_manifest
+    import dns_records
+
+
+TRUTHY = {"1", "true", "yes", "on"}
+
+PAYMENT_QR_ASSETS = {
+    "kbzpay": "kbzpay.png",
+    "wavepay": "wavepay.png",
+    "ayapay": "ayapay.png",
+    "uabpay": "uabpay.png",
+    "cbpay": "cbpay.png",
+}
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"DigitalOcean preflight failed: {message}")
+
+
+def _required(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        fail(f"missing required environment variable: {name}")
+    return value
+
+
+def _check_payment_qr_assets() -> None:
+    """Refuse a DigitalOcean release with an incomplete payment chooser."""
+    directory = Path(__file__).resolve().parents[1] / "assets" / "payment_qr"
+    missing = [
+        provider
+        for provider, filename in PAYMENT_QR_ASSETS.items()
+        if not (directory / filename).is_file() or (directory / filename).stat().st_size <= 0
+    ]
+    if missing:
+        fail("missing or empty payment QR asset(s): " + ", ".join(missing))
+
+
+def _validate_offsite_storage(env: dict[str, str]) -> bool:
+    """Validate optional recovery-store settings without importing app storage clients."""
+    raw_url = env.get("AURIX_BACKUP_OBJECT_STORE_URL", "").strip()
+    backup_bucket = env.get("AURIX_BACKUP_SUPABASE_BUCKET", "").strip()
+    backup_prefix = env.get("AURIX_BACKUP_SUPABASE_PREFIX", "").strip()
+    if not (raw_url or backup_bucket or backup_prefix):
+        return False
+    if raw_url and (backup_bucket or backup_prefix):
+        fail("configure only one offsite backend: S3-compatible object storage or Supabase Storage")
+    if raw_url:
+        parsed = urlsplit(raw_url)
+        if parsed.scheme != "s3" or not parsed.netloc:
+            fail("AURIX_BACKUP_OBJECT_STORE_URL must look like s3://bucket/prefix")
+        if not env.get("AURIX_BACKUP_OBJECT_STORE_ENDPOINT", "").strip().startswith("https://"):
+            fail("AURIX_BACKUP_OBJECT_STORE_ENDPOINT must be an HTTPS URL")
+        if not env.get("AURIX_BACKUP_OBJECT_STORE_ACCESS_KEY_ID", "").strip() or not env.get(
+            "AURIX_BACKUP_OBJECT_STORE_SECRET_ACCESS_KEY", ""
+        ).strip():
+            fail("object-store access key and secret key are required")
+        return True
+
+    if not backup_bucket:
+        fail("configure AURIX_BACKUP_OBJECT_STORE_URL or AURIX_BACKUP_SUPABASE_BUCKET")
+    project_url = urlsplit(env.get("SUPABASE_URL", "").strip())
+    if (
+        project_url.scheme != "https"
+        or not project_url.netloc
+        or project_url.query
+        or project_url.fragment
+    ):
+        fail("SUPABASE_URL must be an https URL without a query or fragment")
+    if not env.get("SUPABASE_SERVICE_ROLE_KEY", "").strip():
+        fail("SUPABASE_SERVICE_ROLE_KEY is required for Supabase backups")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", backup_bucket):
+        fail("AURIX_BACKUP_SUPABASE_BUCKET contains invalid characters")
+    if backup_bucket == env.get("SUPABASE_RECEIPTS_BUCKET", "payment-receipts").strip():
+        fail("AURIX_BACKUP_SUPABASE_BUCKET must differ from SUPABASE_RECEIPTS_BUCKET")
+    if ".." in backup_prefix.strip("/").split("/"):
+        fail("AURIX_BACKUP_SUPABASE_PREFIX contains an invalid path")
+    try:
+        timeout = float(env.get("AURIX_BACKUP_STORAGE_TIMEOUT_SECONDS", "45"))
+        max_bytes = int(env.get("AURIX_BACKUP_STORAGE_MAX_MB", "512")) * 1024 * 1024
+    except (TypeError, ValueError):
+        fail("Supabase backup storage timeout or size is invalid")
+    if not 1 <= timeout <= 120 or not 1 <= max_bytes <= 2 * 1024 * 1024 * 1024:
+        fail("Supabase backup storage timeout or size is outside supported limits")
+    return True
+
+
+def _validate_configuration() -> dict[str, str]:
+    _check_payment_qr_assets()
+    # Keep preflight aligned with the portable recovery path.  The reconciler
+    # intentionally restores root-only SSH material from the private dotenv
+    # before opening an SSH session; rejecting that same configuration here
+    # would make a source + .env rebuild fail before it can start.  Materialize
+    # only when inline copies are supplied; path-only deployments still fail
+    # closed below if their files are absent.
+    try:
+        materialize_trust_files(dict(os.environ))
+    except FleetError as exc:
+        fail(str(exc))
+    token = _required("TELEGRAM_BOT_TOKEN")
+    access_key = _required("AURIX_ACCESS_URL_KEY")
+    try:
+        Fernet(access_key.encode())
+    except (TypeError, ValueError):
+        fail("AURIX_ACCESS_URL_KEY is not a valid Fernet key")
+
+    owner = os.environ.get("OWNER_TELEGRAM_ID", "").strip()
+    admins = os.environ.get("ADMIN_TELEGRAM_IDS", "").strip()
+    control_group = os.environ.get("AURIX_CONTROL_GROUP_ID", "").strip()
+    if not any((owner, admins, control_group)):
+        fail("configure OWNER_TELEGRAM_ID, ADMIN_TELEGRAM_IDS, or AURIX_CONTROL_GROUP_ID")
+    for name, raw in (("OWNER_TELEGRAM_ID", owner), ("ADMIN_TELEGRAM_IDS", admins)):
+        try:
+            values = [int(item.strip()) for item in raw.split(",") if item.strip()]
+        except ValueError:
+            fail(f"{name} must contain numeric Telegram IDs")
+        if any(value <= 0 for value in values):
+            fail(f"{name} must contain positive Telegram IDs")
+    if control_group:
+        try:
+            if int(control_group) >= 0:
+                raise ValueError
+        except ValueError:
+            fail("AURIX_CONTROL_GROUP_ID must be a negative Telegram group ID")
+
+    servers_json = os.environ.get("OUTLINE_SERVERS_JSON", "").strip()
+    provider_resource_id = os.environ.get("OUTLINE_PROVIDER_RESOURCE_ID", "").strip()
+    if provider_resource_id and not re.fullmatch(r"\d{1,20}", provider_resource_id):
+        fail("OUTLINE_PROVIDER_RESOURCE_ID must be a numeric Droplet ID")
+    if servers_json:
+        try:
+            servers = json.loads(servers_json)
+            if not isinstance(servers, list) or not servers:
+                raise ValueError
+            for server in servers:
+                parsed = urlsplit(str(server.get("api_url") or ""))
+                provider_resource_id = str(server.get("provider_resource_id") or "").strip()
+                fingerprint = str(server.get("cert_sha256") or "").replace(":", "")
+                if (
+                    not str(server.get("id") or "").strip()
+                    or parsed.scheme != "https"
+                    or not parsed.hostname
+                    or not parsed.path.strip("/")
+                    or not re.fullmatch(r"[0-9a-fA-F]{64}", fingerprint)
+                    or (provider_resource_id and not re.fullmatch(r"\d{1,20}", provider_resource_id))
+                ):
+                    raise ValueError
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            fail("OUTLINE_SERVERS_JSON contains an invalid server entry")
+    else:
+        outline_url = urlsplit(_required("OUTLINE_API_URL"))
+        fingerprint = _required("OUTLINE_CERT_SHA256").replace(":", "")
+        if (
+            outline_url.scheme != "https"
+            or not outline_url.hostname
+            or not outline_url.path.strip("/")
+        ):
+            fail("OUTLINE_API_URL must be the complete secret HTTPS management URL")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", fingerprint):
+            fail("OUTLINE_CERT_SHA256 must contain 64 hexadecimal characters")
+
+    fleet_raw = os.environ.get("AURIX_FLEET_NODES_JSON", "").strip()
+    auto_activation = os.environ.get(
+        "AURIX_INFRASTRUCTURE_AUTO_ACTIVATION_ENABLED", "0"
+    ).strip().lower() in TRUTHY
+    auto_registration = os.environ.get(
+        "AURIX_FLEET_AUTO_REGISTRATION_ENABLED", "0"
+    ).strip().lower() in TRUTHY
+    if auto_activation and not fleet_raw:
+        fail("automatic infrastructure activation requires AURIX_FLEET_NODES_JSON")
+    if auto_activation:
+        activation_env = Path(
+            os.environ.get("AURIX_FLEET_ENV_FILE", "/etc/aurix-bot/aurix.env")
+        )
+        if not activation_env.is_absolute() or not activation_env.is_file():
+            fail("AURIX_FLEET_ENV_FILE must be an existing absolute file when auto activation is enabled")
+    if auto_registration:
+        registration_url = _required("AURIX_FLEET_REGISTRATION_URL")
+        parsed_registration = urlsplit(registration_url)
+        if (
+            parsed_registration.scheme != "https"
+            or not parsed_registration.hostname
+            or parsed_registration.path != "/fleet/register"
+            or parsed_registration.fragment
+            or parsed_registration.username
+            or parsed_registration.password
+        ):
+            fail("AURIX_FLEET_REGISTRATION_URL must be a credential-free HTTPS URL")
+        enrollment_key = _required("AURIX_FLEET_ENROLLMENT_KEY")
+        try:
+            Fernet(enrollment_key.encode())
+        except (TypeError, ValueError):
+            fail("AURIX_FLEET_ENROLLMENT_KEY is not a valid Fernet key")
+        if os.environ.get("AURIX_FLEET_REGISTRATION_ENABLED", "0").strip().lower() not in TRUTHY:
+            fail("AURIX_FLEET_REGISTRATION_ENABLED=1 is required for automatic node registration")
+        registration_env = Path(
+            os.environ.get("AURIX_FLEET_ENV_FILE", "/etc/aurix-bot/aurix.env")
+        )
+        if not registration_env.is_absolute() or not registration_env.is_file():
+            fail("AURIX_FLEET_ENV_FILE must be an existing absolute file when auto registration is enabled")
+        control_source = _required("AURIX_FLEET_CONTROL_PLANE_SOURCE")
+        try:
+            ipaddress.ip_network(control_source, strict=False)
+        except ValueError:
+            fail("AURIX_FLEET_CONTROL_PLANE_SOURCE must be an IP address or CIDR")
+        for variable in ("AURIX_FLEET_SSH_KEY", "AURIX_FLEET_KNOWN_HOSTS"):
+            configured_path = Path(_required(variable))
+            if not configured_path.is_absolute() or not configured_path.is_file():
+                fail(f"{variable} must be an existing absolute file when auto registration is enabled")
+    object_store_configured = _validate_offsite_storage(dict(os.environ))
+    if fleet_raw:
+        try:
+            strict_allocations = os.environ.get(
+                "AURIX_FLEET_STRICT_ALLOCATION_VALIDATION", ""
+            ).strip().lower() in TRUTHY
+            fleet_nodes = parse_manifest(fleet_raw, strict_allocations=strict_allocations)
+        except FleetError as exc:
+            fail(str(exc))
+        fleet_ids = {node.node_id for node in fleet_nodes}
+        default_id = os.environ.get("OUTLINE_DEFAULT_SERVER_ID", "").strip()
+        if default_id and default_id not in fleet_ids:
+            fail("OUTLINE_DEFAULT_SERVER_ID must exist in AURIX_FLEET_NODES_JSON")
+        for variable in ("AURIX_FLEET_SSH_KEY", "AURIX_FLEET_KNOWN_HOSTS"):
+            configured_path = Path(_required(variable))
+            if not configured_path.is_absolute() or not configured_path.is_file():
+                fail(f"{variable} must be an existing absolute file")
+        source = _required("AURIX_FLEET_CONTROL_PLANE_SOURCE")
+        try:
+            ipaddress.ip_network(source, strict=False)
+        except ValueError:
+            fail("AURIX_FLEET_CONTROL_PLANE_SOURCE must be an IP address or CIDR")
+        backup_key = _required("AURIX_FLEET_BACKUP_KEY")
+        try:
+            Fernet(backup_key.encode())
+        except (TypeError, ValueError):
+            fail("AURIX_FLEET_BACKUP_KEY is not a valid Fernet key")
+        offsite = os.environ.get("AURIX_FLEET_BACKUP_OFFSITE_DIR", "").strip()
+        require_offsite = os.environ.get(
+            "AURIX_FLEET_BACKUP_REQUIRE_OFFSITE", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if object_store_configured:
+            pass
+        elif offsite:
+            offsite_path = Path(offsite)
+            if not offsite_path.is_absolute():
+                fail("AURIX_FLEET_BACKUP_OFFSITE_DIR must be an absolute path")
+            if require_offsite and not offsite_path.is_dir():
+                fail("AURIX_FLEET_BACKUP_OFFSITE_DIR must exist when offsite is required")
+        elif require_offsite:
+            fail("AURIX_FLEET_BACKUP_REQUIRE_OFFSITE needs AURIX_FLEET_BACKUP_OFFSITE_DIR")
+        if dns_records.configured(dict(os.environ)):
+            try:
+                dns_config = dns_records.from_env(dict(os.environ))
+                dns_records.desired_records(fleet_nodes, dns_config)
+            except FleetError as exc:
+                fail(str(exc))
+        elif os.environ.get("AURIX_DNS_REQUIRE", "").strip().lower() in TRUTHY:
+            fail("AURIX_DNS_REQUIRE=1 needs configured Cloudflare DNS automation")
+
+    mutations_enabled = os.environ.get(
+        "AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED", "0"
+    ).strip().lower() in TRUTHY
+    if mutations_enabled:
+        _required("DIGITALOCEAN_API_TOKEN")
+        key_ids = [
+            item.strip()
+            for item in os.environ.get("AURIX_DIGITALOCEAN_SSH_KEY_IDS", "").split(",")
+            if item.strip()
+        ]
+        if not key_ids:
+            fail(
+                "AURIX_DIGITALOCEAN_SSH_KEY_IDS is required when provider mutations are enabled"
+            )
+        if len(key_ids) > 10 or any(
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:._-]{0,127}", value)
+            for value in key_ids
+        ):
+            fail("AURIX_DIGITALOCEAN_SSH_KEY_IDS is invalid")
+    orphan_cleanup_enabled = os.environ.get(
+        "AURIX_ORPHAN_CLEANUP_ENABLED", "0"
+    ).strip().lower() in TRUTHY
+    if orphan_cleanup_enabled and not mutations_enabled:
+        fail("AURIX_ORPHAN_CLEANUP_ENABLED requires AURIX_INFRASTRUCTURE_MUTATIONS_ENABLED=1")
+    if orphan_cleanup_enabled and os.environ.get(
+        "AURIX_ORPHAN_CLEANUP_CONFIRMATION", ""
+    ) != "DELETE-UNREGISTERED-AURIX-NODES":
+        fail(
+            "AURIX_ORPHAN_CLEANUP_CONFIRMATION must exactly equal "
+            "DELETE-UNREGISTERED-AURIX-NODES"
+        )
+
+    database_url = os.environ.get("COMMERCE_DATABASE_URL", "").strip()
+    database_path = os.environ.get("DATABASE_PATH", "").strip()
+    if database_url:
+        parsed_database = urlsplit(database_url)
+        if parsed_database.scheme not in {"postgres", "postgresql"} or not parsed_database.hostname:
+            fail("COMMERCE_DATABASE_URL must be a PostgreSQL URL")
+    else:
+        if not database_path or not Path(database_path).is_absolute():
+            fail("DATABASE_PATH must be an absolute persistent path")
+        resolved = Path(database_path).resolve()
+        if str(resolved).startswith(("/opt/aurix-current/", "/opt/aurix-releases/")):
+            fail("DATABASE_PATH must live outside versioned application releases")
+        try:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            fail(f"DATABASE_PATH parent is unavailable: {type(exc).__name__}")
+        database_offsite = os.environ.get("AURIX_DATABASE_BACKUP_OFFSITE_DIR", "").strip()
+        require_database_offsite = os.environ.get(
+            "AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE", ""
+        ).strip().lower() in TRUTHY
+        if object_store_configured:
+            database_backup_key = os.environ.get(
+                "AURIX_DATABASE_BACKUP_KEY", os.environ.get("AURIX_FLEET_BACKUP_KEY", "")
+            )
+            try:
+                Fernet(database_backup_key.encode())
+            except (TypeError, ValueError):
+                fail("AURIX_DATABASE_BACKUP_KEY or AURIX_FLEET_BACKUP_KEY is not a valid Fernet key")
+        elif database_offsite:
+            database_offsite_path = Path(database_offsite)
+            if not database_offsite_path.is_absolute():
+                fail("AURIX_DATABASE_BACKUP_OFFSITE_DIR must be an absolute path")
+            if require_database_offsite and not database_offsite_path.is_dir():
+                fail("AURIX_DATABASE_BACKUP_OFFSITE_DIR must exist when offsite is required")
+            database_backup_key = os.environ.get(
+                "AURIX_DATABASE_BACKUP_KEY", os.environ.get("AURIX_FLEET_BACKUP_KEY", "")
+            )
+            try:
+                Fernet(database_backup_key.encode())
+            except (TypeError, ValueError):
+                fail("AURIX_DATABASE_BACKUP_KEY or AURIX_FLEET_BACKUP_KEY is not a valid Fernet key")
+        elif require_database_offsite:
+            fail("AURIX_DATABASE_BACKUP_REQUIRE_OFFSITE needs AURIX_DATABASE_BACKUP_OFFSITE_DIR")
+
+    if os.environ.get("ALLOW_TEXT_PAYMENT_REFERENCES", "0").strip().lower() in TRUTHY:
+        fail("ALLOW_TEXT_PAYMENT_REFERENCES must remain disabled")
+    if os.environ.get("RECEIPT_STORAGE_REQUIRED", "0").strip().lower() not in TRUTHY:
+        fail("RECEIPT_STORAGE_REQUIRED must be enabled for receipt-backed payments")
+
+    supabase_url = _required("SUPABASE_URL")
+    supabase_key = _required("SUPABASE_SERVICE_ROLE_KEY")
+    bucket = os.environ.get("SUPABASE_RECEIPTS_BUCKET", "payment-receipts").strip()
+    parsed_supabase = urlsplit(supabase_url)
+    if parsed_supabase.scheme != "https" or not parsed_supabase.hostname:
+        fail("SUPABASE_URL must be an HTTPS project URL")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", bucket):
+        fail("SUPABASE_RECEIPTS_BUCKET contains invalid characters")
+
+    llm_url = _required("RECEIPT_LLM_BASE_URL")
+    llm_model = _required("RECEIPT_LLM_MODEL")
+    llm_key = _required("RECEIPT_LLM_API_KEY")
+    selection_mode = os.environ.get(
+        "RECEIPT_LLM_SELECTION_MODE", "first_acceptable"
+    ).strip().lower()
+    fallback_models = [
+        item.strip()
+        for item in os.environ.get("RECEIPT_LLM_FALLBACK_MODELS", "").split(",")
+        if item.strip()
+    ]
+    if selection_mode not in {"first_acceptable", "rank_all", "consensus"}:
+        fail("RECEIPT_LLM_SELECTION_MODE must be first_acceptable, rank_all, or consensus")
+    if len(fallback_models) > 3:
+        fail("configure at most three receipt fallback models")
+    if selection_mode == "consensus" and not fallback_models:
+        fail("consensus receipt selection requires at least one fallback model")
+    parsed_llm = urlsplit(llm_url)
+    if parsed_llm.scheme != "https" or not parsed_llm.hostname:
+        fail("RECEIPT_LLM_BASE_URL must use HTTPS")
+    if len(llm_key) < 12 or len(llm_model) > 200:
+        fail("receipt vision credentials or model are invalid")
+    recipients_raw = _required("PAYMENT_RECIPIENTS_JSON")
+    try:
+        recipients = json.loads(recipients_raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        fail("PAYMENT_RECIPIENTS_JSON must be valid JSON")
+    required_methods = {"kbzpay", "wavepay", "ayapay", "uabpay", "cbpay"}
+    if not isinstance(recipients, dict) or not required_methods.issubset(recipients):
+        fail("PAYMENT_RECIPIENTS_JSON must configure all five payment methods")
+    for method in required_methods:
+        profile = recipients.get(method)
+        if not isinstance(profile, dict) or not (profile.get("names") or profile.get("accounts")):
+            fail(f"PAYMENT_RECIPIENTS_JSON profile is empty for {method}")
+
+    return {
+        "telegram_token": token,
+        "provider_token": os.environ.get("DIGITALOCEAN_API_TOKEN", "").strip(),
+        "database_url": database_url,
+        "database_path": database_path,
+        "supabase_url": supabase_url.rstrip("/"),
+        "supabase_key": supabase_key,
+        "bucket": bucket,
+        "llm_url": llm_url.rstrip("/"),
+        "llm_key": llm_key,
+        "llm_model": llm_model,
+        "llm_fallback_models": fallback_models,
+    }
+
+
+def _json_request(url: str, headers: dict[str, str], timeout: int = 15) -> object:
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.load(response)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
+        fail(f"live dependency check failed for {urlsplit(url).hostname}: {type(exc).__name__}")
+
+
+def _validate_live(values: dict[str, str]) -> None:
+    telegram = _json_request(
+        f"https://api.telegram.org/bot{values['telegram_token']}/getMe", {}, timeout=15
+    )
+    if not isinstance(telegram, dict) or not telegram.get("ok"):
+        fail("Telegram getMe did not authorize the configured bot")
+
+    bucket = quote(values["bucket"], safe="")
+    storage = _json_request(
+        f"{values['supabase_url']}/storage/v1/bucket/{bucket}",
+        {
+            "Authorization": f"Bearer {values['supabase_key']}",
+            "apikey": values["supabase_key"],
+        },
+    )
+    if not isinstance(storage, dict):
+        fail("Supabase receipt bucket check returned an invalid response")
+
+    models = _json_request(
+        f"{values['llm_url']}/models",
+        {"Authorization": f"Bearer {values['llm_key']}"},
+        timeout=30,
+    )
+    if not isinstance(models, dict) or not isinstance(models.get("data"), list):
+        fail("receipt vision model listing returned an invalid response")
+    advertised_models = {
+        str(item.get("id") or "").strip()
+        for item in models["data"]
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    if not advertised_models:
+        fail("receipt vision model listing contains no usable model IDs")
+    configured_models = [str(values.get("llm_model") or "").strip()]
+    configured_models.extend(
+        str(item).strip()
+        for item in (values.get("llm_fallback_models") or [])
+        if str(item).strip()
+    )
+    if any(item and item not in advertised_models for item in configured_models):
+        fail("configured receipt vision model is not advertised by the gateway")
+
+    provider_token = values.get("provider_token", "")
+    if provider_token:
+        # Inventory is a read-only, low-cost provider canary.  It verifies
+        # that the worker token is still authorized without creating, resizing,
+        # deleting, or otherwise mutating a Droplet.
+        inventory = _json_request(
+            "https://api.digitalocean.com/v2/droplets?per_page=1",
+            {"Authorization": f"Bearer {provider_token}"},
+            timeout=15,
+        )
+        if not isinstance(inventory, dict) or not isinstance(inventory.get("droplets"), list):
+            fail("DigitalOcean inventory check returned an invalid response")
+
+    if values["database_url"]:
+        try:
+            import psycopg
+
+            with psycopg.connect(values["database_url"], connect_timeout=10) as connection:
+                connection.execute("SELECT 1").fetchone()
+        except Exception as exc:
+            fail(f"PostgreSQL connectivity check failed: {type(exc).__name__}")
+    else:
+        try:
+            database_uri = f"file:{quote(str(Path(values['database_path']).resolve()), safe='/')}?mode=rw"
+            with sqlite3.connect(database_uri, timeout=5, uri=True) as connection:
+                connection.execute("SELECT 1").fetchone()
+        except sqlite3.Error as exc:
+            fail(f"SQLite connectivity check failed: {type(exc).__name__}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--live", action="store_true", help="check configured external services")
+    parser.add_argument(
+        "--env-file",
+        default="",
+        help="load the canonical dotenv file before validating (recommended for recovery)",
+    )
+    args = parser.parse_args(argv)
+    if args.env_file:
+        try:
+            # Recovery may have sourced the file for shell variables first.
+            # Overwrite so JSON values are parsed by the canonical dotenv
+            # reader instead of by shell tokenization.
+            load_dotenv(Path(args.env_file), overwrite=True)
+        except (FleetError, OSError) as exc:
+            fail(str(exc))
+    values = _validate_configuration()
+    if args.live:
+        _validate_live(values)
+    mode = "configuration and live dependencies" if args.live else "configuration"
+    print(f"DigitalOcean preflight passed: {mode} are valid")
+
+
+if __name__ == "__main__":
+    main()
