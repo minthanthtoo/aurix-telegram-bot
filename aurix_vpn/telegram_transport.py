@@ -28,6 +28,7 @@ from .telegram_callbacks import TelegramCallbackMixin
 from .telegram_commands import TelegramCommandMixin
 from .telegram_maintenance import TelegramMaintenanceMixin
 from .telegram_navigation import TelegramNavigationMixin
+from .staff_access import StaffAccessService
 from .vpn_dashboard import collect_customer_vpn_state
 from receipt_llm import (
     OpenAICompatibleReceiptExtractor,
@@ -150,6 +151,7 @@ class TelegramBot(
         maintenance_interval_seconds: float = DEFAULT_MAINTENANCE_INTERVAL_SECONDS,
         command_scope_cleanup_ids: set[int] | None = None,
         welcome_image_source: str | None = None,
+        staff_access: StaffAccessService | None = None,
     ):
         self._init_navigation()
         self.api = f"https://api.telegram.org/bot{token}"
@@ -166,9 +168,15 @@ class TelegramBot(
         )
         self.service = service
         self.commerce = commerce
-        self.admin_ids = admin_ids or set()
+        configured_admin_ids = set(admin_ids or set())
+        self.staff_access = staff_access or StaffAccessService.from_environment(
+            getattr(self.commerce, "database", None), configured_admin_ids
+        )
+        self.admin_ids = configured_admin_ids | set(
+            getattr(self.staff_access, "owner_ids", ())
+        )
         self.admin_operations = AdminOperations(
-            self.commerce, self.admin_ids, self.service
+            self.commerce, self.admin_ids, self.service, self.staff_access
         )
         self.trial_ids = trial_ids or set()
         self.receipt_extractor = receipt_extractor or OpenAICompatibleReceiptExtractor()
@@ -1514,7 +1522,31 @@ class TelegramBot(
                 print(f"admin receipt notification error: {type(exc).__name__}", file=sys.stderr)
 
     def _is_admin(self, telegram_id: int) -> bool:
-        return telegram_id in self.admin_ids
+        if self.staff_access is not None and self.staff_access.enabled:
+            return self.staff_access.is_admin(telegram_id)
+        return int(telegram_id) in self.admin_ids
+
+    def _is_staff(self, telegram_id: int) -> bool:
+        if self.staff_access is not None and self.staff_access.enabled:
+            return self.staff_access.is_staff(telegram_id)
+        return self._is_admin(telegram_id)
+
+    def _is_owner(self, telegram_id: int) -> bool:
+        return bool(
+            self.staff_access is not None
+            and self.staff_access.enabled
+            and self.staff_access.is_owner(telegram_id)
+        )
+
+    def _staff_role(self, telegram_id: int) -> str | None:
+        if self.staff_access is not None and self.staff_access.enabled:
+            return self.staff_access.role_for(telegram_id)
+        return "admin" if self._is_admin(telegram_id) else None
+
+    def _has_staff_capability(self, telegram_id: int, capability: str) -> bool:
+        if self.staff_access is not None and self.staff_access.enabled:
+            return self.staff_access.has_capability(telegram_id, capability)
+        return self._is_admin(telegram_id)
 
     def _trial_allowed(self, telegram_id: int) -> bool:
         """Keep the optional trial allow-list consistent across every entrypoint."""
