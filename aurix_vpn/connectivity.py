@@ -24,6 +24,46 @@ from .outline_adapter import OutlineClient
 
 UTC = timezone.utc
 DEFAULT_ENDPOINT_ID = "legacy-default"
+NEARBY_ROUTING_POOL = "nearby:sea"
+NEARBY_COUNTRY_POOLS = ("country:SG", "country:TH", "sea")
+
+
+def _routing_pool_for_region(region: str, endpoint_id: str = "") -> str:
+    """Return the failover/allocation boundary for a provider region.
+
+    Myanmar-facing automatic access is intentionally confined to the SEA
+    pool. Explicit US regions share a country pool; unrecognized locations
+    remain isolated by their literal region rather than being treated as
+    interchangeable.
+    """
+    value = str(region or "").strip().lower()
+    compact = "".join(char for char in value if char.isalnum())
+    if (
+        value in {"jp", "japan", "ap-northeast-1", "ap-northeast-3", "ap-northeast"}
+        or value.startswith("jp-")
+        or compact.startswith(("tyo", "nrt", "itm", "osa"))
+        or value in {"tokyo", "osaka"}
+    ):
+        return "country:JP"
+    if (
+        value in {"us", "usa", "united states"}
+        or value.startswith("us-")
+        or "united states" in value
+        or "california" in value
+        or compact.startswith(("sjc", "nyc", "sfo", "lax", "ord", "atl", "dfw"))
+    ):
+        return "country:US"
+    if (
+        value in {"sg", "sgp1", "singapore", "ap-southeast-1"}
+        or "singapore" in value
+        or compact.startswith(("sgp", "sin"))
+    ):
+        return "country:SG"
+    if value in {"th", "bkk1", "bangkok", "thailand"} or any(
+        marker in value for marker in ("bangkok", "thailand")
+    ) or compact.startswith("bkk"):
+        return "country:TH"
+    return f"region:{value}" if value else f"endpoint:{str(endpoint_id or 'unknown')}"
 
 
 class ConnectivityError(RuntimeError):
@@ -935,7 +975,7 @@ class EndpointRegistry:
         api_url: str,
         certificate_sha256: str,
         *,
-        code: str = "SGP-01",
+        code: str = "AURIX_DIG_SG_A",
         region: str = "sgp1",
         outline_version: str | None = None,
         mark_healthy: bool = True,
@@ -994,6 +1034,7 @@ class EndpointRegistry:
         api_url: str,
         certificate_sha256: str,
         max_active_keys: int | None = None,
+        accepts_new_assignments: bool = True,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Verify Outline first, then make a newly provisioned endpoint allocatable."""
@@ -1018,15 +1059,16 @@ class EndpointRegistry:
                 raise ConnectivityError("endpoint lifecycle does not permit activation")
             connection.execute(
                 """INSERT INTO vpn_endpoints
-                   (id, code, provider, provider_resource_id, region, state,
+                   (id, code, provider, provider_resource_id, region, routing_pool, state,
                     accepts_new_assignments, management_url_ciphertext,
                     certificate_sha256, outline_version, public_address,
                     max_active_keys, created_at, verified_at, last_healthy_at)
-                   VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET
                      code = excluded.code, provider = excluded.provider,
                      provider_resource_id = excluded.provider_resource_id,
                      region = excluded.region, state = 'ACTIVE',
+                     routing_pool = excluded.routing_pool,
                      accepts_new_assignments = excluded.accepts_new_assignments,
                      management_url_ciphertext = excluded.management_url_ciphertext,
                      certificate_sha256 = excluded.certificate_sha256,
@@ -1041,7 +1083,8 @@ class EndpointRegistry:
                     provider[:32],
                     provider_resource_id,
                     region[:32],
-                    True,
+                    _routing_pool_for_region(region, endpoint_id),
+                    bool(accepts_new_assignments),
                     self._encrypt(api_url.rstrip("/")),
                     fingerprint,
                     str(info.get("version") or "unknown")[:64],
@@ -2150,6 +2193,19 @@ class EndpointRegistry:
             30, int(os.environ.get("AURIX_ENDPOINT_HEALTH_MAX_AGE_SECONDS", "900"))
         )
         fresh_after = (datetime.now(UTC) - timedelta(seconds=max_age_seconds)).isoformat()
+        if preferred_endpoint_id:
+            preferred = connection.execute(
+                "SELECT region, routing_pool FROM vpn_endpoints WHERE id = ?",
+                (str(preferred_endpoint_id),),
+            ).fetchone()
+            routing_pool = (
+                str(preferred["routing_pool"] or "")
+                if preferred is not None
+                else f"endpoint:{str(preferred_endpoint_id)}"
+            )
+        else:
+            routing_pool = NEARBY_ROUTING_POOL
+        nearby_pool = routing_pool == NEARBY_ROUTING_POOL
         lock = (
             " FOR UPDATE OF e SKIP LOCKED"
             if connection.__class__.__name__ == "_PostgresConnection"
@@ -2169,6 +2225,11 @@ class EndpointRegistry:
                         WHERE pp.endpoint_id = e.id
                           AND pp.protocol = ? AND pp.status = 'enabled'
                  )"""
+        pool_filter = (
+            "e.routing_pool IN ('country:SG', 'country:TH', 'sea')"
+            if nearby_pool
+            else "e.routing_pool = ?"
+        )
         rows = connection.execute(
             """SELECT e.id, e.code, e.max_active_keys,
                       (SELECT COUNT(*) FROM endpoint_assignments a
@@ -2181,7 +2242,11 @@ class EndpointRegistry:
                LEFT JOIN endpoint_plan_limits l
                  ON l.endpoint_id = e.id AND l.plan_code = ?
                WHERE e.state = 'ACTIVE' AND e.accepts_new_assignments = ?
-                 AND e.last_healthy_at IS NOT NULL AND e.last_healthy_at >= ?"""
+                 AND e.last_healthy_at IS NOT NULL AND e.last_healthy_at >= ?
+                 AND """
+            + pool_filter
+            + """
+                 """
             + protocol_filter
             + """
                  AND (CAST(? AS TEXT) IS NULL OR e.id = ?)
@@ -2194,6 +2259,7 @@ class EndpointRegistry:
             + lock,
             tuple(
                 [plan_code, plan_code, True, fresh_after]
+                + ([] if nearby_pool else [routing_pool])
                 + ([normalized_protocol] if normalized_protocol else [])
                 + [preferred_endpoint_id, preferred_endpoint_id]
             ),
@@ -2223,11 +2289,22 @@ class EndpointRegistry:
         now: datetime,
     ) -> str:
         assignment_id = uuid.uuid4().hex
+        endpoint = connection.execute(
+            "SELECT routing_pool FROM vpn_endpoints WHERE id = ?", (str(endpoint_id),)
+        ).fetchone()
+        if endpoint is None:
+            raise ConnectivityError("VPN endpoint does not exist")
+        endpoint_pool = str(endpoint["routing_pool"] or "")
+        routing_pool = (
+            NEARBY_ROUTING_POOL
+            if endpoint_pool in NEARBY_COUNTRY_POOLS
+            else endpoint_pool
+        )
         connection.execute(
             """INSERT INTO endpoint_assignments
                (id, endpoint_id, subscription_id, free_key_id, plan_code, status,
-                reason, reserved_quota_bytes, assigned_at)
-               VALUES (?, ?, NULL, ?, ?, 'active', 'free-entitlement', ?, ?)""",
+                reason, reserved_quota_bytes, assigned_at, routing_pool)
+               VALUES (?, ?, NULL, ?, ?, 'active', 'free-entitlement', ?, ?, ?)""",
             (
                 assignment_id,
                 endpoint_id,
@@ -2235,6 +2312,7 @@ class EndpointRegistry:
                 plan_code,
                 int(quota_bytes),
                 now.astimezone(UTC).isoformat(),
+                routing_pool,
             ),
         )
         self._record_audit_event(
@@ -2327,12 +2405,20 @@ class EndpointRegistry:
                 preferred_endpoint_id=preferred_endpoint_id,
                 protocol=normalized_protocol,
             )
+            selected_endpoint = connection.execute(
+                "SELECT routing_pool FROM vpn_endpoints WHERE id = ?", (endpoint_id,)
+            ).fetchone()
+            if selected_endpoint is None:
+                raise ConnectivityError("selected VPN endpoint disappeared")
+            routing_pool = str(selected_endpoint["routing_pool"] or "")
+            if not preferred_endpoint_id and routing_pool in NEARBY_COUNTRY_POOLS:
+                routing_pool = NEARBY_ROUTING_POOL
             assignment_id = uuid.uuid4().hex
             connection.execute(
                 """INSERT INTO endpoint_assignments
                    (id, endpoint_id, subscription_id, free_key_id, plan_code, status,
-                    reason, reserved_quota_bytes, assigned_at, protocol)
-                   VALUES (?, ?, ?, NULL, ?, 'active', ?, ?, ?, ?)""",
+                    reason, reserved_quota_bytes, assigned_at, protocol, routing_pool)
+                   VALUES (?, ?, ?, NULL, ?, 'active', ?, ?, ?, ?, ?)""",
                 (
                     assignment_id,
                     endpoint_id,
@@ -2342,6 +2428,7 @@ class EndpointRegistry:
                     quota_bytes,
                     timestamp,
                     normalized_protocol,
+                    routing_pool,
                 ),
             )
             self._record_audit_event(
@@ -2423,18 +2510,27 @@ class EndpointRegistry:
                     "reason": "already_on_target",
                 }
             target = connection.execute(
-                """SELECT e.id, e.state, e.accepts_new_assignments,
+                """SELECT e.id, e.state, e.routing_pool, e.accepts_new_assignments,
                           e.max_active_keys, COUNT(a.id) AS active_count
                      FROM vpn_endpoints e
                      LEFT JOIN endpoint_assignments a
                        ON a.endpoint_id = e.id AND a.status = 'active'
                     WHERE e.id = ?
-                    GROUP BY e.id, e.state, e.accepts_new_assignments, e.max_active_keys""",
+                    GROUP BY e.id, e.state, e.routing_pool, e.accepts_new_assignments, e.max_active_keys""",
                 (target_id,),
             ).fetchone()
             allowed_target_states = {"ACTIVE", "DRAINING"} if rollback else {"ACTIVE"}
             if target is None or str(target["state"]).upper() not in allowed_target_states:
                 raise ConnectivityError("target endpoint is not available")
+            assigned_pool = str(assignment["routing_pool"] or NEARBY_ROUTING_POOL)
+            target_pool = str(target["routing_pool"] or "")
+            pool_matches = (
+                target_pool in NEARBY_COUNTRY_POOLS
+                if assigned_pool == NEARBY_ROUTING_POOL
+                else target_pool == assigned_pool
+            )
+            if not pool_matches:
+                raise ConnectivityError("target endpoint is outside the entitlement routing pool")
             if not rollback and target["accepts_new_assignments"] in (False, 0):
                 raise ConnectivityError("target endpoint is not accepting assignments")
             if target["max_active_keys"] is not None and int(target["active_count"] or 0) >= int(

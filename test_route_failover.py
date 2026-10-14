@@ -104,6 +104,34 @@ class RouteFailoverTest(unittest.TestCase):
         self.assertEqual(usage["credited_bytes"], 100)  # newly owned credentials start at zero
         self.assertEqual(self.identity.generations_for_accounting(entitlement)[0]["status"], "retiring")
 
+    def test_failover_candidate_and_forced_drain_preserve_routing_pool(self):
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO vpn_endpoints
+                   (id, code, provider, region, routing_pool, state,
+                    accepts_new_assignments, created_at)
+                   VALUES ('us-a', 'US-A', 'test', 'sjc1', 'country:US',
+                           'ACTIVE', 1, ?)""",
+                (self.now.isoformat(),),
+            )
+            connection.execute(
+                """INSERT INTO endpoint_protocol_profiles
+                   (profile_id, endpoint_id, protocol, adapter_type, status, created_at)
+                   VALUES ('outline:us-a', 'us-a', 'outline', 'outline', 'enabled', ?)""",
+                (self.now.isoformat(),),
+            )
+            candidate = self.failover._target_endpoint(connection, "sg-a")
+            forced_us = self.failover._target_endpoint(
+                connection, "sg-a", target_endpoint_id="us-a"
+            )
+        self.assertEqual(candidate["id"], "bkk-a")
+        self.assertIsNone(forced_us)
+
+        preview = self.failover.endpoint_drain_preview(
+            "sg-a", target_endpoint_id="us-a", limit=10
+        )
+        self.assertFalse(preview["target_available"])
+
     def test_duplicate_observation_and_stale_worker_claim_are_safe(self):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
         source = self.identity.create_generation(

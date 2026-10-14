@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import shutil
 import socket
 import sqlite3
@@ -8,11 +9,12 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier
 
 from cryptography.fernet import Fernet
 from commerce import CommerceDatabase, CommerceService, PostgresCommerceDatabase
 from deploy.migrate_sqlite_to_postgres import dependency_order, migrate, sqlite_manifest
-from connectivity import EndpointRegistry
+from connectivity import ConnectivityError, EndpointRegistry
 from identity import IdentityService
 from route_failover import RouteFailoverService
 
@@ -51,6 +53,8 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            postgres_env = os.environ.copy()
+            postgres_env.update({"LC_ALL": "C", "LANG": "C"})
             subprocess.run(
                 [
                     shutil.which("pg_ctl"),
@@ -64,6 +68,7 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=postgres_env,
             )
             database = PostgresCommerceDatabase(
                 f"postgresql://127.0.0.1:{port}/postgres"
@@ -247,6 +252,80 @@ class SqliteToPostgresMigrationTest(unittest.TestCase):
                 self.assertEqual(int(assignment_count), 1)
                 self.assertEqual(int(assignment_audits), 1)
                 self.assertEqual(assignment.endpoint_id, "legacy-default")
+
+                # Two different entitlement allocations must not both consume
+                # the final available slot when they race on PostgreSQL.
+                with database.connect() as connection:
+                    connection.execute(
+                        "UPDATE vpn_endpoints SET max_active_keys = 2 WHERE id = 'legacy-default'"
+                    )
+                    for suffix in ("a", "b"):
+                        order_id = f"postgres-capacity-order-{suffix}"
+                        subscription_id = f"postgres-capacity-sub-{suffix}"
+                        connection.execute(
+                            """INSERT INTO orders
+                               (id, telegram_id, plan_code, amount_minor, currency, status, created_at)
+                               VALUES (?, 777, 'basic_50gb', 3000, 'MMK', 'approved', ?)""",
+                            (order_id, now.isoformat()),
+                        )
+                        connection.execute(
+                            """INSERT INTO subscriptions
+                               (id, order_id, telegram_id, plan_code, starts_at, expires_at,
+                                quota_bytes, duration_days, status)
+                               VALUES (?, ?, 777, 'basic_50gb', ?, ?, ?, 30, 'pending')""",
+                            (
+                                subscription_id,
+                                order_id,
+                                now.isoformat(),
+                                (now + timedelta(days=30)).isoformat(),
+                                50 * 1024**3,
+                            ),
+                        )
+
+                allocation_barrier = Barrier(2)
+
+                def allocate_competing_subscription(subscription_id: str):
+                    allocation_barrier.wait(timeout=10)
+                    try:
+                        item = registry.ensure_subscription_assignment(
+                            subscription_id,
+                            "basic_50gb",
+                            50 * 1024**3,
+                            protocol="outline",
+                            now=now,
+                        )
+                        return ("assigned", item.id)
+                    except ConnectivityError as exc:
+                        return ("rejected", str(exc))
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    capacity_results = list(
+                        executor.map(
+                            allocate_competing_subscription,
+                            ("postgres-capacity-sub-a", "postgres-capacity-sub-b"),
+                        )
+                    )
+                self.assertEqual(
+                    [status for status, _value in capacity_results].count("assigned"), 1
+                )
+                rejected = [
+                    value for status, value in capacity_results if status == "rejected"
+                ]
+                self.assertEqual(
+                    rejected,
+                    ["No verified VPN endpoint has capacity for this plan"],
+                )
+                with database.connect() as connection:
+                    active_assignment_count = connection.execute(
+                        """SELECT COUNT(*) AS n FROM endpoint_assignments
+                             WHERE endpoint_id = 'legacy-default' AND status = 'active'"""
+                    ).fetchone()["n"]
+                self.assertEqual(int(active_assignment_count), 2)
+                with database.connect() as connection:
+                    connection.execute(
+                        "UPDATE vpn_endpoints SET max_active_keys = NULL WHERE id = 'legacy-default'"
+                    )
+
                 self.assertEqual(RouteFailoverService(database).decisions(limit=10), [])
                 self.assertEqual(IdentityService(database).generations_for_accounting(), [])
                 with database.connect() as connection:

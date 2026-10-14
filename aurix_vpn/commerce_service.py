@@ -3075,7 +3075,6 @@ class CommerceService(CommerceWorkerMixin):
                             s.starts_at DESC LIMIT ?""",
                 (telegram_id, max(1, min(int(limit), 100))),
             ).fetchall()
-        now_text = _now_text()
         results = []
         for row in rows:
             result = dict(row)
@@ -3092,7 +3091,6 @@ class CommerceService(CommerceWorkerMixin):
                 if (
                     result.get("status") != "active"
                     or result.get("key_status") != "active"
-                    or str(result.get("expires_at") or "") <= now_text
                 ):
                     result["access_url"] = None
             results.append(result)

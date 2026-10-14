@@ -15,6 +15,7 @@ from connectivity import (
     DigitalOceanClient,
     EndpointRegistry,
     FleetController,
+    _routing_pool_for_region,
 )
 from free_repository import Database
 from identity import IdentityService
@@ -425,7 +426,7 @@ class EndpointRegistryTest(unittest.TestCase):
             with self.assertRaisesRegex(ConnectivityError, "lifecycle"):
                 self.registry.register_verified_endpoint(
                     endpoint_id="legacy-default",
-                    code="SGP-01",
+                    code="AURIX_DIG_SG_A",
                     provider="digitalocean",
                     provider_resource_id="42",
                     region="sgp1",
@@ -433,6 +434,101 @@ class EndpointRegistryTest(unittest.TestCase):
                     certificate_sha256="0" * 64,
                 )
             outline_client.assert_not_called()
+
+    def test_staged_us_endpoint_stays_out_of_nearby_and_requires_explicit_selection(self):
+        now = datetime.now(UTC)
+        with patch("connectivity.OutlineClient") as outline_client:
+            outline_client.return_value.server_info.return_value = {"version": "1.12.3"}
+            staged = self.registry.register_verified_endpoint(
+                endpoint_id="sjc-a",
+                code="US-WEST-01",
+                provider="nube",
+                provider_resource_id="resource-sjc-test",
+                region="sjc1",
+                api_url="https://outline.invalid:61603/management-test",
+                certificate_sha256="0" * 64,
+                accepts_new_assignments=False,
+                now=now,
+            )
+            self.assertEqual(staged["routing_pool"], "country:US")
+            self.assertFalse(bool(staged["accepts_new_assignments"]))
+
+        with self.database.connect() as connection:
+            self.assertEqual(
+                self.registry.select_endpoint_for_plan(connection, "basic"),
+                "legacy-default",
+            )
+            with self.assertRaisesRegex(ConnectivityError, "No verified VPN endpoint"):
+                self.registry.select_endpoint_for_plan(
+                    connection, "basic", preferred_endpoint_id="sjc-a"
+                )
+
+        with patch("connectivity.OutlineClient") as outline_client:
+            outline_client.return_value.server_info.return_value = {"version": "1.12.3"}
+            enabled = self.registry.register_verified_endpoint(
+                endpoint_id="sjc-a",
+                code="US-WEST-01",
+                provider="nube",
+                provider_resource_id="resource-sjc-test",
+                region="sjc1",
+                api_url="https://outline.invalid:61603/management-test",
+                certificate_sha256="0" * 64,
+                accepts_new_assignments=True,
+                now=now,
+            )
+        self.assertTrue(bool(enabled["accepts_new_assignments"]))
+        with self.database.connect() as connection:
+            self.assertEqual(
+                self.registry.select_endpoint_for_plan(connection, "basic"),
+                "legacy-default",
+            )
+            self.assertEqual(
+                self.registry.select_endpoint_for_plan(
+                    connection, "basic", preferred_endpoint_id="sjc-a"
+                ),
+                "sjc-a",
+            )
+        assignment = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000, preferred_endpoint_id="sjc-a", now=now
+        )
+        self.assertEqual(assignment.endpoint_id, "sjc-a")
+        with self.assertRaisesRegex(ConnectivityError, "outside the entitlement routing pool"):
+            self.registry.transfer_assignment("paid:sub-1", "legacy-default", now=now)
+
+    def test_japan_regions_share_country_boundary_without_changing_unknown_regions(self):
+        for region in ("TYO1", "nrt", "itm", "jp-tyo-3", "jp-osa", "Japan", "Tokyo",
+                       "Osaka", "ap-northeast", "ap-northeast-1", "ap-northeast-3"):
+            with self.subTest(region=region):
+                self.assertEqual(_routing_pool_for_region(region), "country:JP")
+        self.assertEqual(_routing_pool_for_region("ap-northeast-2"), "region:ap-northeast-2")
+        self.assertEqual(_routing_pool_for_region("unknown"), "region:unknown")
+
+    def test_japan_endpoint_requires_admission_and_explicit_selection(self):
+        now = datetime.now(UTC)
+        for admitted in (False, True):
+            with patch("connectivity.OutlineClient") as client:
+                client.return_value.server_info.return_value = {"version": "1.12.3"}
+                endpoint = self.registry.register_verified_endpoint(
+                    endpoint_id="tyo-a", code="JP-TOKYO-01", provider="nube",
+                    provider_resource_id="test-tokyo", region="tyo1",
+                    api_url="https://outline.invalid:61603/japan-test",
+                    certificate_sha256="0" * 64, accepts_new_assignments=admitted, now=now,
+                )
+            self.assertEqual(endpoint["routing_pool"], "country:JP")
+            with self.database.connect() as connection:
+                self.assertEqual(self.registry.select_endpoint_for_plan(connection, "basic"),
+                                 "legacy-default")
+                if admitted:
+                    self.assertEqual(self.registry.select_endpoint_for_plan(
+                        connection, "basic", preferred_endpoint_id="tyo-a"), "tyo-a")
+                else:
+                    with self.assertRaisesRegex(ConnectivityError, "No verified VPN endpoint"):
+                        self.registry.select_endpoint_for_plan(
+                            connection, "basic", preferred_endpoint_id="tyo-a")
+        self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000, preferred_endpoint_id="tyo-a", now=now)
+        with self.assertRaisesRegex(ConnectivityError, "outside the entitlement routing pool"):
+            self.registry.transfer_assignment("paid:sub-1", "legacy-default", now=now)
 
     def test_endpoint_protocol_profiles_default_to_outline_and_can_stage_candidates(self):
         profiles = self.registry.list_protocol_profiles("legacy-default")
@@ -814,6 +910,9 @@ class EndpointRegistryTest(unittest.TestCase):
 
     def test_transfer_assignment_preserves_identity_and_moves_capacity(self):
         now = datetime.now(UTC)
+        assignment = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000, now=now
+        )
         with self.database.connect() as connection:
             connection.execute(
                 """INSERT INTO vpn_endpoints
@@ -823,10 +922,6 @@ class EndpointRegistryTest(unittest.TestCase):
                 (now.isoformat(), now.isoformat()),
             )
         self.registry.register_protocol_profile("bkk-a", "outline", status="enabled", now=now)
-        assignment = self.registry.ensure_subscription_assignment(
-            "sub-1", "basic", 50_000_000_000,
-            preferred_endpoint_id="legacy-default", now=now
-        )
         moved = self.registry.transfer_assignment(
             "paid:sub-1", "bkk-a", reason="operator-drain", now=now
         )
@@ -873,12 +968,11 @@ class EndpointRegistryTest(unittest.TestCase):
                 """INSERT INTO vpn_endpoints
                    (id, code, region, state, accepts_new_assignments,
                     created_at, last_healthy_at)
-                   VALUES ('bkk-xray', 'BKK-XRAY', 'bkk1', 'ACTIVE', 1, ?, ?)""",
+                   VALUES ('bkk-xray', 'BKK-XRAY', 'sgp1', 'ACTIVE', 1, ?, ?)""",
                 (now.isoformat(), now.isoformat()),
             )
         assignment = self.registry.ensure_subscription_assignment(
-            "sub-1", "basic", 50_000_000_000,
-            preferred_endpoint_id="legacy-default", protocol="xray", now=now
+            "sub-1", "basic", 50_000_000_000, protocol="xray", now=now
         )
         identity = IdentityService(self.database)
         entitlement = identity.ensure_subscription_entitlement(1, "sub-1", now=now.isoformat())
@@ -899,21 +993,20 @@ class EndpointRegistryTest(unittest.TestCase):
         self.registry.promote_protocol_profile(
             "legacy-default", "xray", required_signals=("management",), now=now
         )
+        assignment = self.registry.ensure_subscription_assignment(
+            "sub-1", "basic", 50_000_000_000, protocol="xray", now=now
+        )
         with self.database.connect() as connection:
             connection.execute(
                 """INSERT INTO vpn_endpoints
                    (id, code, region, state, accepts_new_assignments,
                     created_at, last_healthy_at)
-                   VALUES ('bkk-xray-ready', 'BKK-XRAY-READY', 'bkk1', 'ACTIVE', 1, ?, ?)""",
+                   VALUES ('bkk-xray-ready', 'BKK-XRAY-READY', 'sgp1', 'ACTIVE', 1, ?, ?)""",
                 (now.isoformat(), now.isoformat()),
             )
         self._make_protocol_ready("bkk-xray-ready", "xray", now)
         self.registry.promote_protocol_profile(
             "bkk-xray-ready", "xray", required_signals=("management",), now=now
-        )
-        assignment = self.registry.ensure_subscription_assignment(
-            "sub-1", "basic", 50_000_000_000,
-            preferred_endpoint_id="legacy-default", protocol="xray", now=now
         )
         moved = self.registry.transfer_assignment("paid:sub-1", "bkk-xray-ready", now=now)
         self.assertTrue(moved["changed"])

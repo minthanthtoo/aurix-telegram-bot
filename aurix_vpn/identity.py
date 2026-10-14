@@ -782,14 +782,23 @@ class IdentityService:
             rows.extend(
                 connection.execute(
                     """SELECT g.generation_id, g.endpoint_id, g.protocol, g.generation_no,
+                              g.source_id, 'paid:' || g.source_id AS entitlement_key,
+                              a.routing_pool,
                               COALESCE(v.region, g.endpoint_id) AS region
                          FROM credential_generations g
                          JOIN subscriptions s ON s.id = g.source_id
+                         JOIN endpoint_assignments a
+                           ON a.subscription_id = s.id AND a.status = 'active'
                          LEFT JOIN vpn_endpoints v ON v.id = g.endpoint_id
                         WHERE g.source_type = 'paid'
                           AND s.telegram_id = ? AND s.status IN ('active', 'pending')
                           AND s.expires_at > ? AND g.status IN ('active', 'retiring')
-                          AND g.remote_state = 'observed'""",
+                          AND g.remote_state = 'observed'
+                          AND ((a.routing_pool = 'nearby:sea'
+                                AND COALESCE(v.routing_pool, a.routing_pool)
+                                    IN ('country:SG', 'country:TH', 'sea'))
+                               OR (a.routing_pool <> 'nearby:sea'
+                                AND COALESCE(v.routing_pool, a.routing_pool) = a.routing_pool))""",
                     (telegram_id, timestamp),
                 ).fetchall()
             )
@@ -797,14 +806,23 @@ class IdentityService:
                 rows.extend(
                     connection.execute(
                         """SELECT g.generation_id, g.endpoint_id, g.protocol, g.generation_no,
+                                  g.source_id, 'free:' || g.source_id AS entitlement_key,
+                                  a.routing_pool,
                                   COALESCE(v.region, g.endpoint_id) AS region
                              FROM credential_generations g
                              JOIN keys k ON CAST(k.id AS TEXT) = g.source_id
+                             JOIN endpoint_assignments a
+                               ON a.free_key_id = k.id AND a.status = 'active'
                              LEFT JOIN vpn_endpoints v ON v.id = g.endpoint_id
                             WHERE g.source_type = 'free'
                               AND k.telegram_id = ? AND k.status = 'active'
                               AND k.expires_at > ? AND g.status IN ('active', 'retiring')
-                              AND g.remote_state = 'observed'""",
+                              AND g.remote_state = 'observed'
+                              AND ((a.routing_pool = 'nearby:sea'
+                                    AND COALESCE(v.routing_pool, a.routing_pool)
+                                        IN ('country:SG', 'country:TH', 'sea'))
+                                   OR (a.routing_pool <> 'nearby:sea'
+                                    AND COALESCE(v.routing_pool, a.routing_pool) = a.routing_pool))""",
                         (telegram_id, timestamp),
                     ).fetchall()
                 )
@@ -814,6 +832,8 @@ class IdentityService:
                 "generation_id": str(row["generation_id"]),
                 "endpoint_id": str(row["endpoint_id"]),
                 "region": str(row["region"]),
+                "routing_pool": str(row["routing_pool"]),
+                "entitlement_key": str(row["entitlement_key"]),
                 "protocol": str(row["protocol"]),
                 "transport": str(row["protocol"]),
                 "generation": int(row["generation_no"]),

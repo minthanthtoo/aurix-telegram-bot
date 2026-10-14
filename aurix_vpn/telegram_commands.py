@@ -12,6 +12,7 @@ from typing import Any
 
 from .commerce import CommerceError
 from .entitlements import OutlineError
+from .nomenclature import endpoint_display_name
 
 UTC = timezone.utc
 
@@ -64,20 +65,21 @@ class TelegramCommandMixin:
         metric_errors = snapshot.get("metrics_errors") or {}
         for endpoint in (snapshot.get("endpoints") or [])[:10]:
             endpoint_id = str(endpoint["id"])
+            endpoint_name = endpoint_display_name(endpoint_id, endpoint.get("code"))
             maximum = endpoint.get("max_active_keys")
             capacity = f"{endpoint['active_assignments']}/{maximum or '∞'}"
             gate = "open" if endpoint.get("accepts_new_assignments") else "paused"
             health = "⚠️" if endpoint_id in metric_errors else "✅"
             endpoint_lines.append(
-                f"{health} {endpoint['code']} · {endpoint['state']} · {gate} · "
+                f"{health} {endpoint_name} · {endpoint['state']} · {gate} · "
                 f"slots {capacity} · mapped {self._format_bytes(endpoint.get('mapped_transfer_bytes', 0))}"
             )
             endpoint_buttons.append(
                 [
                     (
-                        "⏸ Pause " + str(endpoint["code"])
+                        "⏸ Pause " + endpoint_name
                         if endpoint.get("accepts_new_assignments")
-                        else "▶️ Open " + str(endpoint["code"]),
+                        else "▶️ Open " + endpoint_name,
                         f"a:e:t,{endpoint_id}",
                     ),
                     (f"🎚 Limit {maximum or '∞'}", f"a:e:m,{endpoint_id}"),
@@ -122,7 +124,7 @@ class TelegramCommandMixin:
         self, chat_id: int, telegram_id: int, endpoint_id: str, message_id: int | None = None
     ) -> None:
         plans = self._admin_call(telegram_id, "endpoint_plan_capacity", endpoint_id)
-        blocks = ["📋 Endpoint plan allocation", f"Endpoint: {endpoint_id}"]
+        blocks = ["📋 Endpoint plan allocation", f"Endpoint: {endpoint_display_name(endpoint_id)}"]
         rows = []
         for plan in plans:
             code = str(plan["plan_code"])
@@ -1419,7 +1421,7 @@ class TelegramCommandMixin:
             else:
                 self.send(
                     chat["id"],
-                    f"Protocol profile {result['protocol']} on {result['endpoint_id']} is disabled. "
+                    f"Protocol profile {result['protocol']} on {endpoint_display_name(result['endpoint_id'])} is disabled. "
                     "New assignments are blocked; existing credentials were not revoked.",
                     self._admin_keyboard(telegram_id),
                 )
@@ -1440,7 +1442,7 @@ class TelegramCommandMixin:
             else:
                 self.send(
                     chat["id"],
-                    f"Protocol profile {result['protocol']} on {result['endpoint_id']} is now enabled. "
+                    f"Protocol profile {result['protocol']} on {endpoint_display_name(result['endpoint_id'])} is now enabled. "
                     "Customer traffic remains governed by the registered adapter and endpoint gates.",
                     self._admin_keyboard(telegram_id),
                 )
@@ -1462,8 +1464,8 @@ class TelegramCommandMixin:
             else:
                 self.send(
                     chat["id"],
-                    f"Endpoint {result['source_endpoint_id']} is paused. "
-                    f"Queued {result['queued']} migration(s) to {result['target_endpoint_id']}; "
+                    f"Endpoint {endpoint_display_name(result['source_endpoint_id'])} is paused. "
+                    f"Queued {result['queued']} migration(s) to {endpoint_display_name(result['target_endpoint_id'])}; "
                     "maintenance will provision and probe each target before commit.",
                     self._admin_keyboard(telegram_id),
                 )
@@ -1483,7 +1485,7 @@ class TelegramCommandMixin:
             else:
                 self.send(
                     chat["id"],
-                    f"Endpoint {result['endpoint_id']} is now {result['current_state']}. "
+                    f"Endpoint {endpoint_display_name(result['endpoint_id'])} is now {result['current_state']}. "
                     "Only local VPN admission state changed; no provider VM action was performed.",
                     self._admin_keyboard(telegram_id),
                 )

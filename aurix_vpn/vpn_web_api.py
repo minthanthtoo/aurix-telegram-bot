@@ -8,7 +8,7 @@ import mimetypes
 import os
 import re
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -18,9 +18,13 @@ from .commerce import CommerceError
 from .connectivity import ConnectivityError
 from .device_api import DeviceAPIService, ManifestSigner, create_device_wsgi_app
 from .entitlements import OutlineError
+from .nomenclature import canonical_server_name
 from .runtime import RuntimeServices, build_runtime_services
+from .ssconfig import SsconfError
 from telegram_web_app import TelegramWebAppAuthError, VerifiedTelegramUser, verify_init_data
 from .vpn_dashboard import collect_customer_vpn_state
+
+UTC = timezone.utc
 
 
 # The product package is below the repository/container root; the browser
@@ -66,7 +70,25 @@ def _safe_order(order: dict[str, Any]) -> dict[str, Any]:
         "requested_endpoint_id",
         "requested_protocol",
     }
-    return {key: order[key] for key in allowed if key in order}
+    return _with_canonical_server_name(
+        {key: order[key] for key in allowed if key in order},
+        endpoint_field="requested_endpoint_id",
+        name_field="requested_server_name",
+    )
+
+
+def _with_canonical_server_name(
+    item: dict[str, Any],
+    *,
+    endpoint_field: str = "endpoint_id",
+    name_field: str = "canonical_server_name",
+) -> dict[str, Any]:
+    """Copy a safe record and add its canonical fleet display name when known."""
+    result = dict(item)
+    name = canonical_server_name(result.get(endpoint_field))
+    if name:
+        result[name_field] = name
+    return result
 
 
 def _safe_key(entry: dict[str, Any]) -> dict[str, Any]:
@@ -87,6 +109,7 @@ def _safe_key(entry: dict[str, Any]) -> dict[str, Any]:
         "created_at",
     }
     result = {key: entry[key] for key in allowed if key in entry}
+    result = _with_canonical_server_name(result)
     # A key is deliberately returned only for an active entry already owned by
     # the verified Telegram identity. It is never returned for ended keys.
     access_url = entry.get("access_url")
@@ -113,7 +136,9 @@ def _safe_subscription(item: dict[str, Any]) -> dict[str, Any]:
         "quota_reason",
         "preferred_protocol",
     }
-    return {key: item[key] for key in allowed if key in item}
+    return _with_canonical_server_name(
+        {key: item[key] for key in allowed if key in item}
+    )
 
 
 def _safe_endpoint(item: dict[str, Any]) -> dict[str, Any]:
@@ -132,7 +157,11 @@ def _safe_endpoint(item: dict[str, Any]) -> dict[str, Any]:
         "management_latency_ms",
         "last_probe_at",
     }
-    return {key: item[key] for key in allowed if key in item}
+    result = {key: item[key] for key in allowed if key in item}
+    name = canonical_server_name(item.get("id"))
+    if name:
+        result["canonical_server_name"] = name
+    return result
 
 
 def _safe_protocol_observation(item: dict[str, Any]) -> dict[str, Any]:
@@ -441,6 +470,42 @@ class AuriXVpnWebApplication:
             "selection_policy": "Only enabled endpoint profiles with registered adapters and managed route bindings can be purchased.",
         }
 
+    def ssconf_profile_options(self, user: VerifiedTelegramUser) -> dict[str, Any]:
+        """Return only authenticated, active Outline entitlements for profile scope."""
+        service = getattr(self.runtime, "ssconf_profiles", None)
+        if service is None or not bool(getattr(service, "configured", False)):
+            raise CommerceError("Dynamic Shadowsocks profiles are not configured")
+        try:
+            return {"options": service.options_for_telegram(user.telegram_id)}
+        except SsconfError as exc:
+            raise CommerceError(str(exc)) from exc
+
+    def issue_ssconf_profile(
+        self,
+        user: VerifiedTelegramUser,
+        entitlement_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Issue the legacy account profile or a profile scoped to one entitlement."""
+        service = getattr(self.runtime, "ssconf_profiles", None)
+        if service is None or not bool(getattr(service, "configured", False)):
+            raise CommerceError("Dynamic Shadowsocks profiles are not configured")
+        try:
+            if entitlement_key:
+                account_id = service.identity.ensure_account(user.telegram_id)
+                return service.issue_for_entitlement(
+                    account_id, entitlement_key, label="AuriX VPN"
+                )
+            return service.issue_for_telegram(user.telegram_id, label="AuriX VPN")
+        except SsconfError as exc:
+            raise CommerceError(str(exc)) from exc
+
+    def ssconf_document(self, token: str) -> dict[str, Any] | None:
+        """Return a public dynamic-key document for a bearer token."""
+        service = getattr(self.runtime, "ssconf_profiles", None)
+        if service is None or not bool(getattr(service, "configured", False)):
+            return None
+        return service.document(token)
+
     def dashboard(self, user: VerifiedTelegramUser) -> dict[str, Any]:
         state = collect_customer_vpn_state(
             self.runtime.claim_service, self.runtime.commerce, user.telegram_id
@@ -532,6 +597,7 @@ class AuriXVpnWebApplication:
             safe.append(
                 {
                     "id": item.get("id"),
+                    "canonical_server_name": canonical_server_name(item.get("id")),
                     "code": item.get("code"),
                     "provider": item.get("provider"),
                     "region": item.get("region"),
@@ -575,6 +641,9 @@ class AuriXVpnWebApplication:
             )
             if key in raw
         }
+        canonical_name = canonical_server_name(raw.get("id"))
+        if canonical_name:
+            safe_endpoint["canonical_server_name"] = canonical_name
         safe_endpoint["healthy"] = self._endpoint_health_is_fresh(raw.get("last_healthy_at"))
         profile_method = getattr(registry, "list_protocol_profiles", None)
         profiles: list[dict[str, Any]] = []
@@ -856,6 +925,11 @@ class AuriXVpnWebApplication:
         account = method(account_id) if callable(method) else None
         if account is None:
             return None
+        account = dict(account)
+        for field in ("subscriptions", "routes"):
+            rows = account.get(field)
+            if isinstance(rows, list):
+                account[field] = [_with_canonical_server_name(row) for row in rows]
         access_status = getattr(self.runtime.commerce, "account_access_status", None)
         if callable(access_status):
             account["access_enforcement"] = access_status(account_id)
@@ -873,11 +947,12 @@ class AuriXVpnWebApplication:
     ) -> list[dict[str, Any]]:
         identity = getattr(self.runtime.commerce, "identity", None)
         method = getattr(identity, "admin_generations", None)
-        return (
+        records = (
             method(protocol=protocol, status=status, limit=limit)
             if callable(method)
             else []
         )
+        return [_with_canonical_server_name(record) for record in records]
 
     def admin_failover(self, limit: int = 100) -> list[dict[str, Any]]:
         failover = getattr(self.runtime.commerce, "failover", None)
@@ -919,6 +994,13 @@ class AuriXVpnWebApplication:
                 item["error_type"] = str(decision["last_error"]).split(":", 1)[0][:64]
             else:
                 item["error_type"] = None
+            for endpoint_field, name_field in (
+                ("source_endpoint_id", "source_server_name"),
+                ("target_endpoint_id", "target_server_name"),
+            ):
+                name = canonical_server_name(item.get(endpoint_field))
+                if name:
+                    item[name_field] = name
             safe.append(item)
         return safe
 
@@ -949,7 +1031,15 @@ class AuriXVpnWebApplication:
             "policy_created_at",
             "policy_snapshot_available",
         }
-        return {key: decision[key] for key in allowed if key in decision}
+        result = {key: decision[key] for key in allowed if key in decision}
+        for endpoint_field, name_field in (
+            ("source_endpoint_id", "source_server_name"),
+            ("target_endpoint_id", "target_server_name"),
+        ):
+            name = canonical_server_name(result.get(endpoint_field))
+            if name:
+                result[name_field] = name
+        return result
 
     def admin_operations(self, limit: int = 100) -> dict[str, Any]:
         commerce = self.runtime.commerce
@@ -980,6 +1070,10 @@ class AuriXVpnWebApplication:
             }
             for item in pending
         ]
+        for item in pending_safe:
+            name = canonical_server_name(item.get("requested_endpoint_id"))
+            if name:
+                item["requested_server_name"] = name
         infrastructure_jobs: list[dict[str, Any]] = []
         safety_controls = []
         controls_method = getattr(failover, "safety_controls", None)
@@ -995,7 +1089,7 @@ class AuriXVpnWebApplication:
                     (max(1, min(int(limit), 200)),),
                 ).fetchall()
             infrastructure_jobs = [
-                {
+                _with_canonical_server_name({
                     "job_id": row["id"],
                     "operation": row["operation"],
                     "endpoint_id": row["endpoint_id"],
@@ -1011,7 +1105,7 @@ class AuriXVpnWebApplication:
                         if row["last_error"]
                         else None
                     ),
-                }
+                })
                 for row in rows
             ]
         return {
@@ -1032,7 +1126,12 @@ class AuriXVpnWebApplication:
                      FROM audit_events ORDER BY created_at DESC LIMIT ?""",
                 (max(1, min(int(limit), 200)),),
             ).fetchall()
-        return [dict(row) for row in rows]
+        events = [dict(row) for row in rows]
+        for event in events:
+            name = canonical_server_name(event.get("target_id"))
+            if name:
+                event["target_server_name"] = name
+        return events
 
     def _claim_allowed(self, user: VerifiedTelegramUser, *, trial: bool = False) -> None:
         subscriptions = self.runtime.commerce.user_vpns(user.telegram_id)
@@ -1230,6 +1329,21 @@ def make_handler(
             self.end_headers()
             self.wfile.write(response_body)
 
+        def _ssconf_api(self, method: str, path: str) -> None:
+            if method != "GET":
+                self._error(405, "Method not allowed")
+                return
+            prefix = "/api/ssconf/"
+            token = unquote(path[len(prefix) :])
+            if not token or "/" in token or "\\" in token:
+                self._error(404, "Not found")
+                return
+            document = application.ssconf_document(token)
+            if document is None:
+                self._error(404, "Not found")
+                return
+            self._write(200, document)
+
         def _read_json(self) -> dict[str, Any]:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -1360,6 +1474,21 @@ def make_handler(
                 plan_code = str(plan_values[0])[:64] if plan_values else None
                 self._write(200, application.protocols_payload(plan_code))
                 return
+            if path == "/api/ssconf/options" and method == "GET":
+                self._write(200, application.ssconf_profile_options(user))
+                return
+            if path == "/api/ssconf" and method == "GET":
+                self._write(200, application.issue_ssconf_profile(user))
+                return
+            if path == "/api/ssconf" and method == "POST":
+                body = self._read_json()
+                entitlement_key = str(body.get("entitlement_key") or "").strip()
+                if not entitlement_key or len(entitlement_key) > 256:
+                    raise ValueError("VPN entitlement selection is invalid")
+                self._write(
+                    200, application.issue_ssconf_profile(user, entitlement_key)
+                )
+                return
             if path in ("/api/me", "/api/dashboard") and method == "GET":
                 self._write(200, application.dashboard(user))
                 return
@@ -1453,8 +1582,16 @@ def make_handler(
         def _dispatch(self, method: str) -> None:
             path = urlsplit(self.path).path
             try:
+                # Reserve this authenticated API subroute before dispatching
+                # token-bearing public SSConf URLs below.
+                if path == "/api/ssconf/options":
+                    self._route_api(method, path)
+                    return
                 if path.startswith("/v1/devices/"):
                     self._device_api(method)
+                    return
+                if path.startswith("/api/ssconf/"):
+                    self._ssconf_api(method, path)
                     return
                 if path.startswith("/api/"):
                     self._route_api(method, path)

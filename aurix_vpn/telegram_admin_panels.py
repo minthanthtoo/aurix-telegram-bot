@@ -12,6 +12,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from .nomenclature import endpoint_display_name
+
 UTC = timezone.utc
 ADMIN_CONFIRMATION_TTL = timedelta(minutes=5)
 _PROTOCOL_TOKEN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -717,7 +719,7 @@ class TelegramAdminMixin:
             )
             lines = [
                 f"Source: {snapshot.get('source_code') or args[0]}",
-                f"Target: {snapshot.get('target_code') or snapshot.get('target_endpoint_id') or '-'}",
+                f"Target: {endpoint_display_name(snapshot.get('target_endpoint_id'), snapshot.get('target_code'))}",
                 f"Target available: {'yes' if snapshot.get('target_available') else 'no'}",
                 f"Active generations in cohort: {snapshot.get('active_generations') or 0}",
                 f"Already queued: {snapshot.get('queued_decisions') or 0}",
@@ -773,8 +775,10 @@ class TelegramAdminMixin:
             )
         if command == "/serverstate":
             blockers = [str(value) for value in snapshot.get("blockers") or []]
+            endpoint_id = snapshot.get("endpoint_id") or args[0]
+            endpoint_name = endpoint_display_name(endpoint_id, snapshot.get("endpoint_code"))
             lines = [
-                f"Endpoint: {snapshot.get('endpoint_code') or args[0]}",
+                f"Endpoint: {endpoint_name}",
                 f"Current state: {snapshot.get('current_state') or '-'}",
                 f"Requested state: {snapshot.get('requested_state') or args[1]}",
             ]
@@ -789,13 +793,14 @@ class TelegramAdminMixin:
             return "\n".join(lines)
         if command in {"/protocolreadiness", "/promoteprotocol"}:
             status = "READY" if snapshot.get("promotable") else "BLOCKED"
+            endpoint_id = snapshot.get("endpoint_id") or (args[0] if args else None)
 
             def label(name: str, key: str) -> str:
                 values = snapshot.get(key) or []
                 return f"{name}: " + (", ".join(str(value) for value in values) or "—")
 
             lines = [
-                f"Endpoint: {snapshot.get('endpoint_id') or (args[0] if args else '-')} · "
+                f"Endpoint: {endpoint_display_name(endpoint_id, snapshot.get('endpoint_code'))} · "
                 f"Protocol: {snapshot.get('protocol') or (args[1] if len(args) > 1 else '-')}",
                 f"Profile: {snapshot.get('profile_status') or 'missing'} · {status}",
                 label("Required signals", "required_signals"),
@@ -810,9 +815,10 @@ class TelegramAdminMixin:
                 lines.append("Reasons: " + "; ".join(str(item) for item in snapshot["reasons"]))
             return "\n".join(lines)
         if command == "/disableprotocol":
+            endpoint_id = snapshot.get("endpoint_id") or (args[0] if args else None)
             return "\n".join(
                 [
-                    f"Endpoint: {snapshot.get('endpoint_id') or (args[0] if args else '-')}",
+                    f"Endpoint: {endpoint_display_name(endpoint_id, snapshot.get('endpoint_code'))}",
                     f"Protocol: {snapshot.get('protocol') or (args[1] if len(args) > 1 else '-')}",
                     f"Profile: {snapshot.get('status') or 'missing'}",
                     "Result: block new assignments for this profile.",

@@ -1812,6 +1812,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
         }
         self.bot.handle(self.message(999, "/serverstate sg-a draining"))
         self.assertEqual(preview_calls[0], ("sg-a", "draining"))
+        self.assertIn("Endpoint: AURIX_DIG_SG_A (sg-a)", self.bot.sent[-1][1])
         self.assertIn("⚠️ Confirm Endpoint State", {
             button["text"]
             for row in self.bot.markups[-1]["inline_keyboard"]

@@ -85,7 +85,7 @@ class IdentityAccountingTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.database = CommerceDatabase(Path(self.tmp.name) / "identity.db")
         self.database.initialize()
-        self.now = datetime(2026, 9, 9, tzinfo=UTC)
+        self.now = datetime.now(UTC)
         with self.database.connect() as connection:
             connection.execute(
                 "INSERT INTO users (telegram_id, first_name, created_at) VALUES (?, ?, ?)",
@@ -156,7 +156,7 @@ class IdentityAccountingTest(unittest.TestCase):
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-1")
         generation = self.identity.ensure_generation_for_credential(
             entitlement,
-            "sg-a",
+            "legacy-default",
             credential_id="paid-credential",
             external_id="paid-credential",
             protocol="outline",
@@ -164,6 +164,16 @@ class IdentityAccountingTest(unittest.TestCase):
             usage_baseline_provenance="new",
             now=self.now.isoformat(),
         )
+
+        # Route discovery requires a current assignment in the permitted pool.
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO endpoint_assignments
+                   (id, endpoint_id, subscription_id, plan_code, status, reason, assigned_at)
+                   VALUES ('assignment-identity', 'legacy-default', 'sub-1',
+                           'basic_50gb', 'active', 'test', ?)""",
+                (self.now.isoformat(),),
+            )
 
         self.assertEqual(
             [item["generation_id"] for item in self.identity.routes_for_account(account_id)],

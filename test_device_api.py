@@ -1,5 +1,7 @@
 import base64
 import io
+from datetime import datetime, timedelta, timezone
+
 import json
 import os
 import tempfile
@@ -201,7 +203,8 @@ class DeviceAPITest(unittest.TestCase):
         self.assertEqual(paired["max_active_devices"], 1)
 
     def test_config_is_protocol_neutral_and_owned_by_the_account(self):
-        timestamp = "2026-09-10T00:00:00+00:00"
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
         with self.database.connect() as connection:
             connection.execute(
                 "INSERT INTO users (telegram_id, first_name, created_at) VALUES (123, 'Member', ?)",
@@ -218,7 +221,14 @@ class DeviceAPITest(unittest.TestCase):
                    (id, order_id, telegram_id, plan_code, starts_at, expires_at,
                     quota_bytes, duration_days, status, consumed_bytes)
                    VALUES ('sub-device', 'order-device', 123, 'basic_50gb', ?, ?, 1000, 30, 'active', 0)""",
-                (timestamp, "2026-10-10T00:00:00+00:00"),
+                (timestamp, (now + timedelta(days=30)).isoformat()),
+            )
+            connection.execute(
+                """INSERT INTO endpoint_assignments
+                   (id, endpoint_id, subscription_id, plan_code, status, reason, assigned_at)
+                   VALUES ('assignment-device', 'legacy-default', 'sub-device',
+                           'basic_50gb', 'active', 'test', ?)""",
+                (timestamp,),
             )
         entitlement = self.identity.ensure_subscription_entitlement(123, "sub-device", quota_bytes=1000)
         access_url = "vless://uuid@example.com:18443?security=reality#AuriX"
@@ -243,7 +253,8 @@ class DeviceAPITest(unittest.TestCase):
         self.assertEqual(config["protocol"], "xray")
 
     def test_device_ack_cannot_observe_another_accounts_route(self):
-        timestamp = "2026-09-10T00:00:00+00:00"
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
         with self.database.connect() as connection:
             connection.execute(
                 "INSERT INTO users (telegram_id, first_name, created_at) VALUES (456, 'Other', ?)",
@@ -260,7 +271,7 @@ class DeviceAPITest(unittest.TestCase):
                    (id, order_id, telegram_id, plan_code, starts_at, expires_at,
                     quota_bytes, duration_days, status, consumed_bytes)
                    VALUES ('sub-other', 'order-other', 456, 'basic_50gb', ?, ?, 1000, 30, 'active', 0)""",
-                (timestamp, "2026-10-10T00:00:00+00:00"),
+                (timestamp, (now + timedelta(days=30)).isoformat()),
             )
         entitlement = self.identity.ensure_subscription_entitlement(456, "sub-other", quota_bytes=1000)
         foreign_generation = self.identity.ensure_generation_for_credential(

@@ -1524,6 +1524,178 @@ COMMERCE_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS account_access_actions_pending ON account_access_actions(state, updated_at)",
         ),
     ),
+    Migration(
+        20,
+        "dynamic_shadowsocks_profiles",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS dynamic_shadowsocks_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL UNIQUE REFERENCES accounts(account_id),
+                   token_hash TEXT NOT NULL UNIQUE,
+                   token_ciphertext TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active', 'revoked')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   last_served_at TEXT,
+                   served_count INTEGER NOT NULL DEFAULT 0 CHECK (served_count >= 0)
+               )""",
+            "CREATE INDEX IF NOT EXISTS dynamic_shadowsocks_profiles_status ON dynamic_shadowsocks_profiles(status, updated_at)",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS dynamic_shadowsocks_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL UNIQUE REFERENCES accounts(account_id),
+                   token_hash TEXT NOT NULL UNIQUE,
+                   token_ciphertext TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active', 'revoked')),
+                   created_at TIMESTAMPTZ NOT NULL,
+                   updated_at TIMESTAMPTZ NOT NULL,
+                   last_served_at TIMESTAMPTZ,
+                   served_count BIGINT NOT NULL DEFAULT 0 CHECK (served_count >= 0)
+               )""",
+            "CREATE INDEX IF NOT EXISTS dynamic_shadowsocks_profiles_status ON dynamic_shadowsocks_profiles(status, updated_at)",
+        ),
+    ),
+    Migration(
+        21,
+        "entitlement_scoped_dynamic_profiles",
+        sqlite_statements=(
+            """CREATE TABLE IF NOT EXISTS dynamic_shadowsocks_entitlement_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL REFERENCES accounts(account_id),
+                   entitlement_key TEXT NOT NULL UNIQUE,
+                   token_hash TEXT NOT NULL UNIQUE,
+                   token_ciphertext TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active', 'revoked')),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   last_served_at TEXT,
+                   served_count INTEGER NOT NULL DEFAULT 0 CHECK (served_count >= 0)
+               )""",
+            "CREATE INDEX IF NOT EXISTS dynamic_ssconf_entitlement_account ON dynamic_shadowsocks_entitlement_profiles(account_id, status, updated_at)",
+            "ALTER TABLE dynamic_shadowsocks_profiles ADD COLUMN entitlement_key TEXT",
+        ),
+        postgres_statements=(
+            """CREATE TABLE IF NOT EXISTS dynamic_shadowsocks_entitlement_profiles (
+                   profile_id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL REFERENCES accounts(account_id),
+                   entitlement_key TEXT NOT NULL UNIQUE,
+                   token_hash TEXT NOT NULL UNIQUE,
+                   token_ciphertext TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active', 'revoked')),
+                   created_at TIMESTAMPTZ NOT NULL,
+                   updated_at TIMESTAMPTZ NOT NULL,
+                   last_served_at TIMESTAMPTZ,
+                   served_count BIGINT NOT NULL DEFAULT 0 CHECK (served_count >= 0)
+               )""",
+            "CREATE INDEX IF NOT EXISTS dynamic_ssconf_entitlement_account ON dynamic_shadowsocks_entitlement_profiles(account_id, status, updated_at)",
+            "ALTER TABLE dynamic_shadowsocks_profiles ADD COLUMN IF NOT EXISTS entitlement_key TEXT",
+        ),
+    ),
+    Migration(
+        22,
+        "endpoint_regional_routing_pools",
+        sqlite_statements=(
+            "ALTER TABLE vpn_endpoints ADD COLUMN routing_pool TEXT NOT NULL DEFAULT 'sea'",
+            """UPDATE vpn_endpoints
+                  SET routing_pool = CASE
+                    WHEN LOWER(region) IN ('us', 'usa', 'united states', 'sjc1', 'nyc1', 'nyc2', 'nyc3', 'sfo1', 'sfo2', 'sfo3', 'lax1', 'ord1', 'atl1')
+                      OR LOWER(region) LIKE 'us-%'
+                      OR LOWER(region) LIKE 'sjc%'
+                      OR LOWER(region) LIKE 'nyc%'
+                      OR LOWER(region) LIKE 'sfo%'
+                      OR LOWER(region) LIKE 'lax%'
+                      OR LOWER(region) LIKE 'ord%'
+                      OR LOWER(region) LIKE 'atl%'
+                      OR LOWER(region) LIKE 'dfw%'
+                      OR LOWER(region) LIKE '%united states%'
+                      OR LOWER(region) LIKE '%california%'
+                    THEN 'country:US'
+                    WHEN LOWER(region) IN ('sg', 'sgp1', 'sin1', 'singapore', 'ap-southeast-1')
+                      OR LOWER(region) LIKE '%singapore%'
+                      OR LOWER(region) LIKE 'sgp%'
+                      OR LOWER(region) LIKE 'sin%'
+                    THEN 'country:SG'
+                    WHEN LOWER(region) IN ('th', 'bkk1', 'bangkok', 'thailand')
+                      OR LOWER(region) LIKE '%bangkok%'
+                      OR LOWER(region) LIKE '%thailand%'
+                      OR LOWER(region) LIKE 'bkk%'
+                    THEN 'country:TH'
+                    ELSE 'region:' || LOWER(region)
+                  END""",
+            "ALTER TABLE endpoint_assignments ADD COLUMN routing_pool TEXT NOT NULL DEFAULT 'nearby:sea'",
+            """UPDATE endpoint_assignments
+                  SET routing_pool = COALESCE(
+                      (SELECT routing_pool FROM vpn_endpoints
+                        WHERE vpn_endpoints.id = endpoint_assignments.endpoint_id),
+                      'nearby:sea')""",
+            """UPDATE endpoint_assignments SET routing_pool = 'nearby:sea'
+                WHERE routing_pool IN ('country:SG', 'country:TH')""",
+            """UPDATE endpoint_assignments
+                  SET routing_pool = (
+                      SELECT preferred.routing_pool
+                        FROM subscriptions s
+                        JOIN vpn_endpoints preferred ON preferred.id = s.preferred_endpoint_id
+                       WHERE s.id = endpoint_assignments.subscription_id)
+                WHERE subscription_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1 FROM subscriptions s
+                      JOIN vpn_endpoints preferred ON preferred.id = s.preferred_endpoint_id
+                       WHERE s.id = endpoint_assignments.subscription_id)""",
+        ),
+        postgres_statements=(
+            "ALTER TABLE vpn_endpoints ADD COLUMN IF NOT EXISTS routing_pool TEXT NOT NULL DEFAULT 'sea'",
+            """UPDATE vpn_endpoints
+                  SET routing_pool = CASE
+                    WHEN LOWER(region) IN ('us', 'usa', 'united states', 'sjc1', 'nyc1', 'nyc2', 'nyc3', 'sfo1', 'sfo2', 'sfo3', 'lax1', 'ord1', 'atl1')
+                      OR LOWER(region) LIKE 'us-%'
+                      OR LOWER(region) LIKE 'sjc%'
+                      OR LOWER(region) LIKE 'nyc%'
+                      OR LOWER(region) LIKE 'sfo%'
+                      OR LOWER(region) LIKE 'lax%'
+                      OR LOWER(region) LIKE 'ord%'
+                      OR LOWER(region) LIKE 'atl%'
+                      OR LOWER(region) LIKE 'dfw%'
+                      OR LOWER(region) LIKE '%united states%'
+                      OR LOWER(region) LIKE '%california%'
+                    THEN 'country:US'
+                    WHEN LOWER(region) IN ('sg', 'sgp1', 'sin1', 'singapore', 'ap-southeast-1')
+                      OR LOWER(region) LIKE '%singapore%'
+                      OR LOWER(region) LIKE 'sgp%'
+                      OR LOWER(region) LIKE 'sin%'
+                    THEN 'country:SG'
+                    WHEN LOWER(region) IN ('th', 'bkk1', 'bangkok', 'thailand')
+                      OR LOWER(region) LIKE '%bangkok%'
+                      OR LOWER(region) LIKE '%thailand%'
+                      OR LOWER(region) LIKE 'bkk%'
+                    THEN 'country:TH'
+                    ELSE 'region:' || LOWER(region)
+                  END""",
+            "ALTER TABLE endpoint_assignments ADD COLUMN IF NOT EXISTS routing_pool TEXT NOT NULL DEFAULT 'nearby:sea'",
+            """UPDATE endpoint_assignments
+                  SET routing_pool = COALESCE(
+                      (SELECT routing_pool FROM vpn_endpoints
+                        WHERE vpn_endpoints.id = endpoint_assignments.endpoint_id),
+                      'nearby:sea')""",
+            """UPDATE endpoint_assignments SET routing_pool = 'nearby:sea'
+                WHERE routing_pool IN ('country:SG', 'country:TH')""",
+            """UPDATE endpoint_assignments
+                  SET routing_pool = (
+                      SELECT preferred.routing_pool
+                        FROM subscriptions s
+                        JOIN vpn_endpoints preferred ON preferred.id = s.preferred_endpoint_id
+                       WHERE s.id = endpoint_assignments.subscription_id)
+                WHERE subscription_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1 FROM subscriptions s
+                      JOIN vpn_endpoints preferred ON preferred.id = s.preferred_endpoint_id
+                       WHERE s.id = endpoint_assignments.subscription_id)""",
+        ),
+    ),
 )
 
 

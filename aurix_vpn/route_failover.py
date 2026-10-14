@@ -398,16 +398,36 @@ class RouteFailoverService:
         connection: Any,
         source_endpoint_id: str,
         *,
+        routing_pool: str | None = None,
         protocol: str | None = None,
         target_endpoint_id: str | None = None,
     ) -> dict[str, Any] | None:
         true = "TRUE" if isinstance(connection, _PostgresConnection) else "1"
+        selected_pool = str(routing_pool or "").strip()
+        if not selected_pool:
+            source = connection.execute(
+                "SELECT routing_pool FROM vpn_endpoints WHERE id = ?",
+                (str(source_endpoint_id),),
+            ).fetchone()
+            if source is None:
+                return None
+            selected_pool = str(source["routing_pool"] or "")
+        if not selected_pool:
+            return None
+        nearby_pool = selected_pool in {"nearby:sea", "sea"}
         normalized_protocol = None
         if protocol is not None:
             normalized_protocol = str(protocol or "").strip().lower() or "outline"
         target_filter = ""
         protocol_filter = ""
         values: list[Any] = [str(source_endpoint_id)]
+        pool_filter = (
+            "e.routing_pool IN ('country:SG', 'country:TH', 'sea')"
+            if nearby_pool
+            else "e.routing_pool = ?"
+        )
+        if not nearby_pool:
+            values.append(selected_pool)
         if target_endpoint_id:
             target_filter = " AND e.id = ?"
             values.append(str(target_endpoint_id))
@@ -420,7 +440,7 @@ class RouteFailoverService:
                      )"""
             values.append(normalized_protocol)
         row = connection.execute(
-            f"""SELECT e.id, e.code, e.state, e.accepts_new_assignments,
+            f"""SELECT e.id, e.code, e.state, e.routing_pool, e.accepts_new_assignments,
                              e.max_active_keys,
                              COUNT(DISTINCT a.id) AS active_count,
                              COUNT(DISTINCT d.decision_id) AS reserved_failover_count
@@ -431,10 +451,12 @@ class RouteFailoverService:
                       ON d.target_endpoint_id = e.id
                      AND d.state IN ('pending', 'creating', 'verified')
                    WHERE e.id <> ? AND UPPER(e.state) = 'ACTIVE'
+                     AND {pool_filter}
                      AND e.accepts_new_assignments = {true}
                      {target_filter}
                      {protocol_filter}
-                   GROUP BY e.id, e.code, e.state, e.accepts_new_assignments, e.max_active_keys
+                   GROUP BY e.id, e.code, e.state, e.routing_pool,
+                            e.accepts_new_assignments, e.max_active_keys
                    HAVING e.max_active_keys IS NULL
                        OR COUNT(DISTINCT a.id) + COUNT(DISTINCT d.decision_id) < e.max_active_keys
                    ORDER BY e.code, e.id LIMIT 1""",
@@ -503,6 +525,41 @@ class RouteFailoverService:
             )
         return blockers
 
+    @staticmethod
+    def _entitlement_routing_pool(connection: Any, entitlement_key: str) -> str | None:
+        kind, separator, source_id = str(entitlement_key or "").partition(":")
+        if not separator or kind not in {"paid", "free"} or not source_id:
+            return None
+        if kind == "paid":
+            row = connection.execute(
+                "SELECT routing_pool FROM endpoint_assignments WHERE subscription_id = ? AND status = 'active'",
+                (source_id,),
+            ).fetchone()
+        else:
+            try:
+                free_key_id = int(source_id)
+            except (TypeError, ValueError):
+                return None
+            row = connection.execute(
+                "SELECT routing_pool FROM endpoint_assignments WHERE free_key_id = ? AND status = 'active'",
+                (free_key_id,),
+            ).fetchone()
+        return str(row["routing_pool"] or "") if row is not None else None
+
+    @staticmethod
+    def _default_routing_pool(endpoint_pool: str) -> str:
+        return (
+            "nearby:sea"
+            if str(endpoint_pool or "") in {"country:SG", "country:TH"}
+            else str(endpoint_pool or "")
+        )
+
+    @staticmethod
+    def _routing_pool_matches(routing_pool: str, endpoint_pool: str) -> bool:
+        if routing_pool == "nearby:sea":
+            return endpoint_pool in {"country:SG", "country:TH", "sea"}
+        return bool(routing_pool) and routing_pool == endpoint_pool
+
     def endpoint_drain_preview(
         self,
         source_endpoint_id: str,
@@ -520,50 +577,85 @@ class RouteFailoverService:
         bounded_limit = max(1, min(200, int(limit)))
         with self.database.connect() as connection:
             source = connection.execute(
-                "SELECT id, code, state, accepts_new_assignments FROM vpn_endpoints WHERE id = ?",
+                "SELECT id, code, state, accepts_new_assignments, routing_pool FROM vpn_endpoints WHERE id = ?",
                 (source_id,),
             ).fetchone()
             if source is None:
                 raise FailoverError("source endpoint does not exist")
             unmigratable_assignments = self._unmigratable_assignments(connection, source_id)
-            target = (
+            raw_target = (
                 connection.execute(
-                    "SELECT id, code, state, accepts_new_assignments FROM vpn_endpoints WHERE id = ?",
+                    "SELECT id, code, state, accepts_new_assignments, routing_pool "
+                    "FROM vpn_endpoints WHERE id = ?",
                     (target_id,),
                 ).fetchone()
                 if target_id
-                else self._target_endpoint(connection, source_id)
+                else None
             )
-            protocols = connection.execute(
-                """SELECT DISTINCT LOWER(COALESCE(NULLIF(g.protocol, ''), 'outline')) AS protocol
+            generations = connection.execute(
+                """SELECT DISTINCT g.entitlement_key,
+                                  LOWER(COALESCE(NULLIF(g.protocol, ''), 'outline')) AS protocol
                      FROM credential_generations g
                      JOIN quota_leases l ON l.generation_id = g.generation_id
                         AND l.status = 'active'
                     WHERE g.endpoint_id = ? AND g.status = 'active'""",
                 (source_id,),
             ).fetchall()
+            requirements: list[tuple[str, str | None]] = []
+            for generation in generations:
+                protocol = str(generation["protocol"] or "outline").strip().lower() or "outline"
+                pool = self._entitlement_routing_pool(
+                    connection, str(generation["entitlement_key"])
+                ) or self._default_routing_pool(str(source["routing_pool"] or ""))
+                requirement = (pool, protocol)
+                if requirement not in requirements:
+                    requirements.append(requirement)
+            if not requirements:
+                requirements.append(
+                    (self._default_routing_pool(str(source["routing_pool"] or "")), None)
+                )
+            eligible_targets = [
+                self._target_endpoint(
+                    connection,
+                    source_id,
+                    routing_pool=pool,
+                    protocol=protocol,
+                    target_endpoint_id=target_id,
+                )
+                for pool, protocol in requirements
+            ]
+            target = (
+                raw_target
+                if target_id
+                else next(
+                    (
+                        item
+                        for item in eligible_targets
+                        if item is not None
+                        and all(
+                            other is None or str(other["id"]) == str(item["id"])
+                            for other in eligible_targets
+                        )
+                    ),
+                    None,
+                )
+            )
+            target_pool_compatible = all(
+                item is not None
+                and self._routing_pool_matches(pool, str(item["routing_pool"] or ""))
+                for (pool, _protocol), item in zip(requirements, eligible_targets)
+            )
             source_protocols = sorted(
+                {protocol for _pool, protocol in requirements if protocol}
+            )
+            missing_protocols = sorted(
                 {
-                    str(row["protocol"] or "outline").strip().lower()
-                    for row in protocols
-                    if str(row["protocol"] or "outline").strip()
+                    protocol
+                    for (_pool, protocol), item in zip(requirements, eligible_targets)
+                    if protocol and item is None
                 }
             )
-            target_protocols: list[str] = []
-            if target is not None and source_protocols:
-                placeholders = ",".join("?" for _ in source_protocols)
-                target_profile_rows = connection.execute(
-                    f"""SELECT protocol FROM endpoint_protocol_profiles
-                          WHERE endpoint_id = ? AND status = 'enabled'
-                            AND protocol IN ({placeholders})""",
-                    tuple([str(target["id"])] + source_protocols),
-                ).fetchall()
-                target_protocols = sorted(
-                    {str(row["protocol"]).strip().lower() for row in target_profile_rows}
-                )
-            missing_protocols = [
-                protocol for protocol in source_protocols if protocol not in target_protocols
-            ]
+            target_protocols = sorted(set(source_protocols) - set(missing_protocols))
             candidates = connection.execute(
                 """SELECT COUNT(*) AS n
                      FROM credential_generations g
@@ -584,9 +676,14 @@ class RouteFailoverService:
             "source_accepts_new_assignments": bool(source["accepts_new_assignments"]),
             "target_endpoint_id": str(target["id"]) if target else None,
             "target_code": str(target["code"] or target["id"]) if target else None,
+            "target_endpoint_ids": sorted(
+                {str(item["id"]) for item in eligible_targets if item is not None}
+            ),
             "target_available": target is not None
             and str(target["state"]).upper() == "ACTIVE"
             and target["accepts_new_assignments"] not in (False, 0)
+            and target_pool_compatible
+            and all(item is not None for item in eligible_targets)
             and not missing_protocols
             and not unmigratable_assignments,
             "protocols": source_protocols,
@@ -633,7 +730,7 @@ class RouteFailoverService:
             self.database.begin_write(connection)
             source_lock = " FOR UPDATE" if isinstance(connection, _PostgresConnection) else ""
             source = connection.execute(
-                f"SELECT id, code, state, region FROM vpn_endpoints WHERE id = ?{source_lock}",
+                f"SELECT id, code, state, region, routing_pool FROM vpn_endpoints WHERE id = ?{source_lock}",
                 (source_id,),
             ).fetchone()
             if source is None:
@@ -657,12 +754,16 @@ class RouteFailoverService:
                     ORDER BY g.created_at, g.generation_id LIMIT ?""",
                 (source_id, bounded_limit),
             ).fetchall()
-            targets: dict[str, dict[str, Any]] = {}
+            targets: dict[tuple[str, str], dict[str, Any]] = {}
             for generation in generations:
                 protocol = str(generation["protocol"] or "outline").strip().lower()
+                pool = self._entitlement_routing_pool(
+                    connection, str(generation["entitlement_key"])
+                    ) or self._default_routing_pool(str(source["routing_pool"] or ""))
                 target = self._target_endpoint(
                     connection,
                     source_id,
+                    routing_pool=pool,
                     protocol=protocol,
                     target_endpoint_id=requested_target,
                 )
@@ -674,17 +775,24 @@ class RouteFailoverService:
                     raise FailoverError(
                         f"no eligible drain target endpoint exists for {protocol}"
                     )
-                targets[protocol] = target
+                targets[(pool, protocol)] = target
             if not generations:
                 target = self._target_endpoint(
-                    connection, source_id, target_endpoint_id=requested_target
+                    connection,
+                    source_id,
+                    routing_pool=self._default_routing_pool(str(source["routing_pool"] or "")),
+                    target_endpoint_id=requested_target,
                 )
                 if target is None:
                     raise FailoverError("no eligible drain target endpoint exists")
-                targets["outline"] = target
+                targets[(str(source["routing_pool"] or ""), "outline")] = target
             new_decision_count = 0
             for generation in generations:
-                target = targets[str(generation["protocol"] or "outline").strip().lower()]
+                protocol = str(generation["protocol"] or "outline").strip().lower()
+                pool = self._entitlement_routing_pool(
+                    connection, str(generation["entitlement_key"])
+                ) or self._default_routing_pool(str(source["routing_pool"] or ""))
+                target = targets[(pool, protocol)]
                 idempotency = (
                     f"operator-drain:{source_id}:{generation['generation_id']}:{target['id']}"
                 )
@@ -707,7 +815,11 @@ class RouteFailoverService:
             existing_count = 0
             for generation in generations:
                 entitlement_key = str(generation["entitlement_key"])
-                target = targets[str(generation["protocol"] or "outline").strip().lower()]
+                protocol = str(generation["protocol"] or "outline").strip().lower()
+                pool = self._entitlement_routing_pool(
+                    connection, entitlement_key
+                ) or self._default_routing_pool(str(source["routing_pool"] or ""))
+                target = targets[(pool, protocol)]
                 # Ensure manually queued decisions are claimable even when the
                 # entitlement has no automatic failover policy.
                 connection.execute(
@@ -837,9 +949,12 @@ class RouteFailoverService:
             self.database.begin_write(connection)
             lock = " FOR UPDATE" if isinstance(connection, _PostgresConnection) else ""
             generation = connection.execute(
-                f"""SELECT generation_id, entitlement_key, endpoint_id, protocol, status
-                       FROM credential_generations
-                      WHERE generation_id = ?{lock}""",
+                f"""SELECT g.generation_id, g.entitlement_key, g.endpoint_id,
+                             g.protocol, g.status,
+                             (SELECT routing_pool FROM vpn_endpoints e
+                               WHERE e.id = g.endpoint_id) AS endpoint_routing_pool
+                       FROM credential_generations g
+                      WHERE g.generation_id = ?{lock}""",
                 (str(generation_id),),
             ).fetchone()
             if generation is None:
@@ -905,6 +1020,11 @@ class RouteFailoverService:
                     target = self._target_endpoint(
                         connection,
                         str(generation["endpoint_id"]),
+                        routing_pool=self._entitlement_routing_pool(
+                            connection, str(generation["entitlement_key"])
+                        ) or self._default_routing_pool(
+                            str(generation["endpoint_routing_pool"] or "")
+                        ),
                         protocol=str(generation["protocol"] or "outline").strip().lower(),
                     )
                     if target is not None:

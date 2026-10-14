@@ -2,7 +2,7 @@ import json
 import threading
 import time
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
 from urllib.error import HTTPError
@@ -11,6 +11,8 @@ from urllib.request import Request, urlopen
 from connectivity import ConnectivityError
 from test_telegram_web_app import _init_data
 from vpn_web_api import AuriXVpnWebApplication, make_handler
+
+UTC = timezone.utc
 
 
 class _Outline:
@@ -132,6 +134,57 @@ class _ProtocolRegistry(_Registry):
         }]
 
 
+class _SsconfProfiles:
+    configured = True
+
+    class _Identity:
+        @staticmethod
+        def ensure_account(_telegram_id):
+            return "account-1"
+
+    identity = _Identity()
+
+    def options_for_telegram(self, telegram_id):
+        return [{
+            "entitlement_key": "paid:sub-owned",
+            "endpoint_id": "sjc-a",
+            "region": "SJC1",
+            "label": "Paid · SJC1",
+        }]
+
+    def issue_for_entitlement(self, account_id, entitlement_key, label="AuriX VPN"):
+        return {
+            "protocol": "ssconf",
+            "profile_url": "ssconf://vpn.example.test/api/ssconf/scoped-token",
+            "access_url": "ssconf://vpn.example.test/api/ssconf/scoped-token",
+            "selection_mode": "single-active-route",
+            "compatible_route_count": 1,
+            "multi_server_pool": False,
+            "entitlement_key": entitlement_key,
+        }
+
+    def issue_for_telegram(self, telegram_id, label="AuriX VPN"):
+        return {
+            "protocol": "ssconf",
+            "profile_url": "ssconf://vpn.example.test/api/ssconf/test-token",
+            "access_url": "ssconf://vpn.example.test/api/ssconf/test-token",
+            "selection_mode": "single-active-route",
+            "compatible_route_count": 2,
+            "multi_server_pool": True,
+        }
+
+    def document(self, token):
+        if token != "test-token":
+            return None
+        return {
+            "server": "bkk-a.example",
+            "server_port": 443,
+            "method": "chacha20-ietf-poly1305",
+            "password": "customer-secret",
+            "remarks": "Bangkok",
+        }
+
+
 class VpnWebApplicationTest(unittest.TestCase):
     def setUp(self):
         self.runtime = SimpleNamespace(token="bot-token", claim_service=_Claims(), commerce=_Commerce())
@@ -230,6 +283,83 @@ class VpnWebApplicationTest(unittest.TestCase):
                 ["outline", "xray"],
             )
             self.assertNotIn("public_address", json.dumps(payload))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_ssconf_issue_is_authenticated_but_document_is_public_bearer_delivery(self):
+        self.application.runtime.ssconf_profiles = _SsconfProfiles()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.application))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            issue = Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/ssconf",
+                headers={"X-Telegram-Init-Data": _init_data("bot-token")},
+            )
+            with urlopen(issue, timeout=3) as response:
+                issued = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(issued["protocol"], "ssconf")
+            self.assertTrue(issued["multi_server_pool"])
+
+            with urlopen(
+                f"http://127.0.0.1:{server.server_address[1]}/api/ssconf/test-token",
+                timeout=3,
+            ) as response:
+                document = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(document["server"], "bkk-a.example")
+            self.assertNotIn("X-Telegram-Init-Data", json.dumps(document))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_scoped_ssconf_issue_requires_authenticated_owned_entitlement(self):
+        self.application.runtime.ssconf_profiles = _SsconfProfiles()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.application))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaises(HTTPError) as unauthorized:
+                urlopen(
+                    f"http://127.0.0.1:{server.server_address[1]}/api/ssconf/options",
+                    timeout=3,
+                )
+            self.assertEqual(unauthorized.exception.code, 401)
+
+            options_request = Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/ssconf/options",
+                headers={"X-Telegram-Init-Data": _init_data("bot-token")},
+            )
+            with urlopen(options_request, timeout=3) as response:
+                options = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(options["options"][0]["entitlement_key"], "paid:sub-owned")
+
+            request = Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/ssconf",
+                data=json.dumps({"entitlement_key": "paid:sub-owned"}).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Telegram-Init-Data": _init_data("bot-token"),
+                },
+                method="POST",
+            )
+            with urlopen(request, timeout=3) as response:
+                issued = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(issued["entitlement_key"], "paid:sub-owned")
+            self.assertNotIn("account_id", issued)
+
+            missing_scope = Request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/ssconf",
+                data=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Telegram-Init-Data": _init_data("bot-token"),
+                },
+                method="POST",
+            )
+            with self.assertRaises(HTTPError) as rejected:
+                urlopen(missing_scope, timeout=3)
+            self.assertEqual(rejected.exception.code, 400)
         finally:
             server.shutdown()
             server.server_close()
