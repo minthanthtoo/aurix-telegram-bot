@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import secrets
+import re
 import threading
 import time
 from contextlib import contextmanager
 from html import escape
 from typing import Any
+
+from .staff_access import ADMIN_CAPABILITIES, MAX_TELEGRAM_ID, ROLES, StaffAccessError
 
 
 class TelegramNavigationMixin:
@@ -50,7 +53,7 @@ class TelegramNavigationMixin:
             ],
         ),
         "staff": (
-            "🛠 Staff workspace",
+            "🛠 Admin workspace",
             [
                 [("📥 Sales & payments", "ui:sales")],
                 [("🔁 Recovery", "ui:recovery"), ("📈 Fleet", "ui:fleet")],
@@ -118,6 +121,11 @@ class TelegramNavigationMixin:
     }
     STAFF_MENUS = {
         "staff",
+        "owner_staff",
+        "staff_members",
+        "staff_assignments",
+        "staff_audit",
+        "seller_cases",
         "sales",
         "recovery",
         "fleet",
@@ -139,7 +147,15 @@ class TelegramNavigationMixin:
         "provisionnode": "Region, size and image from the configured allowlists",
         "setpromo": "CODE QUOTA_GB DAYS COUNT campaign|daily|hourly FROM_UTC TO_UTC",
         "verify": "Transaction ID and verified amount in MMK, after checking your receiving account. Example: TX123 3000",
+        "staff_role": "Telegram ID and role: 123456789 seller|admin|owner",
+        "staff_revoke": "Telegram ID of the staff member to revoke",
+        "staff_assign": "Seller Telegram ID and customer Telegram ID: 123456789 987654321",
+        "staff_unassign": "Seller Telegram ID and customer Telegram ID: 123456789 987654321",
+        "staff_capability": "Admin Telegram ID, capability, and allow|deny|inherit",
     }
+    OWNER_INPUT_FORMS = frozenset(
+        {"staff_role", "staff_revoke", "staff_assign", "staff_unassign", "staff_capability"}
+    )
 
     def _init_navigation(self) -> None:
         self._navigation_lock = threading.RLock()
@@ -392,7 +408,7 @@ class TelegramNavigationMixin:
             [("🔐 My VPN", "u:h:vpn"), ("🧾 My Orders", "u:h:orders")],
             [("💰 Wallet", "u:h:wallet"), ("❓ Help & account", "u:h:help")],
         ]
-        if self._is_admin(telegram_id):
+        if self._is_staff(telegram_id):
             rows.append([("🛠 Staff workspace", "u:h:staff")])
         markup = self._inline_keyboard(rows)
         if self.web_app_url:
@@ -400,6 +416,38 @@ class TelegramNavigationMixin:
                 [{"text": "🌐 VPN portal", "web_app": {"url": self.web_app_url}}]
             )
         return markup
+
+    def _admin_keyboard(self, telegram_id: int) -> dict[str, Any]:
+        """Build the same role-filtered staff tree for legacy /admin entrypoints."""
+        if not self._is_admin(telegram_id):
+            raise PermissionError("admin keyboard requested by non-admin")
+        rows = []
+        if self._staff_category_available("sales", telegram_id):
+            rows.append([("📥 Sales & payments", "u:h:sales")])
+        recovery = self._staff_category_available("recovery", telegram_id)
+        fleet = self._staff_category_available("fleet", telegram_id)
+        if recovery or fleet:
+            row = []
+            if recovery:
+                row.append(("🔁 Recovery", "u:h:recovery"))
+            if fleet:
+                row.append(("📈 Fleet", "u:h:fleet"))
+            rows.append(row)
+        promotions = self._staff_category_available("promotions", telegram_id)
+        accounts = self._staff_category_available("accounts", telegram_id)
+        if promotions or accounts:
+            row = []
+            if promotions:
+                row.append(("🎁 Promo Settings", "u:h:promotions"))
+            if accounts:
+                row.append(("👤 Account access", "u:h:accounts"))
+            rows.append(row)
+        if self._staff_category_available("advanced", telegram_id):
+            rows.append([("⚙️ Advanced operations", "u:h:advanced")])
+        if self._is_owner(telegram_id):
+            rows.append([("👑 Staff roles & customer cases", "u:h:owner_staff")])
+        rows.append([("🏠 Customer Menu", "u:h:home")])
+        return self._inline_keyboard(rows)
 
     def _navigation_home_content(
         self, telegram_id: int
@@ -437,6 +485,359 @@ class TelegramNavigationMixin:
                 ],
             )
         return text, markup
+
+    def _staff_category_available(self, category: str, telegram_id: int) -> bool:
+        needed = {
+            "sales": ("sales.read", "sales.decide"),
+            "recovery": ("recovery.manage",),
+            "fleet": ("fleet.read", "fleet.manage"),
+            "promotions": ("promotions.manage",),
+            "accounts": ("accounts.read", "accounts.manage"),
+            "advanced": ("fleet.manage", "recovery.manage"),
+        }.get(category, ())
+        return any(self._has_staff_capability(telegram_id, value) for value in needed)
+
+    def _staff_private_only(self, chat_id: int, telegram_id: int) -> bool:
+        if int(chat_id) == int(telegram_id):
+            return False
+        self.send(chat_id, "Open the AuriX bot in a private chat to use staff screens.")
+        return True
+
+    def _show_staff_workspace(self, chat_id: int, telegram_id: int) -> None:
+        if self._staff_private_only(chat_id, telegram_id):
+            return
+        role = self._staff_role(telegram_id)
+        if role == "seller":
+            self._send_screen(
+                chat_id,
+                "<b>🧑‍💼 Seller workspace</b>\n\n"
+                "Review only customer cases assigned to you. Their payment and VPN records remain read-only.",
+                self._inline_keyboard([[ ("📋 Assigned customers", "ui:seller_cases") ]]),
+            )
+            return
+        if role not in {"admin", "owner"}:
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        labels = {
+            "sales": ("📥 Sales & payments", "ui:sales"),
+            "recovery": ("🔁 Recovery", "ui:recovery"),
+            "fleet": ("📈 Fleet", "ui:fleet"),
+            "promotions": ("🎁 Promotions", "ui:promotions"),
+            "accounts": ("👤 Account access", "ui:accounts"),
+            "advanced": ("⚙️ Advanced operations", "ui:advanced"),
+        }
+        rows = [
+            [(label, entry)]
+            for category, (label, entry) in labels.items()
+            if self._staff_category_available(category, telegram_id)
+        ]
+        if role == "owner":
+            rows.append([("👑 Staff roles & customer cases", "ui:owner_staff")])
+        rows.append([("🏠 Customer Home", "ui:home")])
+        text = (
+            "<b>👑 Owner workspace</b>\n\nChoose an operating area or manage staff roles and assigned customer cases."
+            if role == "owner"
+            else "<b>🛠 Admin workspace</b>\n\nChoose an area available to your role."
+        )
+        self._send_screen(chat_id, text, self._inline_keyboard(rows))
+
+    def _show_owner_staff_menu(self, chat_id: int, telegram_id: int) -> None:
+        if self._staff_private_only(chat_id, telegram_id):
+            return
+        if not self._is_owner(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        self._send_screen(
+            chat_id,
+            "<b>👑 Staff roles & customer cases</b>\n\n"
+            "Role changes, capability limits and seller assignments are recorded and checked when used.\n"
+            "Configured Owner, Admin and Seller IDs must be changed in deployment settings first.",
+            self._inline_keyboard(
+                [
+                    [("👥 Staff members", "ui:staff_members"), ("🎫 Assigned cases", "ui:staff_assignments")],
+                    [("🗂 Access changes", "staffaudit:0")],
+                    [("➕ Grant or change role", "form:staff_role")],
+                    [("⛔ Revoke staff access", "form:staff_revoke")],
+                    [("📌 Assign customer case", "form:staff_assign")],
+                    [("↩ Remove customer case", "form:staff_unassign")],
+                    [("🛡 Set Admin capability", "form:staff_capability")],
+                ]
+            ),
+        )
+
+    def _show_staff_members(self, chat_id: int, telegram_id: int) -> None:
+        if self._staff_private_only(chat_id, telegram_id):
+            return
+        if not self._is_owner(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        members = self.staff_access.staff_members(telegram_id)
+        rows = [
+            [
+                (
+                    f"{'✅' if int(item.get('active') or 0) else '⛔'} {item['role'].title()} · {item['telegram_id']}",
+                    f"staffmember:{item['telegram_id']}",
+                )
+            ]
+            for item in members[:30]
+        ]
+        text = (
+            "<b>👥 Staff members</b>\n\n"
+            + ("Select a person to review their role." if members else "No staff roles are configured.")
+            + ("\nShowing the first 30. Use the role form for any Telegram ID." if len(members) > 30 else "")
+        )
+        self._send_screen(chat_id, text, self._inline_keyboard(rows))
+
+    def _show_staff_assignments(self, chat_id: int, telegram_id: int) -> None:
+        if self._staff_private_only(chat_id, telegram_id):
+            return
+        if not self._is_owner(telegram_id):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        assignments = self.staff_access.assignments(telegram_id)
+        lines = ["<b>🎫 Assigned customer cases</b>"]
+        if assignments:
+            lines.extend(
+                f"\nSeller <code>{item['seller_telegram_id']}</code> → customer <code>{item['customer_telegram_id']}</code>"
+                for item in assignments[:50]
+            )
+            if len(assignments) > 50:
+                lines.append(f"\nShowing 50 of {len(assignments)} active assignments.")
+        else:
+            lines.append("\nNo customer cases are assigned.")
+        self._send_screen(chat_id, "".join(lines), self._inline_keyboard([]))
+
+    def _show_staff_audit(
+        self, chat_id: int, telegram_id: int, offset: int = 0
+    ) -> None:
+        if self._staff_private_only(chat_id, telegram_id) or not self._is_owner(telegram_id):
+            if chat_id == telegram_id:
+                self._send_customer_fallback(chat_id, telegram_id)
+            return
+        events = self.staff_access.audit_events(telegram_id, limit=21, offset=offset)
+        visible = events[:20]
+        lines = ["<b>🗂 Staff access history</b>"]
+        if visible:
+            for event in visible:
+                actor = "Environment" if int(event.get("actor_id") or 0) == 0 else str(event.get("actor_id"))
+                target = str(event.get("target_id") or "—")
+                entity = str(event.get("entity_id") or event.get("entity_type") or "—")
+                detail = str(event.get("details_json") or "{}")
+                lines.append(
+                    "\n\n"
+                    + escape(str(event.get("created_at") or ""))
+                    + f"\n{escape(str(event.get('action') or 'change'))} · {escape(str(event.get('entity_type') or 'staff'))}"
+                    + f"\nActor {escape(actor)} · target {escape(target)} · {escape(entity)}"
+                    + f"\n{escape(detail[:240])}"
+                )
+        else:
+            lines.append("\n\nNo staff changes are recorded on this page.")
+        rows = []
+        if offset > 0:
+            rows.append([("◀ Newer", f"staffaudit:{max(0, offset - 20)}")])
+        if len(events) > 20:
+            rows.append([("Older ▶", f"staffaudit:{offset + 20}")])
+        self._send_screen(chat_id, "".join(lines), self._inline_keyboard(rows))
+
+    def _show_seller_cases(self, chat_id: int, telegram_id: int) -> None:
+        if self._staff_private_only(chat_id, telegram_id):
+            return
+        if self._staff_role(telegram_id) != "seller" or not self._has_staff_capability(
+            telegram_id, "sales.assigned.read"
+        ):
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        customers = self.staff_access.assigned_customers(telegram_id)
+        rows = [
+            [(f"👤 Customer {item['customer_id']}", f"staffcase:{item['customer_id']}")]
+            for item in customers[:30]
+        ]
+        if not rows:
+            text = "<b>📋 Assigned customers</b>\n\nNo customer cases are assigned to you yet."
+        else:
+            text = "<b>📋 Assigned customers</b>\n\nOpen a customer case to review recent order status."
+            if len(customers) > 30:
+                text += f"\nShowing 30 of {len(customers)} assigned customers."
+        self._send_screen(chat_id, text, self._inline_keyboard(rows))
+
+    def _show_seller_case(self, chat_id: int, telegram_id: int, customer_id: int) -> None:
+        if self._staff_private_only(chat_id, telegram_id):
+            return
+        try:
+            self.staff_access.require_customer_case(telegram_id, customer_id)
+        except StaffAccessError:
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        if self.commerce is None:
+            self._send_screen(chat_id, "Order status is unavailable.", self._inline_keyboard([]))
+            return
+        orders = [
+            order
+            for order in self.commerce.list_user_orders(customer_id, limit=20)
+            if str(order.get("order_type") or "vpn") != "wallet_topup"
+        ][:10]
+        lines = [f"<b>🎫 Customer case · {customer_id}</b>"]
+        if not orders:
+            lines.append("\n\nNo VPN orders are recorded for this customer.")
+        else:
+            lines.append("\n\nSelect a recent order to review its current stage.")
+        rows = []
+        for order in orders:
+            title = str(order.get("plan_name") or order.get("plan_code") or "VPN order")
+            label = f"{title[:22]} · {str(order.get('stage') or order.get('status') or 'unknown')[:20]}"
+            rows.append([(label, f"stafforder:{customer_id}:{order['id']}")])
+        self._send_screen(chat_id, "".join(lines), self._inline_keyboard(rows))
+
+    def _show_seller_order(
+        self, chat_id: int, telegram_id: int, customer_id: int, order_id: str
+    ) -> None:
+        if self._staff_private_only(chat_id, telegram_id):
+            return
+        try:
+            self.staff_access.require_customer_case(telegram_id, customer_id)
+        except StaffAccessError:
+            self._send_customer_fallback(chat_id, telegram_id)
+            return
+        order = (
+            self.commerce.order_detail(order_id, customer_id)
+            if self.commerce is not None
+            else None
+        )
+        if order is None or str(order.get("order_type") or "vpn") == "wallet_topup":
+            self._send_screen(chat_id, "This order is not available in the assigned case.", self._inline_keyboard([]))
+            return
+        name = str(order.get("plan_name") or order.get("plan_code") or "VPN order")
+        stage = str(order.get("stage") or order.get("status") or "unknown")
+        lines = [
+            "<b>🧾 Assigned order review</b>",
+            f"\n\nCustomer: <code>{customer_id}</code>",
+            f"\nPlan: {escape(name)}",
+            f"\nAmount: {int(order.get('amount_minor') or 0):,} {escape(str(order.get('currency') or ''))}",
+            f"\nOrder stage: {escape(stage)}",
+            f"\nPayment: {escape(str(order.get('payment_status') or 'not submitted'))}",
+            f"\nReceipt review: {escape(str(order.get('receipt_status') or 'none'))}",
+            f"\nVPN activation: {escape(str(order.get('subscription_status') or order.get('provisioning_status') or 'not active'))}",
+            "\n\nThis view does not reveal wallet details, payment references, or VPN credentials.",
+        ]
+        self._send_screen(chat_id, "".join(lines), self._inline_keyboard([]))
+
+    def _parse_staff_change(self, form: str, raw_text: str) -> tuple[dict[str, Any], str]:
+        tokens = raw_text.split()
+        if form == "staff_role" and len(tokens) == 2:
+            telegram_id = self._positive_telegram_id(tokens[0])
+            role = tokens[1].lower()
+            if role not in ROLES:
+                raise ValueError("Role must be seller, admin, or owner.")
+            self.staff_access.require_configurable_role(0, telegram_id, role)
+            return {"action": "role", "telegram_id": telegram_id, "role": role}, f"Set {telegram_id} to {role.title()}"
+        if form == "staff_revoke" and len(tokens) == 1:
+            telegram_id = self._positive_telegram_id(tokens[0])
+            if telegram_id in self.staff_access.owner_ids:
+                raise ValueError("The deployment-configured Owner cannot be revoked here.")
+            if telegram_id in self.staff_access.admin_ids:
+                raise ValueError("Remove this ID from ADMIN_TELEGRAM_IDS before revoking access.")
+            if telegram_id in self.staff_access.seller_ids:
+                raise ValueError("Remove this ID from SELLER_TELEGRAM_IDS before revoking access.")
+            return {"action": "revoke", "telegram_id": telegram_id}, f"Revoke staff access for {telegram_id}"
+        if form in {"staff_assign", "staff_unassign"} and len(tokens) == 2:
+            seller_id = self._positive_telegram_id(tokens[0])
+            customer_id = self._positive_telegram_id(tokens[1])
+            action = "assign" if form == "staff_assign" else "unassign"
+            verb = "Assign" if action == "assign" else "Remove"
+            return {
+                "action": action,
+                "seller_id": seller_id,
+                "customer_id": customer_id,
+            }, f"{verb} customer {customer_id} {'to' if action == 'assign' else 'from'} Seller {seller_id}"
+        if form == "staff_capability" and len(tokens) == 3:
+            telegram_id = self._positive_telegram_id(tokens[0])
+            capability = tokens[1].lower()
+            effect = tokens[2].lower()
+            if capability not in ADMIN_CAPABILITIES:
+                raise ValueError("Choose a listed Admin capability.")
+            if effect not in {"allow", "deny", "inherit"}:
+                raise ValueError("Capability effect must be allow, deny, or inherit.")
+            return {
+                "action": "capability",
+                "telegram_id": telegram_id,
+                "capability": capability,
+                "effect": None if effect == "inherit" else effect,
+            }, f"Set {capability} for Admin {telegram_id} to {effect}"
+        raise ValueError("The details do not match this form.")
+
+    @staticmethod
+    def _positive_telegram_id(raw_value: str) -> int:
+        if not re.fullmatch(r"[0-9]{1,20}", raw_value):
+            raise ValueError("Telegram IDs must contain digits only.")
+        value = int(raw_value)
+        if value <= 0 or value > MAX_TELEGRAM_ID:
+            raise ValueError("Telegram ID is outside the supported numeric range.")
+        return value
+
+    def _show_staff_change_review(
+        self, activity: dict[str, Any], summary: str
+    ) -> None:
+        self._send_screen(
+            activity["chat_id"],
+            "<b>Review staff change</b>\n\n"
+            + escape(summary)
+            + "\n\nThe change is applied only after you confirm. Back cancels it.",
+            self._inline_keyboard(
+                [[("✅ Confirm change", "staffapply"), ("✖ Cancel", "staffcancel")]]
+            ),
+        )
+
+    def _apply_staff_change(self, activity: dict[str, Any]) -> None:
+        change = activity.get("pending_staff_change")
+        if (
+            not change
+            or activity["chat_id"] != activity["telegram_id"]
+            or not self._is_owner(activity["telegram_id"])
+        ):
+            activity["pending_staff_change"] = None
+            self._send_customer_fallback(activity["chat_id"], activity["telegram_id"])
+            return
+        actor_id = int(activity["telegram_id"])
+        try:
+            action = change["action"]
+            if action == "role":
+                changed = self.staff_access.grant_role(
+                    actor_id, change["telegram_id"], change["role"]
+                )
+            elif action == "revoke":
+                changed = self.staff_access.revoke_role(actor_id, change["telegram_id"])
+            elif action == "assign":
+                changed = self.staff_access.assign_customer(
+                    actor_id, change["seller_id"], change["customer_id"]
+                )
+            elif action == "unassign":
+                changed = self.staff_access.unassign_customer(
+                    actor_id, change["seller_id"], change["customer_id"]
+                )
+            elif action == "capability":
+                changed = self.staff_access.set_capability(
+                    actor_id,
+                    change["telegram_id"],
+                    change["capability"],
+                    change["effect"],
+                )
+            else:
+                raise ValueError("Staff change is unavailable")
+        except (StaffAccessError, ValueError) as exc:
+            activity["pending_staff_change"] = None
+            self._send_screen(
+                activity["chat_id"],
+                "<b>Change not applied</b>\n\n" + escape(str(exc)),
+                self._inline_keyboard([]),
+            )
+            return
+        activity["pending_staff_change"] = None
+        text = "✅ Change saved." if changed else "No change was needed; the current setting is already in place."
+        self._send_screen(
+            activity["chat_id"],
+            text,
+            self._inline_keyboard([[ ("👑 Staff roles & cases", "ui:owner_staff") ]]),
+        )
 
     def _show_navigation_home(self, chat_id: int, telegram_id: int) -> None:
         text, markup = self._navigation_home_content(telegram_id)
@@ -508,6 +909,99 @@ class TelegramNavigationMixin:
         if entry == "ui:home":
             text, markup = self._navigation_home_content(telegram_id)
             self._send_screen(chat_id, text, markup)
+            return
+        if entry == "staffapply":
+            self._apply_staff_change(activity)
+            return
+        if entry == "staffcancel":
+            activity["pending_staff_change"] = None
+            self._show_owner_staff_menu(chat_id, telegram_id)
+            return
+        if entry == "ui:staff":
+            self._show_staff_workspace(chat_id, telegram_id)
+            return
+        if entry == "ui:owner_staff":
+            self._show_owner_staff_menu(chat_id, telegram_id)
+            return
+        if entry == "ui:staff_members":
+            self._show_staff_members(chat_id, telegram_id)
+            return
+        if entry == "ui:staff_assignments":
+            self._show_staff_assignments(chat_id, telegram_id)
+            return
+        if entry.startswith("staffaudit:"):
+            try:
+                offset = max(0, int(entry.split(":", 1)[1]))
+            except ValueError:
+                self._send_customer_fallback(chat_id, telegram_id)
+                return
+            self._show_staff_audit(chat_id, telegram_id, offset)
+            return
+        if entry == "ui:seller_cases":
+            self._show_seller_cases(chat_id, telegram_id)
+            return
+        if entry.startswith("staffmember:"):
+            if not self._is_owner(telegram_id):
+                self._send_customer_fallback(chat_id, telegram_id)
+                return
+            try:
+                target_id = self._positive_telegram_id(entry.split(":", 1)[1])
+            except ValueError:
+                self._send_customer_fallback(chat_id, telegram_id)
+                return
+            member = next(
+                (
+                    value
+                    for value in self.staff_access.staff_members(telegram_id)
+                    if int(value["telegram_id"]) == target_id
+                ),
+                None,
+            )
+            if member is None:
+                self._send_screen(chat_id, "Staff member not found.", self._inline_keyboard([]))
+                return
+            configured = self.staff_access.configured_role(target_id)
+            state = "active" if int(member.get("active") or 0) else "revoked"
+            lines = [
+                "<b>👤 Staff member</b>",
+                f"\n\nTelegram ID: <code>{target_id}</code>",
+                f"\nRole: {escape(str(member['role']).title())} · {state}",
+            ]
+            if configured:
+                lines.append(f"\nConfigured role: {escape(configured.title())}")
+            overrides = self.staff_access.capability_overrides(telegram_id, target_id)
+            if overrides:
+                lines.append("\nCapability overrides: " + escape(", ".join(
+                    f"{name}={effect}" for name, effect in sorted(overrides.items())
+                )))
+            self._send_screen(
+                chat_id,
+                "".join(lines),
+                self._inline_keyboard(
+                    [
+                        [("📝 Change role", "form:staff_role")],
+                        [("🛡 Change Admin capability", "form:staff_capability")],
+                        [("⛔ Revoke access", "form:staff_revoke")],
+                    ]
+                ),
+            )
+            return
+        if entry.startswith("staffcase:"):
+            try:
+                customer_id = self._positive_telegram_id(entry.split(":", 1)[1])
+            except ValueError:
+                self._send_customer_fallback(chat_id, telegram_id)
+                return
+            self._show_seller_case(chat_id, telegram_id, customer_id)
+            return
+        if entry.startswith("stafforder:"):
+            _, customer_value, order_id = entry.split(":", 2)
+            try:
+                customer_id = self._positive_telegram_id(customer_value)
+            except ValueError:
+                self._send_customer_fallback(chat_id, telegram_id)
+                return
+            self._show_seller_order(chat_id, telegram_id, customer_id, order_id)
             return
         if entry.startswith("nextpending:"):
             token = entry[12:]
@@ -642,10 +1136,25 @@ class TelegramNavigationMixin:
             return
         if entry.startswith("ui:"):
             name = entry[3:]
-            if name in self.STAFF_MENUS and not self._is_admin(telegram_id):
+            if name in self.STAFF_MENUS and not self._is_staff(telegram_id):
                 self._send_customer_fallback(chat_id, telegram_id)
                 return
-            if name in self.NAVIGATION_MENUS:
+            if name in {"sales", "recovery", "fleet", "promotions", "accounts", "advanced"} and not self._staff_category_available(
+                name, telegram_id
+            ):
+                self._send_customer_fallback(chat_id, telegram_id)
+                return
+            if name == "staff":
+                self._show_staff_workspace(chat_id, telegram_id)
+            elif name == "owner_staff":
+                self._show_owner_staff_menu(chat_id, telegram_id)
+            elif name == "staff_members":
+                self._show_staff_members(chat_id, telegram_id)
+            elif name == "staff_assignments":
+                self._show_staff_assignments(chat_id, telegram_id)
+            elif name == "seller_cases":
+                self._show_seller_cases(chat_id, telegram_id)
+            elif name in self.NAVIGATION_MENUS:
                 title, rows = self.NAVIGATION_MENUS[name]
                 self._send_screen(
                     chat_id,
@@ -839,6 +1348,11 @@ class TelegramNavigationMixin:
         if entry.startswith("form:") or entry == "t:a:custom":
             form_spec = entry[5:] if entry.startswith("form:") else "topup"
             form, _, prefix = form_spec.partition(":")
+            if form in self.OWNER_INPUT_FORMS and (
+                not self._is_owner(telegram_id) or chat_id != telegram_id
+            ):
+                self._send_customer_fallback(chat_id, telegram_id)
+                return
             if form != "topup" and not self._is_admin(telegram_id):
                 self._send_customer_fallback(chat_id, telegram_id)
                 return
@@ -984,6 +1498,8 @@ class TelegramNavigationMixin:
 
     @staticmethod
     def _activity_read_entry(entry: str) -> str:
+        if entry in {"staffapply", "staffcancel"}:
+            return "ui:owner_staff"
         if entry.startswith(("o:w:", "o:x:", "o:c:", "o:r:")):
             return "o:v:" + entry.split(":", 2)[2]
         if entry.startswith("t:p:"):
@@ -1068,6 +1584,7 @@ class TelegramNavigationMixin:
                 action = parts[3]
                 if action == "back":
                     activity["input"] = None
+                    activity["pending_staff_change"] = None
                     if not activity["history"]:
                         return True
                     entry = activity["history"].pop()
@@ -1201,6 +1718,28 @@ class TelegramNavigationMixin:
             if not text or text.startswith("/"):
                 return False
             form = prompt["form"]
+            if form in self.OWNER_INPUT_FORMS:
+                if not self._is_owner(user["id"]):
+                    activity["input"] = None
+                    activity["pending_staff_change"] = None
+                    self._send_customer_fallback(chat["id"], user["id"])
+                    return True
+                try:
+                    pending, summary = self._parse_staff_change(form, text)
+                except (StaffAccessError, ValueError) as exc:
+                    with self._activity_context(activity):
+                        self.send(
+                            chat["id"],
+                            "Details were not accepted: " + escape(str(exc)) + "\n\n" + self.INPUT_FORMS[form],
+                            self._inline_keyboard([]),
+                        )
+                    return True
+                activity["input"] = None
+                activity["pending_staff_change"] = pending
+                activity["entry"] = "ui:owner_staff"
+                with self._activity_context(activity):
+                    self._show_staff_change_review(activity, summary)
+                return True
             if form != "topup" and not self._is_admin(user["id"]):
                 self._send_customer_fallback(chat["id"], user["id"])
                 return True
