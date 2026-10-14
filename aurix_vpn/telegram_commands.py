@@ -156,6 +156,8 @@ class TelegramCommandMixin:
             self._delete_message(chat_id, message_id)
 
     def handle(self, message: dict[str, Any]) -> None:
+        if self._route_activity_input(message):
+            return
         chat = message.get("chat") or {}
         user = message.get("from") or {}
         if (
@@ -489,6 +491,9 @@ class TelegramCommandMixin:
                     }[command],
                 )
                 return
+        if command == "/start":
+            self._show_navigation_home(chat["id"], telegram_id)
+            return
         if command in ("/start", "/help"):
             if command == "/start":
                 giveaway = self.service.giveaway_status(telegram_id)

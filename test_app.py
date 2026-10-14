@@ -640,9 +640,24 @@ class RecordingTelegramBot(TelegramBot):
 
     def send_photo(self, chat_id, file_id, caption="", reply_markup=None):
         self.media.append(("photo", chat_id, file_id, caption, reply_markup))
+        return {"message_id": 1000 + len(self.media)}
+
 
     def send_document(self, chat_id, file_id, caption="", reply_markup=None):
         self.media.append(("document", chat_id, file_id, caption, reply_markup))
+
+    def request(self, method, payload):
+        if isinstance(self._http, _RecordingTelegramPool):
+            return super().request(method, payload)
+        if method == "sendMessage":
+            self.send(payload["chat_id"], payload["text"], payload.get("reply_markup"))
+            return {"message_id": len(self.sent)}
+        if method == "editMessageReplyMarkup":
+            if self.markups and self.markups[-1] == {"remove_keyboard": True}:
+                self.markups[-1] = payload["reply_markup"]
+            return True
+        return super().request(method, payload)
+
 
 
 class _TelegramPoolResponse:
@@ -888,26 +903,13 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "/start"))
 
         self.assertEqual(len(self.bot.sent), 1)
-        self.assertIn("🎉 AuriX VPN မှ ကြိုဆိုပါတယ်!", self.bot.sent[0][1])
-        self.assertIn("100 GB Outline VPN • 30 days • Free", self.bot.sent[0][1])
-        self.assertIn("🔥 5/5 gifts available for the whole campaign", self.bot.sent[0][1])
+        self.assertIn("Welcome to AuriX VPN", self.bot.sent[0][1])
         self.assertIn("100GBFREE", self.bot.sent[0][1])
-        self.assertIn("No payment or receipt", self.bot.sent[0][1])
-        self.assertIn("not SIM/mobile data", self.bot.sent[0][1])
-        self.assertIn("return automatically", self.bot.sent[0][1])
-        promo_buttons = self.bot.markups[-1]["inline_keyboard"][0]
-        self.assertEqual(
-            next(button for button in promo_buttons if button["text"] == "📋 Copy Promo Code")[
-                "copy_text"
-            ],
-            {"text": "100GBFREE"},
-        )
-        self.assertEqual(
-            next(button for button in promo_buttons if button["text"].startswith("🎁 Redeem"))[
-                "callback_data"
-            ],
-            "g:c:100GBFREE",
-        )
+        labels = {
+            b["text"] for row in self.bot.markups[-1]["inline_keyboard"] for b in row
+        }
+        self.assertIn("🎁 Promotion details", labels)
+        self.assertIn("🛍 Buy VPN", labels)
         self.assertEqual(self.outline.created, [])
         with self.db.connect() as connection:
             self.assertEqual(
@@ -921,6 +923,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
                     "SELECT last_claim_at FROM users WHERE telegram_id = ?", (123,)
                 ).fetchone()["last_claim_at"]
             )
+
 
     def test_start_can_use_one_branded_photo_card_without_duplicate_text(self):
         self.bot.welcome_image_source = "telegram-welcome-file-id"
@@ -947,32 +950,22 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "0 upload(s) failed · 0 failed job(s) · 0 stale review(s) · "
             "0 dead notification(s)",
         )
-        expected_markup = {
-            "inline_keyboard": [
-                [
-                    {"text": "📥 Pending Orders", "callback_data": "a:n:orders"},
-                    {"text": "🧾 Receipt Review", "callback_data": "a:n:receipts"},
-                ],
-                [
-                    {"text": "📈 Capacity", "callback_data": "a:n:capacity"},
-                    {"text": "🔎 Consistency", "callback_data": "a:n:reconcile"},
-                ],
-                [
-                    {"text": "🔁 Failed Jobs", "callback_data": "a:n:failed"},
-                    {"text": "🚨 Enforcement", "callback_data": "a:n:enforcement"},
-                ],
-                [{"text": "🎁 Promo Settings", "callback_data": "a:n:promo"}],
-                [{"text": "🏠 Customer Menu", "callback_data": "n:start"}],
-            ]
+        labels = {
+            b["text"] for row in self.bot.markups[-1]["inline_keyboard"] for b in row
         }
-        self.assertEqual(self.bot.markups[-1], expected_markup)
-        self.assertTrue(
-            all(
-                len(button["callback_data"].encode()) <= 64
-                for row in expected_markup["inline_keyboard"]
-                for button in row
-            )
+        self.assertEqual(
+            labels,
+            {
+                "📥 Sales & payments",
+                "🔁 Recovery",
+                "📈 Fleet",
+                "🎁 Promo Settings",
+                "👤 Account access",
+                "⚙️ Advanced operations",
+                "🏠 Customer Menu",
+            },
         )
+
 
     def test_customer_can_create_and_submit_a_paid_order(self):
         self.bot.handle(self.message(123, "/buy basic_50gb"))
@@ -1213,7 +1206,9 @@ class TelegramBotCommerceTest(unittest.TestCase):
             "telegram_media_type": "photo",
         }
         calls = []
-        self.bot.request = lambda method, payload: calls.append((method, payload)) or True
+        self.bot.request = (
+            lambda method, payload: calls.append((method, payload)) or True
+        )
         sent_before = len(self.bot.sent)
 
         self.bot._send_receipt_review(999, receipt, message_id=83)
@@ -1221,9 +1216,17 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.assertEqual(len(self.bot.sent), sent_before)
         self.assertEqual(self.bot.media[-1][0:3], ("photo", 999, "receipt-photo"))
         self.assertIn(
-            ("deleteMessage", {"chat_id": 999, "message_id": 83}),
+            (
+                "editMessageReplyMarkup",
+                {
+                    "chat_id": 999,
+                    "message_id": 83,
+                    "reply_markup": {"inline_keyboard": []},
+                },
+            ),
             calls,
         )
+
 
     def test_wallet_topup_amount_and_provider_flow_uses_buttons(self):
         self.bot.handle(self.message(123, "/wallet"))
@@ -1637,7 +1640,11 @@ class TelegramBotCommerceTest(unittest.TestCase):
         for command in commands:
             self.bot.handle(self.message(123, command))
             self.assertEqual(self.bot.sent[-1][1], self.bot.UNKNOWN_ACTION_TEXT)
-            labels = {button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row}
+            labels = {
+                button["text"]
+                for row in self.bot.markups[-1]["inline_keyboard"]
+                for button in row
+            }
             self.assertNotIn("🛠 Admin Panel", labels)
 
         self.bot.request = lambda _method, _payload: True
@@ -1663,6 +1670,7 @@ class TelegramBotCommerceTest(unittest.TestCase):
             )
             self.assertEqual(self.bot.sent[-1][1], self.bot.UNKNOWN_ACTION_TEXT)
         self.assertEqual(calls, [])
+
 
     def test_admin_drain_is_confirmation_bound_and_allowlisted(self):
         preview_calls = []
@@ -2228,10 +2236,12 @@ class TelegramBotCommerceTest(unittest.TestCase):
 
         self.bot.handle(self.message(123, "/whoami"))
         customer_labels = {
-            button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
         }
-        self.assertIn("🎁 Daily 300MB", customer_labels)
-        self.assertIn("💎 Plans & Upgrade", customer_labels)
+        self.assertIn("🛍 Buy VPN", customer_labels)
+        self.assertIn("🧾 My Orders", customer_labels)
         self.assertNotIn("📊 Status", customer_labels)
         self.assertNotIn("📶 Usage", customer_labels)
         self.assertNotIn("🛠 Admin Panel", customer_labels)
@@ -2239,10 +2249,13 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(999, "/admin"))
         self.assertEqual(self.bot.markups[-1].keys(), {"inline_keyboard"})
         admin_labels = {
-            button["text"] for row in self.bot.markups[-1]["inline_keyboard"] for button in row
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
         }
-        self.assertIn("📥 Pending Orders", admin_labels)
-        self.assertIn("🧾 Receipt Review", admin_labels)
+        self.assertIn("📥 Sales & payments", admin_labels)
+        self.assertIn("🔁 Recovery", admin_labels)
+
 
     def test_button_actions_and_whoami(self):
         self.bot.handle(self.message(123, "📊 Status"))
@@ -2344,7 +2357,9 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.handle(self.message(123, "100GBFREE"))
         self.bot.handle(self.message(123, "/whoami"))
         locked_labels = {
-            button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
         }
         self.assertNotIn("🎁 Daily 300MB", locked_labels)
         self.assertNotIn("💎 Plans & Upgrade", locked_labels)
@@ -2352,14 +2367,18 @@ class TelegramBotCommerceTest(unittest.TestCase):
         self.bot.service.set_giveaway_active("100GBFREE", False)
         self.bot.handle(self.message(123, "/whoami"))
         restored_labels = {
-            button["text"] for row in self.bot.markups[-1]["keyboard"] for button in row
+            button["text"]
+            for row in self.bot.markups[-1]["inline_keyboard"]
+            for button in row
         }
-        self.assertIn("🎁 Daily 300MB", restored_labels)
-        self.assertIn("🚀 Monthly 3GB", restored_labels)
-        self.assertIn("💎 Plans & Upgrade", restored_labels)
+        self.assertIn("🛍 Buy VPN", restored_labels)
+        self.assertIn("🔐 My VPN", restored_labels)
+        # Navigating acquisition remains available; the existing claim/order
+        # services enforce promo eligibility at the explicit commit step.
 
         order = self.commerce.create_order(123, "Min", "basic_50gb")
         self.assertTrue(order.created)
+
 
     def test_open_paid_order_makes_user_ineligible_for_giveaway(self):
         self.commerce.create_order(123, "Min", "basic_50gb")

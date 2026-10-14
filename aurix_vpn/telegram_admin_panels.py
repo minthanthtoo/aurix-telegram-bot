@@ -320,13 +320,17 @@ class TelegramAdminMixin:
             raise PermissionError("admin keyboard requested by non-admin")
         return self._inline_keyboard(
             [
-                [("📥 Pending Orders", "a:n:orders"), ("🧾 Receipt Review", "a:n:receipts")],
-                [("📈 Capacity", "a:n:capacity"), ("🔎 Consistency", "a:n:reconcile")],
-                [("🔁 Failed Jobs", "a:n:failed"), ("🚨 Enforcement", "a:n:enforcement")],
-                [("🎁 Promo Settings", "a:n:promo")],
-                [("🏠 Customer Menu", "n:start")],
+                [("📥 Sales & payments", "u:h:sales")],
+                [("🔁 Recovery", "u:h:recovery"), ("📈 Fleet", "u:h:fleet")],
+                [
+                    ("🎁 Promo Settings", "u:h:promotions"),
+                    ("👤 Account access", "u:h:accounts"),
+                ],
+                [("⚙️ Advanced operations", "u:h:advanced")],
+                [("🏠 Customer Menu", "u:h:home")],
             ]
         )
+
 
     def _admin_call(self, telegram_id: int, operation: str, *args: Any, **kwargs: Any) -> Any:
         """Invoke a commerce operation through the admin authorization boundary."""
@@ -1123,6 +1127,7 @@ class TelegramAdminMixin:
         admin_view: bool = False,
         heading: str | None = None,
         message_id: int | None = None,
+        full_details: bool = False,
     ) -> None:
         if self.commerce is None:
             self.send(chat_id, "Order tracking is not configured.")
@@ -1132,8 +1137,23 @@ class TelegramAdminMixin:
         if order is None:
             self.send(chat_id, "Order not found.")
             return
-        text = ((heading + "\n\n") if heading else "") + self._order_detail_text(order)
+        context = getattr(self._navigation_local, "current", None)
+        compact = context is not None and not is_admin and not full_details
+        detail = (
+            self._customer_order_text(order)
+            if compact
+            else self._order_detail_text(order)
+        )
+        text = ((heading + "\n\n") if heading else "") + detail
         markup = self._order_actions(order, is_admin)
+        if compact:
+            markup["inline_keyboard"].insert(
+                -1, [{"text": "📄 Full details", "callback_data": f"o:d:{order_id}"}]
+            )
+        elif full_details:
+            markup["inline_keyboard"].insert(
+                0, [{"text": "↩ Order summary", "callback_data": f"o:v:{order_id}"}]
+            )
         if isinstance(message_id, int):
             try:
                 self.edit_message(chat_id, message_id, text, markup)
@@ -1143,3 +1163,47 @@ class TelegramAdminMixin:
         self.send(chat_id, text, markup)
         if isinstance(message_id, int):
             self._delete_message(chat_id, message_id)
+
+
+    @staticmethod
+    def _customer_order_text(order: dict[str, Any]) -> str:
+        from html import escape
+
+        stage = str(order.get("stage") or order.get("status") or "unknown")
+        advice = {
+            "awaiting_payment": "Choose a payment method or pay from your wallet.",
+            "review_pending": "Receipt submitted. Staff review is pending. Do not pay again.",
+            "payment_verified": "Payment verified. Staff approval is pending.",
+            "wallet_reserved": "Wallet funds reserved. Staff approval is pending.",
+            "activation_pending": "Your VPN access is being prepared.",
+            "activation_failed": "Setup needs staff attention. Contact support if needed.",
+            "fulfilled": "Your VPN access is ready.",
+            "revocation_pending": "Access termination is in progress.",
+            "revocation_failed": "Access termination needs staff attention.",
+            "refunded": "This refund remains recorded in your wallet history.",
+            "cancelled": "This order is closed and retained for your records.",
+            "rejected": "This order was rejected. Contact support for help.",
+            "approved": "This order has been approved.",
+        }.get(stage, "Refresh to check the latest status.")
+        if (
+            str(order.get("order_type") or "vpn") == "wallet_topup"
+            and stage == "approved"
+        ):
+            advice = "Top-up approved. View your wallet for the recorded credit."
+        return "\n".join(
+            [
+                "<b>🧾 Order · " + escape(str(order["id"])[:10]) + "</b>",
+                "",
+                escape(
+                    str(
+                        order.get("plan_name")
+                        or order.get("plan_code")
+                        or "Wallet top-up"
+                    )
+                ),
+                f"{int(order['amount_minor']):,} {escape(str(order['currency']))}",
+                "Status: <b>" + escape(stage.replace("_", " ")) + "</b>",
+                "",
+                advice,
+            ]
+        )

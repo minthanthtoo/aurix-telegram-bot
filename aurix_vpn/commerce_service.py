@@ -886,7 +886,7 @@ class CommerceService(CommerceWorkerMixin):
             return "review_pending"
         return "awaiting_payment"
 
-    def list_user_orders(self, telegram_id: int, limit: int = 10) -> list[dict[str, Any]]:
+    def list_user_orders(self, telegram_id: int, limit: int = 10, offset: int = 0) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT o.id, o.plan_code, o.plan_name, o.amount_minor, o.currency,
@@ -910,8 +910,8 @@ class CommerceService(CommerceWorkerMixin):
                           (SELECT r.status FROM wallet_reservations r WHERE r.order_id = o.id
                            LIMIT 1) AS wallet_reservation_status
                    FROM orders o WHERE o.telegram_id = ?
-                   ORDER BY o.created_at DESC LIMIT ?""",
-                (telegram_id, max(1, min(limit, 50))),
+                   ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?""",
+                (telegram_id, max(1, min(limit, 50)), max(0, int(offset))),
             ).fetchall()
         result = []
         for row in rows:

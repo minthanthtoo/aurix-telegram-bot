@@ -27,6 +27,7 @@ from .telegram_admin_panels import TelegramAdminMixin
 from .telegram_callbacks import TelegramCallbackMixin
 from .telegram_commands import TelegramCommandMixin
 from .telegram_maintenance import TelegramMaintenanceMixin
+from .telegram_navigation import TelegramNavigationMixin
 from .vpn_dashboard import collect_customer_vpn_state
 from receipt_llm import (
     OpenAICompatibleReceiptExtractor,
@@ -44,6 +45,7 @@ class TelegramAPIError(RuntimeError):
 
 
 class TelegramBot(
+    TelegramNavigationMixin,
     TelegramAdminMixin,
     TelegramCallbackMixin,
     TelegramMaintenanceMixin,
@@ -149,6 +151,7 @@ class TelegramBot(
         command_scope_cleanup_ids: set[int] | None = None,
         welcome_image_source: str | None = None,
     ):
+        self._init_navigation()
         self.api = f"https://api.telegram.org/bot{token}"
         # urllib.request establishes a fresh TLS connection for every Bot API
         # call. On the Singapore host, a small fraction of those handshakes
@@ -164,7 +167,9 @@ class TelegramBot(
         self.service = service
         self.commerce = commerce
         self.admin_ids = admin_ids or set()
-        self.admin_operations = AdminOperations(self.commerce, self.admin_ids, self.service)
+        self.admin_operations = AdminOperations(
+            self.commerce, self.admin_ids, self.service
+        )
         self.trial_ids = trial_ids or set()
         self.receipt_extractor = receipt_extractor or OpenAICompatibleReceiptExtractor()
         self.allow_text_payment = bool(allow_text_payment)
@@ -178,7 +183,9 @@ class TelegramBot(
             and not parsed_web_app_url.password
             else ""
         )
-        self.maintenance_interval_seconds = max(1.0, float(maintenance_interval_seconds))
+        self.maintenance_interval_seconds = max(
+            1.0, float(maintenance_interval_seconds)
+        )
         self.command_scope_cleanup_ids = command_scope_cleanup_ids or set()
         # A welcome image is optional at the transport boundary so unit tests
         # and lightweight integrations can remain text-only.  The runtime
@@ -212,6 +219,7 @@ class TelegramBot(
             "last_stage": None,
             "last_error": None,
         }
+
 
     def request(self, method: str, payload: dict[str, Any]) -> Any:
         started_at = time.perf_counter()
@@ -323,6 +331,9 @@ class TelegramBot(
         text: str,
         reply_markup: dict[str, Any] | None = None,
     ) -> Any:
+        captured, result = self._capture_activity_screen(chat_id, text, reply_markup)
+        if captured:
+            return result
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
@@ -333,6 +344,7 @@ class TelegramBot(
             payload["reply_markup"] = reply_markup
         return self.request("sendMessage", payload)
 
+
     def edit_message(
         self,
         chat_id: int,
@@ -340,6 +352,9 @@ class TelegramBot(
         text: str,
         reply_markup: dict[str, Any] | None = None,
     ) -> Any:
+        captured, result = self._capture_activity_screen(chat_id, text, reply_markup)
+        if captured:
+            return result
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "message_id": int(message_id),
@@ -351,21 +366,23 @@ class TelegramBot(
             payload["reply_markup"] = reply_markup
         return self.request("editMessageText", payload)
 
-    def _delete_message(self, chat_id: int, message_id: int | None) -> None:
-        """Best-effort cleanup for a bot-owned card that cannot be edited.
 
-        Telegram cannot convert every media message to text (or vice versa)
-        with ``editMessageText``.  When a callback originated in one of our
-        cards and we had to send a replacement, remove the stale card so the
-        customer still has one canonical screen.  Failures are intentionally
-        ignored because deletion is only a presentation cleanup.
-        """
+    def _delete_message(self, chat_id: int, message_id: int | None) -> None:
+        """Retire navigation buttons while retaining the message/record."""
         if not isinstance(message_id, int):
             return
         try:
-            self.request("deleteMessage", {"chat_id": int(chat_id), "message_id": message_id})
+            self.request(
+                "editMessageReplyMarkup",
+                {
+                    "chat_id": int(chat_id),
+                    "message_id": message_id,
+                    "reply_markup": {"inline_keyboard": []},
+                },
+            )
         except Exception:
             return
+
 
     @staticmethod
     def _reply_keyboard(rows: list[list[str]]) -> dict[str, Any]:
@@ -832,7 +849,9 @@ class TelegramBot(
             selected = str(state.get("filter") or "open")
             all_items = list(state.get("all_items") or [])
             page = max(0, int(state.get("page", 0)))
-        filtered = [item for item in all_items if self._order_filter_match(item, selected)]
+        filtered = [
+            item for item in all_items if self._order_filter_match(item, selected)
+        ]
         page_size = 4
         pages = max(1, (len(filtered) + page_size - 1) // page_size)
         page = min(page, pages - 1)
@@ -867,8 +886,14 @@ class TelegramBot(
                 (f"✅ Done {counts['completed']}", f"c2:{token}:filter:completed"),
             ],
             [
-                (f"🚫 Cancelled/expired {counts['cancelled']}", f"c2:{token}:filter:cancelled"),
-                (f"❌ Admin rejected {counts['rejected']}", f"c2:{token}:filter:rejected"),
+                (
+                    f"🚫 Cancelled/expired {counts['cancelled']}",
+                    f"c2:{token}:filter:cancelled",
+                ),
+                (
+                    f"❌ Admin rejected {counts['rejected']}",
+                    f"c2:{token}:filter:rejected",
+                ),
             ],
             [(f"📚 All {counts['all']}", f"c2:{token}:filter:all")],
         ]
@@ -896,9 +921,9 @@ class TelegramBot(
         rows.append([("🔄 Refresh", f"c2:{token}:refresh")])
         rows.append(
             [
-                ("🏠 Main Menu", "n:start"),
-                ("🔐 My VPN", "n:myvpn"),
-                ("✖ Close", "n:close"),
+                {"text": "🏠 Main Menu", "callback_data": "n:start"},
+                {"text": "🔐 My VPN", "callback_data": "n:myvpn"},
+                {"text": "✖ Close", "callback_data": "n:close"},
             ]
         )
         with self._panel_lock:
@@ -908,6 +933,7 @@ class TelegramBot(
             state["items"] = current
             state["updated_at"] = time.monotonic()
         return "\n\n".join(blocks)[:4096], self._inline_keyboard(rows)
+
 
     def _open_customer_orders_panel(
         self, chat_id: int, telegram_id: int, message_id: int | None = None
@@ -1008,27 +1034,8 @@ class TelegramBot(
         return True
 
     def _customer_keyboard(self, telegram_id: int) -> dict[str, Any]:
-        try:
-            promo_locked = bool(
-                self.service.giveaway_status(telegram_id)["access_lock_active"]
-            )
-        except Exception:
-            promo_locked = False
-        rows = [["🔐 My VPN"]]
-        paid_active = self._free_claim_blocked_by_paid(telegram_id)
-        if not promo_locked and not paid_active:
-            rows.append(["🎁 Daily 300MB", "🚀 Monthly 3GB"])
-        if not promo_locked:
-            rows.append(["💎 Plans & Upgrade", "🧾 My Orders"])
-        else:
-            rows.append(["🧾 My Orders"])
-        rows.extend([["💰 Wallet", "❓ Help"]])
-        markup = self._reply_keyboard(rows)
-        if self.web_app_url:
-            markup["keyboard"].append(
-                [{"text": "🌐 Open AuriX VPN Portal", "web_app": {"url": self.web_app_url}}]
-            )
-        return markup
+        return self._navigation_home_markup(telegram_id)
+
 
     def configure_commands(self) -> None:
         self._command_menu_configure_attempted = True
@@ -1141,6 +1148,7 @@ class TelegramBot(
         caption: str = "",
         reply_markup: dict[str, Any] | None = None,
     ) -> Any:
+        reply_markup = self._navigation_media_markup(chat_id, reply_markup)
         source = str(file_id)
         local_path = Path(source).expanduser()
         if local_path.is_file():
@@ -1163,9 +1171,11 @@ class TelegramBot(
                     photos = result.get("photo")
                     if isinstance(photos, list) and photos:
                         final = photos[-1]
-                        if isinstance(final, dict) and isinstance(final.get("file_id"), str):
+                        if isinstance(final, dict) and isinstance(
+                            final.get("file_id"), str
+                        ):
                             self._uploaded_media_file_ids[cache_key] = final["file_id"]
-                return result
+                return self._navigation_media_result(chat_id, result)
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "photo": source,
@@ -1174,7 +1184,10 @@ class TelegramBot(
         self._add_html_parse_mode(payload, caption)
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        return self.request("sendPhoto", payload)
+        return self._navigation_media_result(
+            chat_id, self.request("sendPhoto", payload)
+        )
+
 
     def send_document(
         self,
@@ -1183,6 +1196,7 @@ class TelegramBot(
         caption: str = "",
         reply_markup: dict[str, Any] | None = None,
     ) -> Any:
+        reply_markup = self._navigation_media_markup(chat_id, reply_markup)
         source = str(file_id)
         local_path = Path(source).expanduser()
         if local_path.is_file():
@@ -1203,9 +1217,11 @@ class TelegramBot(
                 )
                 if isinstance(result, dict):
                     document = result.get("document")
-                    if isinstance(document, dict) and isinstance(document.get("file_id"), str):
+                    if isinstance(document, dict) and isinstance(
+                        document.get("file_id"), str
+                    ):
                         self._uploaded_media_file_ids[cache_key] = document["file_id"]
-                return result
+                return self._navigation_media_result(chat_id, result)
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "document": source,
@@ -1214,7 +1230,10 @@ class TelegramBot(
         self._add_html_parse_mode(payload, caption)
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        return self.request("sendDocument", payload)
+        return self._navigation_media_result(
+            chat_id, self.request("sendDocument", payload)
+        )
+
 
     @staticmethod
     def _receipt_review_caption(receipt: dict[str, Any]) -> str:
@@ -1264,6 +1283,7 @@ class TelegramBot(
             and not list(extracted.get("flags") or [])
         ):
             rows.append([("✅ Verify extracted facts…", f"a:v:{evidence_id}")])
+        rows.append([("✍️ Verify manually…", f"form:verify:{evidence_id}")])
         rows.append([("🛑 Reject Receipt", f"a:rq:{evidence_id}")])
         markup = self._inline_keyboard(rows)
         file_id = str(receipt["telegram_file_id"])
@@ -1570,7 +1590,9 @@ class TelegramBot(
         lines.append("free_3gb — free every 30 days — 3 GiB / 30 days (use /trial)")
         plans = self.commerce.plans()
         for plan in plans:
-            quota = f"{plan.quota_bytes / 1024**3:g} GB" if plan.quota_bytes else "fair-use"
+            quota = (
+                f"{plan.quota_bytes / 1024**3:g} GB" if plan.quota_bytes else "fair-use"
+            )
             lines.append(
                 f"{plan.code} — {plan.price_minor:,} {plan.currency} — {quota} / {plan.duration_days} days"
             )
@@ -1597,12 +1619,13 @@ class TelegramBot(
             markup["inline_keyboard"].insert(0, promo_buttons)
         markup["inline_keyboard"].append(
             [
-                ("🏠 Main Menu", "n:start"),
-                ("🔐 My VPN", "n:myvpn"),
-                ("✖ Close", "n:close"),
+                {"text": "🏠 Main Menu", "callback_data": "n:start"},
+                {"text": "🔐 My VPN", "callback_data": "n:myvpn"},
+                {"text": "✖ Close", "callback_data": "n:close"},
             ]
         )
         self._send_screen(chat_id, "\n".join(lines), markup, message_id=message_id)
+
 
     def _send_status(self, chat_id: int, telegram_id: int, include_key: bool = False) -> None:
         giveaway = self.service.giveaway_status(telegram_id)
@@ -1741,7 +1764,9 @@ class TelegramBot(
         ]
         account_status = state.get("account_status")
         if account_status not in (None, "active"):
-            blocks.insert(1, f"Account: {account_status}. VPN access delivery is paused.")
+            blocks.insert(
+                1, f"Account: {account_status}. VPN access delivery is paused."
+            )
         copy_rows: list[list[dict[str, Any]]] = []
         for index, entry in enumerate(displayed, start=page * page_size + 1):
             status = str(entry.get("status") or "unknown")
@@ -1762,7 +1787,9 @@ class TelegramBot(
                 percent = min(100.0, used * 100 / quota)
                 filled = min(10, max(0, int(percent / 10)))
                 bar = "█" * filled + "░" * (10 - filled)
-                observed_note = "" if entry.get("usage_observed") else " · awaiting traffic data"
+                observed_note = (
+                    "" if entry.get("usage_observed") else " · awaiting traffic data"
+                )
                 lines.extend(
                     [
                         f"{bar} {percent:.1f}%{observed_note}",
@@ -1772,6 +1799,17 @@ class TelegramBot(
                 )
             access_url = entry.get("access_url")
             if isinstance(access_url, str) and access_url:
+                if getattr(self._navigation_local, "current", None) is not None:
+                    copy_rows.append(
+                        [
+                            {
+                                "text": f"🔐 Open #{index} · {str(entry['tier'])[:28]}",
+                                "callback_data": f"vpnkey:{token}:{entries.index(entry)}",
+                            }
+                        ]
+                    )
+                    blocks.append("\n".join(lines))
+                    continue
                 lines.append(f"Key:\n{access_url}")
                 copy_button = self._copy_text_button(
                     f"📋 Copy #{index} · {str(entry['tier'])[:28]}", access_url
@@ -1782,28 +1820,52 @@ class TelegramBot(
                     lines.append("Press and hold the key above to copy it.")
             elif entry.get("access_blocked"):
                 lines.append("VPN access is paused while your account is inactive.")
-            elif status == "active" and entry.get("key_type") != "paid" and not access_available:
-                lines.append("Key retrieval is temporarily unavailable; refresh shortly.")
+            elif (
+                status == "active"
+                and entry.get("key_type") != "paid"
+                and not access_available
+            ):
+                lines.append(
+                    "Key retrieval is temporarily unavailable; refresh shortly."
+                )
             elif status == "activation pending":
                 lines.append("Your key will appear here after activation.")
             blocks.append("\n".join(lines))
         if not displayed:
             blocks.append("Nothing in this category.")
         if not usage_available:
-            blocks.append("⚠️ Usage is temporarily unavailable; key status is still shown.")
+            blocks.append(
+                "⚠️ Usage is temporarily unavailable; key status is still shown."
+            )
         else:
-            blocks.append("Usage is Outline's rolling 30-day transfer total, not live speed.")
+            blocks.append(
+                "Usage is Outline's rolling 30-day transfer total, not live speed."
+            )
         rows: list[list[dict[str, Any]]] = [
             [
-                {"text": f"🟢 Active {counts['active']}", "callback_data": f"c2:{token}:filter:active"},
-                {"text": f"🟡 Pending {counts['pending']}", "callback_data": f"c2:{token}:filter:pending"},
+                {
+                    "text": f"🟢 Active {counts['active']}",
+                    "callback_data": f"c2:{token}:filter:active",
+                },
+                {
+                    "text": f"🟡 Pending {counts['pending']}",
+                    "callback_data": f"c2:{token}:filter:pending",
+                },
             ],
             [
-                {"text": f"⚫ Ended {counts['ended']}", "callback_data": f"c2:{token}:filter:ended"},
-                {"text": f"📚 All {counts['all']}", "callback_data": f"c2:{token}:filter:all"},
+                {
+                    "text": f"⚫ Ended {counts['ended']}",
+                    "callback_data": f"c2:{token}:filter:ended",
+                },
+                {
+                    "text": f"📚 All {counts['all']}",
+                    "callback_data": f"c2:{token}:filter:all",
+                },
             ],
         ]
         rows.extend(copy_rows)
+        if getattr(self._navigation_local, "current", None) is not None:
+            rows.append([{"text": "📱 Devices", "callback_data": "ui:devices"}])
         navigation: list[dict[str, Any]] = []
         if page > 0:
             navigation.extend(
@@ -1812,7 +1874,9 @@ class TelegramBot(
                     {"text": "◀", "callback_data": f"c2:{token}:prev"},
                 ]
             )
-        navigation.append({"text": f"{page + 1}/{pages}", "callback_data": f"c2:{token}:refresh"})
+        navigation.append(
+            {"text": f"{page + 1}/{pages}", "callback_data": f"c2:{token}:refresh"}
+        )
         if page + 1 < pages:
             navigation.extend(
                 [
@@ -1835,6 +1899,7 @@ class TelegramBot(
             state["pages"] = pages
             state["updated_at"] = time.monotonic()
         return "\n\n".join(blocks)[:4096], {"inline_keyboard": rows}
+
 
     def _refresh_customer_vpn_panel(self, token: str, telegram_id: int) -> None:
         fresh = self._collect_customer_vpn_state(telegram_id)

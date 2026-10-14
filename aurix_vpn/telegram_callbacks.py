@@ -48,7 +48,10 @@ class TelegramCallbackMixin:
             or int(chat.get("id")) != int(user.get("id"))
         ):
             return
-        self.request("answerCallbackQuery", {"callback_query_id": query_id})
+        if not query.get("_navigation_forwarded"):
+            self.request("answerCallbackQuery", {"callback_query_id": query_id})
+        if self._handle_navigation_callback(query):
+            return
         telegram_id = int(user["id"])
         chat_id = int(chat["id"])
         if data.startswith("v2:"):
@@ -72,17 +75,7 @@ class TelegramCallbackMixin:
             self.send(chat_id, "This panel expired. Open My VPN or My Orders again.")
             return
         if data == "n:close":
-            # A child card is disposable UI state. Deleting it keeps the
-            # conversation compact without creating a replacement message.
-            try:
-                self.request(
-                    "deleteMessage",
-                    {"chat_id": chat_id, "message_id": message.get("message_id")},
-                )
-            except Exception:
-                # Deletion is presentation-only; keep the user in the flow if
-                # Telegram rejects an old/non-bot message.
-                pass
+            self._delete_message(chat_id, message.get("message_id"))
             return
         first_name = str(user.get("first_name") or "")
         username = user.get("username") if isinstance(user.get("username"), str) else None
@@ -142,6 +135,9 @@ class TelegramCallbackMixin:
                 entity_id,
                 message_id=message.get("message_id"),
             )
+        elif scope == "o" and action == "d":
+            self._send_order_detail(chat_id, telegram_id, entity_id,
+                message_id=message.get("message_id"), full_details=True)
         elif scope == "o" and action == "r":
             order = self.commerce.order_detail(entity_id, telegram_id) if self.commerce else None
             if order is None:
