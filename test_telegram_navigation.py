@@ -1,9 +1,11 @@
 """Activity navigation exercised through real dispatch with mocked Telegram I/O."""
 
 import copy
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
@@ -14,6 +16,16 @@ from test_app import FakeOutline
 
 class TelegramNavigationTest(unittest.TestCase):
     def setUp(self):
+        staff_environment = patch.dict(
+            os.environ,
+            {
+                "AURIX_STAFF_AUTHORIZATION_MODE": "legacy",
+                "OWNER_TELEGRAM_IDS": "",
+                "SELLER_TELEGRAM_IDS": "",
+            },
+        )
+        staff_environment.start()
+        self.addCleanup(staff_environment.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Database(Path(self.tmp.name) / "bot.db")
         self.db.initialize()
