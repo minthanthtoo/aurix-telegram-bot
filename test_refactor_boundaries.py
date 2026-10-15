@@ -19,6 +19,7 @@ import telegram_maintenance
 from ports import OutlineGateway, ReceiptExtractorGateway, ReceiptStorageGateway
 from receipt_llm import OpenAICompatibleReceiptExtractor
 from supabase_storage import NullReceiptStorage
+from aurix_vpn.telegram_navigation import TelegramNavigationMixin
 
 
 class CompatibilityExportTest(unittest.TestCase):
@@ -69,8 +70,8 @@ class CompatibilityExportTest(unittest.TestCase):
             telegram_maintenance.TelegramMaintenanceMixin,
         ):
             self.assertTrue(issubclass(bot, mixin))
-        self.assertIs(bot.handle, telegram_commands.TelegramCommandMixin.handle)
-        self.assertIs(bot.handle_callback, telegram_callbacks.TelegramCallbackMixin.handle_callback)
+        self.assertIs(bot.handle, TelegramNavigationMixin.handle)
+        self.assertIs(bot.handle_callback, TelegramNavigationMixin.handle_callback)
         self.assertIs(
             bot._run_maintenance_pass,
             telegram_maintenance.TelegramMaintenanceMixin._run_maintenance_pass,

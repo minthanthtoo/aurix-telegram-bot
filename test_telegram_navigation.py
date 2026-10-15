@@ -11,6 +11,7 @@ from cryptography.fernet import Fernet
 
 from app import ClaimService, Database, TelegramBot
 from commerce import CommerceDatabase, CommerceService
+from receipt_llm import ReceiptLLMUnavailable
 from test_app import FakeOutline
 
 
@@ -135,6 +136,171 @@ class TelegramNavigationTest(unittest.TestCase):
         self.assertNotIn("keyboard", self.messages[1]["reply_markup"])
         self.assertEqual(before, self.financial_state())
         self.assertFalse(self.outline.created)
+
+    def test_command_menu_enters_the_same_backed_activity_as_inline_navigation(self):
+        self.bot.handle(
+            {
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 123, "first_name": "Test"},
+                "text": "/plans",
+            }
+        )
+
+        activity_id = max(self.messages)
+        self.assertEqual(len(self.messages), 1)
+        self.assertTrue(
+            {button["text"] for button in self.buttons(activity_id)}
+            >= {"↩ Back", "🏠 Home"}
+        )
+        actions = [
+            button
+            for button in self.buttons(activity_id)
+            if button["text"] not in {"↩ Back", "🏠 Home"}
+        ]
+        self.assertTrue(actions)
+        self.assertTrue(
+            all(
+                button["callback_data"].startswith("u:")
+                for button in actions
+                if "callback_data" in button
+            )
+        )
+
+        self.click(activity_id, "My VPN")
+        self.assertEqual(len(self.messages), 1)
+        self.assertIn("↩ Back", {button["text"] for button in self.buttons(activity_id)})
+        self.click(activity_id, "Back")
+        self.assertIn("AuriX plans:", self.messages[activity_id]["text"])
+        self.click(activity_id, "Back")
+        self.assertIn("Welcome to AuriX VPN", self.messages[activity_id]["text"])
+
+    def test_legacy_reply_button_shortcuts_enter_role_appropriate_activities(self):
+        self.bot.handle(
+            {
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 123, "first_name": "Test"},
+                "text": "💎 Plans & Upgrade",
+            }
+        )
+        customer_activity = max(self.messages)
+        self.assertTrue(
+            {"↩ Back", "🏠 Home"}
+            <= {button["text"] for button in self.buttons(customer_activity)}
+        )
+
+        self.bot.handle(
+            {
+                "chat": {"id": 999, "type": "private"},
+                "from": {"id": 999, "first_name": "Admin"},
+                "text": "📥 Pending Orders",
+            }
+        )
+        staff_activity = max(self.messages)
+        self.assertEqual(self.messages[staff_activity]["chat_id"], 999)
+        self.assertTrue(
+            {"↩ Back", "🏠 Home"}
+            <= {button["text"] for button in self.buttons(staff_activity)}
+        )
+        self.click_as_staff(staff_activity, "Back")
+        self.assertIn("Admin workspace", self.messages[staff_activity]["text"])
+
+    def test_legacy_order_button_is_upgraded_in_place_with_back_navigation(self):
+        order_id = self.order()
+        message_id = 900
+        self.messages[message_id] = {"chat_id": 123, "text": "Old order card"}
+        self.callback("o:v:" + order_id, message_id=message_id)
+
+        labels = {button["text"] for button in self.buttons(message_id)}
+        self.assertTrue({"↩ Back", "🏠 Home"} <= labels)
+        self.assertTrue(
+            all(
+                button.get("callback_data", "").startswith("u:")
+                for button in self.buttons(message_id)
+                if button["text"] not in {"↩ Back", "🏠 Home"}
+                and "callback_data" in button
+            )
+        )
+        self.click(message_id, "Back")
+        self.assertIn("Orders", self.messages[message_id]["text"])
+
+    def test_legacy_root_home_has_no_redundant_back_step(self):
+        message_id = 901
+        self.messages[message_id] = {"chat_id": 123, "text": "Old home"}
+
+        self.callback("n:start", message_id=message_id)
+
+        labels = {button["text"] for button in self.buttons(message_id)}
+        self.assertIn("🏠 Home", labels)
+        self.assertNotIn("↩ Back", labels)
+
+    def test_legacy_callback_parents_follow_their_feature_branches(self):
+        parents = {
+            "n:adminorders": "ui:staff",
+            "a:n:capacity": "ui:fleet",
+            "a:promo:activate:SPRING": "ui:promotions",
+            "history:10": "n:myorders",
+            "ui:daily": "ui:free",
+            "form:staff_role": "ui:owner_staff",
+        }
+
+        for callback, parent in parents.items():
+            with self.subTest(callback=callback):
+                self.assertEqual(
+                    self.bot._legacy_callback_parent(callback), parent
+                )
+
+    def test_explicit_receipt_upload_preserves_customer_and_admin_activity_records(self):
+        order_id = self.order()
+        self.bot._download_telegram_file = lambda _file_id: (b"receipt-image", "image/jpeg")
+
+        class UnavailableExtractor:
+            @staticmethod
+            def extract(_image, _mime):
+                raise ReceiptLLMUnavailable("No receipt model in this test")
+
+        self.bot.receipt_extractor = UnavailableExtractor()
+        self.bot.handle(
+            {
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 123, "first_name": "Test"},
+                "caption": "/paid " + order_id,
+                "photo": [{"file_id": "receipt-photo", "file_unique_id": "receipt-1"}],
+            }
+        )
+
+        customer_message = next(
+            message_id
+            for message_id, payload in self.messages.items()
+            if payload.get("chat_id") == 123
+        )
+        admin_message = next(
+            message_id
+            for message_id, payload in self.messages.items()
+            if payload.get("chat_id") == 999
+        )
+        self.assertEqual(
+            self.commerce.order_detail(order_id, 123)["status"], "payment_submitted"
+        )
+        customer_labels = {button["text"] for button in self.buttons(customer_message)}
+        admin_labels = {button["text"] for button in self.buttons(admin_message)}
+        self.assertTrue(
+            any("Review order" in label for label in customer_labels)
+            and {"↩ Back", "🏠 Home"} <= customer_labels
+        )
+        self.assertTrue(
+            {"Open Receipt", "Open Order", "↩ Back", "🏠 Home"} <= admin_labels
+        )
+
+        receipt_button = next(
+            button for button in self.buttons(admin_message) if button["text"] == "Open Receipt"
+        )
+        self.callback(receipt_button["callback_data"], admin_message, actor=999)
+        review_message = max(self.messages)
+        self.assertEqual(self.messages[review_message]["chat_id"], 999)
+        self.assertTrue(
+            {"↩ Back", "🏠 Home"}
+            <= {button["text"] for button in self.buttons(review_message)}
+        )
 
     def test_new_activity_keeps_home_and_child_views_edit_same_island(self):
         self.callback("u:h:home")
@@ -404,6 +570,12 @@ class TelegramNavigationTest(unittest.TestCase):
         self.assertNotIn("ss://secret", self.messages[1]["text"])
         self.click(1, "Open #")
         self.assertIn("ss://secret", self.messages[1]["text"])
+        self.assertTrue(
+            any(
+                button.get("copy_text") == {"text": "ss://secret"}
+                for button in self.buttons(1)
+            )
+        )
         self.click(1, "Back")
         self.assertNotIn("ss://secret", self.messages[1]["text"])
 

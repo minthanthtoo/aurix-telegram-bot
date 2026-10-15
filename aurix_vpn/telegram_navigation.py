@@ -14,6 +14,140 @@ from .staff_access import ADMIN_CAPABILITIES, MAX_TELEGRAM_ID, ROLES, StaffAcces
 
 
 class TelegramNavigationMixin:
+    # Keep Telegram's command menu and old inline messages inside the same
+    # activity model as the current Home tree. The commands remain supported;
+    # only their presentation transport changes.
+    ACTIVITY_COMMANDS = frozenset(
+        {
+            "/myvpn",
+            "/status",
+            "/usage",
+            "/claim",
+            "/claimpromo",
+            "/giveaway100gb",
+            "/trial",
+            "/plans",
+            "/buy",
+            "/upgrade",
+            "/renew",
+            "/replace",
+            "/myorders",
+            "/order",
+            "/wallet",
+            "/topup",
+            "/walletpay",
+            "/paid",
+            "/cancelorder",
+            "/whoami",
+            "/pair",
+            "/revoke_device",
+            "/devices",
+            "/help",
+            "/admin",
+            "/orders",
+            "/receipts",
+            "/capacity",
+            "/failsafety",
+            "/setsafety",
+            "/drain",
+            "/serverstate",
+            "/accountstatus",
+            "/suspendaccount",
+            "/reactivateaccount",
+            "/provisionnode",
+            "/disableprotocol",
+            "/protocolreadiness",
+            "/promoteprotocol",
+            "/reconcile",
+            "/enforcement",
+            "/promo",
+            "/setpromo",
+            "/stoppromo",
+            "/resumepromo",
+            "/failed",
+            "/retry",
+            "/retryjob",
+            "/refund",
+            "/ledger",
+            "/receipt",
+            "/rejectreceipt",
+            "/verify",
+            "/approve",
+            "/reject",
+        }
+    )
+    PRESERVED_ACTIVITY_COMMANDS = frozenset(
+        {
+            "/claim",
+            "/claimpromo",
+            "/giveaway100gb",
+            "/trial",
+            "/buy",
+            "/upgrade",
+            "/renew",
+            "/replace",
+            "/wallet",
+            "/walletpay",
+            "/paid",
+            "/cancelorder",
+            "/pair",
+            "/revoke_device",
+            "/verify",
+            "/approve",
+            "/reject",
+            "/rejectreceipt",
+            "/retry",
+            "/retryjob",
+            "/refund",
+            "/setpromo",
+            "/stoppromo",
+            "/resumepromo",
+            "/setsafety",
+            "/drain",
+            "/serverstate",
+            "/suspendaccount",
+            "/reactivateaccount",
+            "/provisionnode",
+            "/disableprotocol",
+            "/promoteprotocol",
+        }
+    )
+    STAFF_ACTIVITY_COMMANDS = frozenset(
+        {
+            "/admin",
+            "/orders",
+            "/receipts",
+            "/capacity",
+            "/failsafety",
+            "/setsafety",
+            "/drain",
+            "/serverstate",
+            "/accountstatus",
+            "/suspendaccount",
+            "/reactivateaccount",
+            "/provisionnode",
+            "/disableprotocol",
+            "/protocolreadiness",
+            "/promoteprotocol",
+            "/reconcile",
+            "/enforcement",
+            "/promo",
+            "/setpromo",
+            "/stoppromo",
+            "/resumepromo",
+            "/failed",
+            "/retry",
+            "/retryjob",
+            "/refund",
+            "/ledger",
+            "/receipt",
+            "/rejectreceipt",
+            "/verify",
+            "/approve",
+            "/reject",
+        }
+    )
+
     NAVIGATION_TTL = 1800
     NAVIGATION_LIMIT = 256
     # These are presentation destinations. They never create business records.
@@ -157,6 +291,265 @@ class TelegramNavigationMixin:
         {"staff_role", "staff_revoke", "staff_assign", "staff_unassign", "staff_capability"}
     )
 
+    def handle(self, message: dict[str, Any]) -> Any:
+        """Route command shortcuts and receipt uploads through activity screens."""
+        if getattr(self._navigation_local, "current", None) is not None:
+            return super().handle(message)
+
+        if message.get("photo") or message.get("document"):
+            if self._route_activity_input(message):
+                return None
+            if self._route_receipt_upload_activity(message):
+                return None
+
+        if self._route_command_activity(message):
+            return None
+        return super().handle(message)
+
+    def _route_command_activity(self, message: dict[str, Any]) -> bool:
+        user = message.get("from") or {}
+        chat = message.get("chat") or {}
+        text = message.get("text")
+        if (
+            not isinstance(text, str)
+            or not isinstance(user.get("id"), int)
+            or not isinstance(chat.get("id"), int)
+            or chat.get("type") != "private"
+            or int(chat["id"]) != int(user["id"])
+        ):
+            return False
+        normalized = text.strip()
+        if not normalized.startswith("/"):
+            normalized = self.CUSTOMER_BUTTON_COMMANDS.get(normalized, "")
+            if not normalized and self._is_admin(user["id"]):
+                normalized = self.ADMIN_BUTTON_COMMANDS.get(text.strip(), "")
+        parts = normalized.split()
+        if not parts or not parts[0].startswith("/"):
+            return False
+        command = parts[0].split("@", 1)[0].lower()
+        if command not in self.ACTIVITY_COMMANDS:
+            return False
+        args = parts[1:]
+        entry = "cmd:" + " ".join([command[1:], *args])
+        activity = self._new_activity(chat["id"], user["id"], entry)
+        activity["entry"] = entry
+        activity["history"] = [
+            "ui:staff" if command in self.STAFF_ACTIVITY_COMMANDS else "ui:home"
+        ]
+        source_message_id = message.get("_message_id")
+        if isinstance(source_message_id, int):
+            activity["message_id"] = source_message_id
+        query = {
+            "from": dict(user),
+            "message": {
+                "chat": {"id": chat["id"], "type": "private"},
+                "message_id": activity.get("message_id"),
+            },
+        }
+        preserve = command in self.PRESERVED_ACTIVITY_COMMANDS or (
+            command == "/topup" and bool(args)
+        )
+        with self._activity_context(activity, preserve=preserve):
+            self._run_activity_entry(activity, entry, query)
+        return True
+
+    def _route_receipt_upload_activity(self, message: dict[str, Any]) -> bool:
+        user = message.get("from") or {}
+        chat = message.get("chat") or {}
+        if (
+            not (message.get("photo") or message.get("document"))
+            or not isinstance(user.get("id"), int)
+            or not isinstance(chat.get("id"), int)
+            or chat.get("type") != "private"
+            or int(chat["id"]) != int(user["id"])
+        ):
+            return False
+        activity = self._new_activity(chat["id"], user["id"], "receipt-upload")
+        activity["history"] = ["ui:home"]
+        caption = str(message.get("caption") or "")
+        try:
+            order_id = self._pending_order_id(user["id"], caption)
+            order = (
+                self.commerce.order_detail(order_id, user["id"])
+                if order_id and self.commerce is not None
+                else None
+            )
+            if order is not None:
+                activity["order_id"] = str(order_id)
+        except Exception:
+            # Receipt ownership and validation remain in _handle_receipt.
+            # This lookup only lets the acknowledgement offer a safe shortcut.
+            pass
+        with self._activity_context(activity, preserve=True):
+            super().handle(message)
+        return True
+
+    def handle_callback(self, query: dict[str, Any]) -> Any:
+        """Upgrade legacy inline buttons to revision-bound activity actions."""
+        if (
+            getattr(self._navigation_local, "current", None) is not None
+            or query.get("_navigation_forwarded")
+            or str(query.get("data") or "").startswith("u:")
+            or query.get("data") == "n:close"
+        ):
+            return super().handle_callback(query)
+        user = query.get("from") or {}
+        message = query.get("message") or {}
+        chat = message.get("chat") or {}
+        data = query.get("data")
+        if (
+            not isinstance(data, str)
+            or not isinstance(user.get("id"), int)
+            or not isinstance(chat.get("id"), int)
+            or chat.get("type") != "private"
+            or int(chat["id"]) != int(user["id"])
+        ):
+            return super().handle_callback(query)
+
+        if data == "n:start":
+            return self._run_legacy_root_callback(query, "ui:home")
+        if data == "n:menu":
+            return self._run_legacy_root_callback(query, "ui:setup")
+
+        activity = self._new_activity(chat["id"], user["id"], data)
+        activity["entry"] = data
+        activity["history"] = [self._legacy_callback_parent(data)]
+        source_message_id = message.get("message_id")
+        if isinstance(source_message_id, int):
+            activity["message_id"] = source_message_id
+        preserve = self._legacy_callback_preserves(data)
+        with self._activity_context(activity, preserve=preserve):
+            return super().handle_callback(query)
+
+    def _run_legacy_root_callback(self, query: dict[str, Any], entry: str) -> None:
+        user = query["from"]
+        message = query["message"]
+        chat_id = int(message["chat"]["id"])
+        activity = self._new_activity(chat_id, int(user["id"]), entry)
+        activity["entry"] = entry
+        activity["history"] = (
+            [] if entry == "ui:home" else [self._legacy_callback_parent(str(query["data"]))]
+        )
+        if isinstance(message.get("message_id"), int):
+            activity["message_id"] = message["message_id"]
+        query_id = query.get("id")
+        if isinstance(query_id, str):
+            self.request("answerCallbackQuery", {"callback_query_id": query_id})
+        with self._activity_context(activity):
+            self._run_activity_entry(activity, entry, query)
+
+    @staticmethod
+    def _legacy_callback_parent(data: str) -> str:
+        if data.startswith(("c2:", "v2:")):
+            parts = data.split(":", 2)
+            if len(parts) >= 2:
+                return "panel:" + parts[1]
+        if data.startswith("a:n:"):
+            section = data.split(":", 2)[2]
+            if section in {"orders", "receipts"}:
+                return "ui:sales"
+            if section in {"failed", "enforcement", "reconcile"}:
+                return "ui:recovery"
+            if section == "capacity":
+                return "ui:fleet"
+            if section == "promo":
+                return "ui:promotions"
+            return "ui:staff"
+        if data.startswith(("a:pl:", "a:ep:", "a:e:")):
+            return "ui:fleet"
+        if data.startswith("a:promo:"):
+            return "ui:promotions"
+        if data == "n:adminorders":
+            return "ui:staff"
+        if data.startswith("a:"):
+            return "ui:sales"
+        if data.startswith("history:"):
+            return "n:myorders"
+        if data.startswith("vpnkey:") or data == "ui:key":
+            return "n:myvpn"
+        if data.startswith("o:"):
+            return "n:myorders"
+        if data.startswith(("p:", "plan:")):
+            return "n:plans"
+        if data.startswith("t:"):
+            return "n:wallet"
+        if data.startswith("g:"):
+            return "ui:free"
+        if data.startswith(("device:", "devrevoke:", "devconfirm:")):
+            return "ui:devices"
+        if data.startswith("ui:"):
+            section = data[3:]
+            parents = {
+                "buy": "ui:home",
+                "free": "ui:buy",
+                "daily": "ui:free",
+                "monthly": "ui:free",
+                "promo": "ui:free",
+                "help": "ui:home",
+                "paymenthelp": "ui:help",
+                "account": "ui:help",
+                "setup": "ui:help",
+                "install": "ui:setup",
+                "addkey": "ui:setup",
+                "connect": "ui:setup",
+                "trouble": "ui:setup",
+                "devices": "n:myvpn",
+                "staff": "ui:home",
+                "owner_staff": "ui:staff",
+                "staff_members": "ui:owner_staff",
+                "staff_assignments": "ui:owner_staff",
+                "staff_audit": "ui:owner_staff",
+                "seller_cases": "ui:staff",
+                "sales": "ui:staff",
+                "recovery": "ui:staff",
+                "fleet": "ui:staff",
+                "accounts": "ui:staff",
+                "advanced": "ui:staff",
+                "promotions": "ui:staff",
+            }
+            return parents.get(section, "ui:home")
+        if data.startswith("form:"):
+            form = data[5:].split(":", 1)[0]
+            if form in {"topup"}:
+                return "n:wallet"
+            if form in {"staff_role", "staff_revoke", "staff_assign", "staff_unassign", "staff_capability"}:
+                return "ui:owner_staff"
+            if form in {"accountstatus", "suspendaccount", "reactivateaccount"}:
+                return "ui:accounts"
+            if form in {"drain", "serverstate"}:
+                return "ui:fleet"
+            if form in {"setsafety", "protocolreadiness", "promoteprotocol", "disableprotocol", "provisionnode"}:
+                return "ui:advanced"
+            if form in {"setpromo", "stoppromo", "resumepromo"}:
+                return "ui:promotions"
+            return "ui:sales"
+        if data == "cmd:failsafety":
+            return "ui:advanced"
+        if data in {"staffapply", "staffcancel"}:
+            return "ui:owner_staff"
+        return "ui:home"
+
+    @staticmethod
+    def _legacy_callback_preserves(data: str) -> bool:
+        if data.startswith(
+            (
+                "p:b:",
+                "p:r:",
+                "p:x:",
+                "n:claim",
+                "n:trial",
+                "g:c:",
+                "o:w:",
+                "o:x:",
+                "a:k:",
+                "purchase:",
+                "walletconfirm:",
+                "devconfirm:",
+            )
+        ):
+            return True
+        return data.startswith("t:a:") and data[4:].isdigit()
+
     def _init_navigation(self) -> None:
         self._navigation_lock = threading.RLock()
         self._navigation_local = threading.local()
@@ -282,9 +675,21 @@ class TelegramNavigationMixin:
         self, chat_id: int, text: str, markup: dict[str, Any] | None
     ) -> tuple[bool, Any]:
         context = getattr(self._navigation_local, "current", None)
-        if context is None or context[0]["chat_id"] != chat_id:
+        if context is None:
             return False, None
         activity, preserve = context
+        if activity["chat_id"] != chat_id:
+            # Receipt notifications are records in each Admin's private chat.
+            # Give them their own protected activity instead of inheriting the
+            # customer's navigation token or leaving raw callback buttons.
+            has_inline_actions = bool((markup or {}).get("inline_keyboard"))
+            if chat_id > 0 and self._is_admin(chat_id) and has_inline_actions:
+                notification = self._new_activity(chat_id, chat_id, "ui:sales")
+                notification["entry"] = "ui:sales"
+                notification["history"] = ["ui:sales"]
+                with self._activity_context(notification, preserve=True):
+                    return self._capture_activity_screen(chat_id, text, markup)
+            return False, None
         with self._navigation_lock:
             order_action = next(
                 (
