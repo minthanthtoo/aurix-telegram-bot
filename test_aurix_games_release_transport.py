@@ -34,6 +34,14 @@ class _Process:
 
 
 class GamesReleaseTransportTests(unittest.TestCase):
+    def test_ssh_failure_without_stdout_reports_server_error(self):
+        process = _Process(b"")
+        process.stderr.write(b"Games release: cleanup failed")
+        process.stderr.seek(0)
+        with patch.object(process, "wait", return_value=1), patch.object(process, "poll", return_value=1):
+            with self.assertRaisesRegex(RuntimeError, "Games release: cleanup failed"):
+                transport._response(process)
+
     def test_ssh_configuration_rejects_host_command_injection(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "GAMES_DEPLOY_HOST": "games.example; touch /tmp/pwned",
