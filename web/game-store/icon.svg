@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="AuriX Game Store">
+  <rect width="192" height="192" rx="42" fill="#0d1110"/>
+  <rect x="18" y="18" width="156" height="156" rx="36" fill="#c9a253"/>
+  <path d="M57 132 91 54l44 78h-22l-9-20H84l-8 20H57Zm35-38h7l-4-13-3 13Z" fill="#171915"/>
+  <circle cx="145" cy="49" r="7" fill="#f2eee5"/>
+</svg>

@@ -1,0 +1,3906 @@
+{
+  "captured_at": "2026-09-24T03:38:04.737906+00:00",
+  "heroes": [
+    {
+      "ban_rate": 2.27,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Aamon",
+      "pick_rate": 0.67,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 50.32,
+      "slug": "aamon",
+      "tier": "B",
+      "win_rate": 49.75
+    },
+    {
+      "ban_rate": 1.51,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Akai",
+      "pick_rate": 0.37,
+      "roles": [
+        "Tank"
+      ],
+      "score": 50.46,
+      "slug": "akai",
+      "tier": "B",
+      "win_rate": 50.08
+    },
+    {
+      "ban_rate": 0.83,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Aldous",
+      "pick_rate": 0.57,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 50.01,
+      "slug": "aldous",
+      "tier": "B",
+      "win_rate": 49.8
+    },
+    {
+      "ban_rate": 2.51,
+      "lanes": [
+        "Exp Lane",
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Alice",
+      "pick_rate": 0.53,
+      "roles": [
+        "Tank",
+        "Mage"
+      ],
+      "score": 51.36,
+      "slug": "alice",
+      "tier": "A",
+      "win_rate": 50.73
+    },
+    {
+      "ban_rate": 0.74,
+      "lanes": [
+        "Jungle",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Alpha",
+      "pick_rate": 1.25,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 47.82,
+      "slug": "alpha",
+      "tier": "C",
+      "win_rate": 47.63
+    },
+    {
+      "ban_rate": 0.28,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Alucard",
+      "pick_rate": 0.51,
+      "roles": [
+        "Fighter",
+        "Assassin"
+      ],
+      "score": 48,
+      "slug": "alucard",
+      "tier": "B",
+      "win_rate": 47.93
+    },
+    {
+      "ban_rate": 6.75,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Angela",
+      "pick_rate": 1.66,
+      "roles": [
+        "Support"
+      ],
+      "score": 51.54,
+      "slug": "angela",
+      "tier": "A",
+      "win_rate": 49.85
+    },
+    {
+      "ban_rate": 2.27,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Argus",
+      "pick_rate": 0.8,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 55.55,
+      "slug": "argus",
+      "tier": "S",
+      "win_rate": 54.98
+    },
+    {
+      "ban_rate": 0.24,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Arlott",
+      "pick_rate": 0.35,
+      "roles": [
+        "Fighter",
+        "Assassin"
+      ],
+      "score": 48.62,
+      "slug": "arlott",
+      "tier": "B",
+      "win_rate": 48.56
+    },
+    {
+      "ban_rate": 11.23,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Atlas",
+      "pick_rate": 1.01,
+      "roles": [
+        "Tank"
+      ],
+      "score": 55.37,
+      "slug": "atlas",
+      "tier": "S",
+      "win_rate": 52.56
+    },
+    {
+      "ban_rate": 1.15,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Aulus",
+      "pick_rate": 0.4,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 56.16,
+      "slug": "aulus",
+      "tier": "S+",
+      "win_rate": 55.87
+    },
+    {
+      "ban_rate": 0.34,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Aurora",
+      "pick_rate": 0.59,
+      "roles": [
+        "Mage"
+      ],
+      "score": 48.1,
+      "slug": "aurora",
+      "tier": "B",
+      "win_rate": 48.01
+    },
+    {
+      "ban_rate": 6.45,
+      "lanes": [
+        "Roam",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Badang",
+      "pick_rate": 1.76,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 51.62,
+      "slug": "badang",
+      "tier": "A",
+      "win_rate": 50.01
+    },
+    {
+      "ban_rate": 0.37,
+      "lanes": [
+        "Jungle",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Balmond",
+      "pick_rate": 0.63,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 45.42,
+      "slug": "balmond",
+      "tier": "C",
+      "win_rate": 45.33
+    },
+    {
+      "ban_rate": 0.14,
+      "lanes": [
+        "Jungle",
+        "Exp Lane"
+      ],
+      "low_sample": true,
+      "name": "Bane",
+      "pick_rate": 0.24,
+      "roles": [
+        "Fighter",
+        "Mage"
+      ],
+      "score": 51.06,
+      "slug": "bane",
+      "tier": "A",
+      "win_rate": 51.02
+    },
+    {
+      "ban_rate": 4.37,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Barats",
+      "pick_rate": 0.78,
+      "roles": [
+        "Tank",
+        "Fighter"
+      ],
+      "score": 53.26,
+      "slug": "barats",
+      "tier": "S",
+      "win_rate": 52.17
+    },
+    {
+      "ban_rate": 0.09,
+      "lanes": [
+        "Jungle",
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Baxia",
+      "pick_rate": 0.05,
+      "roles": [
+        "Tank"
+      ],
+      "score": 47.24,
+      "slug": "baxia",
+      "tier": "C",
+      "win_rate": 47.22
+    },
+    {
+      "ban_rate": 0.44,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Beatrix",
+      "pick_rate": 0.72,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 52.28,
+      "slug": "beatrix",
+      "tier": "A",
+      "win_rate": 52.17
+    },
+    {
+      "ban_rate": 49.35,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Belerick",
+      "pick_rate": 1.89,
+      "roles": [
+        "Tank"
+      ],
+      "score": 65.26,
+      "slug": "belerick",
+      "tier": "S+",
+      "win_rate": 52.92
+    },
+    {
+      "ban_rate": 0.27,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Benedetta",
+      "pick_rate": 0.35,
+      "roles": [
+        "Assassin",
+        "Fighter"
+      ],
+      "score": 53.41,
+      "slug": "benedetta",
+      "tier": "S",
+      "win_rate": 53.34
+    },
+    {
+      "ban_rate": 2.6,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Brody",
+      "pick_rate": 1.23,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 51.73,
+      "slug": "brody",
+      "tier": "A",
+      "win_rate": 51.08
+    },
+    {
+      "ban_rate": 1.04,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Bruno",
+      "pick_rate": 0.73,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 54.39,
+      "slug": "bruno",
+      "tier": "S",
+      "win_rate": 54.13
+    },
+    {
+      "ban_rate": 4.57,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Carmilla",
+      "pick_rate": 1.03,
+      "roles": [
+        "Support",
+        "Tank"
+      ],
+      "score": 54.95,
+      "slug": "carmilla",
+      "tier": "S",
+      "win_rate": 53.81
+    },
+    {
+      "ban_rate": 0.11,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Cecilion",
+      "pick_rate": 0.57,
+      "roles": [
+        "Mage"
+      ],
+      "score": 50.29,
+      "slug": "cecilion",
+      "tier": "B",
+      "win_rate": 50.26
+    },
+    {
+      "ban_rate": 0.29,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Chang'e",
+      "pick_rate": 0.66,
+      "roles": [
+        "Mage"
+      ],
+      "score": 47.48,
+      "slug": "chang-e",
+      "tier": "C",
+      "win_rate": 47.41
+    },
+    {
+      "ban_rate": 0.26,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Chip",
+      "pick_rate": 0.05,
+      "roles": [
+        "Support",
+        "Tank"
+      ],
+      "score": 47.29,
+      "slug": "chip",
+      "tier": "C",
+      "win_rate": 47.22
+    },
+    {
+      "ban_rate": 2.72,
+      "lanes": [
+        "Exp Lane",
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Chou",
+      "pick_rate": 1.16,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 44.71,
+      "slug": "chou",
+      "tier": "C",
+      "win_rate": 44.03
+    },
+    {
+      "ban_rate": 1.23,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Cici",
+      "pick_rate": 0.59,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 50.59,
+      "slug": "cici",
+      "tier": "A",
+      "win_rate": 50.28
+    },
+    {
+      "ban_rate": 0.21,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Claude",
+      "pick_rate": 0.76,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 48.87,
+      "slug": "claude",
+      "tier": "B",
+      "win_rate": 48.82
+    },
+    {
+      "ban_rate": 1.03,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Clint",
+      "pick_rate": 0.87,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 52.19,
+      "slug": "clint",
+      "tier": "A",
+      "win_rate": 51.93
+    },
+    {
+      "ban_rate": 0.23,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Cyclops",
+      "pick_rate": 0.61,
+      "roles": [
+        "Mage"
+      ],
+      "score": 51.06,
+      "slug": "cyclops",
+      "tier": "A",
+      "win_rate": 51
+    },
+    {
+      "ban_rate": 2.84,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Diggie",
+      "pick_rate": 0.18,
+      "roles": [
+        "Support"
+      ],
+      "score": 55.08,
+      "slug": "diggie",
+      "tier": "S",
+      "win_rate": 54.37
+    },
+    {
+      "lanes": [
+        "Mid Lane"
+      ],
+      "name": "Dori",
+      "roles": [
+        "Mage"
+      ],
+      "slug": "dori"
+    },
+    {
+      "ban_rate": 1.32,
+      "lanes": [
+        "Exp Lane",
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Dyrroth",
+      "pick_rate": 1.66,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 47.28,
+      "slug": "dyrroth",
+      "tier": "C",
+      "win_rate": 46.95
+    },
+    {
+      "ban_rate": 0.28,
+      "lanes": [
+        "Exp Lane",
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Edith",
+      "pick_rate": 0.37,
+      "roles": [
+        "Tank",
+        "Marksman"
+      ],
+      "score": 53.5,
+      "slug": "edith",
+      "tier": "S",
+      "win_rate": 53.43
+    },
+    {
+      "ban_rate": 1.82,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Esmeralda",
+      "pick_rate": 0.88,
+      "roles": [
+        "Tank",
+        "Mage"
+      ],
+      "score": 48.81,
+      "slug": "esmeralda",
+      "tier": "B",
+      "win_rate": 48.35
+    },
+    {
+      "ban_rate": 31.13,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Estes",
+      "pick_rate": 0.72,
+      "roles": [
+        "Support"
+      ],
+      "score": 60.61,
+      "slug": "estes",
+      "tier": "S+",
+      "win_rate": 52.83
+    },
+    {
+      "ban_rate": 54,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Eudora",
+      "pick_rate": 2.11,
+      "roles": [
+        "Mage"
+      ],
+      "score": 65.33,
+      "slug": "eudora",
+      "tier": "S+",
+      "win_rate": 51.83
+    },
+    {
+      "ban_rate": 1.83,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Fanny",
+      "pick_rate": 0.64,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 43.47,
+      "slug": "fanny",
+      "tier": "C",
+      "win_rate": 43.01
+    },
+    {
+      "ban_rate": 0.23,
+      "lanes": [
+        "Mid Lane",
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Faramis",
+      "pick_rate": 0.08,
+      "roles": [
+        "Support",
+        "Mage"
+      ],
+      "score": 52.09,
+      "slug": "faramis",
+      "tier": "A",
+      "win_rate": 52.03
+    },
+    {
+      "ban_rate": 11.27,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Floryn",
+      "pick_rate": 1.15,
+      "roles": [
+        "Support"
+      ],
+      "score": 58.1,
+      "slug": "floryn",
+      "tier": "S+",
+      "win_rate": 55.28
+    },
+    {
+      "ban_rate": 2.89,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Franco",
+      "pick_rate": 0.91,
+      "roles": [
+        "Tank"
+      ],
+      "score": 42.22,
+      "slug": "franco",
+      "tier": "C",
+      "win_rate": 41.5
+    },
+    {
+      "ban_rate": 1.73,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Fredrinn",
+      "pick_rate": 0.51,
+      "roles": [
+        "Fighter",
+        "Tank"
+      ],
+      "score": 52.38,
+      "slug": "fredrinn",
+      "tier": "A",
+      "win_rate": 51.95
+    },
+    {
+      "ban_rate": 1.48,
+      "lanes": [
+        "Exp Lane",
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Freya",
+      "pick_rate": 0.53,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 47.58,
+      "slug": "freya",
+      "tier": "C",
+      "win_rate": 47.21
+    },
+    {
+      "ban_rate": 0.27,
+      "lanes": [
+        "Roam",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Gatotkaca",
+      "pick_rate": 0.55,
+      "roles": [
+        "Tank",
+        "Fighter"
+      ],
+      "score": 44.42,
+      "slug": "gatotkaca",
+      "tier": "C",
+      "win_rate": 44.35
+    },
+    {
+      "ban_rate": 33.73,
+      "lanes": [
+        "Roam",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Gloo",
+      "pick_rate": 0.76,
+      "roles": [
+        "Tank"
+      ],
+      "score": 62.41,
+      "slug": "gloo",
+      "tier": "S+",
+      "win_rate": 53.98
+    },
+    {
+      "ban_rate": 0.59,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Gord",
+      "pick_rate": 0.65,
+      "roles": [
+        "Mage"
+      ],
+      "score": 52.8,
+      "slug": "gord",
+      "tier": "A",
+      "win_rate": 52.65
+    },
+    {
+      "ban_rate": 1.35,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Granger",
+      "pick_rate": 1.34,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 44.52,
+      "slug": "granger",
+      "tier": "C",
+      "win_rate": 44.18
+    },
+    {
+      "ban_rate": 0.56,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Grock",
+      "pick_rate": 0.33,
+      "roles": [
+        "Tank",
+        "Fighter"
+      ],
+      "score": 47.43,
+      "slug": "grock",
+      "tier": "C",
+      "win_rate": 47.29
+    },
+    {
+      "ban_rate": 3.46,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Guinevere",
+      "pick_rate": 0.92,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 52.73,
+      "slug": "guinevere",
+      "tier": "A",
+      "win_rate": 51.86
+    },
+    {
+      "ban_rate": 3.97,
+      "lanes": [
+        "Jungle",
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Gusion",
+      "pick_rate": 1.44,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 49.07,
+      "slug": "gusion",
+      "tier": "B",
+      "win_rate": 48.08
+    },
+    {
+      "ban_rate": 6.14,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Hanabi",
+      "pick_rate": 2.79,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 52.78,
+      "slug": "hanabi",
+      "tier": "A",
+      "win_rate": 51.24
+    },
+    {
+      "ban_rate": 20.77,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Hanzo",
+      "pick_rate": 0.59,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 54.51,
+      "slug": "hanzo",
+      "tier": "S",
+      "win_rate": 49.32
+    },
+    {
+      "ban_rate": 0.05,
+      "lanes": [
+        "Gold Lane",
+        "Jungle"
+      ],
+      "low_sample": true,
+      "name": "Harith",
+      "pick_rate": 0.14,
+      "roles": [
+        "Mage"
+      ],
+      "score": 47.58,
+      "slug": "harith",
+      "tier": "C",
+      "win_rate": 47.57
+    },
+    {
+      "ban_rate": 4.62,
+      "lanes": [
+        "Jungle",
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Harley",
+      "pick_rate": 0.86,
+      "roles": [
+        "Assassin",
+        "Mage"
+      ],
+      "score": 48.12,
+      "slug": "harley",
+      "tier": "B",
+      "win_rate": 46.96
+    },
+    {
+      "ban_rate": 2.65,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Hayabusa",
+      "pick_rate": 0.79,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 49.49,
+      "slug": "hayabusa",
+      "tier": "B",
+      "win_rate": 48.83
+    },
+    {
+      "ban_rate": 6.39,
+      "lanes": [
+        "Jungle",
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Helcurt",
+      "pick_rate": 0.6,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 47.8,
+      "slug": "helcurt",
+      "tier": "C",
+      "win_rate": 46.2
+    },
+    {
+      "ban_rate": 4.75,
+      "lanes": [
+        "Roam",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Hilda",
+      "pick_rate": 0.58,
+      "roles": [
+        "Fighter",
+        "Tank"
+      ],
+      "score": 50.91,
+      "slug": "hilda",
+      "tier": "A",
+      "win_rate": 49.72
+    },
+    {
+      "ban_rate": 59.4,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Hirara",
+      "pick_rate": 0.78,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 69.91,
+      "slug": "hirara",
+      "tier": "S+",
+      "win_rate": 55.06
+    },
+    {
+      "ban_rate": 0.24,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Hylos",
+      "pick_rate": 0.28,
+      "roles": [
+        "Tank"
+      ],
+      "score": 48.45,
+      "slug": "hylos",
+      "tier": "B",
+      "win_rate": 48.39
+    },
+    {
+      "ban_rate": 0.23,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Irithel",
+      "pick_rate": 0.4,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 52.33,
+      "slug": "irithel",
+      "tier": "A",
+      "win_rate": 52.27
+    },
+    {
+      "ban_rate": 0.7,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Ixia",
+      "pick_rate": 0.72,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 49.93,
+      "slug": "ixia",
+      "tier": "B",
+      "win_rate": 49.75
+    },
+    {
+      "ban_rate": 0.23,
+      "lanes": [
+        "Roam",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Jawhead",
+      "pick_rate": 0.31,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 46.3,
+      "slug": "jawhead",
+      "tier": "C",
+      "win_rate": 46.24
+    },
+    {
+      "ban_rate": 1.57,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Johnson",
+      "pick_rate": 0.74,
+      "roles": [
+        "Tank",
+        "Support"
+      ],
+      "score": 48.24,
+      "slug": "johnson",
+      "tier": "B",
+      "win_rate": 47.85
+    },
+    {
+      "ban_rate": 0.18,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": true,
+      "name": "Joy",
+      "pick_rate": 0.14,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 50.1,
+      "slug": "joy",
+      "tier": "B",
+      "win_rate": 50.05
+    },
+    {
+      "ban_rate": 0.84,
+      "lanes": [
+        "Jungle",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Julian",
+      "pick_rate": 0.74,
+      "roles": [
+        "Assassin",
+        "Fighter"
+      ],
+      "score": 50.18,
+      "slug": "julian",
+      "tier": "B",
+      "win_rate": 49.97
+    },
+    {
+      "ban_rate": 5.12,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Kadita",
+      "pick_rate": 1.13,
+      "roles": [
+        "Mage",
+        "Assassin"
+      ],
+      "score": 52.44,
+      "slug": "kadita",
+      "tier": "A",
+      "win_rate": 51.16
+    },
+    {
+      "ban_rate": 1.47,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Kagura",
+      "pick_rate": 0.88,
+      "roles": [
+        "Mage"
+      ],
+      "score": 52.82,
+      "slug": "kagura",
+      "tier": "A",
+      "win_rate": 52.45
+    },
+    {
+      "ban_rate": 19.31,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Kaja",
+      "pick_rate": 0.63,
+      "roles": [
+        "Support"
+      ],
+      "score": 55.32,
+      "slug": "kaja",
+      "tier": "S",
+      "win_rate": 50.49
+    },
+    {
+      "ban_rate": 0.37,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Kalea",
+      "pick_rate": 0.19,
+      "roles": [
+        "Support",
+        "Fighter"
+      ],
+      "score": 45.92,
+      "slug": "kalea",
+      "tier": "C",
+      "win_rate": 45.83
+    },
+    {
+      "ban_rate": 2.45,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Karina",
+      "pick_rate": 0.78,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 48.76,
+      "slug": "karina",
+      "tier": "B",
+      "win_rate": 48.15
+    },
+    {
+      "ban_rate": 0.86,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Karrie",
+      "pick_rate": 0.53,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 48.42,
+      "slug": "karrie",
+      "tier": "B",
+      "win_rate": 48.2
+    },
+    {
+      "ban_rate": 0.08,
+      "lanes": [
+        "Roam",
+        "Exp Lane"
+      ],
+      "low_sample": true,
+      "name": "Khaleed",
+      "pick_rate": 0.12,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 51.24,
+      "slug": "khaleed",
+      "tier": "A",
+      "win_rate": 51.22
+    },
+    {
+      "ban_rate": 1.42,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Khufra",
+      "pick_rate": 0.29,
+      "roles": [
+        "Tank"
+      ],
+      "score": 56.35,
+      "slug": "khufra",
+      "tier": "S+",
+      "win_rate": 55.99
+    },
+    {
+      "ban_rate": 0.26,
+      "lanes": [
+        "Mid Lane",
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Kimmy",
+      "pick_rate": 0.59,
+      "roles": [
+        "Marksman",
+        "Mage"
+      ],
+      "score": 48.35,
+      "slug": "kimmy",
+      "tier": "B",
+      "win_rate": 48.28
+    },
+    {
+      "ban_rate": 0.44,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Lancelot",
+      "pick_rate": 0.54,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 43.26,
+      "slug": "lancelot",
+      "tier": "C",
+      "win_rate": 43.15
+    },
+    {
+      "ban_rate": 0.31,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Lapu-Lapu",
+      "pick_rate": 0.33,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 49.3,
+      "slug": "lapu-lapu",
+      "tier": "B",
+      "win_rate": 49.22
+    },
+    {
+      "ban_rate": 0.81,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Layla",
+      "pick_rate": 1.03,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 48.18,
+      "slug": "layla",
+      "tier": "B",
+      "win_rate": 47.98
+    },
+    {
+      "ban_rate": 0.48,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": true,
+      "name": "Leomord",
+      "pick_rate": 0.29,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 51.44,
+      "slug": "leomord",
+      "tier": "A",
+      "win_rate": 51.32
+    },
+    {
+      "ban_rate": 6.54,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Lesley",
+      "pick_rate": 1.78,
+      "roles": [
+        "Marksman",
+        "Assassin"
+      ],
+      "score": 49.7,
+      "slug": "lesley",
+      "tier": "B",
+      "win_rate": 48.06
+    },
+    {
+      "ban_rate": 0.94,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Ling",
+      "pick_rate": 0.76,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 53.49,
+      "slug": "ling",
+      "tier": "S",
+      "win_rate": 53.25
+    },
+    {
+      "ban_rate": 0.16,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Lolita",
+      "pick_rate": 0.07,
+      "roles": [
+        "Support",
+        "Tank"
+      ],
+      "score": 54.1,
+      "slug": "lolita",
+      "tier": "S",
+      "win_rate": 54.06
+    },
+    {
+      "ban_rate": 16.22,
+      "lanes": [
+        "Exp Lane",
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Lukas",
+      "pick_rate": 1.08,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 58.82,
+      "slug": "lukas",
+      "tier": "S+",
+      "win_rate": 54.76
+    },
+    {
+      "ban_rate": 0.14,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": true,
+      "name": "Lunox",
+      "pick_rate": 0.24,
+      "roles": [
+        "Mage"
+      ],
+      "score": 49.26,
+      "slug": "lunox",
+      "tier": "B",
+      "win_rate": 49.22
+    },
+    {
+      "ban_rate": 0.16,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": true,
+      "name": "Luo Yi",
+      "pick_rate": 0.28,
+      "roles": [
+        "Mage"
+      ],
+      "score": 47.84,
+      "slug": "luo-yi",
+      "tier": "C",
+      "win_rate": 47.8
+    },
+    {
+      "ban_rate": 0.36,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Lylia",
+      "pick_rate": 0.54,
+      "roles": [
+        "Mage"
+      ],
+      "score": 49.59,
+      "slug": "lylia",
+      "tier": "B",
+      "win_rate": 49.5
+    },
+    {
+      "ban_rate": 27.44,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Marcel",
+      "pick_rate": 0.31,
+      "roles": [
+        "Support"
+      ],
+      "score": 65.4,
+      "slug": "marcel",
+      "tier": "S+",
+      "win_rate": 58.54
+    },
+    {
+      "ban_rate": 0.32,
+      "lanes": [
+        "Jungle",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Martis",
+      "pick_rate": 0.49,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 46.57,
+      "slug": "martis",
+      "tier": "C",
+      "win_rate": 46.49
+    },
+    {
+      "ban_rate": 14.35,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Masha",
+      "pick_rate": 0.69,
+      "roles": [
+        "Fighter",
+        "Tank"
+      ],
+      "score": 58.85,
+      "slug": "masha",
+      "tier": "S+",
+      "win_rate": 55.26
+    },
+    {
+      "ban_rate": 0.21,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Mathilda",
+      "pick_rate": 0.17,
+      "roles": [
+        "Support",
+        "Assassin"
+      ],
+      "score": 46.37,
+      "slug": "mathilda",
+      "tier": "C",
+      "win_rate": 46.32
+    },
+    {
+      "ban_rate": 5.32,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Melissa",
+      "pick_rate": 0.77,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 50.64,
+      "slug": "melissa",
+      "tier": "A",
+      "win_rate": 49.31
+    },
+    {
+      "ban_rate": 4.2,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Minotaur",
+      "pick_rate": 0.93,
+      "roles": [
+        "Tank",
+        "Support"
+      ],
+      "score": 56.64,
+      "slug": "minotaur",
+      "tier": "S+",
+      "win_rate": 55.59
+    },
+    {
+      "ban_rate": 4.97,
+      "lanes": [
+        "Exp Lane",
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Minsitthar",
+      "pick_rate": 0.61,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 52.03,
+      "slug": "minsitthar",
+      "tier": "A",
+      "win_rate": 50.79
+    },
+    {
+      "ban_rate": 10.17,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Miya",
+      "pick_rate": 2.96,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 51.76,
+      "slug": "miya",
+      "tier": "A",
+      "win_rate": 49.22
+    },
+    {
+      "ban_rate": 0.25,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Moskov",
+      "pick_rate": 0.9,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 50.71,
+      "slug": "moskov",
+      "tier": "A",
+      "win_rate": 50.65
+    },
+    {
+      "ban_rate": 2.93,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Nana",
+      "pick_rate": 1.59,
+      "roles": [
+        "Mage"
+      ],
+      "score": 47.28,
+      "slug": "nana",
+      "tier": "C",
+      "win_rate": 46.55
+    },
+    {
+      "ban_rate": 1.24,
+      "lanes": [
+        "Jungle",
+        "Roam"
+      ],
+      "low_sample": true,
+      "name": "Natalia",
+      "pick_rate": 0.28,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 50.55,
+      "slug": "natalia",
+      "tier": "A",
+      "win_rate": 50.24
+    },
+    {
+      "ban_rate": 0.12,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": true,
+      "name": "Natan",
+      "pick_rate": 0.28,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 51.9,
+      "slug": "natan",
+      "tier": "A",
+      "win_rate": 51.87
+    },
+    {
+      "ban_rate": 1.82,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Nolan",
+      "pick_rate": 0.84,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 49.53,
+      "slug": "nolan",
+      "tier": "B",
+      "win_rate": 49.07
+    },
+    {
+      "ban_rate": 3.8,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Novaria",
+      "pick_rate": 1.52,
+      "roles": [
+        "Mage"
+      ],
+      "score": 51.05,
+      "slug": "novaria",
+      "tier": "A",
+      "win_rate": 50.1
+    },
+    {
+      "ban_rate": 2.88,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Obsidia",
+      "pick_rate": 1.44,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 54.34,
+      "slug": "obsidia",
+      "tier": "S",
+      "win_rate": 53.62
+    },
+    {
+      "ban_rate": 0.9,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Odette",
+      "pick_rate": 0.74,
+      "roles": [
+        "Mage"
+      ],
+      "score": 49.57,
+      "slug": "odette",
+      "tier": "B",
+      "win_rate": 49.34
+    },
+    {
+      "ban_rate": 46.92,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Paquito",
+      "pick_rate": 2.02,
+      "roles": [
+        "Fighter",
+        "Assassin"
+      ],
+      "score": 62.8,
+      "slug": "paquito",
+      "tier": "S+",
+      "win_rate": 51.07
+    },
+    {
+      "ban_rate": 0.18,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Pharsa",
+      "pick_rate": 0.37,
+      "roles": [
+        "Mage"
+      ],
+      "score": 47.18,
+      "slug": "pharsa",
+      "tier": "C",
+      "win_rate": 47.13
+    },
+    {
+      "ban_rate": 0.51,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": true,
+      "name": "Phoveus",
+      "pick_rate": 0.24,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 48.29,
+      "slug": "phoveus",
+      "tier": "B",
+      "win_rate": 48.16
+    },
+    {
+      "ban_rate": 0.21,
+      "lanes": [
+        "Jungle",
+        "Gold Lane"
+      ],
+      "low_sample": false,
+      "name": "Popol and Kupa",
+      "pick_rate": 0.41,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 52.86,
+      "slug": "popol-and-kupa",
+      "tier": "A",
+      "win_rate": 52.81
+    },
+    {
+      "ban_rate": 10.95,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Rafaela",
+      "pick_rate": 1.18,
+      "roles": [
+        "Support"
+      ],
+      "score": 62.02,
+      "slug": "rafaela",
+      "tier": "S+",
+      "win_rate": 59.28
+    },
+    {
+      "ban_rate": 0.09,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": true,
+      "name": "Roger",
+      "pick_rate": 0.29,
+      "roles": [
+        "Fighter",
+        "Marksman"
+      ],
+      "score": 48.9,
+      "slug": "roger",
+      "tier": "B",
+      "win_rate": 48.88
+    },
+    {
+      "ban_rate": 0.24,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Ruby",
+      "pick_rate": 0.32,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 49.78,
+      "slug": "ruby",
+      "tier": "B",
+      "win_rate": 49.72
+    },
+    {
+      "ban_rate": 19.81,
+      "lanes": [
+        "Jungle",
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Saber",
+      "pick_rate": 0.98,
+      "roles": [
+        "Assassin"
+      ],
+      "score": 53.23,
+      "slug": "saber",
+      "tier": "S",
+      "win_rate": 48.28
+    },
+    {
+      "ban_rate": 3.11,
+      "lanes": [
+        "Mid Lane",
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Selena",
+      "pick_rate": 1.33,
+      "roles": [
+        "Assassin",
+        "Mage"
+      ],
+      "score": 50.65,
+      "slug": "selena",
+      "tier": "A",
+      "win_rate": 49.87
+    },
+    {
+      "ban_rate": 1.28,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Silvanna",
+      "pick_rate": 0.92,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 50.38,
+      "slug": "silvanna",
+      "tier": "B",
+      "win_rate": 50.06
+    },
+    {
+      "ban_rate": 2.68,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Sora",
+      "pick_rate": 0.53,
+      "roles": [
+        "Fighter",
+        "Assassin"
+      ],
+      "score": 50.37,
+      "slug": "sora",
+      "tier": "B",
+      "win_rate": 49.7
+    },
+    {
+      "ban_rate": 19.37,
+      "lanes": [
+        "Exp Lane",
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Sun",
+      "pick_rate": 1.37,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 56.8,
+      "slug": "sun",
+      "tier": "S+",
+      "win_rate": 51.96
+    },
+    {
+      "ban_rate": 0.95,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Suyou",
+      "pick_rate": 0.82,
+      "roles": [
+        "Assassin",
+        "Fighter"
+      ],
+      "score": 50.4,
+      "slug": "suyou",
+      "tier": "B",
+      "win_rate": 50.16
+    },
+    {
+      "ban_rate": 0.16,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Terizla",
+      "pick_rate": 0.32,
+      "roles": [
+        "Fighter",
+        "Tank"
+      ],
+      "score": 50.57,
+      "slug": "terizla",
+      "tier": "A",
+      "win_rate": 50.53
+    },
+    {
+      "ban_rate": 1.58,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Thamuz",
+      "pick_rate": 0.83,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 48.56,
+      "slug": "thamuz",
+      "tier": "B",
+      "win_rate": 48.16
+    },
+    {
+      "ban_rate": 4.65,
+      "lanes": [
+        "Roam"
+      ],
+      "low_sample": false,
+      "name": "Tigreal",
+      "pick_rate": 1.87,
+      "roles": [
+        "Tank"
+      ],
+      "score": 45.17,
+      "slug": "tigreal",
+      "tier": "C",
+      "win_rate": 44.01
+    },
+    {
+      "ban_rate": 0.35,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Uranus",
+      "pick_rate": 0.37,
+      "roles": [
+        "Tank"
+      ],
+      "score": 49.64,
+      "slug": "uranus",
+      "tier": "B",
+      "win_rate": 49.55
+    },
+    {
+      "ban_rate": 0.17,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Vale",
+      "pick_rate": 0.52,
+      "roles": [
+        "Mage"
+      ],
+      "score": 49.05,
+      "slug": "vale",
+      "tier": "B",
+      "win_rate": 49.01
+    },
+    {
+      "ban_rate": 0.13,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": true,
+      "name": "Valentina",
+      "pick_rate": 0.16,
+      "roles": [
+        "Mage"
+      ],
+      "score": 45.18,
+      "slug": "valentina",
+      "tier": "C",
+      "win_rate": 45.15
+    },
+    {
+      "ban_rate": 1.38,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Valir",
+      "pick_rate": 0.87,
+      "roles": [
+        "Mage"
+      ],
+      "score": 52.34,
+      "slug": "valir",
+      "tier": "A",
+      "win_rate": 51.99
+    },
+    {
+      "ban_rate": 1.07,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Vexana",
+      "pick_rate": 1.6,
+      "roles": [
+        "Mage"
+      ],
+      "score": 48.65,
+      "slug": "vexana",
+      "tier": "B",
+      "win_rate": 48.38
+    },
+    {
+      "ban_rate": 0.11,
+      "lanes": [
+        "Gold Lane"
+      ],
+      "low_sample": true,
+      "name": "Wanwan",
+      "pick_rate": 0.12,
+      "roles": [
+        "Marksman"
+      ],
+      "score": 47.69,
+      "slug": "wanwan",
+      "tier": "C",
+      "win_rate": 47.66
+    },
+    {
+      "ban_rate": 1.51,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "X.Borg",
+      "pick_rate": 0.53,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 49.9,
+      "slug": "x-borg",
+      "tier": "B",
+      "win_rate": 49.52
+    },
+    {
+      "ban_rate": 0.12,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Xavier",
+      "pick_rate": 0.58,
+      "roles": [
+        "Mage"
+      ],
+      "score": 50.2,
+      "slug": "xavier",
+      "tier": "B",
+      "win_rate": 50.17
+    },
+    {
+      "ban_rate": 9.74,
+      "lanes": [
+        "Jungle"
+      ],
+      "low_sample": false,
+      "name": "Yi Sun-shin",
+      "pick_rate": 1.62,
+      "roles": [
+        "Assassin",
+        "Marksman"
+      ],
+      "score": 53.48,
+      "slug": "yi-sun-shin",
+      "tier": "S",
+      "win_rate": 51.04
+    },
+    {
+      "ban_rate": 1.56,
+      "lanes": [
+        "Jungle",
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Yin",
+      "pick_rate": 0.49,
+      "roles": [
+        "Fighter",
+        "Assassin"
+      ],
+      "score": 48.39,
+      "slug": "yin",
+      "tier": "B",
+      "win_rate": 48
+    },
+    {
+      "ban_rate": 0.7,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Yu Zhong",
+      "pick_rate": 0.55,
+      "roles": [
+        "Fighter"
+      ],
+      "score": 49.65,
+      "slug": "yu-zhong",
+      "tier": "B",
+      "win_rate": 49.48
+    },
+    {
+      "ban_rate": 0.04,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": true,
+      "name": "Yve",
+      "pick_rate": 0.05,
+      "roles": [
+        "Mage"
+      ],
+      "score": 52.1,
+      "slug": "yve",
+      "tier": "A",
+      "win_rate": 52.09
+    },
+    {
+      "ban_rate": 3.57,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Zetian",
+      "pick_rate": 1.52,
+      "roles": [
+        "Mage"
+      ],
+      "score": 52.38,
+      "slug": "zetian",
+      "tier": "A",
+      "win_rate": 51.49
+    },
+    {
+      "ban_rate": 0.33,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": false,
+      "name": "Zhask",
+      "pick_rate": 0.33,
+      "roles": [
+        "Mage"
+      ],
+      "score": 51.83,
+      "slug": "zhask",
+      "tier": "A",
+      "win_rate": 51.75
+    },
+    {
+      "ban_rate": 0.27,
+      "lanes": [
+        "Mid Lane"
+      ],
+      "low_sample": true,
+      "name": "Zhuxin",
+      "pick_rate": 0.13,
+      "roles": [
+        "Mage"
+      ],
+      "score": 49.53,
+      "slug": "zhuxin",
+      "tier": "B",
+      "win_rate": 49.46
+    },
+    {
+      "ban_rate": 0.45,
+      "lanes": [
+        "Exp Lane"
+      ],
+      "low_sample": false,
+      "name": "Zilong",
+      "pick_rate": 0.64,
+      "roles": [
+        "Fighter",
+        "Assassin"
+      ],
+      "score": 44.55,
+      "slug": "zilong",
+      "tier": "C",
+      "win_rate": 44.44
+    }
+  ],
+  "items": [
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+920 HP, +40 Physical Defense, +4 HP Regen",
+      "category": "Defense",
+      "name": "Antique Cuirass",
+      "passive": "Deter: When hit by a skill, reduces the attacker's Physical Damage by 6% for 2 seconds (this effect stacks up to 3 times).",
+      "price": 2170,
+      "recipe": [
+        "Dreadnaught Armor",
+        "Ares Belt"
+      ],
+      "slug": "antique-cuirass",
+      "stats": [],
+      "summary": "Physical Attack Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+40 Movement Speed, +15 Magic Power, +10 Magic Penetration",
+      "category": "Movement",
+      "name": "Arcane Boots",
+      "passive": "",
+      "price": 720,
+      "recipe": [
+        "Boots",
+        "Mystery Codex"
+      ],
+      "slug": "arcane-boots",
+      "stats": [],
+      "summary": "Magic Penetration",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+600 HP",
+      "category": "Defense",
+      "name": "Ares Belt",
+      "passive": "",
+      "price": 700,
+      "recipe": [
+        "Vitality Crystal"
+      ],
+      "slug": "ares-belt",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+900 HP, +48 Magic Defense, +2 HP Regen",
+      "category": "Defense",
+      "name": "Athena's Shield",
+      "passive": "Shield: Upon taking Magic Damage from enemy hero skills or Basic Attacks, reduces Magic Damage taken by 25% for 3 seconds (including the damage that triggers the effect)s. Regains this effect 5 seconds after leaving combat.",
+      "price": 2150,
+      "recipe": [
+        "Silence Robe",
+        "Vitality Crystal"
+      ],
+      "slug": "athena-s-shield",
+      "stats": [],
+      "summary": "Resist Burst Magic Damage",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+5 Mana Regen, +5% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Azure Blade",
+      "passive": "Judgement: After casting a skill, the next Basic Attack within 3 seconds deals 50 extra True Damage (1.5 seconds cooldown).",
+      "price": 600,
+      "recipe": [
+        "Magic Necklace",
+        "Magic Necklace"
+      ],
+      "slug": "azure-blade",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+60 Physical Attack, +25% Crit Chance",
+      "category": "Attack",
+      "name": "Berserker's Fury",
+      "passive": "Doom: When Basic Attacks Crit, they deal extra True Damage equal to 12% of the damage before reduction.",
+      "price": 2390,
+      "recipe": [
+        "Legion Sword",
+        "Javelin",
+        "Javelin"
+      ],
+      "slug": "berserker-s-fury",
+      "stats": [],
+      "summary": "Crit Chance & Damage",
+      "unique": "+30% Crit Damage"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+20 Physical Defense, +20 Magic Defense",
+      "category": "Defense",
+      "name": "Black Ice Shield",
+      "passive": "Fortress Shield: For each enemy hero within 3.55 units, Hybrid Defense is increased by 4, up to 20.",
+      "price": 780,
+      "recipe": [
+        "Leather Jerkin",
+        "Magic Resist Cloak"
+      ],
+      "slug": "black-ice-shield",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+80 Physical Defense",
+      "category": "Defense",
+      "name": "Blade Armor",
+      "passive": "Bladed Armor: When struck by a Basic Attack, deals Physical Damage equal to 30 (+2% Total Physical Defense)% of the incoming damage (calculated before Damage Reduction) to the attacker and slows them by 15% for 1 second.",
+      "price": 1910,
+      "recipe": [
+        "Steel Legplates",
+        "Leather Jerkin",
+        "Leather Jerkin"
+      ],
+      "slug": "blade-armor",
+      "stats": [],
+      "summary": "Damage Reflection",
+      "unique": "+20% Crit Damage Reduction"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+160 Physical Attack, +5% Movement Speed",
+      "category": "Attack",
+      "name": "Blade of Despair",
+      "passive": "Despair: Dealing damage to non-Minion enemies below 50% HP increases Physical Attack by 25% for 2 seconds (takes effect before the damage is dealt).",
+      "price": 3010,
+      "recipe": [
+        "Legion Sword",
+        "Legion Sword"
+      ],
+      "slug": "blade-of-despair",
+      "stats": [],
+      "summary": "Highest Physical Attack",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+70 Physical Attack, +250 HP",
+      "category": "Attack",
+      "name": "Blade of the Heptaseas",
+      "passive": "Ambush: If no damage is taken or dealt within 5 seconds (excluding from Minions or Creeps), the next Basic Attack will deal an additional 160 (+40% Total Physical Attack) Physical Damage and slow the target by 40% for 1.5 seconds.",
+      "price": 1950,
+      "recipe": [
+        "Fury Hammer",
+        "Ogre Tomahawk"
+      ],
+      "slug": "blade-of-the-heptaseas",
+      "stats": [],
+      "summary": "Best for Assassins",
+      "unique": "+15 Physical Penetration"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+90 Magic Power",
+      "category": "Magic",
+      "name": "Blood Wings",
+      "passive": "Guard: Gains a 800 (+100% Magic Power) Shield that will regenerate 20 seconds after being damaged. The Shield also grants 30 Movement Speed while it lasts and 150 Movement Speed for 1 second after it breaks.",
+      "price": 2100,
+      "recipe": [
+        "Magic Wand",
+        "Magic Wand"
+      ],
+      "slug": "blood-wings",
+      "stats": [],
+      "summary": "Speed Boost Shield",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Removed",
+      "bonus": "+70 Physical Attack, +10% Cooldown Reduction",
+      "category": "Attack",
+      "name": "Bloodlust Axe",
+      "passive": "",
+      "price": 1970,
+      "recipe": [
+        "Iron Hunting Bow",
+        "Dagger",
+        "Iron Hunting Bow"
+      ],
+      "slug": "bloodlust-axe",
+      "stats": [],
+      "summary": "Spell Vamp",
+      "unique": "+20% Spell Vamp"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+8 Magic Power, +5% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Book of Sages",
+      "passive": "",
+      "price": 450,
+      "recipe": [],
+      "slug": "book-of-sages",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+20 Movement Speed",
+      "category": "Movement",
+      "name": "Boots",
+      "passive": "",
+      "price": 250,
+      "recipe": [],
+      "slug": "boots",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+800 HP, +20 Physical Defense, +10% Cooldown Reduction",
+      "category": "Defense",
+      "name": "Brute Force Breastplate",
+      "passive": "Brute Force: Each second after dealing damage, gain 8 extra Adaptive Attack and 2% extra Movement Speed for 4 seconds, up to 6 stacks. Gain 25% extra Control Duration Reduction at full stacks.",
+      "price": 2070,
+      "recipe": [
+        "Ares Belt",
+        "Hero's Ring",
+        "Leather Jerkin"
+      ],
+      "slug": "brute-force-breastplate",
+      "stats": [],
+      "summary": "Attack, Speed Up, CC Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Removed",
+      "bonus": "+250 HP",
+      "category": "Magic",
+      "name": "Bud of Hope",
+      "passive": "Bud of Hope: Granted by Floryn and Dew. The equipment will reveal its true power once Dew evolves.",
+      "price": null,
+      "recipe": [],
+      "slug": "bud-of-hope",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Removed",
+      "bonus": "+70 Magic Power, +100 Mana, +6 Mana Regen, +10% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Calamity Reaper",
+      "passive": "Calamity: In 3 seconds after using the skill, the casters next Basic Attack deals additional True Damage as much as 120% of Magic Power with a cooldown of 1.5 seconds. Then briefly gains 10% Movement Speed.",
+      "price": 1950,
+      "recipe": [
+        "Magic Wand",
+        "Azure Blade"
+      ],
+      "slug": "calamity-reaper",
+      "stats": [],
+      "summary": "Enhanced Basic Attacks",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+900 HP, +40 Physical Defense",
+      "category": "Defense",
+      "name": "Chastise Pauldron",
+      "passive": "Chastise: Taking damage will reduce the Attack Speed and Attack Speed cap of the attacker to 75% of normal for 2 seconds.@ Redemption: When incoming damage reduces HP below 30%, recover 20% Max HP over the next 2 seconds. This effect has a 60 seconds cooldown.",
+      "price": 2100,
+      "recipe": [
+        "Steel Legplates",
+        "Ares Belt"
+      ],
+      "slug": "chastise-pauldron",
+      "stats": [],
+      "summary": "Reduce Enemy Attack Speed",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+45 Magic Power, +400 HP, +400 Mana, +10% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Clock of Destiny",
+      "passive": "Destiny: Gains 4.5(+0.5*Hero Level) Hybrid Defense for 5 seconds when dealing Magic Damage to enemy heroes, stacking up to 6 times (can gain 1 stack every 0.4 seconds).@ Gift: When HP drops below 50%, recovers 15% of HP over the next 3 seconds. When Mana drops below 50%, restores 15% of Mana over the next 3 seconds. Cooldown: 60 seconds.",
+      "price": 2030,
+      "recipe": [
+        "Elegant Gem",
+        "Book of Sages",
+        "Book of Sages"
+      ],
+      "slug": "clock-of-destiny",
+      "stats": [],
+      "summary": "For Magic Tanks",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+75 Magic Power, +400 HP",
+      "category": "Magic",
+      "name": "Concentrated Energy",
+      "passive": "Recharge: Increases Magic Power by 5 after dealing Magic Damage (this effect stacks up to 6 times and can only gain 1 stack every 0.4 seconds). When reaching full stacks, increases Magic Damage by 12% for 5 seconds.",
+      "price": 2020,
+      "recipe": [
+        "Mystic Container",
+        "Magic Wand",
+        "Vitality Crystal"
+      ],
+      "slug": "concentrated-energy",
+      "stats": [],
+      "summary": "Continuous Damage Boost",
+      "unique": "+20% Hybrid Lifesteal"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+30 Physical Attack, +30% Attack Speed, +5% Movement Speed",
+      "category": "Attack",
+      "name": "Corrosion Scythe",
+      "passive": "Corrosive: Basic Attacks gain 80 extra Physical Damage and slow the target by 8% (halved for ranged Basic Attacks) for 1.5 seconds. Stacks up to 5 times.@ Impulse: Basic Attacks grant 6% extra Attack Speed for 3 seconds, capped at 5 stacks.",
+      "price": 2050,
+      "recipe": [
+        "Swift Crossbow",
+        "Regular Spear"
+      ],
+      "slug": "corrosion-scythe",
+      "stats": [],
+      "summary": "One-Hit Slow",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+1200 HP, +20 Magic Defense",
+      "category": "Defense",
+      "name": "Cursed Helmet",
+      "passive": "Burning Soul: Deals (1.2% Total HP) Magic Damage to nearby enemies per second. This damage is increased by 125(+15*Hero Level)% against creeps and minions.@ Curse: Dealing damage with Burning Soul will reduce the target's Hybrid Defense by 3 for 3 seconds. Stacks up to 3 times.",
+      "price": 1910,
+      "recipe": [
+        "Molten Essence",
+        "Ares Belt",
+        "Magic Resist Cloak"
+      ],
+      "slug": "cursed-helmet",
+      "stats": [],
+      "summary": "Survivability & Lane Clearing",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+15 Physical Attack",
+      "category": "Attack",
+      "name": "Dagger",
+      "passive": "",
+      "price": 250,
+      "recipe": [],
+      "slug": "dagger",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+35 Physical Attack, +20% Attack Speed",
+      "category": "Attack",
+      "name": "Demon Hunter Sword",
+      "passive": "Engulf: Basic Attacks deal 8% of the target's current HP as extra Physical Damage (capped at 60 against minions).@ Devour: Each Basic Attack recovers 10(+4*Hero Level) HP. This effect is halved against minions.",
+      "price": 2180,
+      "recipe": [
+        "Regular Spear",
+        "Vampire Mallet",
+        "Knife"
+      ],
+      "slug": "demon-hunter-sword",
+      "stats": [],
+      "summary": "Tank Killer",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+40 Movement Speed, +10 Mana Regen",
+      "category": "Movement",
+      "name": "Demon Shoes",
+      "passive": "Mysticism: Getting a kill or assist on an enemy Minion will restore 4% Mana. (An assist occurs when a Minion dies within 2 seconds after taking damage from the hero.)",
+      "price": 720,
+      "recipe": [
+        "Boots",
+        "Magic Necklace",
+        "Magic Necklace"
+      ],
+      "slug": "demon-shoes",
+      "stats": [],
+      "summary": "Quick Mana Regen",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+65 Magic Power",
+      "category": "Magic",
+      "name": "Divine Glaive",
+      "passive": "Spellbreaker: When attacking an enemy, gains 0.1% extra Magic Penetration for each point of the enemy's Magic Defense, capped at 20%.",
+      "price": 1970,
+      "recipe": [
+        "Magic Wand"
+      ],
+      "slug": "divine-glaive",
+      "stats": [],
+      "summary": "Magic Penetration",
+      "unique": "+40% Magic Penetration"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+40 Physical Defense, +40 Magic Defense, +5% Movement Speed",
+      "category": "Defense",
+      "name": "Dominance Ice",
+      "passive": "Fortress Shield: For each enemy hero within 5 units, Hybrid Defense is increased by 8, up to 40.@ Lifebane: Reduces Shield and HP Regen effects of nearby enemies within 5 units to 60% of normal for 1 second.",
+      "price": 2010,
+      "recipe": [
+        "Black Ice Shield",
+        "Leather Jerkin",
+        "Magic Resist Cloak"
+      ],
+      "slug": "dominance-ice",
+      "stats": [],
+      "summary": "Healing Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+30 Physical Defense",
+      "category": "Defense",
+      "name": "Dreadnaught Armor",
+      "passive": "Deter: When hit by a skill, reduces the attacker's Physical Damage by 4% for 2 seconds (this effect stacks up to 3 times).",
+      "price": 730,
+      "recipe": [
+        "Leather Jerkin",
+        "Leather Jerkin"
+      ],
+      "slug": "dreadnaught-armor",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+300 HP, +380 Mana",
+      "category": "Magic",
+      "name": "Elegant Gem",
+      "passive": "Gift: When HP drops below 50%, recovers 15% of HP over the next 3 seconds. When Mana drops below 50%, restores 15% of Mana over the next 3 seconds. Cooldown: 60 seconds.",
+      "price": 700,
+      "recipe": [
+        "Power Crystal",
+        "Vitality Crystal"
+      ],
+      "slug": "elegant-gem",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+70 Magic Power, +300 HP, +15% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Enchanted Talisman",
+      "passive": "Mana Spring: Regenerates 15% of Max Mana every 10 seconds.@ Magic Mastery: Max Cooldown Reduction is increased by 5%.",
+      "price": 2070,
+      "recipe": [
+        "Tome of Evil",
+        "Magic Necklace",
+        "Magic Wand"
+      ],
+      "slug": "enchanted-talisman",
+      "stats": [],
+      "summary": "Mana Regen & CD Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+60 Physical Attack, +250 HP, +10% Cooldown Reduction, +5% Movement Speed, +5 Mana Regen",
+      "category": "Attack",
+      "name": "Endless Battle",
+      "passive": "Divine Justice: After casting a skill, the next Basic Attack within 3 seconds deals (60% Total Physical Attack) extra True Damage and recovers 80 (+40% of Total Physical Attack) HP (1.5 seconds cooldown).",
+      "price": 2330,
+      "recipe": [
+        "Azure Blade",
+        "Iron Hunting Bow",
+        "Ogre Tomahawk"
+      ],
+      "slug": "endless-battle",
+      "stats": [],
+      "summary": "Enhanced Basic Attacks",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+30 Magic Power, +5% Movement Speed",
+      "category": "Magic",
+      "name": "Exotic Veil",
+      "passive": "",
+      "price": 600,
+      "recipe": [
+        "Mystery Codex"
+      ],
+      "slug": "exotic-veil",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+30 Adaptive Attack,",
+      "category": "Attack & Magic",
+      "name": "Expert Gloves",
+      "passive": "",
+      "price": 500,
+      "recipe": [],
+      "slug": "expert-gloves",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+60 Magic Power, +20% Attack Speed, +10% Lifesteal, +5% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Feather of Heaven",
+      "passive": "Affliction: Each Basic Attack deals extra 50 (+30% Total Magic Power) Magic Damage.@ Impulse: Basic Attacks grant 6% extra Attack Speed for 3 seconds, capped at 5 stacks.",
+      "price": 2030,
+      "recipe": [
+        "Swift Crossbow",
+        "Book of Sages"
+      ],
+      "slug": "feather-of-heaven",
+      "stats": [],
+      "summary": "Magic Basic Attacks",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+60 Magic Power, +300 HP, +10% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Flask of the Oasis",
+      "passive": "Blessing: When casting a healing or shield skill, if the target's HP is below 35%, or falls below 35% within 3 seconds, they will get a (100*Hero Level) shield that lasts 3 seconds. When this effect triggers, it also reduces the cooldown of the caster's skills by 2 seconds. (This effect can only trigger once every 60 seconds on the same target, and will not trigger on self-only healing and shield skills.)",
+      "price": 1850,
+      "recipe": [
+        "Magic Wand",
+        "Book of Sages",
+        "Vitality Crystal"
+      ],
+      "slug": "flask-of-the-oasis",
+      "stats": [],
+      "summary": "Protect Teammates",
+      "unique": "+12% Healing Effect"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+30 Adaptive Attack, +600 HP, +15% Cooldown Reduction",
+      "category": "Attack, Magic & Defense",
+      "name": "Fleeting Time",
+      "passive": "Timestream: Hero kills or assists reduce the Ultimate's current cooldown by 30%.",
+      "price": 2050,
+      "recipe": [
+        "Hero's Ring",
+        "Hero's Ring",
+        "Expert Gloves"
+      ],
+      "slug": "fleeting-time",
+      "stats": [],
+      "summary": "Ultimate CD Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Floryn's allies",
+      "bonus": "+5% Adaptive Attack",
+      "category": "Magic",
+      "name": "Flower of Hope",
+      "passive": "Flower of Hope: Every 6 seconds, the next skill or Basic Attack deals an additional 60 (+30% Total Physical Attack) (+30% Total Magic Power) Magic Damage.",
+      "price": null,
+      "recipe": [],
+      "slug": "flower-of-hope",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+35 Physical Attack",
+      "category": "Attack",
+      "name": "Fury Hammer",
+      "passive": "",
+      "price": 830,
+      "recipe": [
+        "Dagger"
+      ],
+      "slug": "fury-hammer",
+      "stats": [],
+      "summary": "",
+      "unique": "+12 Physical Penetration"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+75 Magic Power, +5% Movement Speed",
+      "category": "Magic",
+      "name": "Genius Wand",
+      "passive": "Magic: Dealing Magic Damage to enemy heroes will reduce their Magic Defense by 2.5+(0.5*Hero Level) for 2 seconds. Stacks up to 3 times.",
+      "price": 2000,
+      "recipe": [
+        "Exotic Veil",
+        "Magic Wand"
+      ],
+      "slug": "genius-wand",
+      "stats": [],
+      "summary": "Magic Defense Reduction",
+      "unique": "+10 Magic Penetration"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+60 Magic Power, +300 HP, +5% Movement Speed",
+      "category": "Magic",
+      "name": "Glowing Wand",
+      "passive": "Scorch: Dealing Magic Damage burns the targets for 3 seconds, also dealing extra Magic Damage equal to 1% of the target's Max HP per second.@ Lifebane: Dealing damage to the target will reduce the Shield and HP Regen effects on them to 60% of normal for 3 seconds.",
+      "price": 2150,
+      "recipe": [
+        "Exotic Veil",
+        "Mystery Codex",
+        "Vitality Crystal"
+      ],
+      "slug": "glowing-wand",
+      "stats": [],
+      "summary": "Healing Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+55 Physical Attack, +15% Attack Speed",
+      "category": "Attack",
+      "name": "Golden Staff",
+      "passive": "Swift: Every 1% extra Crit Chance gained is converted into 1% extra Attack Speed.@ Endless Strike: After every 2 non-Crit Basic Attacks, the Attack Speed of the next Basic Attack is increased by 80% (and Attack Speed cap is increased to 500%) and triggers Attack Effects an additional 2 time(s).",
+      "price": 2000,
+      "recipe": [
+        "Regular Spear",
+        "Dagger",
+        "Dagger"
+      ],
+      "slug": "golden-staff",
+      "stats": [],
+      "summary": "Enhance Attack Effects",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+70 Physical Attack, +10% Cooldown Reduction, +20% Crit Chance",
+      "category": "Attack",
+      "name": "Great Dragon Spear",
+      "passive": "Supreme Warrior: After casting an Ultimate, increase Movement Speed by 30% for 7.5 seconds. This effect has a 15 seconds cooldown.",
+      "price": 2140,
+      "recipe": [
+        "Legion Sword",
+        "Iron Hunting Bow",
+        "Javelin"
+      ],
+      "slug": "great-dragon-spear",
+      "stats": [],
+      "summary": "CD Reduction & Crit",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+1800 HP, +20 HP Regen",
+      "category": "Defense",
+      "name": "Guardian Helmet",
+      "passive": "Recovery: After 5 seconds out of combat, recover (2.5% Total HP) HP per second.@ Defender: Upon taking more than 500 damage in a single instance, recover 30 (+0.3% Total HP)% HP from the excess damage beyond that amount.",
+      "price": 2500,
+      "recipe": [
+        "Ares Belt",
+        "Ares Belt",
+        "Ares Belt"
+      ],
+      "slug": "guardian-helmet",
+      "stats": [],
+      "summary": "Constant HP Regen",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+40 Physical Attack, +15% Attack Speed, +20% Crit Chance",
+      "category": "Attack",
+      "name": "Haas' Claws",
+      "passive": "Frenzy: Critical strikes grant 20% extra Attack Speed for 2 seconds.",
+      "price": 2020,
+      "recipe": [
+        "Vampire Mallet",
+        "Rogue Meteor",
+        "Dagger"
+      ],
+      "slug": "haas-claws",
+      "stats": [],
+      "summary": "Lifesteal",
+      "unique": "+20% Lifesteal"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+4 HP Regen",
+      "category": "Defense",
+      "name": "Healing Necklace",
+      "passive": "",
+      "price": 140,
+      "recipe": [],
+      "slug": "healing-necklace",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+150 HP, +5% Cooldown Reduction",
+      "category": "Defense",
+      "name": "Hero's Ring",
+      "passive": "",
+      "price": 450,
+      "recipe": [],
+      "slug": "hero-s-ring",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+165 Magic Power",
+      "category": "Magic",
+      "name": "Holy Crystal",
+      "passive": "Mystery: Gains 21%-35% extra Magic Power (scales with level).",
+      "price": 3000,
+      "recipe": [
+        "Magic Wand",
+        "Magic Wand",
+        "Magic Wand"
+      ],
+      "slug": "holy-crystal",
+      "stats": [],
+      "summary": "Max Magic Power",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+80 Physical Attack, +10% Cooldown Reduction",
+      "category": "Attack",
+      "name": "Hunter Strike",
+      "passive": "Retribution: Dealing damage to the same enemy hero or creep 5 times in a row grants 50% extra Movement Speed that decays over 3 seconds (8 seconds cooldown).",
+      "price": 2010,
+      "recipe": [
+        "Fury Hammer",
+        "Iron Hunting Bow",
+        "Dagger"
+      ],
+      "slug": "hunter-strike",
+      "stats": [],
+      "summary": "Brief Speed-Up",
+      "unique": "+15 Physical Penetration"
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+60 Magic Power, +10% Spell Vamp, +300 HP, +7% Movement Speed",
+      "category": "Magic",
+      "name": "Ice Queen Wand",
+      "passive": "Ice Bound: When a skill deals damage to an enemy hero, it will also slow them by 10% for 2 seconds (stacks up to 3 times). This effect has a 0.4 seconds cooldown.",
+      "price": 2040,
+      "recipe": [
+        "Mystic Container",
+        "Exotic Veil",
+        "Mystery Codex"
+      ],
+      "slug": "ice-queen-wand",
+      "stats": [],
+      "summary": "Slow on Skill Hit",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+850 HP, +15 Physical Defense",
+      "category": "Defense",
+      "name": "Immortality",
+      "passive": "Immortal: Resurrect 2.5 seconds upon death and gets 16% Max HP and a shield that can absorb 150(+70*Hero Level）damage. Shield lasts 3 seconds. This effect has a 210 seconds cooldown.",
+      "price": 2120,
+      "recipe": [
+        "Ares Belt",
+        "Vitality Crystal",
+        "Leather Jerkin"
+      ],
+      "slug": "immortality",
+      "stats": [],
+      "summary": "Self-Resurrection",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+10 Physical Attack, +5% Cooldown Reduction",
+      "category": "Attack",
+      "name": "Iron Hunting Bow",
+      "passive": "",
+      "price": 450,
+      "recipe": [],
+      "slug": "iron-hunting-bow",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+8% Crit Chance",
+      "category": "Attack",
+      "name": "Javelin",
+      "passive": "",
+      "price": 320,
+      "recipe": [],
+      "slug": "javelin",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+10% Attack Speed",
+      "category": "Attack",
+      "name": "Knife",
+      "passive": "",
+      "price": 280,
+      "recipe": [],
+      "slug": "knife",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Floryn",
+      "bonus": "+20 Magic Power, +4% Movement Speed, +2% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Lantern of Hope",
+      "passive": "Lantern of Hope: The equipment's attributes scale with hero level.",
+      "price": null,
+      "recipe": [],
+      "slug": "lantern-of-hope",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+14 Physical Defense",
+      "category": "Defense",
+      "name": "Leather Jerkin",
+      "passive": "",
+      "price": 220,
+      "recipe": [],
+      "slug": "leather-jerkin",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+60 Physical Attack",
+      "category": "Attack",
+      "name": "Legion Sword",
+      "passive": "",
+      "price": 910,
+      "recipe": [
+        "Dagger",
+        "Dagger"
+      ],
+      "slug": "legion-sword",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+75 Magic Power, +400 Mana, +10% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Lightning Truncheon",
+      "passive": "Resonate: Every 6 seconds, the next skill echoes, dealing 255 (+85% Magic Power) extra Magic Damage to all enemies in range.",
+      "price": 2250,
+      "recipe": [
+        "Magic Wand",
+        "Book of Sages",
+        "Power Crystal"
+      ],
+      "slug": "lightning-truncheon",
+      "stats": [],
+      "summary": "Splash Damage",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+35 Physical Attack, +10% Lifesteal",
+      "category": "Attack",
+      "name": "Magic Blade",
+      "passive": "Lifeline: When taking damage that reduces HP below 30%, gains a (+60*Hero Level) shield (increases with level) and 50% Movement Speed that rapidly decays over 3 seconds. This effect has a 60 seconds cooldown.",
+      "price": 1050,
+      "recipe": [
+        "Dagger",
+        "Vampire Mallet"
+      ],
+      "slug": "magic-blade",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+2 Mana Regen",
+      "category": "Magic",
+      "name": "Magic Necklace",
+      "passive": "",
+      "price": 120,
+      "recipe": [],
+      "slug": "magic-necklace",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "",
+      "category": "Magic",
+      "name": "Magic Potion",
+      "passive": "Increase Power: Automatically used after purchasing, increases Magic Power by 30 and Cooldown Reduction by 10% for 120s. Can only have one potion effect at a time.",
+      "price": 1500,
+      "recipe": [],
+      "slug": "magic-potion",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+14 Magic Defense",
+      "category": "Defense",
+      "name": "Magic Resist Cloak",
+      "passive": "",
+      "price": 220,
+      "recipe": [],
+      "slug": "magic-resist-cloak",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+40 Movement Speed, +10% Cooldown Reduction, +150 HP",
+      "category": "Movement",
+      "name": "Magic Shoes",
+      "passive": "",
+      "price": 720,
+      "recipe": [
+        "Boots",
+        "Hero's Ring"
+      ],
+      "slug": "magic-shoes",
+      "stats": [],
+      "summary": "CD Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+45 Magic Power",
+      "category": "Magic",
+      "name": "Magic Wand",
+      "passive": "",
+      "price": 820,
+      "recipe": [
+        "Mystery Codex"
+      ],
+      "slug": "magic-wand",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+40 Physical Attack, +20% Attack Speed",
+      "category": "Attack",
+      "name": "Malefic Gun",
+      "passive": "Armor Buster: Increase Physical Penetration by 30%.@ Malefic Energy: Increases Basic Attack range by 12%. When hitting a target, gains 10% Movement Speed for 0.5 seconds.",
+      "price": 2120,
+      "recipe": [
+        "Fury Hammer",
+        "Knife",
+        "Knife"
+      ],
+      "slug": "malefic-gun",
+      "stats": [],
+      "summary": "Attack Range Increase",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+60 Physical Attack",
+      "category": "Attack",
+      "name": "Malefic Roar",
+      "passive": "Armor Buster: Increase Physical Penetration by 30%.@ Breaker: When attacking an enemy, gains 0.1% extra Physical Penetration for each point of the enemy's Physical Defense, capped at 30%.",
+      "price": 2060,
+      "recipe": [
+        "Legion Sword"
+      ],
+      "slug": "malefic-roar",
+      "stats": [],
+      "summary": "High Physical Penetration",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+540 HP",
+      "category": "Defense",
+      "name": "Molten Essence",
+      "passive": "Burning Soul: Deals (0.6% Total HP) Magic Damage to nearby enemies per second. This damage is increased by 125(+15*Hero Level)% against creeps and minions.",
+      "price": 800,
+      "recipe": [
+        "Vitality Crystal"
+      ],
+      "slug": "molten-essence",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+15 Magic Power",
+      "category": "Magic",
+      "name": "Mystery Codex",
+      "passive": "",
+      "price": 300,
+      "recipe": [],
+      "slug": "mystery-codex",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+15 Magic Power, +8% Spell Vamp",
+      "category": "Magic",
+      "name": "Mystic Container",
+      "passive": "",
+      "price": 500,
+      "recipe": [
+        "Mystery Codex"
+      ],
+      "slug": "mystic-container",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Removed",
+      "bonus": "+60 Magic Power, +300 HP, +380 Mana, +5% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Necklace of Durance",
+      "passive": "Gift: Regens 20% HP and Mana within 2 seconds of leveling up.@ Lifebane: Upon dealing damage to the target, reduces Shield and HP Regen of the target by 50% for 3 seconds.",
+      "price": 2010,
+      "recipe": [
+        "Book of Sages",
+        "Elegant Gem",
+        "Mystery Codex"
+      ],
+      "slug": "necklace-of-durance",
+      "stats": [],
+      "summary": "Healing Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+25 Physical Attack, +230 HP",
+      "category": "Attack",
+      "name": "Ogre Tomahawk",
+      "passive": "",
+      "price": 650,
+      "recipe": [
+        "Dagger",
+        "Vitality Crystal"
+      ],
+      "slug": "ogre-tomahawk",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+850 HP, +20 Physical Defense, +20 Magic Defense, +10% Cooldown Reduction",
+      "category": "Defense",
+      "name": "Oracle",
+      "passive": "Bless: Received Shield and HP Regen effects are increased by 25%.",
+      "price": 1860,
+      "recipe": [
+        "Hero's Ring",
+        "Hero's Ring",
+        "Vitality Crystal"
+      ],
+      "slug": "oracle",
+      "stats": [],
+      "summary": "Enhanced Regen",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+280 Mana",
+      "category": "Magic",
+      "name": "Power Crystal",
+      "passive": "",
+      "price": 220,
+      "recipe": [],
+      "slug": "power-crystal",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "",
+      "category": "Attack",
+      "name": "Power Potion",
+      "passive": "Increase Power: Automatically used after purchasing, giving 30 Physical Attack and 15% of Lifesteal for 120s. Can only have one potion effect at a time.",
+      "price": 1500,
+      "recipe": [],
+      "slug": "power-potion",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+750 HP, +30 Adaptive Attack, +10% Cooldown Reduction, +10% Spell Vamp",
+      "category": "Defense",
+      "name": "Queen's Wings",
+      "passive": "Demonize: When HP drops below 40%, gains 30% Damage Reduction for 3 seconds and reduces skill cooldowns by 2 seconds. This effect has a 60 seconds cooldown.@ Defiance: For every 1% HP lost, damage is increased by 0.25%, up to 15%.",
+      "price": 2250,
+      "recipe": [
+        "Ares Belt",
+        "Hero's Ring",
+        "Expert Gloves"
+      ],
+      "slug": "queen-s-wings",
+      "stats": [],
+      "summary": "Low-HP Retaliation",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+950 HP, +40 Magic Defense, +12 HP Regen",
+      "category": "Defense",
+      "name": "Radiant Armor",
+      "passive": "Holy Blessing: Taking Magic Damage grants 5(+1*Hero Level) Magic Defense for 5 seconds, up to 6 stacks (can only gain 1 stack(s) every 0.4 seconds).",
+      "price": 1880,
+      "recipe": [
+        "Silence Robe",
+        "Magic Resist Cloak",
+        "Healing Necklace"
+      ],
+      "slug": "radiant-armor",
+      "stats": [],
+      "summary": "Magic Damage Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+55 Movement Speed, +35% Slow Reduction, +12 HP Regen",
+      "category": "Movement",
+      "name": "Rapid Boots",
+      "passive": "",
+      "price": 720,
+      "recipe": [
+        "Boots",
+        "Healing Necklace",
+        "Healing Necklace"
+      ],
+      "slug": "rapid-boots",
+      "stats": [],
+      "summary": "Movement Speed",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+20 Physical Attack, +10% Attack Speed",
+      "category": "Attack",
+      "name": "Regular Spear",
+      "passive": "",
+      "price": 600,
+      "recipe": [
+        "Knife",
+        "Dagger"
+      ],
+      "slug": "regular-spear",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "",
+      "category": "Defense",
+      "name": "Rock Potion",
+      "passive": "Increase Power: Upon purchase, grants 500 Max HP and 5% Damage Reduction for 120 seconds. Can only have one potion effect at a time.",
+      "price": 1500,
+      "recipe": [],
+      "slug": "rock-potion",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+15% Attack Speed, +10% Crit Chance",
+      "category": "Attack",
+      "name": "Rogue Meteor",
+      "passive": "",
+      "price": 900,
+      "recipe": [
+        "Knife",
+        "Javelin"
+      ],
+      "slug": "rogue-meteor",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+30 Physical Attack, +20% Attack Speed, +10% Lifesteal",
+      "category": "Attack",
+      "name": "Rose Gold Meteor",
+      "passive": "Dragon Scale: Every 4 extra Physical Attack increases Hybrid Defense by 1, up to 50 (effect is halved if Main Role is not Fighter).@ Lifeline: When taking damage that reduces HP below 30%, gains a (120*Hero Level) shield (increases with level) and 50% Movement Speed that rapidly decays over 3 seconds. This effect has a 60 seconds cooldown.",
+      "price": 2030,
+      "recipe": [
+        "Magic Blade",
+        "Knife"
+      ],
+      "slug": "rose-gold-meteor",
+      "stats": [],
+      "summary": "Low-HP Shield",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Removed",
+      "bonus": "+30 Physical Attack, +20% Attack Speed, +25% Crit Chance",
+      "category": "Attack",
+      "name": "Scarlet Phantom",
+      "passive": "Frenzy: Critical strikes grant 30% extra Attack Speed and 5% extra Crit Chance for 2 seconds.",
+      "price": 2020,
+      "recipe": [
+        "Rogue Meteor",
+        "Javelin"
+      ],
+      "slug": "scarlet-phantom",
+      "stats": [],
+      "summary": "Crit & Attack Speed",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+80 Physical Attack, +20% Attack Speed",
+      "category": "Attack",
+      "name": "Sea Halberd",
+      "passive": "Lifebane: Dealing damage to a target will reduce the Shield and HP Regen effects on them to 60% of normal for 3 seconds.@ Punish: Increase damage by 8% against enemy heroes with higher extra HP.",
+      "price": 2050,
+      "recipe": [
+        "Legion Sword",
+        "Regular Spear"
+      ],
+      "slug": "sea-halberd",
+      "stats": [],
+      "summary": "Healing Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Removed",
+      "bonus": "+75 Magic Power, +15% Magic Lifesteal, +5% Movement Speed",
+      "category": "Magic",
+      "name": "Shadow Twinblades",
+      "passive": "Assassination: If no damage is taken or dealt within 5 sseconds, the next Basic Attack will deal extra Magic Damage equal to 200 plus 50% Magic Power, and inflict 60% slow effects upon the target for 1.5 seconds.",
+      "price": 1960,
+      "recipe": [
+        "Exotic Veil",
+        "Mystic Container"
+      ],
+      "slug": "shadow-twinblades",
+      "stats": [],
+      "summary": "Best for Assassins",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Removed",
+      "bonus": "+20 Magic Power, +5% Movement Speed",
+      "category": "Magic",
+      "name": "Shimmering Lantern",
+      "passive": "Floryn can share the power of Dew's Lantern with an allied hero. The Lantern is not strong enough yet and can evolve once it absorbs enough energy in battle.",
+      "price": null,
+      "recipe": [],
+      "slug": "shimmering-lantern",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+540 HP, +23 Magic Defense",
+      "category": "Defense",
+      "name": "Silence Robe",
+      "passive": "",
+      "price": 1020,
+      "recipe": [
+        "Vitality Crystal",
+        "Magic Resist Cloak"
+      ],
+      "slug": "silence-robe",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+60 Adaptive Attack, +15 Movement Speed",
+      "category": "Attack & Magic",
+      "name": "Sky Piercer",
+      "passive": "Lethality: After dealing damage to an enemy hero, executes the hero if their HP is lower than 4%. Gains 10 stack(s) of Lethality for each kill and loses 30% current stack(s) for each death. Each stack of Lethality increases the HP threshold of the execute effect by 0.1%, stacking up 80 times.",
+      "price": 1500,
+      "recipe": [
+        "Expert Gloves",
+        "Expert Gloves"
+      ],
+      "slug": "sky-piercer",
+      "stats": [],
+      "summary": "Best for Finishers",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+75 Magic Power, +10% Cooldown Reduction, +8% Hybrid Lifesteal, +6 Mana Regen",
+      "category": "Magic",
+      "name": "Starlium Scythe",
+      "passive": "Crisis: After casting a skill, the next Basic Attack within 3 seconds deals 90 (+60% Total Magic Power) extra True Damage and reduces the target's Movement Speed by 15% for 1.5 seconds (1.5 seconds cooldown).",
+      "price": 2120,
+      "recipe": [
+        "Azure Blade",
+        "Book of Sages",
+        "Magic Wand"
+      ],
+      "slug": "starlium-scythe",
+      "stats": [],
+      "summary": "Enhanced Basic Attacks",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+35 Physical Defense",
+      "category": "Defense",
+      "name": "Steel Legplates",
+      "passive": "",
+      "price": 630,
+      "recipe": [
+        "Leather Jerkin"
+      ],
+      "slug": "steel-legplates",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+40 Movement Speed, +15% Attack Speed",
+      "category": "Movement",
+      "name": "Swift Boots",
+      "passive": "",
+      "price": 720,
+      "recipe": [
+        "Boots",
+        "Knife"
+      ],
+      "slug": "swift-boots",
+      "stats": [],
+      "summary": "Attack Speed",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+20% Attack Speed",
+      "category": "Attack",
+      "name": "Swift Crossbow",
+      "passive": "Crossbow: Each Basic Attack deals 40 extra Adaptive Damage.@ Impulse: Basic Attacks grant 3% extra Attack Speed for 3 seconds, capped at 5 stacks.",
+      "price": 1000,
+      "recipe": [
+        "Knife",
+        "Knife"
+      ],
+      "slug": "swift-crossbow",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+600 HP, +15 Physical Defense, +15 Magic Defense, +20 Movement Speed",
+      "category": "Defense",
+      "name": "Thunder Belt",
+      "passive": "Thunderbolt: Every 4 seconds, the next Basic Attack deals 50 (+100% Extra Physical Defense) (+100% Extra Magic Defense) extra True Damage to the target and enemies around them, and briefly slows them by 99%. Hybrid Defense permanently increases by 1 each time the attack hits an enemy hero. (This effect is reduced to 50% for Marksmen, Mages, and Assassins)",
+      "price": 1820,
+      "recipe": [
+        "Ares Belt",
+        "Leather Jerkin",
+        "Magic Resist Cloak"
+      ],
+      "slug": "thunder-belt",
+      "stats": [],
+      "summary": "Damage for Tanks",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+30 Magic Power, +2 Mana Regen, +10% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Tome of Evil",
+      "passive": "",
+      "price": 950,
+      "recipe": [
+        "Magic Necklace",
+        "Book of Sages"
+      ],
+      "slug": "tome-of-evil",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+40 Movement Speed, +18 Magic Defense",
+      "category": "Movement",
+      "name": "Tough Boots",
+      "passive": "Fortitude: CC and Slow Duration reduced by 25%.",
+      "price": 720,
+      "recipe": [
+        "Boots",
+        "Magic Resist Cloak"
+      ],
+      "slug": "tough-boots",
+      "stats": [],
+      "summary": "CC Duration Reduction",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "Removed",
+      "bonus": "+1200 HP, +15 Physical Defense",
+      "category": "Defense",
+      "name": "Twilight Armor",
+      "passive": "Twilight: Upon taking more than 500 damage in a single instance, the excess damage beyond that amount is reduced by 20 (+0.2% Total HP)%.@ Redemption: When incoming damage reduces HP below 30%, recover 20% Max HP over the next 4 seconds. This effect has a 60 seconds cooldown.",
+      "price": 2100,
+      "recipe": [
+        "Ares Belt",
+        "Ares Belt",
+        "Leather Jerkin"
+      ],
+      "slug": "twilight-armor",
+      "stats": [],
+      "summary": "High Damage Resistance",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+8 Physical Attack, +8% Lifesteal",
+      "category": "Attack",
+      "name": "Vampire Mallet",
+      "passive": "",
+      "price": 400,
+      "recipe": [],
+      "slug": "vampire-mallet",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+230 HP",
+      "category": "Defense",
+      "name": "Vitality Crystal",
+      "passive": "",
+      "price": 300,
+      "recipe": [],
+      "slug": "vitality-crystal",
+      "stats": [],
+      "summary": "",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+35 Physical Attack, +400 HP, +10% Cooldown Reduction, +8% Hybrid Lifesteal",
+      "category": "Attack",
+      "name": "War Axe",
+      "passive": "Fighting Spirit: Attacks grants 12 extra Physical Attack per second for 4 seconds, up to 6 stacks. Deals 10% extra True Damage based on the damage dealt (no damage reduction counted) at full stacks. (Marksmen, Mages, and Supports only receive 50% of these stacked effects.)",
+      "price": 2100,
+      "recipe": [
+        "Ogre Tomahawk",
+        "Iron Hunting Bow",
+        "Hero's Ring"
+      ],
+      "slug": "war-axe",
+      "stats": [],
+      "summary": "Continuous Damage Boost",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+40 Movement Speed, +18 Physical Defense",
+      "category": "Movement",
+      "name": "Warrior Boots",
+      "passive": "Valor: Gains 4 extra Physical Defense for 3 seconds when taking Physical Damage, up to 20.",
+      "price": 720,
+      "recipe": [
+        "Boots",
+        "Leather Jerkin"
+      ],
+      "slug": "warrior-boots",
+      "stats": [],
+      "summary": "Stackable Physical Defense",
+      "unique": ""
+    },
+    {
+      "active": "Wind Chant: Become immune to all Physical Damage for 2 seconds (duration is halved if Main Role is not Marksman; 90 seconds cooldown).",
+      "best_for": "All heroes",
+      "bonus": "+30 Physical Attack, +20% Attack Speed, +10% Lifesteal",
+      "category": "Attack",
+      "name": "Wind of Nature",
+      "passive": "",
+      "price": 1910,
+      "recipe": [
+        "Regular Spear",
+        "Vampire Mallet"
+      ],
+      "slug": "wind-of-nature",
+      "stats": [],
+      "summary": "Physical Damage Immunity",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+35% Attack Speed, +20% Crit Chance, +20 Movement Speed",
+      "category": "Attack",
+      "name": "Windtalker",
+      "passive": "Typhoon: Every 5–2 seconds (reduced by 0.2 seconds for each Basic Attack), the next Basic Attack will hit up to 3 enemy units for 150–362 Magic Damage. (This attack can Crit and the damage increases to 200% against Minions.)",
+      "price": 1880,
+      "recipe": [
+        "Rogue Meteor",
+        "Knife"
+      ],
+      "slug": "windtalker",
+      "stats": [],
+      "summary": "Splash Damage",
+      "unique": ""
+    },
+    {
+      "active": "Frozen: Becomes frozen, untargetable, and immune to damage for 2 seconds (100 seconds cooldown). Cannot move or cast skills while frozen, but skills already cast won't be interrupted.",
+      "best_for": "All heroes",
+      "bonus": "+45 Adaptive Attack, +400 HP, +5% Cooldown Reduction",
+      "category": "Attack & Magic",
+      "name": "Winter Crown",
+      "passive": "",
+      "price": 1910,
+      "recipe": [
+        "Expert Gloves",
+        "Hero's Ring",
+        "Vitality Crystal"
+      ],
+      "slug": "winter-crown",
+      "stats": [],
+      "summary": "Temporary Invincibility",
+      "unique": ""
+    },
+    {
+      "active": "",
+      "best_for": "All heroes",
+      "bonus": "+75 Magic Power, +400 Mana, +10% Cooldown Reduction",
+      "category": "Magic",
+      "name": "Wishing Lantern",
+      "passive": "Butterfly Goddess: For every 900 Magic Damage dealt to an enemy hero (calculated before Damage Reduction), a Butterfly Goddess is summoned to attack the enemy hero, dealing Magic Damage equal to 8% of their Current HP.",
+      "price": 2250,
+      "recipe": [
+        "Magic Wand",
+        "Book of Sages",
+        "Power Crystal"
+      ],
+      "slug": "wishing-lantern",
+      "stats": [],
+      "summary": "Counter High HP",
+      "unique": ""
+    }
+  ],
+  "patch": "2.1.90",
+  "rankings_measured_at": "2026-09-21T10:00:42.336Z",
+  "schema_version": 1
+}

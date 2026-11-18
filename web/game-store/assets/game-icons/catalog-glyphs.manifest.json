@@ -1,0 +1,85 @@
+{
+  "assets": [
+    {
+      "author": "Delapouite",
+      "file": "coins.svg",
+      "iconify_id": "game-icons:coins",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "modified": "SVG dimensions normalized to 512px; path geometry unchanged.",
+      "sha256": "8a6edf27f4b46681cd34ab58f64d1f695a16d3f1b32edf9f22c295c25a250367",
+      "source": "https://game-icons.net/1x1/delapouite/coins.html",
+      "title": "Coins"
+    },
+    {
+      "author": "Lorc",
+      "file": "cut-diamond.svg",
+      "iconify_id": "game-icons:cut-diamond",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "modified": "SVG dimensions normalized to 512px; path geometry unchanged.",
+      "sha256": "b02cb60ea14f9c492bac06ec84fcee9e1dc1096fbb9bc52b1e330af533e982bd",
+      "source": "https://game-icons.net/1x1/lorc/cut-diamond.html",
+      "title": "Cut Diamond"
+    },
+    {
+      "author": "Delapouite",
+      "file": "present.svg",
+      "iconify_id": "game-icons:present",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "modified": "SVG dimensions normalized to 512px; path geometry unchanged.",
+      "sha256": "12a5ee3b22c81723a5a8b6e56272c7f03aac2cfc65653009487098643d5c32b6",
+      "source": "https://game-icons.net/1x1/delapouite/present.html",
+      "title": "Present"
+    },
+    {
+      "author": "Delapouite",
+      "file": "spell-book.svg",
+      "iconify_id": "game-icons:spell-book",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "modified": "SVG dimensions normalized to 512px; path geometry unchanged.",
+      "sha256": "817111593224028d36c8733708b67248f0bd5a450d0a97522c3dcd92c405e925",
+      "source": "https://game-icons.net/1x1/delapouite/spell-book.html",
+      "title": "Spell Book"
+    },
+    {
+      "author": "Lorc",
+      "file": "boots.svg",
+      "iconify_id": "game-icons:boots",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "modified": "SVG dimensions normalized to 512px; path geometry unchanged.",
+      "sha256": "cfa7dcdbfeaf09ca91e1d8f7ef4f826f1a4c5a6fa4de7ae69c4f15b48c86d485",
+      "source": "https://game-icons.net/1x1/lorc/boots.html",
+      "title": "Boots"
+    },
+    {
+      "author": "Delapouite",
+      "file": "jungle.svg",
+      "iconify_id": "game-icons:jungle",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "modified": "SVG dimensions normalized to 512px; path geometry unchanged.",
+      "sha256": "a8fa6c0973a688a7e3d29974148f1359a37bf2e7d5193c39374771dba11e7d97",
+      "source": "https://game-icons.net/1x1/delapouite/jungle.html",
+      "title": "Jungle"
+    },
+    {
+      "author": "Skoll",
+      "file": "footsteps.svg",
+      "iconify_id": "game-icons:footsteps",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "modified": "SVG dimensions normalized to 512px; path geometry unchanged.",
+      "sha256": "d3a802a4d08caf887a21ae8708686b09594663610ea343f8874d089283e383a5",
+      "source": "https://game-icons.net/1x1/skoll/footsteps.html",
+      "title": "Footsteps"
+    }
+  ],
+  "license": "CC BY 3.0",
+  "license_url": "https://creativecommons.org/licenses/by/3.0/",
+  "schema_version": 1,
+  "source_api": "https://api.iconify.design/game-icons"
+}

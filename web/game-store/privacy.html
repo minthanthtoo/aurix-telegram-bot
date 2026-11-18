@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Privacy notice for AuriX Game Store accounts, orders, payments and fulfillment.">
+  <meta name="theme-color" content="#0d1110">
+  <title>Privacy notice · AuriX Game Store</title>
+  <link rel="stylesheet" href="/game-store/styles.css?v=20261116-warm-material-1">
+  <link rel="stylesheet" href="/game-store/theme.css?v=20261116-warm-material-1">
+  <style>
+    .policy-main { width: min(780px, calc(100% - 40px)); margin: 48px auto 72px; }
+    .policy-kicker { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    .policy-main h1 { margin: 8px 0 10px; font-size: clamp(30px, 6vw, 44px); }
+    .policy-updated { color: var(--muted); font-size: 13px; }
+    .policy-main h2 { margin: 32px 0 10px; font-size: 20px; }
+    .policy-main p, .policy-main li { color: #c7d4e9; font-size: 15px; line-height: 1.75; }
+    .policy-main a { color: var(--accent); }
+    .policy-back { display: inline-flex; min-height: 44px; align-items: center; margin-top: 26px; padding: 0 16px; border: 1px solid var(--line); border-radius: 12px; color: var(--text) !important; text-decoration: none; }
+    @media (max-width: 600px) { .policy-main { margin-top: 30px; } }
+  </style>
+</head>
+<body>
+  <main class="policy-main">
+    <p class="policy-kicker">AuriX Game Store</p>
+    <h1>Privacy notice</h1>
+    <p class="policy-updated">Effective 15 November 2026</p>
+    <p>AuriX Game Store at <a href="https://games.aurix-mart.tech">games.aurix-mart.tech</a> offers account sign-in, game package listings and checkout for supported packages. Account checks and payment instructions are shown during the order workflow.</p>
+
+    <h2>Sign-in information</h2>
+    <p>You can use Google or Telegram to create a Store account. The provider sends a signed sign-in response to AuriX so the server can verify your account and, if you choose, link that provider to an existing Store account. Google’s response can contain a stable account identifier and profile claims; Telegram’s response can contain an account identifier and profile claims. The Store persists the provider, stable provider identifier, internal Store account identifier, and sign-in session data. It does not retain the provider profile claims or the Google ID token after verification. AuriX does not ask for your Google or Telegram password or one-time sign-in code.</p>
+    <p>The browser uses a first-party session cookie marked <code>HttpOnly</code>, <code>Secure</code> on the HTTPS site, and <code>SameSite=Lax</code>; it expires after 12 hours. Private account responses are not stored by the Store service worker. A browser may remember recently entered game IDs locally when you choose to use the recipient-history feature; those values are kept in that browser and are not part of Google or Telegram sign-in.</p>
+
+    <h2>Service and operational data</h2>
+    <p>The Games service runs on AuriX infrastructure in Singapore. The HTTP service records the client network address, request method and path, and request time in operational logs; request bodies and query strings are not written to those logs. A fixed retention period for operational logs has not yet been approved. Store identity and account records remain in the private Store database; a self-service account deletion control and a fixed identity-record retention period are not yet available.</p>
+    <p>Google and Telegram provide the authentication services you select. The hosting provider stores the Game Store service and its database. AuriX does not sell Store identity data or use it for advertising. For account checks, AuriX sends the required game account ID and server or zone to FazerCards, which may return a player name and account region. For fulfillment, AuriX sends the confirmed account fields and selected package to FazerCards. AuriX stores order amounts, payment instructions, transaction references and order status. Uploaded payment receipts and recipient records are encrypted in private storage. Authorized Store reviewers can access receipt evidence and verify merchant transactions to approve payment or record refunds. Receipt images may contain financial and personal information. Include only the evidence needed to verify your transfer.</p>
+
+    <h2>Optional Most active buyers leaderboard</h2>
+    <p>If you choose to join from your Store profile, AuriX stores your chosen display name and opt-in setting with your Store account. The public leaderboard shows that name and the number of your completed orders during the rolling 30-day period. It does not publish your account ID, game player ID, order references, or payment amounts. You can turn participation off in your profile; your name is then removed from the public ranking. The leaderboard is based on completed deliveries and does not promise a prize or giveaway. Store notices are available in the in-app notice center; unread status is stored in your browser only. They are not push, SMS or email notifications.</p>
+
+    <h2>Your choices and contact</h2>
+    <p>You may choose not to sign in, or sign out from your Store account. To ask about the identity record associated with your account or request its removal, contact <a href="mailto:newmoonlake3@gmail.com">newmoonlake3@gmail.com</a>. AuriX will review the request against operational, security, and record-keeping needs. Support staffing is planned for 09:00–21:00 Myanmar time; live support is not currently connected in the Store.</p>
+
+    <h2>Changes</h2>
+    <p>This notice will be revised when the Store changes how it collects, uses or shares account, order or payment data.</p>
+    <a class="policy-back" href="/game-store/">Back to AuriX Game Store</a>
+  </main>
+</body>
+</html>

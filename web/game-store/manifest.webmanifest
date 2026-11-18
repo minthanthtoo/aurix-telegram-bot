@@ -1,0 +1,18 @@
+{
+  "name": "AuriX Game Store",
+  "short_name": "AuriX Games",
+  "description": "A mobile-first preview catalog for verified game goods.",
+  "start_url": "/game-store/",
+  "scope": "/game-store/",
+  "display": "standalone",
+  "background_color": "#0d1110",
+  "theme_color": "#0d1110",
+  "icons": [
+    {
+      "src": "/game-store/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

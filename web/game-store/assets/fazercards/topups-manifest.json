@@ -1,0 +1,1415 @@
+{
+  "source": "FazerCards top-up catalog UI metadata",
+  "captured_categories": 287,
+  "artwork": {
+    "8-ball-pool": {
+      "src": "/game-store/assets/fazercards/topups/8-ball-pool.png",
+      "name": "8 Ball Pool",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "acecraft": {
+      "src": "/game-store/assets/fazercards/topups/acecraft.jpg",
+      "name": "Acecraft",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ace-racer": {
+      "src": "/game-store/assets/fazercards/topups/ace-racer.jpg",
+      "name": "Ace Racer",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "afk-journey": {
+      "src": "/game-store/assets/fazercards/topups/afk-journey.jpg",
+      "name": "AFK Journey",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "age-of-empire-mobile": {
+      "src": "/game-store/assets/fazercards/topups/age-of-empire-mobile.jpg",
+      "name": "Age of Empire Mobile",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "age-of-magic": {
+      "src": "/game-store/assets/fazercards/topups/age-of-magic.webp",
+      "name": "Age of Magic",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "arena-breakout-infinite": {
+      "src": "/game-store/assets/fazercards/topups/arena-breakout-infinite.webp",
+      "name": "Arena Breakout: Infinite",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "arena-of-valor-eu": {
+      "src": "/game-store/assets/fazercards/topups/arena-of-valor-eu.jpg",
+      "name": "Arena of Valor (EU)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "arena-of-valor-id": {
+      "src": "/game-store/assets/fazercards/topups/arena-of-valor-eu.jpg",
+      "name": "Arena of Valor (ID)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "arena-of-valor-th": {
+      "src": "/game-store/assets/fazercards/topups/arena-of-valor-eu.jpg",
+      "name": "Arena of Valor (TH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "arknight-endfield-login": {
+      "src": "/game-store/assets/fazercards/topups/arknight-endfield-login.png",
+      "name": "Arknight: Endfield (Auto Via Login)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "asphalt-9-legends": {
+      "src": "/game-store/assets/fazercards/topups/asphalt-9-legends.webp",
+      "name": "Asphalt 9: Legends",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "astral-guardians-cyber-fantasy": {
+      "src": "/game-store/assets/fazercards/topups/astral-guardians-cyber-fantasy.webp",
+      "name": "Astral Guardians: Cyber Fantasy",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "azur-lane": {
+      "src": "/game-store/assets/fazercards/topups/azur-lane.jpg",
+      "name": "Azur Lane",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "badlanders": {
+      "src": "/game-store/assets/fazercards/topups/badlanders.jpg",
+      "name": "Badlanders",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ballistic-hero-vng": {
+      "src": "/game-store/assets/fazercards/topups/ballistic-hero-vng.png",
+      "name": "Ballistic Hero VNG",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "be-the-king": {
+      "src": "/game-store/assets/fazercards/topups/be-the-king.png",
+      "name": "Be The King",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "bigo-live": {
+      "src": "/game-store/assets/fazercards/topups/bigo-live.jpg",
+      "name": "Bigo Live",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "black-clover-m": {
+      "src": "/game-store/assets/fazercards/topups/black-clover-m.webp",
+      "name": "Black Clover M (Asia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "blade-x-odyssey-of-heroes": {
+      "src": "/game-store/assets/fazercards/topups/blade-x-odyssey-of-heroes.jpg",
+      "name": "Blade X: Odyssey of Heroes",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "bleach-soul-resonance-americas": {
+      "src": "/game-store/assets/fazercards/topups/bleach-soul-resonance-americas.webp",
+      "name": "Bleach: Soul Resonance (Americas)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "bleach-soul-resonance-europe": {
+      "src": "/game-store/assets/fazercards/topups/bleach-soul-resonance-americas.webp",
+      "name": "Bleach: Soul Resonance (Europe)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "bleach-soul-resonance-sea": {
+      "src": "/game-store/assets/fazercards/topups/bleach-soul-resonance-americas.webp",
+      "name": "Bleach: Soul Resonance (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "blood-strike": {
+      "src": "/game-store/assets/fazercards/topups/blood-strike-mena.jpg",
+      "name": "Blood Strike",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "blood-strike-mena": {
+      "src": "/game-store/assets/fazercards/topups/blood-strike-mena.jpg",
+      "name": "Blood Strike (Mena)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "bullet-echo": {
+      "src": "/game-store/assets/fazercards/topups/bullet-echo.webp",
+      "name": "Bullet Echo",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "codm-activision-in": {
+      "src": "/game-store/assets/fazercards/topups/codm-activision-in.webp",
+      "name": "Call of Duty Mobile - Activision (IN)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "capcut": {
+      "src": "/game-store/assets/fazercards/topups/capcut.png",
+      "name": "CapCut",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "captain-tsubasa-ace": {
+      "src": "/game-store/assets/fazercards/topups/captain-tsubasa-ace.jpg",
+      "name": "Captain Tsubasa: Ace",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "cats-crash-arena-turbo-stars": {
+      "src": "/game-store/assets/fazercards/topups/cats-crash-arena-turbo-stars.png",
+      "name": "CATS: Crash Arena Turbo Stars",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "chamet": {
+      "src": "/game-store/assets/fazercards/topups/chamet.png",
+      "name": "Chamet",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "civilization-eras-and-allies": {
+      "src": "/game-store/assets/fazercards/topups/civilization-eras-and-allies.png",
+      "name": "Civilization: Eras & Allies",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "clash-of-plants": {
+      "src": "/game-store/assets/fazercards/topups/clash-of-plants.webp",
+      "name": "Clash Of Plants",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "conquer-online": {
+      "src": "/game-store/assets/fazercards/topups/conquer-online.png",
+      "name": "Conquer Online",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "crossfire-legend": {
+      "src": "/game-store/assets/fazercards/topups/crossfire-legend.png",
+      "name": "Crossfire: Legend",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "crossout-mobile": {
+      "src": "/game-store/assets/fazercards/topups/crossout-mobile.jpg",
+      "name": "Crossout Mobile",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "crystalfall": {
+      "src": "/game-store/assets/fazercards/topups/crystalfall.jpg",
+      "name": "Crystalfall",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "crystal-of-atlan": {
+      "src": "/game-store/assets/fazercards/topups/crystal-of-atlan.jpg",
+      "name": "Crystal of Atlan",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "delta-force": {
+      "src": "/game-store/assets/fazercards/topups/delta-force.png",
+      "name": "Delta Force",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "destiny-rising": {
+      "src": "/game-store/assets/fazercards/topups/destiny-rising.png",
+      "name": "Destiny: Rising",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "dragonheir-silent-gods": {
+      "src": "/game-store/assets/fazercards/topups/dragonheir-silent-gods.jpg",
+      "name": "Dragonheir: Silent Gods",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "dragon-nest-m-sea": {
+      "src": "/game-store/assets/fazercards/topups/dragon-nest-m-sea.jpg",
+      "name": "Dragon Nest M Classic (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "dragon-nest-m-tw-hk-mo": {
+      "src": "/game-store/assets/fazercards/topups/dragon-nest-m-sea.jpg",
+      "name": "Dragon Nest M Classic (TW/HK/MO)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "dragon-raja-sea": {
+      "src": "/game-store/assets/fazercards/topups/dragon-raja-sea.webp",
+      "name": "Dragon Raja (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "dream-and-lethe-record": {
+      "src": "/game-store/assets/fazercards/topups/dream-and-lethe-record.webp",
+      "name": "Dream and Lethe Record",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "duet-night-abyss": {
+      "src": "/game-store/assets/fazercards/topups/duet-night-abyss.webp",
+      "name": "Duet Night Abyss",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "dunk-city-dynasty": {
+      "src": "/game-store/assets/fazercards/topups/dunk-city-dynasty.jpg",
+      "name": "Dunk City Dynasty",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "dynasty-heroes-legend-samkok": {
+      "src": "/game-store/assets/fazercards/topups/dynasty-heroes-legend-samkok.webp",
+      "name": "Dynasty Heroes: Legend Samkok",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "eafc-mobile-id": {
+      "src": "/game-store/assets/fazercards/topups/eafc-mobile-id.webp",
+      "name": "EAFC Mobile (ID)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "eafc-mobile-kh": {
+      "src": "/game-store/assets/fazercards/topups/eafc-mobile-id.webp",
+      "name": "EAFC Mobile (KH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "eafc-mobile-my": {
+      "src": "/game-store/assets/fazercards/topups/eafc-mobile-id.webp",
+      "name": "EAFC Mobile (MY)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "eafc-mobile-sg": {
+      "src": "/game-store/assets/fazercards/topups/eafc-mobile-id.webp",
+      "name": "EAFC Mobile (SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "eggy-party": {
+      "src": "/game-store/assets/fazercards/topups/eggy-party.png",
+      "name": "Eggy Party",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "enhypen-world": {
+      "src": "/game-store/assets/fazercards/topups/enhypen-world.jpg",
+      "name": "Enhypen World",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ensemble-stars-music": {
+      "src": "/game-store/assets/fazercards/topups/ensemble-stars-music.jpg",
+      "name": "Ensemble Stars Music",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "etheria-restart": {
+      "src": "/game-store/assets/fazercards/topups/etheria-restart.jpg",
+      "name": "Etheria Restart",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "eve-echoes": {
+      "src": "/game-store/assets/fazercards/topups/eve-echoes.png",
+      "name": "EVE Echoes",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "extraordinary-ones": {
+      "src": "/game-store/assets/fazercards/topups/extraordinary-ones.jpg",
+      "name": "Extraordinary Ones",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "farlight-84": {
+      "src": "/game-store/assets/fazercards/topups/farlight-84.png",
+      "name": "Farlight 84",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "fashion-dream": {
+      "src": "/game-store/assets/fazercards/topups/fashion-dream.png",
+      "name": "Fashion Dream",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "firefly-live": {
+      "src": "/game-store/assets/fazercards/topups/firefly-live.jpg",
+      "name": "Firefly Live",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "football-master-2": {
+      "src": "/game-store/assets/fazercards/topups/football-master-2.jpg",
+      "name": "Football Master 2",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "frag-pro-shooter": {
+      "src": "/game-store/assets/fazercards/topups/frag-pro-shooter.jpg",
+      "name": "FRAG Pro Shooter",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-bd": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (BD)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-br": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (BR)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-cis": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (CIS)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-eu": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (EU)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-id": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (ID)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-latam": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (LATAM)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-mena": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (MENA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-my-sg": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (MY/SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-ph": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (PH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-sg": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-th": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (TH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-tw": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (TW)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "free-fire-vn": {
+      "src": "/game-store/assets/fazercards/topups/free-fire-bd.png",
+      "name": "Free Fire (VN)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "garena-delta-force-indonesia": {
+      "src": "/game-store/assets/fazercards/topups/garena-delta-force-indonesia.jpg",
+      "name": "Garena Delta Force (Indonesia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "garena-delta-force-my": {
+      "src": "/game-store/assets/fazercards/topups/garena-delta-force-indonesia.jpg",
+      "name": "Garena Delta Force (MY)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "garena-speed-drifters": {
+      "src": "/game-store/assets/fazercards/topups/garena-speed-drifters.png",
+      "name": "Garena Speed Drifters",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "undawn-garena-global": {
+      "src": "/game-store/assets/fazercards/topups/undawn-eu.png",
+      "name": "Garena Undawn (Global)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "undawn-garena-id": {
+      "src": "/game-store/assets/fazercards/topups/undawn-eu.png",
+      "name": "Garena Undawn (Indonesia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "undawn-garena-sg": {
+      "src": "/game-store/assets/fazercards/topups/undawn-eu.png",
+      "name": "Garena Undawn (SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "genshin-impact-login": {
+      "src": "/game-store/assets/fazercards/topups/genshin-impact-global.jpg",
+      "name": "Genshin Impact (Auto Via Login)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "genshin-impact-global": {
+      "src": "/game-store/assets/fazercards/topups/genshin-impact-global.jpg",
+      "name": "Genshin Impact (Global)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ghost-story-love-destiny": {
+      "src": "/game-store/assets/fazercards/topups/ghost-story-love-destiny.png",
+      "name": "Ghost Story: Love Destiny",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "goddess-of-victory-nikke": {
+      "src": "/game-store/assets/fazercards/topups/goddess-of-victory-nikke.webp",
+      "name": "Goddess of Victory: NIKKE",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "golden-spatula": {
+      "src": "/game-store/assets/fazercards/topups/golden-spatula.png",
+      "name": "Golden Spatula",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "growtopia": {
+      "src": "/game-store/assets/fazercards/topups/growtopia.jpg",
+      "name": "Growtopia",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "guns-of-glory": {
+      "src": "/game-store/assets/fazercards/topups/guns-of-glory.png",
+      "name": "Guns of Glory",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "haikyu-fly-high-sea": {
+      "src": "/game-store/assets/fazercards/topups/haikyu-fly-high-sea.jpg",
+      "name": "Haikyu!! Fly High (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "harry-potter-magic-awakened": {
+      "src": "/game-store/assets/fazercards/topups/harry-potter-magic-awakened.jpg",
+      "name": "Harry Potter: Magic Awakened",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "hatsune-miku-colorful-stage": {
+      "src": "/game-store/assets/fazercards/topups/hatsune-miku-colorful-stage.jpg",
+      "name": "Hatsune Miku: Colorful Stage",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "heartopia": {
+      "src": "/game-store/assets/fazercards/topups/heartopia.webp",
+      "name": "Heartopia",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "heaven-burns-red": {
+      "src": "/game-store/assets/fazercards/topups/heaven-burns-red.webp",
+      "name": "Heaven Burns Red",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "hero-clash": {
+      "src": "/game-store/assets/fazercards/topups/hero-clash.jpg",
+      "name": "Hero Clash",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "heroes-evolved": {
+      "src": "/game-store/assets/fazercards/topups/heroes-evolved.png",
+      "name": "Heroes Evolved",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "honkai-impact-3rd-asia": {
+      "src": "/game-store/assets/fazercards/topups/honkai-impact-3rd-asia.webp",
+      "name": "Honkai Impact 3rd (Asia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "honkai-impact-3rd-id": {
+      "src": "/game-store/assets/fazercards/topups/honkai-impact-3rd-asia.webp",
+      "name": "Honkai Impact 3rd (ID)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "honkai-impact-3rd-kh": {
+      "src": "/game-store/assets/fazercards/topups/honkai-impact-3rd-asia.webp",
+      "name": "Honkai Impact 3rd (KH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "honkai-impact-3rd-my": {
+      "src": "/game-store/assets/fazercards/topups/honkai-impact-3rd-asia.webp",
+      "name": "Honkai Impact 3rd (MY)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "honkai-impact-3rd-ph": {
+      "src": "/game-store/assets/fazercards/topups/honkai-impact-3rd-asia.webp",
+      "name": "Honkai Impact 3rd (PH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "honkai-impact-3rd-sg": {
+      "src": "/game-store/assets/fazercards/topups/honkai-impact-3rd-asia.webp",
+      "name": "Honkai Impact 3rd (SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "honkai-impact-3rd-th": {
+      "src": "/game-store/assets/fazercards/topups/honkai-impact-3rd-asia.webp",
+      "name": "Honkai Impact 3rd (TH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "honkai-star-rail-global": {
+      "src": "/game-store/assets/fazercards/topups/honkai-star-rail-global.jpg",
+      "name": "Honkai: Star Rail (Global)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "honor-of-kings": {
+      "src": "/game-store/assets/fazercards/topups/honor-of-kings.webp",
+      "name": "Honor of Kings",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "hyper-front": {
+      "src": "/game-store/assets/fazercards/topups/hyper-front.jpg",
+      "name": "Hyper Front",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "identity-v": {
+      "src": "/game-store/assets/fazercards/topups/identity-v.png",
+      "name": "Identity V",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "idol-party": {
+      "src": "/game-store/assets/fazercards/topups/idol-party.jpg",
+      "name": "Idol Party",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "imo": {
+      "src": "/game-store/assets/fazercards/topups/imo.jpg",
+      "name": "IMO",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "infinite-lagrange": {
+      "src": "/game-store/assets/fazercards/topups/infinite-lagrange.webp",
+      "name": "Infinite Lagrange",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "isekai-feast-tales-of-recipes": {
+      "src": "/game-store/assets/fazercards/topups/isekai-feast-tales-of-recipes.jpg",
+      "name": "Isekai Feast: Tales of Recipes",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "jade-dynasty-new-fantasy": {
+      "src": "/game-store/assets/fazercards/topups/jade-dynasty-new-fantasy.png",
+      "name": "Jade Dynasty: New Fantasy",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "journey-renewed-fate-fantasy": {
+      "src": "/game-store/assets/fazercards/topups/journey-renewed-fate-fantasy.jpg",
+      "name": "Journey Renewed: Fate Fantasy",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "kings-choice-sea": {
+      "src": "/game-store/assets/fazercards/topups/kings-choice-sea.png",
+      "name": "Kings Choice (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "kingshot": {
+      "src": "/game-store/assets/fazercards/topups/kingshot.jpg",
+      "name": "Kingshot",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "knives-out": {
+      "src": "/game-store/assets/fazercards/topups/knives-out.png",
+      "name": "Knives Out",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "kuroko-street-rivals": {
+      "src": "/game-store/assets/fazercards/topups/kuroko-street-rivals.png",
+      "name": "Kuroko Street Rivals",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lol-id": {
+      "src": "/game-store/assets/fazercards/topups/lol-id.jpg",
+      "name": "League of Legends (ID)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lol-kh": {
+      "src": "/game-store/assets/fazercards/topups/lol-id.jpg",
+      "name": "League of Legends (KH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lol-my": {
+      "src": "/game-store/assets/fazercards/topups/lol-id.jpg",
+      "name": "League of Legends (MY)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lol-ph": {
+      "src": "/game-store/assets/fazercards/topups/lol-id.jpg",
+      "name": "League of Legends (PH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lol-sg": {
+      "src": "/game-store/assets/fazercards/topups/lol-id.jpg",
+      "name": "League of Legends (SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lol-th": {
+      "src": "/game-store/assets/fazercards/topups/lol-id.jpg",
+      "name": "League of Legends (TH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lol-vn": {
+      "src": "/game-store/assets/fazercards/topups/lol-id.jpg",
+      "name": "League of Legends (VN)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legacy-of-discord-furiouswings": {
+      "src": "/game-store/assets/fazercards/topups/legacy-of-discord-furiouswings.png",
+      "name": "Legacy of Discord - FuriousWings",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legend-of-neverland": {
+      "src": "/game-store/assets/fazercards/topups/legend-of-neverland-naeu.jpg",
+      "name": "Legend of Neverland",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legend-of-neverland-naeu": {
+      "src": "/game-store/assets/fazercards/topups/legend-of-neverland-naeu.jpg",
+      "name": "Legend of Neverland (NAEU)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legend-of-the-phoenix": {
+      "src": "/game-store/assets/fazercards/topups/legend-of-the-phoenix.webp",
+      "name": "Legend of the Phoenix",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legends-of-runeterra-indonesia": {
+      "src": "/game-store/assets/fazercards/topups/legends-of-runeterra-indonesia.jpg",
+      "name": "Legends of Runeterra (Indonesia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legends-of-runeterra-malaysia": {
+      "src": "/game-store/assets/fazercards/topups/legends-of-runeterra-indonesia.jpg",
+      "name": "Legends of Runeterra (Malaysia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legends-of-runeterra-philippines": {
+      "src": "/game-store/assets/fazercards/topups/legends-of-runeterra-indonesia.jpg",
+      "name": "Legends of Runeterra (Philippines)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legends-of-runeterra-singapore": {
+      "src": "/game-store/assets/fazercards/topups/legends-of-runeterra-indonesia.jpg",
+      "name": "Legends of Runeterra (Singapore)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legends-of-runeterra-thailand": {
+      "src": "/game-store/assets/fazercards/topups/legends-of-runeterra-indonesia.jpg",
+      "name": "Legends of Runeterra (Thailand)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "legends-of-runeterra-united-states": {
+      "src": "/game-store/assets/fazercards/topups/legends-of-runeterra-indonesia.jpg",
+      "name": "Legends of Runeterra (United States)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lifeafter": {
+      "src": "/game-store/assets/fazercards/topups/lifeafter.jpg",
+      "name": "LifeAfter",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "life-makeover-global": {
+      "src": "/game-store/assets/fazercards/topups/life-makeover-global.jpg",
+      "name": "Life Makeover (Global)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "likee": {
+      "src": "/game-store/assets/fazercards/topups/likee.png",
+      "name": "Likee",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lineage2m": {
+      "src": "/game-store/assets/fazercards/topups/lineage2m.jpg",
+      "name": "Lineage2M",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lineage-w": {
+      "src": "/game-store/assets/fazercards/topups/lineage-w.webp",
+      "name": "Lineage W",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lita": {
+      "src": "/game-store/assets/fazercards/topups/lita.webp",
+      "name": "Lita",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "lords-mobile": {
+      "src": "/game-store/assets/fazercards/topups/lords-mobile.png",
+      "name": "Lords Mobile",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "love-and-deepspace": {
+      "src": "/game-store/assets/fazercards/topups/love-and-deepspace-login.jpg",
+      "name": "Love and Deepspace",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "love-and-deepspace-login": {
+      "src": "/game-store/assets/fazercards/topups/love-and-deepspace-login.jpg",
+      "name": "Love and Deepspace (Auto Via Login)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "love-nikki": {
+      "src": "/game-store/assets/fazercards/topups/love-nikki.jpg",
+      "name": "Love Nikki",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ludus-strategy-pvp": {
+      "src": "/game-store/assets/fazercards/topups/ludus-strategy-pvp.webp",
+      "name": "Ludus Strategy PVP",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "magic-chess-gogo-global": {
+      "src": "/game-store/assets/fazercards/topups/magic-chess-gogo-global.webp",
+      "name": "Magic Chess Go Go (Global)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "magic-chess-gogo-id": {
+      "src": "/game-store/assets/fazercards/topups/magic-chess-gogo-global.webp",
+      "name": "Magic Chess Go Go (Indonesia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "magic-chess-gogo-my": {
+      "src": "/game-store/assets/fazercards/topups/magic-chess-gogo-global.webp",
+      "name": "Magic Chess Go Go (Malaysia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "magic-chess-gogo-ru": {
+      "src": "/game-store/assets/fazercards/topups/magic-chess-gogo-global.webp",
+      "name": "Magic Chess Go Go (RU)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mangatoon-read-comics-novel": {
+      "src": "/game-store/assets/fazercards/topups/mangatoon-read-comics-novel.webp",
+      "name": "MangaToon - Read Comics Novel",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "maplestory-m": {
+      "src": "/game-store/assets/fazercards/topups/maplestory-m.jpg",
+      "name": "MapleStory M",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "marvel-duel": {
+      "src": "/game-store/assets/fazercards/topups/marvel-duel.jpg",
+      "name": "Marvel Duel",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "marvel-rivals": {
+      "src": "/game-store/assets/fazercards/topups/marvel-rivals.png",
+      "name": "Marvel Rivals",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mecha-break": {
+      "src": "/game-store/assets/fazercards/topups/mecha-break.png",
+      "name": "Mecha Break",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "metal-slug-awakening-sea": {
+      "src": "/game-store/assets/fazercards/topups/metal-slug-awakening-sea.webp",
+      "name": "Metal Slug Awakening (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mirage-perfect-skyline": {
+      "src": "/game-store/assets/fazercards/topups/mirage-perfect-skyline.png",
+      "name": "Mirage: Perfect Skyline",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-adventure": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-adventure.png",
+      "name": "Mobile Legends: Adventure",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-brazil": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (Brazil)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-exclusive": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (Exclusive)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-global": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (Global)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-indonesia": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (Indonesia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-malaysia": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (Malaysia)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-philippines": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (Philippines)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-ru": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (RU)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-singapore": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (Singapore)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-special": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (Special)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-turkey": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (Turkey)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mobile-legends-united-states": {
+      "src": "/game-store/assets/fazercards/topups/mobile-legends-brazil.webp",
+      "name": "Mobile Legends (United States)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "modern-strike-online": {
+      "src": "/game-store/assets/fazercards/topups/modern-strike-online.png",
+      "name": "Modern Strike Online",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "modern-warships-naval-battles": {
+      "src": "/game-store/assets/fazercards/topups/modern-warships-naval-battles.png",
+      "name": "Modern Warships: Naval Battles",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mongil-star-dive": {
+      "src": "/game-store/assets/fazercards/topups/mongil-star-dive.jpg",
+      "name": "Mongil: Star Dive (Auto Via Login)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "moonlight-blade-m": {
+      "src": "/game-store/assets/fazercards/topups/moonlight-blade-m.webp",
+      "name": "Moonlight Blade M",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mu-ascension": {
+      "src": "/game-store/assets/fazercards/topups/mu-ascension.jpg",
+      "name": "MU Ascension",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "mu-origin-3-asia": {
+      "src": "/game-store/assets/fazercards/topups/mu-origin-3-asia.png",
+      "name": "MU ORIGIN 3 Asia",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "my-singing-monsters": {
+      "src": "/game-store/assets/fazercards/topups/my-singing-monsters.png",
+      "name": "My Singing Monsters",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "neverness-to-everness-login": {
+      "src": "/game-store/assets/fazercards/topups/neverness-to-everness-login.jpg",
+      "name": "Neverness to Everness (Auto Via Login)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "nimo-tv": {
+      "src": "/game-store/assets/fazercards/topups/nimo-tv.webp",
+      "name": "Nimo TV",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "omega-legends": {
+      "src": "/game-store/assets/fazercards/topups/omega-legends.jpg",
+      "name": "Omega Legends",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "once-human": {
+      "src": "/game-store/assets/fazercards/topups/once-human.jpg",
+      "name": "Once Human",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "onmyoji-arena": {
+      "src": "/game-store/assets/fazercards/topups/onmyoji-arena.png",
+      "name": "Onmyoji Arena",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "overmortal-idle-global": {
+      "src": "/game-store/assets/fazercards/topups/overmortal-idle-global.jpg",
+      "name": "Overmortal Idle (Global)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "overmortal-idle-sea": {
+      "src": "/game-store/assets/fazercards/topups/overmortal-idle-global.jpg",
+      "name": "Overmortal Idle (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "oxide-survival-island": {
+      "src": "/game-store/assets/fazercards/topups/oxide-survival-island.png",
+      "name": "Oxide Survival Island",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "path-to-nowhere": {
+      "src": "/game-store/assets/fazercards/topups/path-to-nowhere.png",
+      "name": "Path to Nowhere",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "pixel-gun-3d": {
+      "src": "/game-store/assets/fazercards/topups/pixel-gun-3d.png",
+      "name": "Pixel Gun 3D",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "point-blank-id": {
+      "src": "/game-store/assets/fazercards/topups/point-blank-id.png",
+      "name": "Point Blank (ID)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "poppo-live": {
+      "src": "/game-store/assets/fazercards/topups/poppo-live.png",
+      "name": "Poppo Live",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "project-entropy": {
+      "src": "/game-store/assets/fazercards/topups/project-entropy.png",
+      "name": "Project Entropy",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "pubg-mobile-auto": {
+      "src": "/game-store/assets/fazercards/topups/pubg-mobile-auto.webp",
+      "name": "PUBG Mobile (Auto)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "pubg-mobile-manual": {
+      "src": "/game-store/assets/fazercards/topups/pubg-mobile-auto.webp",
+      "name": "PUBG Mobile (Manual)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "pubg-mobile-reserve": {
+      "src": "/game-store/assets/fazercards/topups/pubg-mobile-auto.webp",
+      "name": "PUBG Mobile (Reserve)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "pubg-new-state": {
+      "src": "/game-store/assets/fazercards/topups/pubg-new-state.webp",
+      "name": "PUBG: New State",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "punishing-gray-raven": {
+      "src": "/game-store/assets/fazercards/topups/punishing-gray-raven.png",
+      "name": "Punishing: Gray Raven",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "puzzles-and-survival": {
+      "src": "/game-store/assets/fazercards/topups/puzzles-and-survival.webp",
+      "name": "Puzzles & Survival",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "qq-coin-qb-direct": {
+      "src": "/game-store/assets/fazercards/topups/qq-coin-qb-direct.webp",
+      "name": "QQ Coin Q币直充",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "racing-master-latam": {
+      "src": "/game-store/assets/fazercards/topups/racing-master-latam.jpg",
+      "name": "Racing Master (LATAM)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "racing-master-sea": {
+      "src": "/game-store/assets/fazercards/topups/racing-master-latam.jpg",
+      "name": "Racing Master (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ragnarok-crush": {
+      "src": "/game-store/assets/fazercards/topups/ragnarok-crush.webp",
+      "name": "Ragnarok Crush",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ragnarok-idle-adventure-plus": {
+      "src": "/game-store/assets/fazercards/topups/ragnarok-idle-adventure-plus.webp",
+      "name": "Ragnarok Idle Adventure Plus",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ragnarok-m-classic-sea": {
+      "src": "/game-store/assets/fazercards/topups/ragnarok-m-classic-sea.webp",
+      "name": "Ragnarok M: Classic (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ragnarok-m-eternal-love-sea": {
+      "src": "/game-store/assets/fazercards/topups/ragnarok-m-eternal-love-sea.webp",
+      "name": "Ragnarok M: Eternal Love (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ragnarok-origin": {
+      "src": "/game-store/assets/fazercards/topups/ragnarok-origin.webp",
+      "name": "Ragnarok Origin",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ragnarok-tactics": {
+      "src": "/game-store/assets/fazercards/topups/ragnarok-tactics.jpg",
+      "name": "Ragnarok Tactics",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ragnarok-the-lost-memories": {
+      "src": "/game-store/assets/fazercards/topups/ragnarok-the-lost-memories.webp",
+      "name": "Ragnarok: The Lost Memories",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ragnarok-x": {
+      "src": "/game-store/assets/fazercards/topups/ragnarok-x.jpg",
+      "name": "Ragnarok X: Next Generation",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "r6-mobile-global": {
+      "src": "/game-store/assets/fazercards/topups/r6-mobile-global.png",
+      "name": "Rainbow Six Mobile (Global)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "r6-mobile-sg": {
+      "src": "/game-store/assets/fazercards/topups/r6-mobile-global.png",
+      "name": "Rainbow Six Mobile (SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "realms-of-pixel": {
+      "src": "/game-store/assets/fazercards/topups/realms-of-pixel.webp",
+      "name": "Realms of Pixel",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "rememento-white-shadows": {
+      "src": "/game-store/assets/fazercards/topups/rememento-white-shadows.jpg",
+      "name": "Rememento: White Shadows",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "revelation-infinite-journey": {
+      "src": "/game-store/assets/fazercards/topups/revelation-infinite-journey.jpg",
+      "name": "Revelation: Infinite Journey",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "sausage-man": {
+      "src": "/game-store/assets/fazercards/topups/sausage-man.png",
+      "name": "Sausage Man",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "shining-nikki": {
+      "src": "/game-store/assets/fazercards/topups/shining-nikki.jpg",
+      "name": "Shining Nikki",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "silver-and-blood": {
+      "src": "/game-store/assets/fazercards/topups/silver-and-blood.webp",
+      "name": "Silver and Blood",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "sky-children-of-light": {
+      "src": "/game-store/assets/fazercards/topups/sky-children-of-light.jpg",
+      "name": "Sky: Children of the Light",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "slam-dunk": {
+      "src": "/game-store/assets/fazercards/topups/slam-dunk.jpg",
+      "name": "Slam Dunk",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "snowbreak-containment-zone": {
+      "src": "/game-store/assets/fazercards/topups/snowbreak-containment-zone.png",
+      "name": "Snowbreak: Containment Zone",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "solo-leveling-arise-login": {
+      "src": "/game-store/assets/fazercards/topups/solo-leveling-arise-login.jpg",
+      "name": "Solo Leveling: Arise (Auto Via Login)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "soul-land-new-world": {
+      "src": "/game-store/assets/fazercards/topups/soul-land-new-world.png",
+      "name": "Soul Land: New World",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "spring-valley-farm-adventures": {
+      "src": "/game-store/assets/fazercards/topups/spring-valley-farm-adventures.webp",
+      "name": "Spring Valley: Farm Adventures",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "starfall-fantasy-neverland": {
+      "src": "/game-store/assets/fazercards/topups/starfall-fantasy-neverland.jpg",
+      "name": "Starfall Fantasy: Neverland",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "starmaker": {
+      "src": "/game-store/assets/fazercards/topups/starmaker.png",
+      "name": "StarMaker",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "star-resonance": {
+      "src": "/game-store/assets/fazercards/topups/star-resonance.webp",
+      "name": "Star Resonance",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "state-of-survival": {
+      "src": "/game-store/assets/fazercards/topups/state-of-survival.png",
+      "name": "State of Survival",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "stella-sora": {
+      "src": "/game-store/assets/fazercards/topups/stella-sora.jpg",
+      "name": "Stella Sora",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "stormshot": {
+      "src": "/game-store/assets/fazercards/topups/stormshot.jpg",
+      "name": "Stormshot",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "stumble-guys": {
+      "src": "/game-store/assets/fazercards/topups/stumble-guys.jpg",
+      "name": "Stumble Guys",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "sugo-online-chat-party": {
+      "src": "/game-store/assets/fazercards/topups/sugo-online-chat-party.jpg",
+      "name": "SUGO: Online Chat Party",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "super-sus": {
+      "src": "/game-store/assets/fazercards/topups/super-sus.png",
+      "name": "Super Sus",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "sword-of-fire-and-ice": {
+      "src": "/game-store/assets/fazercards/topups/sword-of-fire-and-ice.jpg",
+      "name": "Sword of Fire and Ice",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "sword-of-justice-eu": {
+      "src": "/game-store/assets/fazercards/topups/sword-of-justice-eu.webp",
+      "name": "Sword of Justice (EU)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "sword-of-justice-na": {
+      "src": "/game-store/assets/fazercards/topups/sword-of-justice-eu.webp",
+      "name": "Sword of Justice (NA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "sword-of-justice-sea": {
+      "src": "/game-store/assets/fazercards/topups/sword-of-justice-eu.webp",
+      "name": "Sword of Justice (SEA)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "t3-arena": {
+      "src": "/game-store/assets/fazercards/topups/t3-arena.png",
+      "name": "T3 Arena",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "teen-patti-gold": {
+      "src": "/game-store/assets/fazercards/topups/teen-patti-gold.webp",
+      "name": "Teen Patti Gold",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "tft-mobile-id": {
+      "src": "/game-store/assets/fazercards/topups/tft-mobile-id.jpg",
+      "name": "TFT Mobile (ID)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "tft-mobile-my": {
+      "src": "/game-store/assets/fazercards/topups/tft-mobile-id.jpg",
+      "name": "TFT Mobile (MY)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "tft-mobile-ph": {
+      "src": "/game-store/assets/fazercards/topups/tft-mobile-id.jpg",
+      "name": "TFT Mobile (PH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "tft-mobile-sg": {
+      "src": "/game-store/assets/fazercards/topups/tft-mobile-id.jpg",
+      "name": "TFT Mobile (SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "tft-mobile-th": {
+      "src": "/game-store/assets/fazercards/topups/tft-mobile-id.jpg",
+      "name": "TFT Mobile (TH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "the-ants-underground-kingdom": {
+      "src": "/game-store/assets/fazercards/topups/the-ants-underground-kingdom.jpg",
+      "name": "The Ants: Underground Kingdom",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "division-resurgence": {
+      "src": "/game-store/assets/fazercards/topups/division-resurgence.webp",
+      "name": "The Division Resurgence",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "tik-tok-china": {
+      "src": "/game-store/assets/fazercards/topups/tik-tok-china.png",
+      "name": "Tik Tok (China)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "tom-and-jerry-chase": {
+      "src": "/game-store/assets/fazercards/topups/tom-and-jerry-chase.webp",
+      "name": "Tom and Jerry: Chase",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "tomb-busters": {
+      "src": "/game-store/assets/fazercards/topups/tomb-busters.webp",
+      "name": "Tomb Busters",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "tower-of-fantasy-login": {
+      "src": "/game-store/assets/fazercards/topups/tower-of-fantasy-login.png",
+      "name": "Tower of Fantasy (Auto Via Login)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "ulala-idle-adventure": {
+      "src": "/game-store/assets/fazercards/topups/ulala-idle-adventure.jpg",
+      "name": "Ulala: Idle Adventure",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "undawn-eu": {
+      "src": "/game-store/assets/fazercards/topups/undawn-eu.png",
+      "name": "Undawn (EU)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "undawn-global": {
+      "src": "/game-store/assets/fazercards/topups/undawn-eu.png",
+      "name": "Undawn Global",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "valorant-id": {
+      "src": "/game-store/assets/fazercards/topups/valorant-id.webp",
+      "name": "Valorant (ID)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "valorant-kh": {
+      "src": "/game-store/assets/fazercards/topups/valorant-id.webp",
+      "name": "Valorant (KH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "valorant-my": {
+      "src": "/game-store/assets/fazercards/topups/valorant-id.webp",
+      "name": "Valorant (MY)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "valorant-ph": {
+      "src": "/game-store/assets/fazercards/topups/valorant-id.webp",
+      "name": "Valorant (PH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "valorant-sg": {
+      "src": "/game-store/assets/fazercards/topups/valorant-id.webp",
+      "name": "Valorant (SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "valorant-th": {
+      "src": "/game-store/assets/fazercards/topups/valorant-id.webp",
+      "name": "Valorant (TH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "valorant-vn": {
+      "src": "/game-store/assets/fazercards/topups/valorant-id.webp",
+      "name": "Valorant (VN)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "warborne-above-ashes": {
+      "src": "/game-store/assets/fazercards/topups/warborne-above-ashes.jpg",
+      "name": "Warborne Above Ashes",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "watcher-of-realms": {
+      "src": "/game-store/assets/fazercards/topups/watcher-of-realms.webp",
+      "name": "Watcher of Realms",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "wesing": {
+      "src": "/game-store/assets/fazercards/topups/wesing.webp",
+      "name": "WeSing",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "where-winds-meet": {
+      "src": "/game-store/assets/fazercards/topups/where-winds-meet.jpg",
+      "name": "Where Winds Meet",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "whiteout-survival": {
+      "src": "/game-store/assets/fazercards/topups/whiteout-survival.jpg",
+      "name": "Whiteout Survival",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "wild-rift-id": {
+      "src": "/game-store/assets/fazercards/topups/wild-rift-id.webp",
+      "name": "Wild Rift (ID)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "wild-rift-kh": {
+      "src": "/game-store/assets/fazercards/topups/wild-rift-id.webp",
+      "name": "Wild Rift (KH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "wild-rift-my": {
+      "src": "/game-store/assets/fazercards/topups/wild-rift-id.webp",
+      "name": "Wild Rift (MY)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "wild-rift-ph": {
+      "src": "/game-store/assets/fazercards/topups/wild-rift-id.webp",
+      "name": "Wild Rift (PH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "wild-rift-sg": {
+      "src": "/game-store/assets/fazercards/topups/wild-rift-id.webp",
+      "name": "Wild Rift (SG)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "wild-rift-th": {
+      "src": "/game-store/assets/fazercards/topups/wild-rift-id.webp",
+      "name": "Wild Rift (TH)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "wild-rift-vn": {
+      "src": "/game-store/assets/fazercards/topups/wild-rift-id.webp",
+      "name": "Wild Rift (VN)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "wuthering-waves": {
+      "src": "/game-store/assets/fazercards/topups/wuthering-waves.jpg",
+      "name": "Wuthering Waves",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "yalla-ludo": {
+      "src": "/game-store/assets/fazercards/topups/yalla-ludo.webp",
+      "name": "Yalla Ludo",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "yoho-group-voice-chat-room": {
+      "src": "/game-store/assets/fazercards/topups/yoho-group-voice-chat-room.jpg",
+      "name": "YoHo: Group Voice Chat Room",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "zenless-zone-zero-global": {
+      "src": "/game-store/assets/fazercards/topups/zenless-zone-zero-global.webp",
+      "name": "Zenless Zone Zero (Global)",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "zepeto": {
+      "src": "/game-store/assets/fazercards/topups/zepeto.png",
+      "name": "Zepeto",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "arena-breakout": {
+      "src": "/game-store/assets/fazercards/topups/arena-breakout.png",
+      "name": "Arena Breakout",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "the-division-resurgence": {
+      "src": "/game-store/assets/fazercards/topups/division-resurgence.webp",
+      "name": "The Division Resurgence",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "hago": {
+      "src": "/game-store/assets/fazercards/topups/hago-original-cover.jpg",
+      "name": "Hago",
+      "source": "AuriX original AI-generated illustration"
+    },
+    "x-clash": {
+      "src": "/game-store/assets/fazercards/topups/x-clash-original-cover.jpg",
+      "name": "X-Clash",
+      "source": "AuriX original AI-generated illustration"
+    },
+    "devil-may-cry-peak-of-combat": {
+      "src": "/game-store/assets/fazercards/topups/devil-may-cry-peak-of-combat.jpg",
+      "name": "Devil May Cry: Peak of Combat",
+      "source": "FazerCards catalog UI artwork"
+    },
+    "the-lord-of-the-rings-rise-to-war": {
+      "src": "/game-store/assets/fazercards/topups/the-lord-of-the-rings-rise-to-war.avif",
+      "name": "The Lord of the Rings: Rise to War",
+      "source": "FazerCards catalog UI artwork"
+    }
+  },
+  "missing": [
+    "dazz_live",
+    "hago",
+    "jaco",
+    "livu",
+    "mico",
+    "migo_live",
+    "sawa_play",
+    "soulchill",
+    "toptop",
+    "x_clash",
+    "yalla"
+  ],
+  "failed": [],
+  "generated_artwork": [
+    "hago",
+    "x-clash"
+  ],
+  "duplicate_assets_consolidated": 83
+}

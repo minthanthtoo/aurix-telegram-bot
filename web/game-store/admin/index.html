@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AuriX Game Store operator console.">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#0d1110">
+  <title>AuriX Game Store · Operator</title>
+  <link rel="stylesheet" href="../styles.css?v=20261116-warm-material-1">
+  <link rel="stylesheet" href="admin.css?v=20261117-mapping-review-clarity-1">
+  <script src="admin.js?v=20261117-mapping-review-clarity-1" defer></script>
+</head>
+<body>
+  <header class="topbar admin-topbar">
+    <a class="brand" href="../" aria-label="AuriX Game Store home">
+      <span class="brand__mark" aria-hidden="true">A</span>
+      <span><strong>AuriX</strong><small>OPERATOR CONSOLE</small></span>
+    </a>
+    <a class="admin-back" href="../staff/">Payment review & controls</a>
+  </header>
+
+  <main class="admin-main">
+    <section id="auth-panel" class="admin-panel admin-auth" aria-labelledby="auth-title">
+      <p class="eyebrow">PROTECTED ADMIN SURFACE</p>
+      <h1 id="auth-title">Supplier operations</h1>
+      <p id="auth-copy" class="admin-copy">Enter the configured AuriX admin bearer token. It stays in memory for this tab only and is never written to storage or sent anywhere except the same-origin admin API.</p>
+      <form id="auth-form" class="admin-auth__form">
+        <label for="admin-token">Admin token</label>
+        <div class="admin-auth__row">
+          <input id="admin-token" name="admin-token" type="password" autocomplete="off" spellcheck="false" required>
+          <button class="admin-button admin-button--primary" type="submit">Connect</button>
+        </div>
+      </form>
+      <p id="auth-status" class="admin-status" role="status" aria-live="polite">Not connected.</p>
+      <a id="admin-sign-in" class="admin-button admin-button--primary admin-auth__action" href="../?signin=admin" hidden>Sign in</a>
+    </section>
+
+    <section id="dashboard" hidden aria-labelledby="dashboard-title">
+      <div class="admin-heading">
+        <div>
+          <p class="eyebrow">AURIX GAME STORE</p>
+          <h1 id="dashboard-title">Operator console</h1>
+        </div>
+        <div class="admin-heading__actions">
+          <button id="refresh-button" class="admin-button" type="button">Refresh</button>
+          <button id="disconnect-button" class="admin-button admin-button--quiet" type="button">Disconnect</button>
+        </div>
+      </div>
+
+
+      <details class="admin-guardrail">
+        <summary>Security and money-handling guardrails</summary>
+        <p>Exact supplier costs are confined to this authenticated operator inventory review and never enter customer responses. Credentials stay server-side. Funding and pricing writes remain subject to the server-side supplier-write and admin-authentication gates.</p>
+      </details>
+<section class="admin-metrics" aria-label="Current operator status">
+        <article class="admin-metric">
+          <span>FazerCards balance</span>
+          <strong id="wallet-balance">—</strong>
+          <small id="wallet-state">Not loaded</small>
+        </article>
+        <article class="admin-metric">
+          <span>Low-wallet reminder</span>
+          <strong id="wallet-reminder">—</strong>
+          <small id="wallet-reminder-detail">Not loaded</small>
+        </article>
+        <article class="admin-metric admin-metric--catalog" aria-label="Catalog publication status">
+          <div class="admin-metric__catalog-item">
+            <div class="admin-metric__catalog-heading"><span>Public catalog</span><strong id="catalog-state">—</strong></div>
+            <small id="catalog-detail">Not loaded</small>
+          </div>
+          <div class="admin-metric__catalog-item">
+            <div class="admin-metric__catalog-heading"><span>Approved offers</span><strong id="catalog-offers">—</strong></div>
+            <small id="catalog-observed">Not loaded</small>
+          </div>
+        </article>
+        <article class="admin-metric admin-metric--pricing">
+          <span>Pricing approval</span>
+          <strong id="pricing-state">—</strong>
+          <small id="pricing-rate-updated">Not loaded</small>
+          <small id="pricing-expiry">Not loaded</small>
+          <small id="pricing-warning" class="admin-pricing-warning" role="alert" hidden></small>
+          <button id="pricing-settings-quicklink" class="admin-button admin-button--quiet" type="button">Pricing settings →</button>
+        </article>
+      </section>
+            <p id="dashboard-status" class="admin-status" role="status" aria-live="polite"></p>
+
+      <nav class="admin-view-switcher" role="tablist" aria-label="Operator work areas">
+        <button id="tab-overview" class="admin-view-tab" type="button" role="tab" aria-selected="true" aria-controls="view-overview" tabindex="0" data-admin-view="overview">Overview</button>
+        <button id="tab-catalog" class="admin-view-tab" type="button" role="tab" aria-selected="false" aria-controls="view-catalog" tabindex="-1" data-admin-view="catalog">Catalog</button>
+        <button id="tab-supplier" class="admin-view-tab" type="button" role="tab" aria-selected="false" aria-controls="view-supplier" tabindex="-1" data-admin-view="supplier">Supplier wallet</button>
+        <button id="tab-settings" class="admin-view-tab" type="button" role="tab" aria-selected="false" aria-controls="view-settings" tabindex="-1" data-admin-view="settings">Pricing &amp; settings</button>
+        <button id="tab-notices" class="admin-view-tab" type="button" role="tab" aria-selected="false" aria-controls="view-notices" tabindex="-1" data-admin-view="notices">Notices</button>
+      </nav>
+
+      <section id="view-overview" class="admin-view" role="tabpanel" aria-labelledby="tab-overview" tabindex="0" data-admin-panel="overview">
+        <div class="admin-overview-grid">
+          <section class="admin-panel admin-order-attention" aria-labelledby="order-attention-title">
+        <p class="eyebrow">ORDER RECOVERY</p>
+        <h2 id="order-attention-title">Game order attention queue</h2>
+        <p class="admin-copy">Review unknown delivery, reconciliation, refund review and failed orders. For an accepted supplier attempt, check status performs a GET-only supplier read and applies only the existing allowed state transitions; it never submits or retries a purchase.</p>
+        <p id="game-order-attention-status" class="admin-status" role="status" aria-live="polite">Not loaded</p>
+        <div id="game-order-attention-list" class="admin-order-attention__list" aria-label="Game orders requiring review"></div>
+      </section>
+          <section class="admin-panel" aria-labelledby="money-integrity-title">
+        <h2 id="money-integrity-title">Money integrity</h2>
+        <p class="admin-note">Local ledger and workflow checks. Bank receipts and supplier refunds still require independent evidence.</p>
+        <p id="money-integrity-status" class="admin-status" role="status" aria-live="polite">Not loaded</p>
+        <div id="money-integrity-findings" class="admin-order-attention__list"></div>
+      </section>
+        </div>
+      </section>
+      <section id="view-catalog" class="admin-view" role="tabpanel" aria-labelledby="tab-catalog" tabindex="0" data-admin-panel="catalog" hidden>
+        <div class="admin-catalog-layout">
+          <section class="admin-panel" aria-labelledby="catalog-policy-title">
+        <h2 id="catalog-policy-title">What customers can buy</h2>
+        <p class="admin-copy">The Game Shop backend applies these filters and computes MMK prices. Supplier credentials and wholesale data stay on the server. Enabling a family does not approve its SKUs or bypass payment checks.</p>
+        <form id="catalog-policy-form" class="admin-form">
+          <fieldset><legend>Product families</legend>
+            <label class="admin-checkbox"><input id="catalog-family-topups" type="checkbox"> Game currency top-ups</label>
+            <label class="admin-checkbox"><input id="catalog-family-giftcards" type="checkbox"> Gift cards</label>
+            <label class="admin-checkbox"><input id="catalog-family-gamekeys" type="checkbox"> Game keys</label>
+            <label class="admin-checkbox"><input id="catalog-family-manual_services" type="checkbox"> Manual services</label>
+          </fieldset>
+          <label>Hidden AuriX product slugs (one per line)<textarea id="catalog-excluded-products" rows="3" maxlength="32000" spellcheck="false"></textarea></label>
+          <label>Hidden AuriX offer IDs (one per line)<textarea id="catalog-excluded-offers" rows="3" maxlength="80000" spellcheck="false"></textarea></label>
+          <p class="admin-muted">Changes apply to catalog reads and new checkout immediately. Previously accepted payment and delivery obligations keep their saved terms.</p>
+          <div class="admin-heading__actions">
+            <button id="catalog-policy-save" class="admin-button admin-button--primary" type="submit" disabled>Save catalog choices</button>
+            <button id="catalog-policy-reload" class="admin-button" type="button">Reload saved choices</button>
+          </div>
+        </form>
+        <p id="catalog-policy-status" class="admin-status" role="status" aria-live="polite">Not loaded</p>
+      </section>
+          <section class="admin-panel admin-catalog-panel" aria-labelledby="catalog-title">
+        <p class="eyebrow">CATALOG RELEASE GATE</p>
+        <h2 id="catalog-title">Freshness status</h2>
+        <p class="admin-copy">Only a fresh, sanitized, operator-generated projection can appear in the customer catalog. Stale or malformed artifacts stay unavailable.</p>
+        <dl class="admin-details">
+          <div><dt>Status</dt><dd id="catalog-status-detail">—</dd></div>
+          <div><dt>Generated</dt><dd id="catalog-generated">—</dd></div>
+          <div><dt>Supplier observed</dt><dd id="catalog-source-observed">—</dd></div>
+          <div><dt>Max age</dt><dd id="catalog-max-age">—</dd></div>
+        </dl>
+        <section class="admin-catalog-evidence" aria-labelledby="catalog-evidence-title">
+          <h3 id="catalog-evidence-title">Latest mapped offer checks</h3>
+          <p class="admin-copy">Read-only summary of the latest supplier refresh. Cost ceilings stay private; offer status never changes publication by itself.</p>
+          <p id="catalog-refresh-evidence-status" class="admin-status" role="status" aria-live="polite">Not loaded</p>
+          <div id="catalog-refresh-evidence-list" class="admin-order-attention__list" aria-label="Latest mapped supplier offer checks"></div>
+        </section>
+      </section>
+        </div>
+        <details class="admin-disclosure">
+        <summary><span>Supplier mapping audit</span><small id="mapping-review-summary">Review-only snapshot · not live stock</small></summary>
+          <section class="admin-panel admin-mapping-panel" aria-labelledby="mapping-title">
+        <p class="eyebrow">SKU · REGION · RIGHTS</p>
+        <h2 id="mapping-title">Supplier snapshot review</h2>
+        <p class="admin-copy">Read-only checks of captured supplier data. The mapped-offer checks above show current pilot availability; this broader snapshot may be stale.</p>
+        <dl class="admin-details">
+          <div><dt>Status</dt><dd id="mapping-state">—</dd></div>
+          <div><dt>Mapped rows</dt><dd id="mapping-mapped">—</dd></div>
+          <div><dt>Projected offers</dt><dd id="mapping-projected">—</dd></div>
+          <div><dt>Snapshot captured</dt><dd id="mapping-captured">—</dd></div>
+        </dl>
+        <p id="mapping-reason" class="admin-mapping-reason" role="status" aria-live="polite">Not loaded</p>
+        <div class="admin-mapping-blocker-panel">
+          <div class="admin-mapping-blocker-heading"><strong>Failed checks</strong><small>Counts can overlap</small></div>
+          <ul id="mapping-block-reasons" class="admin-mapping-blockers" aria-label="Supplier snapshot checks"></ul>
+        </div>
+      </section>
+        </details>
+        <details class="admin-disclosure">
+          <summary><span>Recent mapping approvals</span><small>Read-only audit trail</small></summary>
+          <section class="admin-panel admin-mapping-history-panel" aria-labelledby="mapping-history-title">
+        <p class="eyebrow">APPROVAL AUDIT</p>
+        <h2 id="mapping-history-title">Recent mapping approvals</h2>
+        <p class="admin-copy">Read-only, bounded history from the private queue. Rights evidence is represented only as recorded/not recorded; no evidence URL, credential, or supplier write is returned.</p>
+        <dl class="admin-details">
+          <div><dt>Status</dt><dd id="mapping-history-state">—</dd></div>
+          <div><dt>Recorded events</dt><dd id="mapping-history-count">—</dd></div>
+          <div><dt>Last reviewed</dt><dd id="mapping-history-last">—</dd></div>
+        </dl>
+        <pre id="mapping-history-events" class="admin-inventory-sample__rows">Not loaded</pre>
+      </section>
+        </details>
+        <details class="admin-disclosure">
+          <summary><span>Exact supplier SKU inventory</span><small>Search, inspect, and record a private mapping review</small></summary>
+          <section class="admin-panel admin-inventory-panel" aria-labelledby="inventory-title">
+        <p class="eyebrow">SOURCE API SNAPSHOT</p>
+        <h2 id="inventory-title">Exact supplier SKU inventory</h2>
+        <p class="admin-copy">Rows are read from the captured API response, not handwritten in the UI. Exact costs and identifiers are visible only here for authenticated mapping review; this data is never customer-visible and never enables checkout.</p>
+        <dl class="admin-details">
+          <div><dt>Exact SKU rows</dt><dd id="inventory-count">—</dd></div>
+          <div><dt>Families</dt><dd id="inventory-families">—</dd></div>
+          <div><dt>Captured</dt><dd id="inventory-captured">—</dd></div>
+          <div><dt>Source hash</dt><dd id="inventory-hash">—</dd></div>
+          <div><dt>Mapping status</dt><dd id="inventory-mapping-status">—</dd></div>
+          <div><dt>Approval gates</dt><dd id="inventory-mapping-gates">—</dd></div>
+          <div><dt>Projection</dt><dd id="inventory-projection">—</dd></div>
+        </dl>
+        <form id="inventory-search-form" class="admin-inventory-filters">
+          <label>Family
+            <select id="inventory-family-filter">
+              <option value="">All families</option>
+              <option value="topups">Top-ups</option>
+              <option value="giftcards">Gift cards</option>
+              <option value="gamekeys">Game keys</option>
+              <option value="manual_services">Manual services</option>
+            </select>
+          </label>
+          <label>Category ID
+            <input id="inventory-category-filter" type="search" maxlength="80" placeholder="e.g. mlbb">
+          </label>
+          <label>Search SKU or title
+            <input id="inventory-query-filter" type="search" maxlength="80" placeholder="Search exact supplier rows">
+          </label>
+          <button class="admin-button" type="submit">Search inventory</button>
+        </form>
+        <div class="admin-inventory-results" aria-labelledby="inventory-results-title">
+          <h3 id="inventory-results-title">Reviewable supplier offers</h3>
+          <p class="admin-muted">Suggested titles are hints only. Confirm product, region, recipient fields, resale rights, and fulfillment before approval.</p>
+          <div id="inventory-review-rows" class="admin-inventory-review-rows" aria-label="Exact supplier inventory rows"></div>
+          <section id="mapping-review-editor" class="admin-mapping-editor" aria-labelledby="mapping-review-title" hidden>
+            <div class="admin-mapping-editor__heading">
+              <div>
+                <p class="eyebrow">ONE EXACT SKU · PRIVATE CONFIG ONLY</p>
+                <h3 id="mapping-review-title">Review supplier mapping</h3>
+              </div>
+              <button id="mapping-review-cancel" class="admin-button admin-button--quiet" type="button">Close</button>
+            </div>
+            <p id="mapping-review-source" class="admin-muted">Select a row to begin.</p>
+            <pre id="mapping-review-schema" class="admin-inventory-sample__rows">Supplier recipient schema will appear here when provided.</pre>
+            <form id="mapping-review-form" class="admin-form">
+              <div class="admin-fields">
+                <label>AuriX product
+                  <select id="mapping-product-select" required><option value="">Select the exact game or product</option></select>
+                </label>
+                <label>AuriX offer ID<input id="mapping-offer-id" type="text" maxlength="160" autocomplete="off" required></label>
+                <label>Fulfillment type
+                  <select id="mapping-fulfillment" required>
+                    <option value="direct_topup">Direct top-up</option>
+                    <option value="gift_card">Gift card</option>
+                    <option value="game_key">Game key</option>
+                    <option value="manual_service">Manual service</option>
+                  </select>
+                </label>
+                <label>Region dimension
+                  <select id="mapping-region-dimension" required>
+                    <option value="game_server">Game server</option>
+                    <option value="store_country">Store country</option>
+                    <option value="activation_country">Activation country</option>
+                  </select>
+                </label>
+                <label>Allowed account-side region values<input id="mapping-region-values" type="text" maxlength="500" placeholder="e.g. mm, global" required></label>
+                <label>Region label<input id="mapping-region-label" type="text" maxlength="160" placeholder="e.g. Myanmar server"></label>
+                <label>Rights evidence reference<input id="mapping-rights-evidence" type="text" maxlength="512" placeholder="Contract, supplier listing, or private document reference" required></label>
+                <label>Reviewer<input id="mapping-reviewer" type="text" maxlength="160" autocomplete="name" required></label>
+              </div>
+              <label>Recipient field keys <small>Use the supplier field keys, one per line.</small>
+                <textarea id="mapping-input-labels" rows="3" maxlength="1200" placeholder="player_id&#10;server_id"></textarea>
+              </label>
+              <details>
+                <summary>Game account validation route</summary>
+                <label>Validation category ID<input id="mapping-validation-category" maxlength="255" placeholder="pubg_mobile"></label>
+                <label>Field mapping JSON <small>Validation key to recipient field key. Leave empty when the keys match.</small>
+                  <textarea id="mapping-validation-fields" rows="3" placeholder='{"user_id":"player_id","zone_id":"server_id"}'></textarea>
+                </label>
+                <label>Region mapping JSON <small>Supplier region name to approved region value.</small>
+                  <textarea id="mapping-validation-regions" rows="3" placeholder='{"Thailand":"th"}'></textarea>
+                </label>
+                <label>Detected region policy JSON <small>For routes that accept detected regions with documented package exclusions.</small>
+                  <textarea id="mapping-validation-policy" rows="3" placeholder='{"mode":"detected","excluded_values":["Indonesia","ID","Brazil","BR"],"evidence":"Exact package supplier notes"}'></textarea>
+                </label>
+              </details>
+              <label class="admin-checkbox"><input id="mapping-allow-all-region" type="checkbox"> Supplier/publisher evidence confirms this item works in every region</label>
+              <p class="admin-warning admin-mapping-editor__warning">Approving records resale, region, SKU, and fulfillment review in the private mapping file. It does not call FazerCards, generate a customer catalog, or enable checkout. “All regions” must be backed by evidence, not guessed from a supplier label.</p>
+              <label class="admin-checkbox"><input id="mapping-approval-confirm" type="checkbox" required> I reviewed the exact provider row, product, recipient fields, region rule, fulfillment, and resale-rights evidence.</label>
+              <div class="admin-heading__actions">
+                <button id="mapping-approval-submit" class="admin-button admin-button--primary" type="submit">Record private mapping approval</button>
+                <button id="mapping-approval-cancel" class="admin-button admin-button--quiet" type="button">Cancel</button>
+              </div>
+              <p id="mapping-approval-status" class="admin-status" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+          <nav class="admin-inventory-pagination" aria-label="Inventory pages">
+            <button id="inventory-previous" class="admin-button admin-button--quiet" type="button" disabled>Previous</button>
+            <span id="inventory-page-status" class="admin-muted" aria-live="polite">Page not loaded</span>
+            <button id="inventory-next" class="admin-button admin-button--quiet" type="button" disabled>Next</button>
+          </nav>
+        </div>
+        <p id="inventory-state" class="admin-muted">Not loaded</p>
+      </section>
+        </details>
+      </section>
+      <section id="view-supplier" class="admin-view" role="tabpanel" aria-labelledby="tab-supplier" tabindex="0" data-admin-panel="supplier" hidden>
+        <div class="admin-supplier-grid">
+          <section class="admin-panel admin-alert-panel" aria-labelledby="alerts-title">
+        <p class="eyebrow">RECOVERABLE REMINDERS</p>
+        <h2 id="alerts-title">Low-wallet reminder outbox</h2>
+        <p class="admin-copy">Pending reminders are durable local notification intents. No automatic delivery channel is configured; reading this queue does not mark a reminder sent, transfer funds, or suppress future reminders.</p>
+        <p id="wallet-alerts" class="admin-alerts" role="status" aria-live="polite">Not loaded</p>
+      </section>
+          <section class="admin-panel admin-subscription-panel" aria-labelledby="subscription-title">
+        <p class="eyebrow">SUPPLIER PLAN</p>
+        <h2 id="subscription-title">Trial / subscription</h2>
+        <p id="subscription-detail" class="admin-copy">Read-only status; renewal and plan changes stay outside this console.</p>
+        <p id="subscription-meta" class="admin-muted"></p>
+        <span id="subscription-state" class="admin-pill">Not loaded</span>
+      </section>
+          <section class="admin-panel" aria-labelledby="funding-title">
+          <p class="eyebrow">SUPPLIER WALLET</p>
+          <h2 id="funding-title">Create funding intent</h2>
+          <p class="admin-copy">A lost supplier response can leave an invoice unknown. New invoices stay blocked until FazerCards confirms the previous request was not created.</p>
+          <form id="funding-form" class="admin-form">
+            <label>Method
+              <select id="funding-method" required>
+                <option value="usdt">USDT payment page (choose network there)</option>
+              </select>
+            </label>
+            <label>Amount (USD)<input id="funding-amount" type="number" min="1" step="0.01" value="50" required></label>
+            <p id="funding-limits" class="admin-muted" role="status" aria-live="polite">Loading current account limits…</p>
+            <label>Funding request ID — reuse for retries<input id="funding-intent-id" type="text" maxlength="128" autocomplete="off" spellcheck="false" required></label>
+            <label>Named treasury credential<input id="funding-credential" type="password" maxlength="256" autocomplete="off" required></label>
+            <button id="funding-submit" class="admin-button admin-button--primary" type="submit" disabled>Create funding invoice</button>
+            <p id="funding-status" class="admin-status" role="status" aria-live="polite"></p>
+          </form>
+          <a id="funding-payment-link" class="admin-button admin-button--primary" href="#" target="_blank" rel="noopener noreferrer" hidden>Open FazerCards payment page ↗</a>
+          <pre id="funding-result" class="admin-result" hidden></pre>
+          <section class="admin-funding-review" aria-labelledby="funding-review-title">
+            <h3 id="funding-review-title">Unknown invoice creations</h3>
+            <p id="funding-review-status" class="admin-status" role="status" aria-live="polite">Checking local attempt records…</p>
+            <div id="funding-review-list" class="admin-order-attention__list" aria-label="Unresolved supplier funding attempts"></div>
+          </section>
+        </section>
+        </div>
+      </section>
+      <section id="view-settings" class="admin-view" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" data-admin-panel="settings" hidden>
+        <div class="admin-settings-grid">
+          <section class="admin-panel" aria-labelledby="pricing-title">
+          <p class="eyebrow">RETAIL RULES</p>
+          <h2 id="pricing-title">Pricing policy</h2>
+          <p class="admin-copy">These values are operator policy inputs. The server recomputes prices from approved supplier costs; the browser never supplies a retail price.</p>
+          <form id="pricing-form" class="admin-form">
+            <div class="admin-fields">
+              <label>Sell currency<input data-policy="sell_currency" type="text" value="MMK" readonly></label>
+              <label>Supplier currency<input data-policy="supplier_currency" type="text" value="USD" readonly></label>
+              <label><span id="pricing-fx-rate-caption">FX rate (MMK per USD)</span><input data-policy="fx_rate" type="number" min="100" max="100000" step="1" required></label>
+              <label>Target profit fraction (0.15 = 15%)<input data-policy="target_profit_pct" type="number" min="0" max="0.999" step="0.001" required></label>
+              <label>Minimum profit fraction<input data-policy="minimum_profit_pct" type="number" min="0" max="0.999" step="0.001"></label>
+              <label>Target profit (minor)<input data-policy="target_profit_minor" type="number" min="0" step="1" required></label>
+              <label>Operating fee (minor)<input data-policy="operating_fee_minor" type="number" min="0" step="1" required></label>
+              <label>Payment fee fraction<input data-policy="payment_fee_pct" type="number" min="0" max="0.999" step="0.001" required></label>
+              <label>Payment fee (minor)<input data-policy="payment_fee_minor" type="number" min="0" step="1" required></label>
+              <label>Marketing fraction<input data-policy="marketing_pct" type="number" min="0" max="0.999" step="0.001" required></label>
+              <label>Payback fraction<input data-policy="payback_pct" type="number" min="0" max="0.999" step="0.001" required></label>
+              <label>Promotion fraction<input data-policy="promo_pct" type="number" min="0" max="0.999" step="0.001" required></label>
+              <label>Promotion fixed (minor)<input data-policy="promo_fixed_minor" type="number" min="0" step="1" required></label>
+              <label>Rounding (minor)<input data-policy="rounding_minor" type="number" min="1" step="1" required></label>
+              <label>Minimum price (minor)<input data-policy="minimum_price_minor" type="number" min="0" step="1" required></label>
+              <label>Maximum price (minor)<input data-policy="maximum_price_minor" type="number" min="0" step="1"></label>
+            </div>
+            <label class="admin-check"><input id="pricing-auto-fx" type="checkbox"> Automatically refresh the USD/MMK rate from the CBM market rate; no daily entry</label>
+            <p id="pricing-auto-fx-help" class="admin-copy">Automatic mode uses the higher of the approved FX floor and latest published CBM rate. If that quote expires, listings keep the last approved rate and show an admin warning.</p>
+            <div id="pricing-manual-fx-fields" class="admin-fields">
+              <label>FX source<input id="pricing-fx-source" type="text" maxlength="240" required></label>
+              <label>FX observed at (ISO 8601 with timezone)<input id="pricing-fx-observed-at" type="text" placeholder="2026-11-13T12:00:00+06:30" required></label>
+              <label>Price valid until (ISO 8601 with timezone)<input id="pricing-valid-until" type="text" placeholder="2026-11-14T12:00:00+06:30" required></label>
+            </div>
+            <label>Named pricing reviewer credential<input id="pricing-review-credential" type="password" autocomplete="new-password" required></label>
+            <label class="admin-check"><input id="pricing-owner-approval" type="checkbox" required> I approve these values as the current store policy, including the FX source or automatic-rate rule, margin, fees and promotions.</label>
+            <button class="admin-button admin-button--primary" type="submit">Save pricing policy</button>
+            <p id="pricing-status" class="admin-status" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+          <section class="admin-panel admin-webhook-panel" aria-labelledby="webhook-title">
+        <p class="eyebrow">ORDER NOTIFICATIONS</p>
+        <h2 id="webhook-title">FazerCards webhook</h2>
+        <p class="admin-copy">The callback receives signed order events at AuriX. This panel never displays or stores the signing secret. Saving is rejected until the server-side supplier-write gate is explicitly enabled.</p>
+        <div class="admin-webhook__meta">
+          <span>Current state</span><strong id="webhook-state">Not loaded</strong>
+          <span>Configured URL</span><code id="webhook-url">—</code>
+        </div>
+        <form id="webhook-form" class="admin-form">
+          <label>Callback URL<input id="webhook-url-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://store.example/api/v1/webhooks/fazercards" required></label>
+          <label class="admin-checkbox"><input id="webhook-enabled" type="checkbox" checked> Enable order notifications</label>
+          <button class="admin-button admin-button--primary" type="submit">Save webhook</button>
+          <p id="webhook-status" class="admin-status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+        </div>
+      </section>
+
+      <section id="view-notices" class="admin-view" role="tabpanel" aria-labelledby="tab-notices" tabindex="0" data-admin-panel="notices" hidden>
+        <div class="admin-notice-layout">
+          <section class="admin-panel" aria-labelledby="store-notices-title">
+            <p class="eyebrow">CUSTOMER UPDATES</p>
+            <h2 id="store-notices-title">Publish a store notice</h2>
+            <p class="admin-copy">Active notices appear in the customer in-app notice center and its unread badge. This does not send push notifications, SMS or email. Archive a notice when it is no longer current.</p>
+            <form id="store-notice-form" class="admin-form">
+              <input id="store-notice-id" type="hidden">
+              <label>Title<input id="store-notice-title" type="text" minlength="3" maxlength="100" required></label>
+              <label>Message<textarea id="store-notice-body" rows="4" maxlength="1200" minlength="3" required></textarea></label>
+              <div class="admin-fields">
+                <label>Notice type<select id="store-notice-severity"><option value="info">Store update</option><option value="success">Positive update</option><option value="warning">Important notice</option></select></label>
+                <label>Visibility<select id="store-notice-status"><option value="active">Publish now</option><option value="archived">Keep archived</option></select></label>
+              </div>
+              <div class="admin-heading__actions"><button id="store-notice-save" class="admin-button admin-button--primary" type="submit">Publish notice</button><button id="store-notice-clear" class="admin-button" type="button">Clear</button></div>
+              <p id="store-notice-form-status" class="admin-status" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+          <section class="admin-panel" aria-labelledby="store-notice-list-title">
+            <h2 id="store-notice-list-title">Published &amp; archived</h2>
+            <p id="store-notice-list-status" class="admin-status" role="status" aria-live="polite">Loading notices…</p>
+            <div id="store-notice-list" class="admin-notice-list" aria-label="Store notices"></div>
+          </section>
+        </div>
+      </section>
+
+    </section>
+  </main>
+
+  <footer><span>© AuriX Game Store</span><span>Operator console · token memory only</span></footer>
+</body>
+</html>
