@@ -12,9 +12,15 @@ import sys
 import tarfile
 
 if __package__:
-    from .game_store_scope import LOCK_FILE, REQUIRED_RELEASE_FILES, SHARED_MODULES, is_release_input
+    from .game_store_scope import (
+        LOCK_FILE, PUBLIC_GAME_CONFIG_FILES, REQUIRED_RELEASE_FILES, SHARED_MODULES,
+        SNAPSHOT_REQUIRED_RELEASE_FILES, is_release_input,
+    )
 else:
-    from game_store_scope import LOCK_FILE, REQUIRED_RELEASE_FILES, SHARED_MODULES, is_release_input
+    from game_store_scope import (
+        LOCK_FILE, PUBLIC_GAME_CONFIG_FILES, REQUIRED_RELEASE_FILES, SHARED_MODULES,
+        SNAPSHOT_REQUIRED_RELEASE_FILES, is_release_input,
+    )
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB_SUFFIXES = {'.html', '.css', '.js', '.mjs', '.json', '.webmanifest', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.avif', '.gif', '.ico', '.txt'}
@@ -25,7 +31,7 @@ MAX_RELEASE_FILES = 4096
 def package(output: Path, *, root: Path = ROOT) -> dict:
     files = [root / path for path in SHARED_MODULES]
     files.extend((root / 'aurix_games').rglob('*.py'))
-    files.extend((root / 'config/games').rglob('*.json'))
+    files.extend(root / path for path in PUBLIC_GAME_CONFIG_FILES)
     for pattern in ('*fazercards*.py', '*game*.py', '*games*.py'):
         files.extend((root / 'scripts').glob(pattern))
     files.extend(path for path in (root / 'web/game-store').rglob('*')
@@ -47,6 +53,61 @@ def package(output: Path, *, root: Path = ROOT) -> dict:
     manifest = output.with_suffix('.manifest.json')
     manifest.write_text(json.dumps(result, indent=2) + '\n')
     manifest.chmod(0o600)
+    return result
+
+
+def package_snapshot(root: Path, output: Path) -> dict:
+    """Make a data-free rollback bundle from the currently installed source tree."""
+    root = root.resolve(strict=True)
+    files = sorted(
+        path for path in root.rglob("*")
+        if path.is_file() and is_release_input(path.relative_to(root).as_posix())
+    )
+    names = {path.relative_to(root).as_posix() for path in files}
+    missing = SNAPSHOT_REQUIRED_RELEASE_FILES - names
+    if missing:
+        raise ValueError(f"active release is missing rollback files: {', '.join(sorted(missing))}")
+    if any(path.is_symlink() for path in files):
+        raise ValueError("active release snapshot contains a symlink")
+    if len(files) > MAX_RELEASE_FILES:
+        raise ValueError("active release snapshot exceeds the file limit")
+    hashes = {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+    expanded = sum(path.stat().st_size for path in files)
+    if expanded > MAX_RELEASE_BYTES:
+        raise ValueError("active release snapshot exceeds the size limit")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.resolve() == root or output.resolve().is_relative_to(root):
+        raise ValueError("snapshot output must be outside the active release")
+    if output.exists():
+        raise FileExistsError(output)
+    with output.open("xb") as stream:
+        try:
+            output.chmod(0o600)
+            with gzip.GzipFile(filename="", fileobj=stream, mode="wb", mtime=0, compresslevel=6) as zipped:
+                with tarfile.open(fileobj=zipped, mode="w|", format=tarfile.PAX_FORMAT) as archive:
+                    for path in files:
+                        name = path.relative_to(root).as_posix()
+                        data = path.read_bytes()
+                        entry = tarfile.TarInfo(name)
+                        entry.size = len(data)
+                        entry.mode = 0o755 if path.stat().st_mode & 0o111 else 0o644
+                        archive.addfile(entry, io.BytesIO(data))
+        except BaseException:
+            output.unlink()
+            raise
+    digest = _sha256(output)
+    release_id = f"legacy-{digest}"
+    result = {
+        "format_version": 1, "release_id": release_id, "commit_sha": None,
+        "snapshot": True, "files": len(hashes), "source_sha256": digest,
+        "archive_bytes": output.stat().st_size, "expanded_bytes": expanded,
+        "lock_sha256": hashes.get(LOCK_FILE), "file_sha256": hashes,
+        "financial_writes": False,
+    }
+    manifest = output.with_suffix(".manifest.json")
+    with manifest.open("x", encoding="utf-8") as file:
+        manifest.chmod(0o600)
+        file.write(json.dumps(result, indent=2) + "\n")
     return result
 
 
@@ -131,6 +192,7 @@ def package_commit(output: Path, commit: str, *, root: Path = ROOT) -> dict:
                 raise
     result = {
         "format_version": 1,
+        "release_id": commit,
         "commit_sha": commit,
         "files": len(hashes),
         "source_sha256": _sha256(output),
@@ -154,9 +216,16 @@ def package_commit(output: Path, commit: str, *, root: Path = ROOT) -> dict:
     return result
 
 
-def verify_commit_package(output: Path, commit: str, expected_digest: str) -> dict:
-    """Check a bundle against its commit and digest from a trusted release record."""
-    _require_commit(commit)
+def verify_release_package(
+    output: Path,
+    expected_digest: str,
+    *,
+    expected_commit: str | None = None,
+    expected_release_id: str | None = None,
+) -> dict:
+    """Verify a commit build or legacy snapshot against its manifest and digest."""
+    if expected_commit is not None:
+        _require_commit(expected_commit)
     if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
         raise ValueError("expected archive digest must be SHA-256")
     manifest = output.with_suffix(".manifest.json")
@@ -165,7 +234,10 @@ def verify_commit_package(output: Path, commit: str, expected_digest: str) -> di
     result = json.loads(manifest.read_text(encoding="utf-8"))
     if (
         not isinstance(result, dict)
-        or result.get("format_version") != 1 or result.get("commit_sha") != commit
+        or result.get("format_version") != 1
+        or (expected_commit is not None and result.get("commit_sha") != expected_commit)
+        or (expected_commit is None and result.get("snapshot") is not True)
+        or (expected_release_id is not None and result.get("release_id") != expected_release_id)
         or result.get("source_sha256") != expected_digest
         or result.get("archive_bytes") != output.stat().st_size
         or output.stat().st_size > MAX_RELEASE_BYTES + 8 * 1024 * 1024
@@ -173,10 +245,11 @@ def verify_commit_package(output: Path, commit: str, expected_digest: str) -> di
     ):
         raise ValueError("archive or manifest does not match the expected release")
     files = result.get("file_sha256")
+    required_files = SNAPSHOT_REQUIRED_RELEASE_FILES if result.get("snapshot") else REQUIRED_RELEASE_FILES
     if (
-        not isinstance(files, dict) or not REQUIRED_RELEASE_FILES <= files.keys()
+        not isinstance(files, dict) or not required_files <= files.keys()
         or len(files) != result.get("files") or len(files) > MAX_RELEASE_FILES
-        or result.get("lock_sha256") != files[LOCK_FILE]
+        or result.get("lock_sha256") != files.get(LOCK_FILE)
     ):
         raise ValueError("release manifest is incomplete")
     expanded = 0
@@ -200,6 +273,11 @@ def verify_commit_package(output: Path, commit: str, expected_digest: str) -> di
     if seen != files.keys() or expanded != result.get("expanded_bytes"):
         raise ValueError("archive does not match the manifest inventory")
     return result
+
+
+def verify_commit_package(output: Path, commit: str, expected_digest: str) -> dict:
+    """Check a bundle against its commit and digest from a trusted release record."""
+    return verify_release_package(output, expected_digest, expected_commit=commit, expected_release_id=commit)
 
 
 if __name__ == '__main__':

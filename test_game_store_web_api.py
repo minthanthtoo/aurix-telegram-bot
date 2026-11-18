@@ -115,6 +115,26 @@ class GameStoreWebAPITests(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=2)
 
+    def test_version_endpoint_reports_uncached_deployed_release_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "release.json"
+            marker.write_text(json.dumps({"release_id": "a" * 40, "commit_sha": "a" * 40}), encoding="utf-8")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(release_marker_path=marker))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with urlopen(f"http://127.0.0.1:{server.server_port}/api/version") as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+                    self.assertEqual(json.load(response), {"release_id": "a" * 40, "commit_sha": "a" * 40})
+                marker.write_text(json.dumps({"release_id": "legacy-" + "b" * 64, "commit_sha": None}), encoding="utf-8")
+                with urlopen(f"http://127.0.0.1:{server.server_port}/api/version") as response:
+                    self.assertEqual(json.load(response)["release_id"], "legacy-" + "b" * 64)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
     def test_local_mlbb_lookup_only_returns_confirmed_identity_and_throttles(self):
         with tempfile.TemporaryDirectory() as directory:
             supplier = Mock()

@@ -68,6 +68,7 @@ from .store_features import StoreFeatureStore
 
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
+RELEASE_MARKER_PATH = Path(__file__).resolve().parents[1] / ".aurix-games-release.json"
 UTC = timezone.utc
 _PRODUCT_PATH = re.compile(r"^/api/v1/catalog/([a-z0-9-]{1,80})$")
 _PRODUCT_OFFERS_PATH = re.compile(r"^/api/v1/catalog/([a-z0-9-]{1,80})/offers$")
@@ -120,6 +121,7 @@ def make_handler(
     payment_review: PaymentReviewService | None = None,
     receiver_qr_dir: str | Path | None = None,
     store_features: StoreFeatureStore | None = None,
+    release_marker_path: str | Path | None = None,
     redirect_live_store: bool = False,
 ) -> type[SimpleHTTPRequestHandler]:
     """Create the storefront handler with optional live/admin capabilities."""
@@ -144,6 +146,7 @@ def make_handler(
         if not qr_directory.is_dir():
             raise ValueError("payment QR directory is unavailable")
     root = Path(web_root).resolve()
+    release_marker = Path(release_marker_path) if release_marker_path is not None else RELEASE_MARKER_PATH
     live_store = PublicCatalogStore(
         public_catalog_path
         if public_catalog_path is not None
@@ -247,6 +250,20 @@ def make_handler(
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", "0")
                 self.end_headers()
+                return
+            if parsed.path == "/api/version":
+                if parsed.query:
+                    self._json(400, {"error": "version check does not accept query parameters"})
+                    return
+                try:
+                    marker = json.loads(release_marker.read_text(encoding="utf-8"))
+                    release_id = marker.get("release_id") if isinstance(marker, dict) else None
+                    if not isinstance(release_id, str) or not re.fullmatch(r"(?:[0-9a-f]{40}|legacy-[0-9a-f]{64})", release_id):
+                        raise ValueError("release marker is invalid")
+                except (OSError, ValueError, json.JSONDecodeError):
+                    self._json(503, {"error": "release version is unavailable"})
+                    return
+                self._json(200, {"release_id": release_id, "commit_sha": marker.get("commit_sha")})
                 return
             if parsed.path == "/api/v1/admin/commerce-settings":
                 try:

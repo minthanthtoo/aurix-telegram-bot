@@ -11,6 +11,7 @@ SHARED_MODULES = frozenset({
     "commerce_models.py", "migrations.py", "persistence.py", "telegram_web_app.py", "scripts/__init__.py",
 })
 LOCK_FILE = "config/games/requirements.lock"
+PUBLIC_GAME_CONFIG_FILES = frozenset({"config/games/mlbb-strategy.json"})
 GAME_SCRIPTS = frozenset({
     "scripts/approve_fazercards_mapping.py",
     "scripts/audit_games_fulfillment.py",
@@ -35,7 +36,10 @@ GAME_TOOLS = frozenset({
     ".github/workflows/games-ci.yml",
     ".github/workflows/games-production.yml",
     "scripts/accept_fazercards_topup.py",
+    "scripts/aurix_games_release_transport.py",
     "deploy/install_aurix_games.py",
+    "deploy/aurix_games_deploy.py",
+    "deploy/bootstrap_aurix_games_deployer.sh",
     "scripts/analyze_game_store_competition.py",
     "scripts/capture_game_store_surfaces.mjs",
     "scripts/check_game_store_interactions.mjs",
@@ -49,6 +53,8 @@ GAME_TOOLS = frozenset({
     "scripts/verify_game_store_domain.py",
 })
 OTHER_GAME_TESTS = frozenset({
+    "test_aurix_games_deploy.py",
+    "test_aurix_games_release_transport.py",
     "test_cbm_fx.py",
     "test_live_catalog.py",
     "test_order_reconciliation.py",
@@ -72,6 +78,14 @@ REQUIRED_RELEASE_FILES = SHARED_MODULES | frozenset({
     "scripts/reconcile_game_orders.py", "scripts/audit_games_fulfillment.py",
     "scripts/aurix_games_backup_job.py",
 })
+SNAPSHOT_REQUIRED_RELEASE_FILES = SHARED_MODULES | frozenset({
+    "aurix_games/__main__.py", "aurix_games/web_api.py",
+    "web/game-store/index.html", "web/game-store/app.js",
+    "web/game-store/service-worker.js", "scripts/refresh_game_store_catalog.py",
+    "scripts/run_games_fulfillment.py", "scripts/dispatch_paid_game_orders.py",
+    "scripts/reconcile_game_orders.py", "scripts/audit_games_fulfillment.py",
+    "scripts/aurix_games_backup_job.py",
+})
 
 
 def is_game_test(path: str) -> bool:
@@ -88,7 +102,7 @@ def is_release_input(path: str) -> bool:
     return (
         path in SHARED_MODULES | GAME_SCRIPTS or path == LOCK_FILE
         or (path.startswith("aurix_games/") and parsed.suffix == ".py")
-        or (path.startswith("config/games/") and parsed.suffix == ".json")
+        or path in PUBLIC_GAME_CONFIG_FILES
         or (
             path.startswith("web/game-store/") and parsed.suffix.lower() in WEB_SUFFIXES
             and "token" not in parsed.name.lower()
