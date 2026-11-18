@@ -97,6 +97,7 @@ Before=${UNITS[*]}
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
 ExecStart=$RECOVERY_WRAPPER
 TimeoutStartSec=240
 
@@ -112,5 +113,5 @@ After=$RECOVERY_UNIT
 EOF
 done
 systemctl daemon-reload
-systemctl enable "$RECOVERY_UNIT"
+systemctl enable --now "$RECOVERY_UNIT"
 echo "Games deploy identity and boot recovery installed. No Games service was restarted."

@@ -114,6 +114,18 @@ class GamesDeploymentTests(unittest.TestCase):
         self.assertFalse(self.journal.exists())
         self.assertFalse((self.releases / self.next_record["release_id"]).exists())
 
+    def test_boot_recovery_restores_pointer_without_starting_dependent_units(self):
+        self.journal.write_text(json.dumps({
+            "phase": "switched", "previous_target": str(self.active),
+            "active_timers": [deploy.TIMERS[0]], "web_was_active": True,
+            "previous_release_id": self.active_record["release_id"],
+        }))
+        deploy.recover_boot()
+        self.assertEqual(self.current.resolve(), self.active.resolve())
+        self.assertFalse(self.journal.exists())
+        deploy._run.assert_not_called()
+        deploy._health.assert_not_called()
+
     def test_rollback_swaps_active_and_retains_the_previous_package_for_next_recovery(self):
         deployed = self._request(
             self.next_archive, self.next_record,
