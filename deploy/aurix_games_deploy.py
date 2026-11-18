@@ -183,8 +183,11 @@ def _recover_locked(*, at_boot: bool = False) -> str:
         candidate = journal.get("candidate_target")
         if not isinstance(candidate, str) or not Path(candidate).is_dir():
             raise DeployError("verified deployment recovery target is missing")
-        _symlink_release(Path(candidate))
-        if not at_boot:
+        target = Path(candidate)
+        pointer_changed = not CURRENT.is_symlink() or CURRENT.resolve() != target.resolve()
+        if pointer_changed:
+            _symlink_release(target)
+        if not at_boot and (pointer_changed or not _active(WEB_SERVICE)):
             _run("systemctl", "restart", WEB_SERVICE)
         candidate_state = journal.get("candidate_state")
         if not isinstance(candidate_state, dict):
@@ -222,11 +225,8 @@ def _prune_releases(keep: Path) -> None:
     keep = keep.resolve(strict=True)
     if keep.parent != RELEASES.resolve(strict=True):
         raise DeployError("refusing to prune outside the managed Games releases")
-    entries = list(RELEASES.iterdir())
-    if any(path.is_symlink() or not path.is_dir() for path in entries if path.resolve() != keep):
-        raise DeployError("unexpected file in the managed release directory")
-    for path in entries:
-        if path.resolve() != keep:
+    for path in RELEASES.iterdir():
+        if not path.is_symlink() and path.is_dir() and path.resolve() != keep:
             shutil.rmtree(path)
 
 

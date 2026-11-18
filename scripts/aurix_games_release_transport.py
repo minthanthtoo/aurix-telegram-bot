@@ -52,6 +52,10 @@ def _configuration(directory: Path) -> list[str]:
 
 def _response(process: subprocess.Popen, *, timeout: int = 1200) -> dict:
     line = process.stdout.readline(8193)
+    if not line:
+        error = process.stderr.read(8193).decode("utf-8", errors="replace")
+        if process.wait(timeout=timeout):
+            raise RuntimeError(error.strip()[:1000] or "Games SSH operation failed")
     if len(line) > 8192 or not line.endswith(b"\n"):
         _abort(process)
         raise RuntimeError("Games server returned an invalid response")

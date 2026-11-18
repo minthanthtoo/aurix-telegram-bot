@@ -91,6 +91,20 @@ class GamesDeploymentTests(unittest.TestCase):
         self.assertTrue(self.journal.exists())
         self.assertEqual(self.current.resolve(), self.active.resolve())
 
+    def test_first_deploy_prunes_old_directory_and_preserves_legacy_files(self):
+        archive = self.releases / "legacy-backup.tgz"
+        archive.write_bytes(b"keep")
+        alias = self.releases / "legacy-alias"
+        alias.symlink_to(self.active)
+        result = self._request(
+            self.next_archive, self.next_record, previous=self.active_record["release_id"],
+        )
+        self.assertEqual(result["status"], "deployed")
+        self.assertEqual(archive.read_bytes(), b"keep")
+        self.assertTrue(alias.is_symlink())
+        self.assertFalse(self.active.exists())
+        self.assertFalse(self.journal.exists())
+
     def test_first_deploy_snapshots_unmarked_active_and_keeps_it_as_rollback(self):
         result = self._request(
             self.next_archive, self.next_record,
