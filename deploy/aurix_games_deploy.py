@@ -170,7 +170,7 @@ def _restore_timers(active_timers: list[str]) -> None:
         raise DeployError("Games timer state could not be restored")
 
 
-def _recover_locked() -> str:
+def _recover_locked(*, at_boot: bool = False) -> str:
     journal = _read_json(JOURNAL)
     if not journal:
         return "clean"
@@ -184,19 +184,21 @@ def _recover_locked() -> str:
         if not isinstance(candidate, str) or not Path(candidate).is_dir():
             raise DeployError("verified deployment recovery target is missing")
         _symlink_release(Path(candidate))
-        _run("systemctl", "restart", WEB_SERVICE)
+        if not at_boot:
+            _run("systemctl", "restart", WEB_SERVICE)
         candidate_state = journal.get("candidate_state")
         if not isinstance(candidate_state, dict):
             raise DeployError("verified deployment state is missing")
         _atomic_json(STATE, candidate_state)
-        _health(candidate_state["active"]["release_id"])
+        if not at_boot:
+            _health(candidate_state["active"]["release_id"])
         _prune_releases(Path(candidate))
     elif phase in {"pausing", "paused", "switched"}:
         old = Path(previous)
         if not old.is_dir():
             raise DeployError("previous release is unavailable; workers remain paused")
         _symlink_release(old)
-        if journal.get("web_was_active"):
+        if not at_boot and journal.get("web_was_active"):
             _run("systemctl", "restart", WEB_SERVICE)
             _health(str(journal.get("previous_release_id", "legacy-")))
         previous_state = journal.get("previous_state")
@@ -209,7 +211,9 @@ def _recover_locked() -> str:
         _prune_releases(old)
     else:
         raise DeployError("deployment recovery phase is invalid; workers remain paused")
-    _restore_timers(timers)
+    # At boot systemd starts enabled units after this dependency completes.
+    if not at_boot:
+        _restore_timers(timers)
     JOURNAL.unlink(missing_ok=True)
     return "recovered"
 
@@ -621,7 +625,7 @@ class _BoundedReader:
 def recover_boot() -> None:
     with LOCK.open("a+b") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        _recover_locked()
+        _recover_locked(at_boot=True)
 
 
 def main() -> int:
