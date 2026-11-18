@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Browse current AuriX game top-up listings, check your game account, and review the exact MMK payment before ordering.">
+  <meta name="theme-color" content="#0d1110">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/game-store/manifest.webmanifest">
+  <title>AuriX Game Store</title>
+  <link rel="stylesheet" href="/game-store/styles.css?v=20261117-compact-detail-1">
+  <link rel="stylesheet" href="/game-store/storefront-refinements.css?v=20261115-preview-card-layout-1">
+  <link rel="stylesheet" href="/game-store/theme.css?v=20261117-leaderboard-sheet-7">
+  <link rel="stylesheet" href="/game-store/premium-theme.css?v=20261118-detail-views-1">
+  <script src="/game-store/interactions.js?v=20261113-pager-1" defer></script>
+  <script src="/game-store/game-art-manifest.js?v=20261114-fazercards-art-2" defer></script>
+  <script src="/game-store/app.js?v=20261118-detail-view-1" defer></script>
+  <script src="/game-store/auth.js?v=20261117-theme-1" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/game-store/" aria-label="AuriX Game Store home">
+      <span class="brand__mark" aria-hidden="true"><svg viewBox="0 0 32 32" width="30" height="30" fill="none"><path d="M4 26 14 5h5l9 21h-7l-5-13-5 13Z" fill="currentColor"/><path d="m12 22 5-5h10l-5 5Z" fill="#f4f7ff"/></svg></span>
+      <span><strong>AuriX</strong><small>GAME STORE</small></span>
+    </a>
+    <div class="topbar__actions">
+      <button id="nav-open" class="nav-open" type="button" aria-haspopup="dialog" aria-controls="navigation-dialog">Menu</button>
+      <button id="notification-open" class="notification-open" type="button" aria-label="Open store notices" aria-haspopup="dialog" aria-controls="auxiliary-dialog">
+        <span id="notification-count" class="notification-open__count" hidden></span>
+      </button>
+      <button id="wallet-open" class="wallet-open" type="button" aria-label="View wallet balance and credits">Wallet</button>
+      <button id="account-open" class="account-open" type="button" aria-haspopup="dialog" aria-controls="account-dialog">Sign in</button>
+      <span id="connection-status" class="topbar__status"><i aria-hidden="true"></i> Checking store connection…</span>
+    </div>
+  </header>
+  <div id="offline-banner" class="offline-banner" role="status" aria-live="polite" hidden>
+    Offline preview · cached storefront only · checkout locked, live offers unavailable
+  </div>
+
+  <main data-store-view="home">
+    <section class="store-intro" aria-label="Welcome to AuriX">
+      <div class="store-intro__copy">
+        <p class="eyebrow">GAME TOP-UPS &amp; PASSES</p>
+        <h1>Gear up. <span>Game on.</span></h1>
+        <p class="store-intro__lede">Check your player first. Then browse top-ups.</p>
+      </div>
+    </section>
+
+    <section class="catalog" aria-labelledby="catalog-title">
+      <div class="catalog__heading">
+        <div><p class="eyebrow">THE CATALOG</p><h2 id="catalog-title">Choose your game</h2></div>
+        <button id="search-toggle" class="search-toggle" type="button" aria-label="Search games" aria-controls="search-form" aria-expanded="false"><svg class="catalog-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 4.5 4.5"></path></svg><span id="search-toggle-label">Search</span></button>
+        <form id="search-form" data-mobile-open="false" role="search">
+          <label class="sr-only" for="search">Search games</label>
+          <span aria-hidden="true"><svg class="catalog-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 4.5 4.5"></path></svg></span>
+          <input id="search" name="q" type="search" maxlength="80" placeholder="Search games…" autocomplete="off">
+          <button id="search-clear" type="button" aria-label="Clear search" hidden>×</button>
+          <button type="submit">Search</button>
+        </form>
+      </div>
+
+      <nav id="category-list" class="categories" aria-label="Catalog categories">
+        <button id="saved-games" class="category-chip saved-games" data-category-kind="saved" type="button" aria-pressed="false" hidden>Saved</button>
+      </nav>
+      <div class="catalog-pulse" aria-label="Catalog freshness">
+        <span class="catalog-pulse__dot" aria-hidden="true"></span>
+        <span><strong>Current listings</strong><small>Supplier does not report unit stock counts</small></span>
+      </div>
+      <div id="catalog-status" class="catalog-status" role="status" aria-live="polite">Loading current listings…</div>
+      <div class="catalog-recovery"><button id="catalog-reset" type="button" hidden>Show all games</button><button id="catalog-retry" type="button" hidden>Try again</button></div>
+      <div id="product-grid" class="product-grid" aria-label="Games"></div>
+    </section>
+
+    <section class="trust-note" aria-label="Availability notice">
+      <span class="trust-note__icon" aria-hidden="true">✓</span>
+      <p id="availability-copy"><strong>Before you pay.</strong> We check the player and confirm the exact total before payment.</p>
+    </section>
+
+    <section class="store-promises" aria-label="How ordering works">
+      <div class="store-promise">
+        <span class="store-promise__icon" aria-hidden="true"><img src="/game-store/assets/aurix/nav-profile.svg" alt="" loading="lazy"></span>
+        <span><strong>Check player</strong><small>Name and region first</small></span>
+      </div>
+      <div class="store-promise">
+        <span class="store-promise__icon" aria-hidden="true"><img src="/game-store/assets/aurix/nav-wallet.svg" alt="" loading="lazy"></span>
+        <span><strong>Clear total</strong><small>Review MMK before pay</small></span>
+      </div>
+      <div class="store-promise">
+        <span class="store-promise__icon" aria-hidden="true"><img src="/game-store/assets/aurix/nav-history.svg" alt="" loading="lazy"></span>
+        <span><strong>Track order</strong><small>Follow it in History</small></span>
+      </div>
+    </section>
+
+    <a class="promo-banner" href="#product-grid" aria-label="Browse game top-ups">
+      <span class="promo-banner__copy">
+        <span class="promo-banner__eyebrow">AURIX GAME STORE</span>
+        <strong>Ready for your next match?</strong>
+        <small>Check your ID. Choose a pack. Review the MMK total.</small>
+      </span>
+      <span class="promo-banner__action" aria-hidden="true">›</span>
+    </a>
+
+    <section id="home-overview" class="home-overview" aria-label="Store overview">
+      <section class="home-leaderboard" aria-labelledby="home-leaderboard-title">
+        <div class="home-leaderboard__heading">
+          <span class="home-leaderboard__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8m-4-4v4M7 4h10v6a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4v2a4 4 0 0 0 4 4m9-6h3v2a4 4 0 0 1-4 4"/></svg></span>
+          <div><p class="eyebrow">COMMUNITY RANKING</p><h2 id="home-leaderboard-title">Most active buyers</h2></div>
+          <span class="home-leaderboard__period">ROLLING 30 DAYS</span>
+        </div>
+        <p id="home-leaderboard-status" class="home-leaderboard__status" role="status">Loading the recent leaderboard…</p>
+        <ol id="home-leaderboard-preview" class="home-leaderboard__list" aria-label="Most active buyers"></ol>
+        <button id="leaderboard-open" class="home-leaderboard__open" type="button">View leaderboard <span aria-hidden="true">›</span></button>
+      </section>
+    </section>
+
+    <section id="home-account-overview" class="reference-home" aria-label="Your account" hidden>
+      <article id="home-wallet-card" class="home-wallet-card" hidden>
+        <div class="home-wallet-card__identity">
+          <p class="home-wallet-card__label">Wallet Balance</p>
+          <div class="home-wallet-card__amount"><strong id="wallet-balance">—</strong><button id="wallet-balance-toggle" type="button" aria-pressed="false" disabled>Show</button></div>
+          <p id="wallet-account-note" class="home-wallet-card__note" role="status">Sign in to see your available balance.</p>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    <span>© AuriX Game Store</span>
+    <span>Order availability follows current account, region and payment checks.</span>
+    <nav aria-label="Legal information"><a href="/game-store/privacy.html">Privacy notice</a><span aria-hidden="true"> · </span><a href="/game-store/terms.html">Store terms</a></nav>
+    <button id="footer-guides-open" class="footer-more" type="button">Guides &amp; community</button>
+    <details class="artwork-credits">
+      <summary>Artwork &amp; trademark credits</summary>
+      <div class="artwork-credits__content">
+        <p>Mobile Legends artwork is an AI-generated Miya fan illustration, not official publisher artwork or a promise of a purchasable skin. Other game covers use FazerCards catalog UI images where supplied; Hago and X-Clash use original AuriX illustrations. The gift-and-controller promo banner is original AuriX-generated artwork and does not advertise an active bonus. Catalog media does not imply publisher endorsement or grant rights beyond the supplier's terms. Guide tools use generic <a href="https://kenney.nl/assets/game-icons">Game Icons by Kenney Vleugels</a> from a CC0 pack.</p>
+        <p>MLBB guide-role emblems use <a href="https://game-icons.net/about.html">Game-icons.net</a> icons by Lorc and Delapouite, CC BY 3.0; <a href="/game-store/assets/game-icons/ATTRIBUTION.txt">individual asset credits</a>. No publisher logos or character portraits are embedded.</p>
+        <p>Package tiles use original AuriX generic coin, gem, pass and spell illustrations. They are decorative labels, not official in-game item art; catalog names, availability, and prices remain supplier/API data. <a href="/game-store/assets/game-icons/catalog-glyphs.manifest.json">Pinned asset sources and hashes</a>.</p>
+        <p>Game names identify catalog products. AuriX is an independent preview, not endorsed by the publishers. Game cover images are cached from FazerCards catalog UI metadata; their presence does not establish publisher endorsement or expand the supplier's media-use rights.</p>
+      </div>
+    </details>
+  </footer>
+
+  <nav id="bottom-navigation" class="bottom-navigation" aria-label="Store navigation">
+    <button class="bottom-navigation__item bottom-navigation__item--active" id="bottom-home" type="button" aria-current="page"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span><small>Home</small></button>
+    <button class="bottom-navigation__item" id="bottom-games" type="button"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 6h10c2 0 3 2 4 6l1 6c.3 3-2 4-4 2l-3-3H9l-3 3c-2 2-4 1-4-2l1-6c1-4 2-6 4-6Z"/><path d="M7 10v4m-2-2h4m7-1h.01m3 3h.01"/></svg></span><small>Games</small></button>
+    <button id="bottom-wallet" class="bottom-navigation__item" type="button" aria-label="View wallet balance and credits"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 8H5a2 2 0 0 1 0-4h13v4M3 6v13a1 1 0 0 0 1 1h16V8m0 4h-5v4h5m-2-2h.01"/></svg></span><small>Wallet</small></button>
+    <button class="bottom-navigation__item" id="bottom-history" type="button" aria-label="View order and wallet credit history"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11a9 9 0 1 1 3 8M3 5v6h6m3-4v5l3 2"/></svg></span><small>History</small></button>
+    <button class="bottom-navigation__item" id="bottom-profile" type="button" aria-label="Open account"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></span><small>Account</small></button>
+  </nav>
+
+
+
+  <dialog id="account-dialog" class="account-dialog" aria-labelledby="account-title">
+    <div class="account-dialog__body">
+      <button id="account-close" class="dialog-close" type="button" aria-label="Close account">×</button>
+      <p class="eyebrow">AURIX ACCOUNT</p>
+      <h2 id="account-title">Sign in or create an account</h2>
+      <p id="account-status" class="account-status" role="status" aria-live="polite">Checking available sign-in methods…</p>
+      <button id="account-retry" class="account-provider-retry" type="button" hidden>Retry account connection</button>
+      <button id="account-link" class="guide-primary-action" type="button" hidden>Link a sign-in method</button>
+      <p id="account-reference" class="account-note" hidden></p>
+      <a id="account-staff" class="guide-primary-action" href="/game-store/staff/" hidden>Store administration</a>
+      <div id="telegram-login-slot" class="account-provider" aria-live="polite" aria-atomic="true"></div>
+      <div id="google-login-slot" class="account-provider" aria-live="polite" aria-atomic="true"></div>
+      <button id="account-logout" class="account-logout" type="button" hidden>Sign out</button>
+      <p class="account-note">Orders and wallet history are private to your account. Payment instructions appear only after account confirmation.</p>
+    </div>
+  </dialog>
+
+  <dialog id="navigation-dialog" class="navigation-dialog" aria-labelledby="navigation-title">
+    <div class="navigation-dialog__body">
+      <button id="nav-close" class="dialog-close" type="button" aria-label="Close menu">×</button>
+      <p class="eyebrow">YOUR GAME SPACE</p>
+      <h2 id="navigation-title">Guides &amp; community</h2>
+      <p id="navigation-summary" class="navigation-summary">Game references, region checks and buyer rankings</p>
+      <nav id="navigation-list" class="navigation-list" aria-label="Game store navigation"></nav>
+    </div>
+  </dialog>
+
+  <dialog id="auxiliary-dialog" class="auxiliary-dialog" aria-labelledby="auxiliary-title">
+    <div class="auxiliary-dialog__body">
+      <header class="auxiliary-dialog__header">
+        <button id="auxiliary-close" class="dialog-close" type="button" aria-label="Close page">×</button>
+        <h2 id="auxiliary-title"></h2>
+        <div id="auxiliary-header-actions" class="auxiliary-dialog__header-spacer"></div>
+      </header>
+      <p class="eyebrow auxiliary-kind">REFERENCE SURFACE</p>
+      <p id="auxiliary-copy" class="dialog-copy"></p>
+      <div id="auxiliary-content" class="auxiliary-content"></div>
+      <p id="auxiliary-status" class="auxiliary-status" role="status" aria-live="polite"></p>
+    </div>
+  </dialog>
+
+  <dialog id="product-dialog" class="product-detail" aria-labelledby="dialog-title">
+    <header class="product-detail__header">
+      <button id="dialog-close" class="detail-brand detail-brand--back" type="button" aria-label="Back to games · AuriX Game Store" title="Back to games">
+        <span class="detail-brand__mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M4 26 14 5h5l9 21h-7l-5-13-5 13Z" fill="currentColor"/><path d="m12 22 5-5h10l-5 5Z" fill="#f4f7ff"/></svg></span>
+        <span><strong>AuriX</strong><small>GAME STORE</small></span>
+      </button>
+      <button id="detail-notices" class="detail-header-action detail-header-action--bell" type="button" aria-label="Open store notices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-8 12a2 2 0 0 0 4 0"/></svg></button>
+      <button id="detail-more" class="detail-header-action detail-header-action--more" type="button" aria-label="Open store menu"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button>
+    </header>
+    <div class="product-detail__body">
+      <div class="detail-hero">
+        <div id="detail-art" class="detail-art">
+          <strong id="detail-art-label" class="detail-art-label" aria-hidden="true"></strong>
+          <img id="detail-art-image" class="detail-art__image" alt="" aria-hidden="true" loading="eager" decoding="async" referrerpolicy="no-referrer" hidden>
+        </div>
+        <div class="detail-product-heading">
+          <h2 id="dialog-title"></h2>
+          <p id="detail-hero-meta" class="detail-hero__meta"></p>
+        </div>
+        <button id="detail-favorite" class="detail-favorite" type="button" aria-label="Save game" aria-pressed="false" title="Save game · pins it first in your list"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 8.8c0 5.3-8.8 10.2-8.8 10.2S3.2 14.1 3.2 8.8A4.6 4.6 0 0 1 12 6.2a4.6 4.6 0 0 1 8.8 2.6Z"/></svg></button>
+      </div>
+      <div id="detail-view-tabs" class="detail-view-tabs" role="tablist" aria-label="Game details" aria-orientation="horizontal">
+        <button id="detail-tab-packages" class="detail-view-tab" type="button" role="tab" aria-selected="true" aria-controls="detail-panel-packages" data-detail-view="packages">Packages</button>
+        <button id="detail-tab-stock" class="detail-view-tab" type="button" role="tab" aria-selected="false" aria-controls="detail-panel-stock" data-detail-view="stock" tabindex="-1">Stock</button>
+        <button id="detail-tab-info" class="detail-view-tab" type="button" role="tab" aria-selected="false" aria-controls="detail-panel-info" data-detail-view="info" tabindex="-1">Info</button>
+      </div>
+      <section id="detail-panel-packages" class="detail-view-panel" role="tabpanel" aria-labelledby="detail-tab-packages" tabindex="0">
+      <ol id="purchase-steps" class="purchase-steps" aria-label="Top-up steps">
+        <li id="purchase-step-account" class="purchase-steps__step" data-state="current" aria-current="step">
+          <span class="purchase-steps__number">01</span>
+          <span class="purchase-steps__copy"><strong>Check player</strong><small>No sign-in needed</small></span>
+        </li>
+        <li id="purchase-step-package" class="purchase-steps__step" data-state="locked">
+          <span class="purchase-steps__number">02</span>
+          <span class="purchase-steps__copy"><strong>Pick package</strong><small>After player check</small></span>
+        </li>
+      </ol>
+      <p class="detail-order-promise">Sign in only to order.</p>
+      <p id="dialog-copy" class="dialog-copy"></p>
+
+      <p id="detail-reference-note" class="reference-note" hidden></p>
+      <section id="detail-reference" class="reference-detail" aria-label="Available game packages and account details" hidden>
+        <section id="detail-recipient" class="detail-recipient" aria-labelledby="detail-recipient-title" hidden>
+          <h3 id="detail-recipient-title"><span class="detail-recipient__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3.2"/><path d="M3.5 19v-1.2A5.3 5.3 0 0 1 8.8 12.5h.4a5.3 5.3 0 0 1 5.3 5.3V19z"/><path d="m16 9 1.8 1.8L21 7.5"/></svg></span><span>Player details</span></h3>
+          <div id="detail-recipient-fields" class="detail-recipient__fields"></div>
+          <button id="detail-account-check" class="detail-recipient__check" type="button" hidden>Check player ID</button>
+          <section id="detail-account-check-review" class="recipient-checkout-review" aria-label="Player account check result" hidden>
+            <h3 id="detail-account-check-name"></h3>
+            <p id="detail-account-check-region"></p>
+            <label><input id="detail-account-check-confirm" type="checkbox"><span>I confirm this is my game account.</span></label>
+          </section>
+          <p id="detail-recipient-status" class="detail-recipient__status"></p>
+        </section>
+        <section id="detail-package-step" aria-labelledby="detail-offers-title">
+          <p id="detail-package-gate" class="detail-package-gate">Confirm your player account above to unlock packages.</p>
+          <div id="detail-tabs" class="detail-tabs" hidden>
+            <p id="detail-region-label" class="detail-region-label" hidden></p>
+            <div id="detail-region-list" class="detail-regions" role="group" aria-label="Account regions"></div>
+          </div>
+          <h3 id="detail-pinned-title" hidden>Pinned Items</h3>
+          <div id="detail-pinned-offers" class="detail-offers detail-offers--pinned" role="group" hidden aria-label="Pinned packages"></div>
+          <h3 id="detail-offers-title">Choose a package</h3>
+          <div id="detail-offers" class="detail-offers" role="group" aria-label="Available game packages"></div>
+          <p id="detail-empty-offers" class="detail-empty" hidden></p>
+          <details class="package-notes"><summary>Package notes</summary><p id="detail-reference-description" class="detail-reference-description" hidden></p></details>
+        </section>
+      </section>
+
+      <div class="dialog-state" hidden><span aria-hidden="true">◷</span><span id="detail-live-status"></span><button id="detail-retry" type="button" hidden>Try again</button></div>
+      <p class="dialog-footnote">Check the player name and region before reviewing the exact total and receiver instructions. Never share your game password.</p>
+      </section>
+      <section id="detail-panel-stock" class="detail-view-panel detail-stock-panel" role="tabpanel" aria-labelledby="detail-tab-stock" tabindex="0" hidden>
+        <div class="detail-stock-overview">
+          <span class="detail-stock-overview__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/><path d="m7 5 9 4"/></svg></span>
+          <div><p class="eyebrow">LISTING STATUS</p><h3 id="detail-stock-heading">Checking current listings</h3><p id="detail-stock-copy" role="status" aria-live="polite">Current package availability is being checked.</p></div>
+        </div>
+        <div id="detail-stock-regions" class="detail-stock-regions" role="list" aria-label="Package listings by region"></div>
+      </section>
+      <section id="detail-panel-info" class="detail-view-panel detail-info-panel" role="tabpanel" aria-labelledby="detail-tab-info" tabindex="0" hidden>
+        <p class="eyebrow">BEFORE YOU ORDER</p>
+        <div class="detail-info-card"><span aria-hidden="true">01</span><div><h3>Check your player</h3><p>Confirm the in-game name and region before choosing a package. No sign-in is needed for this check.</p></div></div>
+        <div class="detail-info-card"><span aria-hidden="true">02</span><div><h3>Review the total</h3><p>Sign in only when placing an order. Review the confirmed player, package and exact MMK amount before paying.</p></div></div>
+        <div class="detail-info-card"><span aria-hidden="true">03</span><div><h3>Track delivery</h3><p>Follow order progress in History. Delivery timing depends on the approved package and supplier response.</p></div></div>
+        <p class="detail-info-safety">AuriX never needs your game password.</p>
+        <button id="detail-help" class="detail-help-action" type="button">How ordering works</button>
+        <p id="detail-help-copy" class="detail-help-copy" hidden></p>
+      </section>
+    </div>
+    <div class="detail-actions detail-actions--clear-hidden">
+      <button id="detail-clear" class="detail-actions__clear" type="button" disabled hidden>Clear</button>
+      <div class="detail-actions__purchase">
+        <span id="detail-selection" class="detail-actions__selection">Select a package</span>
+        <button id="detail-buy" class="detail-actions__buy" type="button" disabled aria-disabled="true">Select a package</button>
+      </div>
+    </div>
+    <p id="detail-action-status" class="detail-action-status" role="status" aria-live="polite"></p>
+  </dialog>
+
+  <dialog id="wallet-dialog" class="wallet-dialog" aria-labelledby="wallet-title">
+    <header class="wallet-dialog__header">
+      <button id="wallet-close" class="dialog-close" type="button" aria-label="Back to store"><span aria-hidden="true">‹</span></button>
+      <h2 id="wallet-title">Wallet top-up</h2>
+      <span aria-hidden="true"></span>
+    </header>
+    <div class="wallet-dialog__body">
+      <section class="wallet-funding-state" role="status" aria-labelledby="wallet-funding-title">
+        <span class="wallet-funding-state__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 8H5a2 2 0 0 1 0-4h13v4M3 6v13a1 1 0 0 0 1 1h16V8m0 4h-5v4h5"/><path d="m4 4 16 16"/></svg></span>
+        <div><p class="eyebrow">WALLET FUNDING</p><h3 id="wallet-funding-title">Top-up is unavailable</h3><p>No customer payment account or receipt review is connected in this preview. Do not transfer money here.</p></div>
+      </section>
+      <div class="wallet-preview-form" hidden>
+      <p class="eyebrow">WALLET · REFERENCE PREVIEW</p>
+      <p class="wallet-dialog__lede">Preview only — no payment will be collected.</p>
+      <ol class="wallet-steps" aria-label="Top-up steps">
+        <li id="wallet-step-1" aria-current="step"><span>1</span><span>Amount &amp; method</span></li>
+        <li id="wallet-step-2"><span>2</span><span>Confirmation</span></li>
+      </ol>
+      <p class="reference-note wallet-reference-note">Preview only · payment methods are disabled.</p>
+      <section id="wallet-step-one-amount" aria-labelledby="wallet-amount-title">
+        <h3 id="wallet-amount-title">Choose amount</h3>
+        <label class="wallet-custom-amount" for="wallet-custom-amount">
+          <span>Top-up amount</span>
+          <span class="wallet-custom-amount__field">
+            <input id="wallet-custom-amount" type="text" inputmode="numeric" autocomplete="off" maxlength="21" pattern="[0-9, ]*" placeholder="Enter amount" aria-describedby="wallet-custom-amount-hint">
+            <span class="wallet-custom-amount__currency" aria-label="Myanmar kyat">MMK</span>
+          </span>
+          <small id="wallet-custom-amount-hint">Enter a whole MMK amount, or choose a quick amount below.</small>
+        </label>
+        <div id="wallet-amounts" class="wallet-amounts" role="group" aria-label="Sample wallet amounts"></div>
+      </section>
+      <section id="wallet-step-one-method" aria-labelledby="wallet-method-title">
+        <h3 id="wallet-method-title">Choose payment method</h3>
+        <div id="wallet-methods" class="wallet-methods" role="group" aria-label="Sample payment methods"></div>
+      </section>
+      <section id="wallet-step-one-boundary" class="wallet-reference-boundary" aria-labelledby="wallet-payment-boundary-title">
+        <h3 id="wallet-payment-boundary-title">Payment confirmation</h3>
+        <p>Payment proof is not enabled in this preview. QR and slip verification stay disabled until the payment connector is approved.</p>
+      </section>
+      <p id="wallet-selection" class="wallet-selection">Choose an amount and method to continue.</p>
+      <section id="wallet-confirmation-preview" class="wallet-confirmation-preview" hidden aria-labelledby="wallet-confirmation-title">
+        <h3 id="wallet-confirmation-title">Choose Account to Transfer</h3>
+        <p class="wallet-transfer-summary"><span>Selected top-up</span><strong id="wallet-transfer-amount">Choose amount</strong><span id="wallet-transfer-method">Choose payment method</span></p>
+        <article class="wallet-account-card">
+          <span class="wallet-account-radio" aria-hidden="true"></span>
+          <span id="wallet-account-icon" class="wallet-method-icon" aria-hidden="true">?</span>
+          <span><strong id="wallet-account-label">No payment method selected</strong><small id="wallet-account-status">Merchant payment account is not configured.</small></span>
+        </article>
+        <h3>Payment transaction screenshot</h3>
+        <button id="wallet-pick-image" class="wallet-upload-placeholder" type="button" disabled>Pick Image</button>
+        <p id="wallet-confirmation-note" class="wallet-confirmation-note">No merchant account is configured. Payment evidence upload and confirmation remain disabled.</p>
+      </section>
+      </div>
+    </div>
+    <div class="wallet-actions" hidden>
+      <button id="wallet-clear" class="detail-actions__clear" type="button">Clear</button>
+      <button id="wallet-next" class="detail-actions__buy" type="button" disabled>Next</button>
+    </div>
+    <p id="wallet-status" class="wallet-status" role="status" aria-live="polite"></p>
+  </dialog>
+
+  <noscript>This catalog preview needs JavaScript enabled to load its read-only product list.</noscript>
+</body>
+</html>

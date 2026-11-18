@@ -1,0 +1,84 @@
+MLBB strategy-guide role emblems
+
+The following six icons are from Game-icons.net and are used under Creative
+Commons Attribution 3.0 Unported (CC BY 3.0):
+https://creativecommons.org/licenses/by/3.0/
+
+shield-reflect.svg
+  Title: Shield Reflect
+  Author: Lorc
+  Source: https://game-icons.net/1x1/lorc/shield-reflect.html
+
+crossed-swords.svg
+  Title: Crossed Swords
+  Author: Lorc
+  Source: https://game-icons.net/1x1/lorc/crossed-swords.html
+
+assassin-pocket.svg
+  Title: Assassin Pocket
+  Author: Lorc
+  Source: https://game-icons.net/1x1/lorc/assassin-pocket.html
+
+wizard-staff.svg
+  Title: Wizard Staff
+  Author: Lorc
+  Source: https://game-icons.net/1x1/lorc/wizard-staff.html
+
+bow-arrow.svg
+  Title: Bow Arrow
+  Author: Delapouite
+  Source: https://game-icons.net/1x1/delapouite/bow-arrow.html
+
+healing.svg
+  Title: Healing
+  Author: Delapouite
+  Source: https://game-icons.net/1x1/delapouite/healing.html
+
+Store package symbols (generic decorative glyphs)
+  License: Creative Commons Attribution 3.0 Unported (CC BY 3.0)
+  License URL: https://creativecommons.org/licenses/by/3.0/
+  Iconify API: https://api.iconify.design/game-icons/{icon}.svg
+  Source set: Game-icons.net; these symbols are not official publisher art.
+  Exact authors, source pages, modifications, and SHA-256 hashes:
+    /game-store/assets/game-icons/catalog-glyphs.manifest.json
+
+coins.svg
+  Title: Coins
+  Author: Delapouite
+  Source: https://game-icons.net/1x1/delapouite/coins.html
+
+cut-diamond.svg
+  Title: Cut Diamond
+  Author: Lorc
+  Source: https://game-icons.net/1x1/lorc/cut-diamond.html
+
+present.svg
+  Title: Present
+  Author: Delapouite
+  Source: https://game-icons.net/1x1/delapouite/present.html
+
+spell-book.svg
+  Title: Spell Book
+  Author: Delapouite
+  Source: https://game-icons.net/1x1/delapouite/spell-book.html
+
+boots.svg
+  Title: Boots
+  Author: Lorc
+  Source: https://game-icons.net/1x1/lorc/boots.html
+
+jungle.svg
+  Title: Jungle
+  Author: Delapouite
+  Source: https://game-icons.net/1x1/delapouite/jungle.html
+
+footsteps.svg
+  Title: Footsteps
+  Author: Skoll
+  Source: https://game-icons.net/1x1/skoll/footsteps.html
+
+The SVG paths are retained as distributed; the storefront applies CSS color
+and shadow styling at display time. The SVG dimensions are normalized for
+local display; path geometry is unchanged. All are generic category or offer
+symbols, not Mobile Legends or PUBG Mobile item artwork, character portraits,
+official game art, or publisher marks.

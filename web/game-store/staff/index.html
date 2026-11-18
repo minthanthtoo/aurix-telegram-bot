@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Store operations · AuriX</title>
+  <link rel="stylesheet" href="../styles.css?v=20261116-warm-material-1">
+  <link rel="stylesheet" href="../admin/admin.css?v=20261117-compact-operator-1">
+  <link rel="stylesheet" href="../review/review.css?v=20261116-warm-material-1">
+  <script src="../review/review.js?v=20261117-readable-amounts-1" defer></script>
+  <script src="../commerce-settings.js?v=20261115-exposure-1" defer></script>
+</head>
+<body>
+  <header class="topbar staff-topbar">
+    <a class="brand" href="../">AuriX <span>GAME STORE</span></a>
+    <nav class="staff-topbar__links" aria-label="Store navigation">
+      <a id="staff-catalog-console" class="admin-back" href="../admin/index.html?session=1" hidden>Catalog &amp; supplier controls</a>
+      <a class="admin-back" href="../">Back to store</a>
+    </nav>
+  </header>
+
+  <main class="admin-main staff-main" id="staff-workspace">
+    <section class="staff-overview" aria-labelledby="staff-title">
+      <div>
+        <p class="staff-eyebrow">OPERATIONS · GAME STORE</p>
+        <h1 id="staff-title">Store operations</h1>
+      </div>
+      <div class="staff-overview__status">
+        <span id="staff-role" class="staff-role">Checking access</span>
+        <p id="review-status" class="admin-status" role="status" aria-live="polite">Checking admin access…</p>
+      </div>
+    </section>
+
+    <a id="staff-sign-in" class="admin-button admin-button--primary staff-sign-in" href="../?signin=staff" hidden>Sign in to your Store account</a>
+
+    <div id="staff-dashboard" hidden>
+      <nav class="staff-tabs" role="tablist" aria-label="Staff workspace">
+        <button id="staff-tab-payments" class="staff-tab" type="button" role="tab" aria-selected="true" aria-controls="staff-panel-payments" data-staff-tab="payments">Payments</button>
+        <button id="staff-tab-history" class="staff-tab" type="button" role="tab" aria-selected="false" aria-controls="staff-panel-history" data-staff-tab="history" tabindex="-1">Order history</button>
+        <button id="staff-tab-controls" class="staff-tab" type="button" role="tab" aria-selected="false" aria-controls="staff-panel-controls" data-staff-tab="controls" tabindex="-1" hidden>Store controls</button>
+        <button id="staff-tab-access" class="staff-tab" type="button" role="tab" aria-selected="false" aria-controls="staff-panel-access" data-staff-tab="access" tabindex="-1" hidden>Admin access</button>
+      </nav>
+
+      <section id="staff-panel-payments" class="admin-panel staff-view" role="tabpanel" aria-labelledby="staff-tab-payments" data-staff-panel="payments" tabindex="0">
+        <div class="staff-view-heading">
+          <div>
+            <p class="staff-eyebrow">RECEIPTS &amp; REFUNDS</p>
+            <h2>Payment review</h2>
+            <p>Verify transfers in merchant records before making a decision.</p>
+          </div>
+          <div class="staff-view-heading__actions">
+            <span id="staff-intake" class="staff-intake"></span>
+            <div id="review-controls" hidden><button id="review-refresh" class="admin-button staff-refresh" type="button">Refresh queue</button></div>
+          </div>
+        </div>
+        <div id="review-cases" class="review-cases"></div>
+      </section>
+
+      <section id="staff-panel-history" class="admin-panel staff-view" role="tabpanel" aria-labelledby="staff-tab-history" data-staff-panel="history" tabindex="0" hidden>
+        <div class="staff-view-heading">
+          <div>
+            <p class="staff-eyebrow">LOOK UP A PAYMENT</p>
+            <h2>Order history</h2>
+            <p>Inspect receipt decisions, refunds and order-state changes.</p>
+          </div>
+        </div>
+        <form id="staff-order-search" class="admin-form staff-search-form">
+          <label>Order ID<input id="staff-order-id" type="text" required maxlength="128" autocomplete="off" spellcheck="false"></label>
+          <button type="submit" class="admin-button admin-button--primary">Find order</button>
+        </form>
+        <p id="staff-history-status" class="admin-status" role="status" aria-live="polite"></p>
+        <div id="staff-history-result" class="staff-history-result"></div>
+        <details class="staff-disclosure">
+          <summary>Recent payment intents</summary>
+          <ul id="staff-recent-orders" class="staff-history-list"></ul>
+        </details>
+      </section>
+
+      <section id="staff-panel-controls" class="admin-panel staff-view" role="tabpanel" aria-labelledby="staff-tab-controls" data-staff-panel="controls" tabindex="0" hidden>
+        <div class="staff-view-heading">
+          <div>
+            <p class="staff-eyebrow">NEW ACTIVITY</p>
+            <h2>Store controls</h2>
+            <p>Changes apply to new checkout and supplier activity. Existing payment cases remain recoverable.</p>
+          </div>
+        </div>
+        <p id="commerce-exposure-warning" class="admin-warning staff-exposure" role="status" hidden></p>
+        <form id="commerce-settings-form" class="admin-form staff-controls-form" hidden>
+          <div class="staff-control-toggles">
+            <label class="staff-control-toggle"><input type="checkbox" name="checkout_enabled"><span>Customer checkout</span></label>
+            <label class="staff-control-toggle"><input type="checkbox" name="account_checks_enabled"><span>Game account checks</span></label>
+            <label class="staff-control-toggle"><input type="checkbox" name="payments_enabled"><span>New payment instructions</span></label>
+            <label class="staff-control-toggle"><input type="checkbox" name="supplier_orders_enabled"><span>Paid supplier orders</span></label>
+          </div>
+          <div class="staff-control-limits">
+            <label>Daily supplier spend limit <span>USD</span><input name="daily_limit_usd" type="number" min="0.01" step="0.01" placeholder="No daily limit"></label>
+            <label>Maximum customer order <span>MMK</span><input name="maximum_order_mmk" type="number" min="1" step="1" placeholder="No order limit"></label>
+          </div>
+          <div class="staff-control-actions">
+            <button class="admin-button admin-button--primary" type="submit" disabled>Save controls</button>
+            <button class="admin-button admin-button--quiet" id="commerce-settings-reload" type="button">Reload saved settings</button>
+          </div>
+        </form>
+        <p id="commerce-settings-status" class="admin-status" role="status" aria-live="polite">Loading controls…</p>
+      </section>
+
+      <section id="staff-panel-access" class="admin-panel staff-view" role="tabpanel" aria-labelledby="staff-tab-access" data-staff-panel="access" tabindex="0" hidden>
+        <div class="staff-view-heading">
+          <div>
+            <p class="staff-eyebrow">SUPER ADMIN</p>
+            <h2>Admin access</h2>
+            <p>Grant access only to a person who has signed in and shared their Store account ID.</p>
+          </div>
+        </div>
+        <form id="staff-grant" class="admin-form staff-search-form">
+          <label>Store account ID<input id="staff-account-id" type="text" required maxlength="128" autocomplete="off" spellcheck="false"></label>
+          <button type="submit" id="staff-grant-button" class="admin-button admin-button--primary">Grant admin access</button>
+        </form>
+        <p id="staff-access-status" class="admin-status" role="status" aria-live="polite"></p>
+        <ul id="staff-admin-list" class="staff-admin-list"></ul>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

@@ -304,6 +304,7 @@ class ConnectivityRegistryTest(unittest.TestCase):
         service.configure_server_capacity("sg-a", 123, max_keys=10, reserved_keys=1)
         service.configure_plan_allocation("sg-a", "basic_50gb", 5, 123)
         order = service.create_order(123, "Test", "basic_50gb", datetime(2026, 9, 4, tzinfo=timezone.utc))
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         with open_sqlite_connection(self.path) as connection:
             connection.execute(
                 """INSERT INTO subscriptions
@@ -312,7 +313,7 @@ class ConnectivityRegistryTest(unittest.TestCase):
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')""",
                 (
                     "sub-1", order.order_id, 123, "basic_50gb",
-                    "2026-09-04T00:00:00+00:00", "2026-10-04T00:00:00+00:00",
+                    "2026-09-04T00:00:00+00:00", expires_at,
                     "50 GB", 50_000_000_000, 30,
                 ),
             )
@@ -388,13 +389,14 @@ class ConnectivityRegistryTest(unittest.TestCase):
         service.configure_server_capacity("sg-a", 123, max_keys=10, reserved_keys=1)
         service.configure_plan_allocation("sg-a", "basic_50gb", 5, 123)
         order = service.create_order(123, "Test", "basic_50gb", datetime(2026, 9, 4, tzinfo=timezone.utc))
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         with open_sqlite_connection(self.path) as connection:
             connection.execute(
                 """INSERT INTO subscriptions
                    (id, order_id, telegram_id, plan_code, starts_at, expires_at,
                     plan_name, quota_bytes, duration_days, status)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')""",
-                ("sub-1", order.order_id, 123, "basic_50gb", "2026-09-04T00:00:00+00:00", "2026-10-04T00:00:00+00:00", "50 GB", 50_000_000_000, 30),
+                ("sub-1", order.order_id, 123, "basic_50gb", "2026-09-04T00:00:00+00:00", expires_at, "50 GB", 50_000_000_000, 30),
             )
             encrypted = service._encrypt_access_url("ss://source")
             connection.execute(

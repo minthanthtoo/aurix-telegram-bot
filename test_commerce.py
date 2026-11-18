@@ -103,7 +103,7 @@ class CommerceServiceTest(unittest.TestCase):
             allow_legacy_text_approval=True,
         )
         self.service.initialize()
-        self.now = datetime(2026, 8, 27, 3, 7, tzinfo=UTC)
+        self.now = datetime.now(UTC).replace(microsecond=0)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -558,7 +558,7 @@ class CommerceServiceTest(unittest.TestCase):
 
         self.assertEqual(self.service.process_jobs(self.now), 1)
         self.assertEqual(len(self.outline.created), 1)
-        self.assertTrue(self.outline.created[0][0].startswith("123-PAID50GB-30day-202608270307-"))
+        self.assertTrue(self.outline.created[0][0].startswith(f"123-PAID50GB-30day-{self.now:%Y%m%d%H%M}-"))
         subscription = self.service.user_vpn(123)
         self.assertEqual(subscription["status"], "active")
         self.assertEqual(subscription["access_url"], "ss://paid-1")
@@ -581,7 +581,7 @@ class CommerceServiceTest(unittest.TestCase):
         self.service.approve_order(order.order_id, 999, self.now)
         self.service.process_jobs(self.now)
         self.assertTrue(
-            self.outline.created[0][0].startswith("min_vpn-PAID50GB-30day-202608270307-")
+            self.outline.created[0][0].startswith(f"min_vpn-PAID50GB-30day-{self.now:%Y%m%d%H%M}-")
         )
 
     def test_user_can_buy_multiple_paid_keys(self):
