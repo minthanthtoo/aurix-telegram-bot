@@ -25,7 +25,7 @@ HELPER_ROOT = Path(__file__).resolve().parents[1]
 if str(HELPER_ROOT) not in sys.path:
     sys.path.insert(0, str(HELPER_ROOT))
 
-from scripts.package_game_store import package_snapshot, verify_release_package  # noqa: E402
+from scripts.package_game_store import package_snapshot, sha256_stream, verify_release_package  # noqa: E402
 from scripts.game_store_scope import LOCK_FILE  # noqa: E402
 
 
@@ -60,7 +60,7 @@ class DeployError(RuntimeError):
 
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        return sha256_stream(stream)
 
 
 def _atomic_json(path: Path, value: dict) -> None:
@@ -565,7 +565,12 @@ def handle_request(stdin: BinaryIO, stdout: BinaryIO) -> None:
     if operation == "status":
         with LOCK.open("a+b") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
+            if JOURNAL.exists():
+                raise DeployError("Games deployment recovery is pending")
+            active_target = _current_target()
             state = _state()
+            if state is not None and _marker(active_target) != state["active"]:
+                raise DeployError("installed release and deployment record disagree")
             stdout.write((json.dumps({"status": "ok", "state": state}, separators=(",", ":")) + "\n").encode())
         return
     if operation == "snapshot":

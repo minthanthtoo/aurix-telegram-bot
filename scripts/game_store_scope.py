@@ -78,7 +78,8 @@ REQUIRED_RELEASE_FILES = SHARED_MODULES | frozenset({
     "scripts/reconcile_game_orders.py", "scripts/audit_games_fulfillment.py",
     "scripts/aurix_games_backup_job.py",
 })
-SNAPSHOT_REQUIRED_RELEASE_FILES = SHARED_MODULES | frozenset({
+# Older Games releases shipped a standalone migrations module.
+SNAPSHOT_REQUIRED_RELEASE_FILES = (SHARED_MODULES - {"commerce_models.py"}) | frozenset({
     "aurix_games/__main__.py", "aurix_games/web_api.py",
     "web/game-store/index.html", "web/game-store/app.js",
     "web/game-store/service-worker.js", "scripts/refresh_game_store_catalog.py",

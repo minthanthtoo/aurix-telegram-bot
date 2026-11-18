@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Deploy a passing main commit or restore the retained rollback package
+        description: Check the deployment connection, deploy a passing main commit, or roll back
         type: choice
-        options: [deploy, rollback]
+        options: [preflight, deploy, rollback]
         required: true
-        default: deploy
+        default: preflight
       commit:
         description: Full commit SHA on main (deploy only)
         type: string
@@ -27,8 +27,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.operation == 'preflight' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: games-production
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Verify pinned SSH and deployment state
+        env:
+          GAMES_DEPLOY_HOST: ${{ vars.GAMES_DEPLOY_HOST }}
+          GAMES_DEPLOY_PORT: ${{ vars.GAMES_DEPLOY_PORT }}
+          GAMES_DEPLOY_PRIVATE_KEY: ${{ secrets.GAMES_DEPLOY_PRIVATE_KEY }}
+          GAMES_DEPLOY_KNOWN_HOSTS: ${{ secrets.GAMES_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          python3 scripts/aurix_games_release_transport.py status | jq -e '.status == "ok"'
+          echo 'Restricted Games deploy account responded over pinned SSH.' >> "$GITHUB_STEP_SUMMARY"
+
   release:
-    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_production && vars.GAMES_DEPLOYMENT_ENABLED == 'true' }}
+    if: ${{ github.ref == 'refs/heads/main' && inputs.operation != 'preflight' && inputs.confirm_production && vars.GAMES_DEPLOYMENT_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: games-production
@@ -80,7 +100,6 @@ jobs:
           RELEASE_SHA: ${{ inputs.commit }}
 
       - name: Read the server state and package the selected release
-        id: prepare
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/aurix-games-release"
@@ -88,25 +107,47 @@ jobs:
           python scripts/aurix_games_release_transport.py status > "$dir/status.json"
           jq -e '.status == "ok"' "$dir/status.json" >/dev/null
           state="$(jq -c '.state' "$dir/status.json")"
-          printf 'state=%s\n' "$state" >> "$GITHUB_OUTPUT"
 
           release_tag() {
             [[ "$1" =~ ^(legacy-[0-9a-f]{64}|[0-9a-f]{40})$ ]] || { echo 'Invalid release ID.' >&2; exit 1; }
             printf 'aurix-games-%s' "$1"
           }
+          list_releases() {
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100"
+          }
+          draft_release() {
+            jq -cs --arg tag "$1" '
+              [ .[][] | select(.tag_name == $tag) ]
+              | if length > 1 or any(.[]; .draft != true)
+                then error("Games release must be a unique draft")
+                else .[0] // empty end
+            '
+          }
           download_release() {
-            gh release download "$1" --pattern aurix-games.tgz --pattern aurix-games.manifest.json --dir "$2"
+            local release name asset
+            release="$(list_releases | draft_release "$1")"
+            test -n "$release"
+            for name in aurix-games.tgz aurix-games.manifest.json; do
+              asset="$(jq -er --arg name "$name" '
+                [.assets[] | select(.name == $name and .state == "uploaded") | .id]
+                | if length == 1 then .[0] else error("Expected one uploaded asset") end
+              ' <<< "$release")"
+              gh api -H 'Accept: application/octet-stream' \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/$asset" > "$2/$name"
+            done
           }
           ensure_release() {
             local tag="$1" archive="$2" manifest="$3" title="$4" target="${5:-$GITHUB_SHA}"
-            if ! gh release view "$tag" >/dev/null 2>&1; then
+            local release
+            release="$(list_releases | draft_release "$tag")"
+            if [[ -z "$release" ]]; then
               local upload="$dir/upload-$tag"
               mkdir -m 700 "$upload"
               cp "$archive" "$upload/aurix-games.tgz"
               cp "$manifest" "$upload/aurix-games.manifest.json"
               gh release create "$tag" "$upload/aurix-games.tgz" "$upload/aurix-games.manifest.json" \
-                --target "$target" --prerelease --title "$title" \
-                --notes "Games source bundle only. SHA-256: $(jq -r .source_sha256 "$manifest")"
+                --target "$target" --draft --title "$title" \
+                --notes "Internal Games recovery package. SHA-256: $(jq -r .source_sha256 "$manifest")"
             fi
           }
 
@@ -207,16 +248,19 @@ jobs:
           rollback_id="$(jq -r '.rollback.release_id // ""' "$dir/result.json")"
           active_tag="$(release_tag "$active_id")"
           rollback_tag="$(release_tag "$rollback_id")"
-          gh release edit "$active_tag" --prerelease=false
-          gh release edit "$rollback_tag" --prerelease=true
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name' > "$dir/tags.txt"
-          while IFS= read -r old_tag; do
-            [[ "$old_tag" == aurix-games-* ]] || continue
-            [[ "$old_tag" == "$active_tag" || "$old_tag" == "$rollback_tag" ]] && continue
-            gh release delete "$old_tag" --yes
-          done < "$dir/tags.txt"
           python scripts/aurix_games_release_transport.py status > "$dir/confirmed.json"
-          jq -e --arg active "$active_id" '.state.active.release_id == $active' "$dir/confirmed.json" >/dev/null
+          jq -e --slurpfile result "$dir/result.json" '
+            .status == "ok" and .state.active == $result[0].active
+            and .state.rollback == $result[0].rollback
+          ' "$dir/confirmed.json" >/dev/null
+          list_releases | jq -r --arg active "$active_tag" --arg rollback "$rollback_tag" '
+            .[] | select(.draft == true
+              and (.tag_name | test("^aurix-games-(legacy-[0-9a-f]{64}|[0-9a-f]{40})$"))
+              and .tag_name != $active and .tag_name != $rollback) | .id
+          ' > "$dir/prune-ids.txt"
+          while IFS= read -r release_id; do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/$release_id"
+          done < "$dir/prune-ids.txt"
           {
             printf 'Operation: %s\n\nActive release: `%s`\n\nRollback release: `%s`\n' \
               "$INPUT_OPERATION" "$active_id" "$rollback_id"
@@ -228,29 +272,3 @@ jobs:
           GAMES_DEPLOY_PORT: ${{ vars.GAMES_DEPLOY_PORT }}
           GAMES_DEPLOY_PRIVATE_KEY: ${{ secrets.GAMES_DEPLOY_PRIVATE_KEY }}
           GAMES_DEPLOY_KNOWN_HOSTS: ${{ secrets.GAMES_DEPLOY_KNOWN_HOSTS }}
-
-      - name: Remove unreferenced Games release packages
-        if: ${{ always() && steps.prepare.outcome == 'failure' && github.ref == 'refs/heads/main' }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GAMES_DEPLOY_HOST: ${{ vars.GAMES_DEPLOY_HOST }}
-          GAMES_DEPLOY_PORT: ${{ vars.GAMES_DEPLOY_PORT }}
-          GAMES_DEPLOY_PRIVATE_KEY: ${{ secrets.GAMES_DEPLOY_PRIVATE_KEY }}
-          GAMES_DEPLOY_KNOWN_HOSTS: ${{ secrets.GAMES_DEPLOY_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          status="$(python scripts/aurix_games_release_transport.py status 2>/dev/null)" || exit 0
-          jq -e '.status == "ok" and (.state == null or ((.state | type) == "object" and (.state.active | type) == "object" and (.state.active.release_id | type) == "string" and (.state.rollback == null or (.state.rollback | type) == "object")))' <<< "$status" >/dev/null || exit 0
-          active="$(jq -r '.state.active.release_id // ""' <<< "$status")"
-          rollback="$(jq -r '.state.rollback.release_id // ""' <<< "$status")"
-          active_tag=""
-          rollback_tag=""
-          [[ -z "$active" ]] || active_tag="aurix-games-$active"
-          [[ -z "$rollback" ]] || rollback_tag="aurix-games-$rollback"
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name' > "$RUNNER_TEMP/games-release-tags.txt"
-          while IFS= read -r tag; do
-            [[ "$tag" == aurix-games-* ]] || continue
-            [[ "$tag" == "$active_tag" || "$tag" == "$rollback_tag" ]] && continue
-            gh release delete "$tag" --yes
-          done < "$RUNNER_TEMP/games-release-tags.txt"

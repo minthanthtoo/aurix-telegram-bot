@@ -120,9 +120,16 @@ def _require_commit(commit: str) -> None:
         raise ValueError("release commit must be a full lowercase Git SHA")
 
 
+def sha256_stream(stream) -> str:
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        return sha256_stream(stream)
 
 
 def package_commit(output: Path, commit: str, *, root: Path = ROOT) -> dict:
@@ -267,7 +274,7 @@ def verify_release_package(
             if expanded > MAX_RELEASE_BYTES:
                 raise ValueError("release exceeds the expanded size limit")
             with archive.extractfile(member) as stream:
-                if hashlib.file_digest(stream, "sha256").hexdigest() != files[name]:
+                if sha256_stream(stream) != files[name]:
                     raise ValueError(f"release content checksum mismatch: {name!r}")
             seen.add(name)
     if seen != files.keys() or expanded != result.get("expanded_bytes"):

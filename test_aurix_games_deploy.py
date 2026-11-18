@@ -1,3 +1,4 @@
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -78,6 +79,18 @@ class GamesDeploymentTests(unittest.TestCase):
             header, archive.with_suffix(".manifest.json").read_bytes(), archive,
         )
 
+    def test_preflight_checks_the_pointer_and_leaves_pending_recovery_untouched(self):
+        request = b'{"operation":"status"}\n'
+        result = io.BytesIO()
+        deploy.handle_request(io.BytesIO(request), result)
+        self.assertEqual(json.loads(result.getvalue()), {"status": "ok", "state": None})
+
+        self.journal.write_text("{}")
+        with self.assertRaisesRegex(deploy.DeployError, "recovery is pending"):
+            deploy.handle_request(io.BytesIO(request), io.BytesIO())
+        self.assertTrue(self.journal.exists())
+        self.assertEqual(self.current.resolve(), self.active.resolve())
+
     def test_first_deploy_snapshots_unmarked_active_and_keeps_it_as_rollback(self):
         result = self._request(
             self.next_archive, self.next_record,
@@ -91,6 +104,15 @@ class GamesDeploymentTests(unittest.TestCase):
         self.assertEqual([path.name for path in self.releases.iterdir()], [self.next_record["release_id"]])
         self.assertTrue((self.current.resolve() / ".aurix-games-release.json").is_file())
         self.assertEqual(self.current.resolve().stat().st_mode & 0o777, 0o755)
+
+    def test_unhealthy_first_release_restores_live_pointer_and_state(self):
+        deploy._health.side_effect = [deploy.DeployError("candidate health failed"), None]
+        with self.assertRaisesRegex(deploy.DeployError, "candidate health failed"):
+            self._request(self.next_archive, self.next_record, previous=self.active_record["release_id"])
+        self.assertEqual(self.current.resolve(), self.active.resolve())
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.journal.exists())
+        self.assertFalse((self.releases / self.next_record["release_id"]).exists())
 
     def test_rollback_swaps_active_and_retains_the_previous_package_for_next_recovery(self):
         deployed = self._request(

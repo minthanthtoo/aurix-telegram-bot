@@ -78,12 +78,12 @@ chmod 0755 "$WRAPPER" "$RECOVERY_WRAPPER"
 
 install -d "$HOME_DIR/.ssh"
 chown root:root "$HOME_DIR/.ssh"
-chmod 0700 "$HOME_DIR/.ssh"
+chmod 0755 "$HOME_DIR/.ssh"
 if [[ ! -s "$AUTHORIZED_KEYS" ]]; then
   printf '%s\n' "$AUTH_LINE" > "$AUTHORIZED_KEYS"
 fi
 chown root:root "$AUTHORIZED_KEYS"
-chmod 0600 "$AUTHORIZED_KEYS"
+chmod 0644 "$AUTHORIZED_KEYS"
 
 SUDOERS=/etc/sudoers.d/aurix-games-deploy
 printf '%s ALL=(root) NOPASSWD: %s\n' "$USER" "$WRAPPER" > "$SUDOERS"
