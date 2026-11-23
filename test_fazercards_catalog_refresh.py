@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from aurix_games.pricing import PricingPolicy
-from aurix_games.public_catalog import PublicCatalogStore
+from aurix_games.public_catalog import PublicCatalogStore, build_supplier_discovery
 from scripts import refresh_fazercards_public_catalog as refresh_module
 from scripts import build_fazercards_public_catalog as builder_module
 from scripts import refresh_game_store_catalog as scheduled
@@ -33,17 +33,24 @@ class FazerCardsCatalogRefreshTests(unittest.TestCase):
             shortlist = root / "pilot-shortlist.json"
             shortlist.write_text("[]"); shortlist.chmod(0o600)
             output = root / "public-catalog.json"
+            supplier_discovery = root / "supplier-index.json"
             output.write_text("previous")
             with patch.dict(os.environ, {
                 "AURIX_GAMES_BASE_DIR": str(root), "FAZERCARDS_PUBLIC_CATALOG_CONFIG": str(config),
                 "AURIX_GAMES_PUBLIC_CATALOG": str(output), "AURIX_GAMES_CATALOG_SHORTLIST": str(shortlist),
-                "FAZERCARDS_API_KEY": "fixture",
-            }), patch.object(scheduled, "refresh_shortlist", return_value={"offer_count": 2, "selected_count": 3}) as refresh:
+                "AURIX_GAMES_SUPPLIER_DISCOVERY": str(supplier_discovery), "FAZERCARDS_API_KEY": "fixture",
+            }), patch.object(scheduled, "_refresh_supplier_discovery", return_value={
+                "status": "current", "count": 2, "updated_at": now.isoformat(),
+            }) as discovery_refresh, patch.object(
+                scheduled, "refresh_shortlist", return_value={"offer_count": 2, "selected_count": 3}
+            ) as refresh:
                 with (root / "catalog-refresh.lock").open("w") as lock:
                     fcntl.flock(lock, fcntl.LOCK_EX)
                     self.assertEqual(scheduled.refresh_from_environment(), {"status": "already_running"})
                     refresh.assert_not_called()
                 self.assertEqual(scheduled.refresh_from_environment()["status"], "published")
+                discovery_refresh.assert_called_once()
+                self.assertEqual(discovery_refresh.call_args.args[0], supplier_discovery)
                 first = refresh.call_args.kwargs["snapshot_path"]
                 scheduled.refresh_from_environment()
                 self.assertNotEqual(first, refresh.call_args.kwargs["snapshot_path"])
@@ -54,6 +61,57 @@ class FazerCardsCatalogRefreshTests(unittest.TestCase):
                 config.unlink()
                 self.assertEqual(scheduled.main(), 1)
                 refresh.assert_not_called()
+
+    def test_supplier_discovery_refresh_is_cached_private_and_names_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path = root / "supplier-discovery.json"
+            now = datetime.now(timezone.utc)
+            categories = [
+                {"category_id": "private-a", "name": "Mobile Legends", "stock": 5},
+                {"category_id": "private-b", "name": "PUBG Mobile"},
+            ]
+            with patch.object(scheduled, "FazerCardsReadOnlyClient") as client, patch.object(
+                scheduled, "_list_cursor_items", return_value=(categories, {"total": 2})
+            ) as list_items:
+                result = scheduled._refresh_supplier_discovery(path, api_key="fixture-secret", now=now)
+                self.assertEqual(result["status"], "published")
+                self.assertEqual(result["count"], 2)
+                client.assert_called_once_with("fixture-secret", min_interval_seconds=1.0)
+                list_items.assert_called_once_with(
+                    client.return_value, "/topups", item_id_key="category_id"
+                )
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                saved = path.read_text(encoding="utf-8")
+                self.assertNotIn("private-a", saved)
+                self.assertNotIn("fixture-secret", saved)
+                self.assertNotIn("stock", saved)
+                cached = scheduled._refresh_supplier_discovery(
+                    path, api_key="fixture-secret", now=now + timedelta(hours=12)
+                )
+                self.assertEqual(cached["status"], "current")
+                client.assert_called_once()
+
+    def test_failed_supplier_discovery_read_preserves_previous_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path = root / "supplier-discovery.json"
+            now = datetime.now(timezone.utc)
+            artifact = build_supplier_discovery(
+                [{"category_id": "private-a", "name": "Mobile Legends"}],
+                generated_at=now - timedelta(hours=25),
+            )
+            path.write_text(json.dumps(artifact), encoding="utf-8")
+            path.chmod(0o600)
+            original = path.read_bytes()
+            with patch.object(scheduled, "_list_cursor_items", side_effect=RuntimeError("upstream down")):
+                with self.assertRaisesRegex(RuntimeError, "upstream down"):
+                    scheduled._refresh_supplier_discovery(path, api_key="fixture-secret", now=now)
+            self.assertEqual(path.read_bytes(), original)
+            stale = scheduled._supplier_discovery_status(path, now=now)
+            self.assertEqual(stale["status"], "stale")
 
     def test_invalid_full_refresh_paths_or_freshness_stop_before_supplier_reads(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from aurix_games.public_catalog import PublicCatalogStore
+from aurix_games.public_catalog import PublicCatalogStore, build_supplier_discovery
 from aurix_games.pricing import PricingPolicy
 from aurix_games.pricing_store import PricingPolicyStore, catalog_config_revision
 from aurix_games.customer_checkout import PublicCatalogOfferResolver
@@ -27,6 +27,76 @@ def approve_catalog_fixture(path: Path, *, now: datetime | None = None) -> Prici
 
 
 class PublicCatalogTests(unittest.TestCase):
+    def test_supplier_category_index_is_browse_only_and_contains_no_supplier_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            now = datetime.now(timezone.utc)
+            discovery_path = root / "supplier-discovery.json"
+            artifact = build_supplier_discovery([
+                {"category_id": "private-mlbb-category", "name": "Mobile Legends", "stock": 123},
+                {"category_id": "private-pubg-category", "name": "PUBG Mobile"},
+            ], generated_at=now)
+            discovery_path.write_text(json.dumps(artifact), encoding="utf-8")
+            discovery_path.chmod(0o600)
+
+            store = PublicCatalogStore(root / "missing-public-catalog.json", now=now,
+                                       discovery_path=discovery_path)
+            payload = store.response()
+
+            self.assertEqual(payload["status"], "supplier_listed")
+            self.assertFalse(payload["checkout_enabled"])
+            self.assertEqual(payload["total_count"], 2)
+            self.assertEqual({row["name"] for row in payload["products"]}, {"Mobile Legends", "PUBG Mobile"})
+            for product in payload["products"]:
+                self.assertEqual(product["status"], "supplier_review")
+                self.assertFalse(product["purchase_enabled"])
+                self.assertEqual(product["offers"], [])
+            self.assertNotIn("private-mlbb-category", json.dumps(payload))
+            self.assertNotIn("stock", json.dumps(payload))
+            detail = store.product_detail("mobile-legends")
+            self.assertEqual(detail["status"], "supplier_review")
+            self.assertEqual(detail["offers"], [])
+            self.assertIn("Quantity is unreported", detail["notice"])
+
+    def test_supplier_titles_join_current_listings_without_expanding_purchase_allowlist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            now = datetime.now(timezone.utc)
+            catalog_path = root / "public.json"
+            discovery_path = root / "supplier-discovery.json"
+            catalog_path.write_text(json.dumps({
+                "schema_version": 1,
+                "status": "approved_projection",
+                "generated_at": now.isoformat(),
+                "source_observed_at": now.isoformat(),
+                "valid_until": (now + timedelta(minutes=10)).isoformat(),
+                "offers": [{
+                    "offer_id": "mlbb-pack", "product_slug": "mobile-legends",
+                    "product_name": "Mobile Legends", "fulfillment_kind": "direct_topup",
+                    "denomination_label": "14 Diamonds", "retail_amount_minor": 1300,
+                    "currency": "MMK", "region": {"type": "global", "label": "Global"},
+                    "required_input_labels": ["Player ID", "Zone ID"],
+                }],
+            }), encoding="utf-8")
+            discovery_path.write_text(json.dumps(build_supplier_discovery([
+                {"category_id": "mlbb", "name": "Mobile Legends"},
+                {"category_id": "free-fire", "name": "Free Fire"},
+            ], generated_at=now)), encoding="utf-8")
+            discovery_path.chmod(0o600)
+
+            store = PublicCatalogStore(catalog_path, now=now, discovery_path=discovery_path)
+            payload = store.response()
+            by_slug = {product["slug"]: product for product in payload["products"]}
+            self.assertEqual(payload["total_count"], 2)
+            self.assertEqual(set(by_slug), {"mobile-legends", "free-fire"})
+            self.assertEqual(len(by_slug["mobile-legends"]["offers"]), 1)
+            self.assertTrue(by_slug["mobile-legends"]["live"])
+            self.assertEqual(by_slug["free-fire"]["status"], "supplier_review")
+            self.assertEqual(by_slug["free-fire"]["offers"], [])
+            self.assertEqual(store.response(category="supplier-review")["total_count"], 1)
+            self.assertEqual(store.response(category="live-offers")["total_count"], 1)
+            self.assertNotIn("private-b", json.dumps(payload))
+
     def test_status_uses_metadata_and_offers_from_the_same_read(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'public.json'

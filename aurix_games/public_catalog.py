@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
+import stat
 from typing import Any
 
 from .commerce_settings import env_commerce_settings
@@ -24,6 +25,7 @@ class PublicCatalogError(ValueError):
 UTC = timezone.utc
 DEFAULT_PUBLIC_CATALOG_MAX_AGE = timedelta(minutes=15)
 _DISCOVERY_MAX_AGE = timedelta(days=30)
+_DISCOVERY_MAX_PRODUCTS = 300
 _DISCOVERY_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,79}\Z")
 _PURCHASE_SWITCHES = (
     "checkout_enabled",
@@ -48,6 +50,127 @@ def _purchase_enabled(offers: list[dict[str, Any]], settings: dict[str, Any]) ->
     )
 
 
+def build_supplier_discovery(
+    categories: list[dict[str, Any]], *, generated_at: datetime | None = None
+) -> dict[str, Any]:
+    """Build a names-only, non-purchasable index from FazerCards top-up categories."""
+
+    if not isinstance(categories, list) or not 1 <= len(categories) <= _DISCOVERY_MAX_PRODUCTS:
+        raise ValueError("supplier category list is outside the supported range")
+    observed = generated_at or datetime.now(UTC)
+    if not isinstance(observed, datetime) or observed.tzinfo is None or observed.utcoffset() is None:
+        raise ValueError("supplier category timestamp must be timezone-aware")
+
+    names: dict[str, str] = {}
+    seen_ids: set[str] = set()
+    for row in categories:
+        if not isinstance(row, dict):
+            raise ValueError("supplier category is malformed")
+        raw_id, raw_name = row.get("category_id"), row.get("name")
+        if (isinstance(raw_id, bool) or not isinstance(raw_id, (str, int))
+                or not str(raw_id).strip() or not isinstance(raw_name, str)):
+            raise ValueError("supplier category is missing its identifier or name")
+        category_id = str(raw_id).strip()
+        name = raw_name.strip()
+        if (category_id in seen_ids or not name or len(name) > 120
+                or any(ord(char) < 32 or ord(char) == 127 for char in name)):
+            raise ValueError("supplier category identifier or name is invalid")
+        seen_ids.add(category_id)
+        names.setdefault(name.casefold(), name)
+    if not names:
+        raise ValueError("supplier category list contains no displayable games")
+
+    products: list[dict[str, Any]] = []
+    slugs: set[str] = set()
+    for index, name in enumerate(sorted(names.values(), key=str.casefold), start=1):
+        base = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")[:70].strip("-")
+        base = base or f"supplier-game-{index}"
+        slug = base
+        suffix = 2
+        while slug in slugs:
+            slug = f"{base[:70]}-{suffix}"
+            suffix += 1
+        if not _DISCOVERY_SLUG.fullmatch(slug):
+            raise ValueError("supplier category name cannot be represented safely")
+        slugs.add(slug)
+        products.append({
+            "slug": slug,
+            "name": name,
+            "category": "Supplier top-up",
+            "category_ids": ["supplier-review"],
+            "supplier_listed": True,
+        })
+
+    return {
+        "schema_version": 1,
+        "status": "supplier_listed",
+        "generated_at": observed.astimezone(UTC).isoformat(),
+        "checkout_enabled": False,
+        "total_count": len(products),
+        "products": products,
+    }
+
+
+def load_supplier_discovery(
+    path: str | Path | None,
+    *,
+    now: datetime | None = None,
+    max_age: timedelta = _DISCOVERY_MAX_AGE,
+) -> dict[str, Any] | None:
+    """Read a bounded private discovery artifact and return only its public allowlist."""
+
+    if path is None or not isinstance(max_age, timedelta) or max_age < timedelta(0):
+        return None
+    source = Path(path)
+    if source.is_symlink() or not source.is_file():
+        return None
+    try:
+        info = source.stat()
+        if stat.S_IMODE(info.st_mode) & 0o077 or info.st_size > 1_000_000:
+            return None
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        current = now or datetime.now(UTC)
+        if not isinstance(current, datetime) or current.tzinfo is None or current.utcoffset() is None:
+            return None
+        expected_fields = {"schema_version", "status", "generated_at", "checkout_enabled", "total_count", "products"}
+        if (not isinstance(payload, dict) or set(payload) != expected_fields
+                or type(payload.get("schema_version")) is not int or payload["schema_version"] != 1
+                or payload.get("status") != "supplier_listed" or payload.get("checkout_enabled") is not False):
+            return None
+        generated = _aware_timestamp(payload.get("generated_at"), "generated_at")
+        current = current.astimezone(UTC)
+        raw_products = payload.get("products")
+        if (generated > current + timedelta(minutes=5) or current - generated > max_age
+                or not isinstance(raw_products, list) or not 1 <= len(raw_products) <= _DISCOVERY_MAX_PRODUCTS
+                or type(payload.get("total_count")) is not int or payload["total_count"] != len(raw_products)):
+            return None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, PublicCatalogError, TypeError, ValueError):
+        return None
+
+    products: list[dict[str, Any]] = []
+    seen_slugs: set[str] = set()
+    for row in raw_products:
+        if (not isinstance(row, dict)
+                or set(row) != {"slug", "name", "category", "category_ids", "supplier_listed"}
+                or not isinstance(row.get("slug"), str) or not _DISCOVERY_SLUG.fullmatch(row["slug"])
+                or not isinstance(row.get("name"), str) or not row["name"].strip()
+                or len(row["name"]) > 120
+                or any(ord(char) < 32 or ord(char) == 127 for char in row["name"])
+                or row.get("category") != "Supplier top-up"
+                or row.get("category_ids") != ["supplier-review"]
+                or row.get("supplier_listed") is not True
+                or row["slug"] in seen_slugs):
+            return None
+        seen_slugs.add(row["slug"])
+        products.append({
+            "slug": row["slug"], "name": row["name"].strip(),
+            "category": "Supplier top-up", "category_ids": ["supplier-review"],
+            "supplier_listed": True, "status": "supplier_review", "live": False,
+            "purchase_enabled": False, "offers": [], "last_updated_at": generated.isoformat(),
+        })
+    return {"generated_at": generated.isoformat(), "products": products}
+
+
 class PublicCatalogStore:
     """Reload-on-request store for a generated public catalog artifact."""
 
@@ -59,6 +182,7 @@ class PublicCatalogStore:
         now: datetime | None = None,
         catalog_policy_store: CatalogPolicyStore | None = None,
         pricing_policy_store: PricingPolicyStore | None = None,
+        discovery_path: str | Path | None = None,
     ) -> None:
         if not isinstance(max_age, timedelta) or max_age < timedelta(0):
             raise ValueError("public catalog max_age must be non-negative")
@@ -71,6 +195,10 @@ class PublicCatalogStore:
         self._now = now
         self.catalog_policy_store = catalog_policy_store
         self.pricing_policy_store = pricing_policy_store
+        self.discovery_path = (
+            Path(discovery_path) if discovery_path else
+            (self.path.with_name("supplier-discovery.json") if self.path else None)
+        )
 
     def controls_active(self) -> bool:
         if self.catalog_policy_store is None:
@@ -80,68 +208,105 @@ class PublicCatalogStore:
         except (ValueError, OSError, json.JSONDecodeError):
             return True
 
-    def discovery(self, *, now: datetime | None = None) -> dict[str, Any] | None:
-        """Return recent public game names only; this never makes offers purchasable."""
-        if self.path is None or self.path.is_symlink() or not self.path.is_file():
-            return None
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-            current = now or self._now or datetime.now(UTC)
-            if current.tzinfo is None or current.utcoffset() is None:
-                return None
-            current = current.astimezone(UTC)
-            if not isinstance(payload, dict) or type(payload.get("schema_version")) is not int or payload["schema_version"] != 1:
-                return None
-            generated = _aware_timestamp(payload.get("generated_at"), "generated_at")
-            if generated > current + timedelta(minutes=5) or current - generated > _DISCOVERY_MAX_AGE:
-                return None
-            offers = payload.get("offers")
-            if not isinstance(offers, list) or len(offers) > 5000:
-                return None
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, PublicCatalogError, TypeError, ValueError):
-            return None
+    def supplier_discovery_available(self, *, now: datetime | None = None) -> bool:
+        return load_supplier_discovery(
+            self.discovery_path, now=now or self._now or datetime.now(UTC)
+        ) is not None
 
-        products: dict[str, str] = {}
-        for offer in offers:
-            if not isinstance(offer, dict):
-                continue
-            slug, name = offer.get("product_slug"), offer.get("product_name")
-            if (not isinstance(slug, str) or not _DISCOVERY_SLUG.fullmatch(slug)
-                    or not isinstance(name, str) or not name.strip() or len(name) > 120
-                    or any(ord(char) < 32 or ord(char) == 127 for char in name)):
-                continue
-            name = name.strip()
-            if slug in products and products[slug] != name:
-                return None
-            products[slug] = name
+    def discovery(self, *, now: datetime | None = None) -> dict[str, Any] | None:
+        """Return supplier-listed names and previously approved names, never offers."""
+        current = now or self._now or datetime.now(UTC)
+        supplier_catalog = load_supplier_discovery(self.discovery_path, now=current)
+        products: dict[str, dict[str, Any]] = {
+            item["slug"]: item for item in (supplier_catalog or {}).get("products", [])
+        }
+        categories: list[dict[str, str]] = []
+        if products:
+            categories.append({"id": "supplier-review", "name": "In review"})
+
+        if self.path is not None and not self.path.is_symlink() and self.path.is_file():
+            try:
+                payload = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict) and type(payload.get("schema_version")) is int and payload["schema_version"] == 1:
+                    generated = _aware_timestamp(payload.get("generated_at"), "generated_at")
+                    current_utc = current.astimezone(UTC)
+                    offers = payload.get("offers")
+                    if (generated <= current_utc + timedelta(minutes=5)
+                            and current_utc - generated <= _DISCOVERY_MAX_AGE
+                            and isinstance(offers, list) and len(offers) <= 5000):
+                        approved: dict[str, str] = {}
+                        for offer in offers:
+                            if not isinstance(offer, dict):
+                                continue
+                            slug, name = offer.get("product_slug"), offer.get("product_name")
+                            if (not isinstance(slug, str) or not _DISCOVERY_SLUG.fullmatch(slug)
+                                    or not isinstance(name, str) or not name.strip() or len(name) > 120
+                                    or any(ord(char) < 32 or ord(char) == 127 for char in name)):
+                                continue
+                            approved[slug] = name.strip()
+                        for slug, name in approved.items():
+                            products[slug] = {
+                                "slug": slug, "name": name, "category": "Game top-up",
+                                "category_ids": ["live-offers"],
+                            }
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, PublicCatalogError, TypeError, ValueError):
+                pass
+
         if not products:
             return None
+        if any("live-offers" in item.get("category_ids", []) for item in products.values()):
+            categories.insert(0, {"id": "live-offers", "name": "Previously listed"})
+        ordered = sorted(products.values(), key=lambda item: (item["name"].casefold(), item["slug"]))
+        if len(ordered) > _DISCOVERY_MAX_PRODUCTS:
+            ordered = ordered[:_DISCOVERY_MAX_PRODUCTS]
         return {
-            "schema_version": 1,
-            "status": "cached",
-            "checkout_enabled": False,
-            "categories": [{"id": "live-offers", "name": "Previously listed"}],
-            "products": [
-                {"slug": slug, "name": name, "category": "Game top-up", "category_ids": ["live-offers"]}
-                for slug, name in products.items()
-            ],
-            "total_count": len(products),
+            "schema_version": 1, "status": "cached", "checkout_enabled": False,
+            "categories": categories, "products": ordered, "total_count": len(ordered),
+        }
+
+    def _supplier_only_response(
+        self, discovery: dict[str, Any] | None, *, query: str, category: str | None,
+        limit: int, offset: int,
+    ) -> dict[str, Any] | None:
+        if discovery is None:
+            return None
+        products = discovery["products"]
+        if category not in (None, "supplier-review"):
+            products = []
+        if query.strip():
+            needle = query.strip().casefold()
+            products = [product for product in products if needle in product["name"].casefold()]
+        total = len(products)
+        page = products[offset:offset + limit]
+        next_offset = offset + len(page)
+        return {
+            "schema_version": 1, "status": "supplier_listed", "checkout_enabled": False,
+            "source": "supplier_category_index", "last_updated_at": discovery["generated_at"],
+            "generated_at": discovery["generated_at"], "catalog_controls_active": self.controls_active(),
+            "categories": [{"id": "supplier-review", "name": "In review"}], "products": page,
+            "result_count": len(page), "total_count": total,
+            "next_offset": next_offset if next_offset < total else None,
         }
 
     def response(self, *, query: str = "", category: str | None = None, limit: int = 50, offset: int = 0) -> dict[str, Any] | None:
         if not 1 <= limit <= MAX_PAGE_SIZE or not 0 <= offset <= MAX_OFFSET or len(query) > MAX_QUERY_LENGTH:
             raise ValueError('catalog query or page is out of range')
+        now = self._now or datetime.now(UTC)
+        supplier_catalog = load_supplier_discovery(self.discovery_path, now=now)
         try:
-            _, offers = self._load_catalog(now=self._now or datetime.now(UTC))
+            _, offers = self._load_catalog(now=now)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, PublicCatalogError):
-            return None
+            return self._supplier_only_response(supplier_catalog, query=query, category=category, limit=limit, offset=offset)
         if offers is None:
-            return None
+            return self._supplier_only_response(supplier_catalog, query=query, category=category, limit=limit, offset=offset)
         normalized_query = query.strip().casefold()
         settings = _commerce_state()
         controlled = self.controls_active()
         categories = _categories()[-1:] if controlled else _categories()
-        if category is not None and category not in {item["id"] for item in CATEGORIES} and category != "live-offers":
+        review_products = list((supplier_catalog or {}).get("products", []))
+        if review_products:
+            categories = [*categories, {"id": "supplier-review", "name": "In review"}]
+        if category is not None and category not in {item["id"] for item in CATEGORIES} and category not in {"live-offers", "supplier-review"}:
             return {"schema_version": 1, "status": "live", "checkout_enabled": False, "catalog_controls_active": controlled, "categories": categories, "products": [], "result_count": 0, "total_count": 0, "next_offset": None}
         grouped: dict[str, dict[str, Any]] = {}
         for offer in offers:
@@ -172,9 +337,14 @@ class PublicCatalogStore:
                     "required_input_labels": list(offer.get("required_input_labels", [])),
                 }
             )
-        products = list(grouped.values())
-        for product in products:
+        approved_products = list(grouped.values())
+        for product in approved_products:
             product["purchase_enabled"] = _purchase_enabled(product["offers"], settings)
+        if not approved_products:
+            categories = [item for item in categories if item["id"] != "live-offers"]
+        approved_slugs = set(grouped)
+        review_products = [product for product in review_products if product["slug"] not in approved_slugs]
+        products = approved_products + review_products
         if normalized_query:
             products = [
                 product
@@ -182,7 +352,11 @@ class PublicCatalogStore:
                 if normalized_query in product["name"].casefold()
                 or any(normalized_query in offer["name"].casefold() for offer in product["offers"])
             ]
-        if category and category != "live-offers":
+        if category == "live-offers":
+            products = [product for product in products if "live-offers" in product.get("category_ids", [])]
+        elif category == "supplier-review":
+            products = [product for product in products if product.get("supplier_listed") is True]
+        elif category:
             products = []
         total = len(products)
         page = products[offset : offset + limit]
@@ -226,15 +400,16 @@ class PublicCatalogStore:
 
         if not isinstance(slug, str) or not slug.strip():
             return None
+        current = now or self._now or datetime.now(UTC)
         try:
-            _, offers = self._load_catalog(now=now or self._now or datetime.now(UTC))
+            _, offers = self._load_catalog(now=current)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, PublicCatalogError):
-            return None
+            return self._supplier_product_detail(slug.strip(), now=current)
         if offers is None:
-            return None
+            return self._supplier_product_detail(slug.strip(), now=current)
         matching = [offer for offer in offers if offer["product_slug"] == slug.strip()]
         if not matching:
-            return None
+            return self._supplier_product_detail(slug.strip(), now=current)
         settings = _commerce_state()
         purchase_enabled = _purchase_enabled(matching, settings)
         product = _live_product(matching, purchase_enabled=purchase_enabled)
@@ -248,6 +423,24 @@ class PublicCatalogStore:
             "purchase_enabled": purchase_enabled,
             "notice": "Check the game account and confirm the exact package before payment." if purchase_enabled
             else "Browsing only. Checkout is unavailable; do not transfer until an order shows payment instructions.",
+        }
+
+    def _supplier_product_detail(self, slug: str, *, now: datetime) -> dict[str, Any] | None:
+        discovery = load_supplier_discovery(self.discovery_path, now=now)
+        if discovery is None:
+            return None
+        product = next((item for item in discovery["products"] if item["slug"] == slug), None)
+        if product is None:
+            return None
+        return {
+            "schema_version": 1, "status": "supplier_review", "checkout_enabled": False,
+            "source": "supplier_category_index", "last_updated_at": discovery["generated_at"],
+            "generated_at": discovery["generated_at"], "product": product, "regions": [],
+            "offers": [], "purchase_enabled": False,
+            "notice": (
+                "This supplier-listed game is still under product, region, pricing, and account-check review. "
+                "Quantity is unreported. No order or payment has started."
+            ),
         }
 
     def product_offers(
