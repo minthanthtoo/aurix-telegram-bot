@@ -1107,9 +1107,11 @@ def make_handler(
                 if parsed.query:
                     self._json(400, {"error": "product detail does not accept query parameters"})
                     return
-                detail = live_store.product_detail(catalog_product_match.group(1))
-                if detail is None and not live_store.controls_active():
-                    detail = product_detail(catalog_product_match.group(1), topup_preview=topup_preview)
+                slug = catalog_product_match.group(1)
+                detail = live_store.product_detail(slug)
+                if (detail is None and not live_store.controls_active()
+                        and not live_store.supplier_slug_exists(slug)):
+                    detail = product_detail(slug, topup_preview=topup_preview)
                 if detail is None:
                     self._missing_catalog_product()
                     return
@@ -1118,9 +1120,11 @@ def make_handler(
 
             match = _PRODUCT_PATH.fullmatch(parsed.path)
             if match:
-                detail = live_store.product_detail(match.group(1))
-                if detail is None and not live_store.controls_active():
-                    detail = product_detail(match.group(1), topup_preview=topup_preview)
+                slug = match.group(1)
+                detail = live_store.product_detail(slug)
+                if (detail is None and not live_store.controls_active()
+                        and not live_store.supplier_slug_exists(slug)):
+                    detail = product_detail(slug, topup_preview=topup_preview)
                 if detail is None:
                     self._missing_catalog_product()
                     return
