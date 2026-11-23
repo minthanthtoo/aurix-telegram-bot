@@ -161,6 +161,7 @@ def make_handler(
             "AURIX_GAMES_SUPPLIER_DISCOVERY",
             str(games_state_dir / 'supplier-discovery.json'),
         ),
+        topup_preview=topup_preview,
     )
 
     class Handler(SimpleHTTPRequestHandler):

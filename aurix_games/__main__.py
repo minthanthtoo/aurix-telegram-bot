@@ -68,7 +68,20 @@ def main() -> None:
         parser.error("--local-mlbb-lookup requires 127.0.0.1 and FAZERCARDS_API_KEY")
     if args.topup_preview_snapshot and args.host != "127.0.0.1":
         parser.error("--topup-preview-snapshot requires 127.0.0.1")
-    topup_preview = load_topup_preview(args.topup_preview_snapshot) if args.topup_preview_snapshot else None
+    store_base = Path(os.environ.get("AURIX_GAMES_BASE_DIR", ".local/fazercards"))
+    snapshot_path = Path(os.environ.get(
+        "FAZERCARDS_CATALOG_SNAPSHOT", str(store_base / "catalog-20260921.json")
+    ))
+    preview_paths = args.topup_preview_snapshot or ([snapshot_path] if snapshot_path.is_file() else [])
+    try:
+        topup_preview = load_topup_preview(
+            preview_paths, require_private=not bool(args.topup_preview_snapshot)
+        ) if preview_paths else None
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        logging.getLogger(__name__).warning(
+            "Supplier package snapshot could not be loaded (%s)", type(exc).__name__
+        )
+        topup_preview = None
     customer_api = build_env_customer_api()
     customer_checkout = build_env_customer_checkout(customer_api=customer_api)
     wallet_payments = None if customer_api is None else CustomerPaymentService(
@@ -103,7 +116,6 @@ def main() -> None:
             catalog_store=public_catalog,
             supplier_route_store=PrivateSupplierRouteStore(config_path),
         )
-    store_base = Path(os.environ.get("AURIX_GAMES_BASE_DIR", ".local/fazercards"))
     store_database = Path(os.environ.get("AURIX_GAMES_ORDER_DATABASE", str(store_base / "game-orders.sqlite3")))
     server = create_server(
         args.host,

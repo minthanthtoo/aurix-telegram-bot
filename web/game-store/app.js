@@ -167,6 +167,8 @@ const MLBB_ACCOUNT_HISTORY_KEY = "aurix-mlbb-account-ids";
 const MLBB_ZONE_HISTORY_KEY = "aurix-mlbb-zone-ids";
 const GAME_LIST_CACHE_KEY = "aurix-game-list-v2";
 const GAME_LIST_CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
+const CATALOG_DISCOVERY_REFRESH_INTERVAL = 5 * 60 * 1000;
+let catalogDiscoveryAttemptedAt = 0;
 const MLBB_ACCOUNT_ID_PATTERN = /^[0-9]{4,20}$/;
 const MLBB_ZONE_ID_PATTERN = /^\d{1,10}$/;
 
@@ -2532,7 +2534,7 @@ function addCategoryButton(category) {
     : /\bpc\b|computer/i.test(categoryLabel) ? "pc"
       : /gift|card|redeem/i.test(categoryLabel) ? "gift"
         : /mobile|app/i.test(categoryLabel) ? "mobile" : "category";
-  button.textContent = isCurrentListings ? "Current Listings" : category.name;
+  button.textContent = category.name;
   button.dataset.categoryKind = categoryKind;
   if (category.disabled) {
     button.disabled = true;
@@ -2549,11 +2551,11 @@ function addCategoryButton(category) {
   categoryList.append(button);
 }
 
-function addAllCategoryButton() {
+function addAllCategoryButton(label = "All Games") {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "category-chip";
-  button.textContent = "All Games";
+  button.textContent = label;
   button.dataset.categoryKind = "all";
   button.dataset.category = "";
   button.setAttribute("aria-pressed", String(activeCategory === ""));
@@ -2636,7 +2638,9 @@ function productCard(product, catalogIndex) {
   status.textContent = product.cached_listing
     ? "Live status unverified"
     : product.supplier_listed === true
-    ? "Supplier-listed · review pending"
+    ? Number.isSafeInteger(product.preview_package_count) && product.preview_package_count > 0
+      ? `${product.preview_package_count} package options · snapshot`
+      : "Supplier-listed · review pending"
     : product.live
     ? `${Array.isArray(product.offers) ? product.offers.length : 0} packages listed`
     : product.preview_package_count ? `${product.preview_package_count} packages · preview` : "In review";
@@ -2671,7 +2675,8 @@ function productCard(product, catalogIndex) {
   details.type = "button";
   details.className = "product-card__details";
   const action = product.cached_listing ? "Check availability"
-    : product.supplier_listed === true ? "View listing"
+    : product.supplier_listed === true
+      ? Number.isSafeInteger(product.preview_package_count) && product.preview_package_count > 0 ? "Browse packages" : "View listing"
       : product.live || product.reference_detail_available === true ? "View packages" : "View status";
   details.textContent = `${action} ›`;
   details.setAttribute("aria-label", `${action} for ${product.name}`);
@@ -2749,6 +2754,10 @@ function safeCatalogProduct(product) {
     category_ids: categoryIds,
     ...(product.supplier_listed === true ? { supplier_listed: true } : {}),
     ...(product.status === "supplier_review" ? { status: "supplier_review" } : {}),
+    ...(Number.isSafeInteger(product.preview_package_count) && product.preview_package_count > 0
+      && product.preview_package_count <= 20_000 ? { preview_package_count: product.preview_package_count } : {}),
+    ...(Number.isSafeInteger(product.preview_region_count) && product.preview_region_count > 0
+      && product.preview_region_count <= 300 ? { preview_region_count: product.preview_region_count } : {}),
     ...(typeof product.artwork_slug === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/.test(product.artwork_slug)
       ? { artwork_slug: product.artwork_slug } : {}),
   };
@@ -2805,14 +2814,20 @@ function renderCatalogProducts(products, categories, { liveMode = false, totalCo
     ? categories.filter((item) => item.id === "live-offers" || availableLiveCategoryIds?.has(item.id) || item.id === activeCategory)
     : categories;
   const currentListingsCategory = visibleCategories.find((item) => item.id === "live-offers");
+  const canShowGlobalCounts = liveMode && !cached && !activeCategory && !searchInput.value.trim();
+  const orderableCount = canShowGlobalCounts ? products.filter((product) => product.live === true).length : null;
+  const supplierReviewCount = canShowGlobalCounts ? products.filter((product) => product.supplier_listed === true).length : null;
+  const allListingsLabel = canShowGlobalCounts ? `All Games (${totalCount})` : "All Games";
   const orderedCategories = [{ ...(currentListingsCategory || { id: "live-offers", name: "Current Listings" }),
+    name: canShowGlobalCounts ? `Ready to order (${orderableCount})` : (currentListingsCategory?.name || "Current Listings"),
     disabled: !liveMode || cached || !currentListingsCategory },
-    ...visibleCategories.filter((item) => item.id !== "live-offers")];
+    ...visibleCategories.filter((item) => item.id !== "live-offers").map((item) => item.id === "supplier-review" && canShowGlobalCounts
+      ? { ...item, name: `In review (${supplierReviewCount})` } : item)];
   categoryList.hidden = false;
-  const categoryIds = JSON.stringify(orderedCategories.map(({ id, disabled }) => [id, Boolean(disabled)]));
+  const categoryIds = JSON.stringify(orderedCategories.map(({ id, name, disabled }) => [id, name, Boolean(disabled)]));
   if (categoryList.dataset.catalogIds !== categoryIds) {
     categoryList.replaceChildren();
-    addAllCategoryButton();
+    addAllCategoryButton(allListingsLabel);
     categoryList.append(savedGamesButton);
     orderedCategories.forEach(addCategoryButton);
     categoryList.dataset.catalogIds = categoryIds;
@@ -2835,11 +2850,11 @@ function renderCatalogProducts(products, categories, { liveMode = false, totalCo
     ? `${visibleProducts.length} cached title${visibleProducts.length === 1 ? "" : "s"} · checking availability`
     : savedOnly ? `${visibleProducts.length} saved game${visibleProducts.length === 1 ? "" : "s"} · on this device` : liveMode
       ? activeCategory === "supplier-review"
-        ? `${totalCount} supplier-listed title${totalCount === 1 ? "" : "s"} · offers and regions under review`
+        ? `${totalCount} supplier-listed title${totalCount === 1 ? "" : "s"} · packages are browse-only`
         : activeCategory === "live-offers"
           ? `${totalCount} current listings · prices from the latest approved snapshot`
           : supplierTitleCount
-            ? `${supplierTitleCount} supplier-listed title${supplierTitleCount === 1 ? "" : "s"} · ${approvedListingCount} current listing${approvedListingCount === 1 ? "" : "s"}`
+            ? `${supplierTitleCount} supplier-listed title${supplierTitleCount === 1 ? "" : "s"} · ${approvedListingCount} orderable now`
             : `${totalCount} current listings · prices from the latest approved snapshot`
       : `${totalCount} titles · checkout unavailable`, cached ? "cached" : "ready");
   if (catalogReset) catalogReset.hidden = !(savedOnly || activeCategory || searchInput.value.trim());
@@ -2890,7 +2905,7 @@ function renderCatalogSkeleton() {
   }
 }
 
-async function loadCatalog() {
+async function loadCatalog({ refreshDiscovery = false } = {}) {
   activeLoadController?.abort();
   const controller = new AbortController();
   activeLoadController = controller;
@@ -2917,12 +2932,13 @@ async function loadCatalog() {
   if (query) parameters.set("q", query);
 
   try {
-    if (!catalogCache) {
+    if (refreshDiscovery || Date.now() - catalogDiscoveryAttemptedAt >= CATALOG_DISCOVERY_REFRESH_INTERVAL) {
       let discovery = null;
       try { discovery = await fetchCatalogDiscovery(controller.signal); }
       catch (discoveryError) { if (discoveryError.name === "AbortError") throw discoveryError; }
       if (controller !== activeLoadController) return;
-      if (discovery) {
+      catalogDiscoveryAttemptedAt = Date.now();
+      if (discovery && (discovery.products.length > 0 || !catalogCache)) {
         saveCatalogCache(discovery.products, discovery.categories, "supplier");
         renderCachedCatalog();
         updateCatalogContext("refreshing");
@@ -3084,9 +3100,13 @@ async function showProduct(product) {
       detailRetry.hidden = true;
       dialog.dataset.offerState = "supplier-review";
       detailStockHeading.textContent = "Supplier listing under review";
-      detailStockCopy.textContent = "The supplier does not report unit quantities. This title is not orderable yet.";
-      clearStockRegions();
-      appendStockEmpty("Packages, supported regions, pricing, and account requirements still need verification. No order or payment has started.");
+      detailStockCopy.textContent = "Supplier package names are for browsing only. Unit quantities are not reported, and this title is not orderable yet.";
+      if (Array.isArray(detail.supplier_preview?.regions) && detail.supplier_preview.regions.length) {
+        renderSnapshotStock(detail.supplier_preview.regions, true);
+      } else {
+        clearStockRegions();
+        appendStockEmpty("Packages, supported regions, pricing, and account requirements still need verification. No order or payment has started.");
+      }
     } else if (Array.isArray(detail.supplier_preview?.regions) && detail.supplier_preview.regions.length) {
       copy.textContent = "Browse supplier packages in this preview. Prices and account eligibility are pending.";
       setDetailLiveStatus("Supplier package preview · prices and eligibility pending");
@@ -3895,7 +3915,7 @@ catalogReset?.addEventListener("click", () => {
   searchInput.value = "";
   void loadCatalog();
 });
-catalogRetry?.addEventListener("click", () => { clearSearchTimer(); void loadCatalog(); });
+catalogRetry?.addEventListener("click", () => { clearSearchTimer(); void loadCatalog({ refreshDiscovery: true }); });
 
 searchForm.addEventListener("submit", (event) => {
   event.preventDefault();

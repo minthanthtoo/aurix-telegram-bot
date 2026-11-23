@@ -27,6 +27,45 @@ def approve_catalog_fixture(path: Path, *, now: datetime | None = None) -> Prici
 
 
 class PublicCatalogTests(unittest.TestCase):
+    def test_supplier_titles_show_snapshot_package_names_without_enabling_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            now = datetime.now(timezone.utc)
+            discovery_path = root / "supplier-discovery.json"
+            discovery_path.write_text(json.dumps(build_supplier_discovery([
+                {"category_id": "supplier-stumble", "name": "Stumble Guys"},
+            ], generated_at=now)), encoding="utf-8")
+            discovery_path.chmod(0o600)
+            preview = {
+                "stumble-guys": {
+                    "regions": [{
+                        "id": "group-1", "name": "Stumble Guys",
+                        "observed_at": now.isoformat(),
+                        "offers": [{
+                            "id": "preview-1", "name": "250 Gems",
+                            "stock_label": "Quantity unreported",
+                        }],
+                    }],
+                },
+            }
+            store = PublicCatalogStore(
+                root / "missing-public-catalog.json", now=now,
+                discovery_path=discovery_path, topup_preview=preview,
+            )
+
+            listing = store.response()
+            product = listing["products"][0]
+            detail = store.product_detail("stumble-guys")
+
+            self.assertEqual(product["preview_package_count"], 1)
+            self.assertFalse(product["purchase_enabled"])
+            self.assertEqual(detail["status"], "supplier_review")
+            self.assertFalse(detail["purchase_enabled"])
+            self.assertEqual(detail["offers"], [])
+            self.assertEqual(detail["supplier_preview"]["regions"][0]["offers"][0]["name"], "250 Gems")
+            self.assertNotIn("price", json.dumps(detail))
+            self.assertNotIn("supplier", json.dumps(detail["supplier_preview"]["regions"][0]["offers"][0]))
+
     def test_supplier_category_index_is_browse_only_and_contains_no_supplier_ids(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
