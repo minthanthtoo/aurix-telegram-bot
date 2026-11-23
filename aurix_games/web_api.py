@@ -147,17 +147,20 @@ def make_handler(
             raise ValueError("payment QR directory is unavailable")
     root = Path(web_root).resolve()
     release_marker = Path(release_marker_path) if release_marker_path is not None else RELEASE_MARKER_PATH
+    games_state_dir = Path(os.environ.get('AURIX_GAMES_BASE_DIR', '.local/fazercards'))
     live_store = PublicCatalogStore(
         public_catalog_path
         if public_catalog_path is not None
-        else os.environ.get("AURIX_GAMES_PUBLIC_CATALOG", str(Path(os.environ.get(
-            'AURIX_GAMES_BASE_DIR', '.local/fazercards')) / 'public-catalog.json')),
+        else os.environ.get("AURIX_GAMES_PUBLIC_CATALOG", str(games_state_dir / 'public-catalog.json')),
         catalog_policy_store=getattr(admin_service, 'catalog_policy_store', None) or env_catalog_policy_store(),
         pricing_policy_store=getattr(admin_service, 'pricing_policy_store', None) or PricingPolicyStore(
             os.environ.get('FAZERCARDS_PUBLIC_CATALOG_CONFIG', str(
-                (Path(public_catalog_path).parent if public_catalog_path is not None else
-                 Path(os.environ.get('AURIX_GAMES_BASE_DIR', '.local/fazercards')))
+                (Path(public_catalog_path).parent if public_catalog_path is not None else games_state_dir)
                 / 'public-catalog-config.json'))),
+        discovery_path=os.environ.get(
+            "AURIX_GAMES_SUPPLIER_DISCOVERY",
+            str(games_state_dir / 'supplier-discovery.json'),
+        ),
     )
 
     class Handler(SimpleHTTPRequestHandler):
@@ -858,7 +861,7 @@ def make_handler(
                     offset_text = _one(parameters, "offset")
                     limit = 50 if limit_text is None else int(limit_text)
                     offset = 0 if offset_text is None else int(offset_text)
-                    if live_store.controls_active():
+                    if live_store.controls_active() or live_store.supplier_discovery_available():
                         payload = live_store.response(category=category, query=query, limit=limit, offset=offset)
                         if payload is None:
                             self._json(503, {'error': 'approved catalog is unavailable'})
@@ -878,7 +881,8 @@ def make_handler(
                 if parsed.query:
                     self._json(400, {"error": "categories does not accept query parameters"})
                     return
-                payload = live_store.response(limit=1) if live_store.controls_active() else catalog_response(limit=1)
+                use_live_store = live_store.controls_active() or live_store.supplier_discovery_available()
+                payload = live_store.response(limit=1) if use_live_store else catalog_response(limit=1)
                 if payload is None:
                     self._json(503, {'error': 'approved catalog is unavailable'})
                     return
@@ -913,7 +917,7 @@ def make_handler(
                     offset_text = cursor_text if cursor_text is not None else offset_text
                     limit = 50 if limit_text is None else int(limit_text)
                     offset = 0 if offset_text is None else int(offset_text)
-                    if live_store.controls_active():
+                    if live_store.controls_active() or live_store.supplier_discovery_available():
                         payload = live_store.response(category=category, query=query, limit=limit, offset=offset)
                         if payload is None:
                             self._json(503, {'error': 'approved catalog is unavailable'})

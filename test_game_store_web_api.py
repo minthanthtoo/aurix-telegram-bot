@@ -23,6 +23,7 @@ from aurix_games.order_repository import GameOrderRepository
 from aurix_games.order_state import OrderSnapshot, OrderState, create_order
 from aurix_games.web_api import make_handler
 from aurix_games.wallet_monitor import SupplierWalletAlertStore
+from aurix_games.public_catalog import build_supplier_discovery
 
 
 class _WebhookAdminStub:
@@ -134,6 +135,47 @@ class GameStoreWebAPITests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
+
+    def test_supplier_catalog_is_listed_when_no_priced_catalog_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            discovery = build_supplier_discovery([
+                {"category_id": "private-valorant", "name": "Valorant"},
+                {"category_id": "private-mlbb", "name": "Mobile Legends"},
+            ])
+            discovery_path = state / "supplier-discovery.json"
+            discovery_path.write_text(json.dumps(discovery), encoding="utf-8")
+            discovery_path.chmod(0o600)
+            catalog_path = state / "not-yet-approved.json"
+            with patch.dict(os.environ, {"AURIX_GAMES_BASE_DIR": str(state)}):
+                server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(public_catalog_path=catalog_path))
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    origin = f"http://127.0.0.1:{server.server_port}"
+                    with urlopen(origin + "/api/v1/catalog/products?category=supplier-review") as response:
+                        products = json.load(response)
+                    self.assertEqual(products["status"], "supplier_listed")
+                    self.assertEqual(products["total_count"], 2)
+                    self.assertFalse(products["checkout_enabled"])
+                    with urlopen(origin + "/api/v1/catalog/categories") as response:
+                        categories = json.load(response)
+                    self.assertIn({"id": "supplier-review", "name": "In review"}, categories["categories"])
+                    with urlopen(origin + "/api/v1/live-catalog?limit=50&offset=0") as response:
+                        live_catalog = json.load(response)
+                    self.assertEqual(live_catalog["status"], "supplier_listed")
+                    self.assertEqual(live_catalog["total_count"], 2)
+                    with urlopen(origin + "/api/v1/catalog/products/valorant") as response:
+                        detail = json.load(response)
+                    self.assertEqual(detail["status"], "supplier_review")
+                    self.assertFalse(detail["purchase_enabled"])
+                    self.assertEqual(detail["offers"], [])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=2)
 
     def test_local_mlbb_lookup_only_returns_confirmed_identity_and_throttles(self):
         with tempfile.TemporaryDirectory() as directory:

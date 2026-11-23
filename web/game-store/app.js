@@ -165,7 +165,7 @@ let mlbbCheckoutZonesPromise = null;
 
 const MLBB_ACCOUNT_HISTORY_KEY = "aurix-mlbb-account-ids";
 const MLBB_ZONE_HISTORY_KEY = "aurix-mlbb-zone-ids";
-const GAME_LIST_CACHE_KEY = "aurix-game-list-v1";
+const GAME_LIST_CACHE_KEY = "aurix-game-list-v2";
 const GAME_LIST_CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 const MLBB_ACCOUNT_ID_PATTERN = /^[0-9]{4,20}$/;
 const MLBB_ZONE_ID_PATTERN = /^\d{1,10}$/;
@@ -2619,7 +2619,7 @@ function productCard(product, catalogIndex) {
 
   const category = document.createElement("p");
   category.className = "product-card__category";
-  category.textContent = product.category;
+  category.textContent = product.supplier_listed === true ? "FazerCards catalog" : product.category;
   category.hidden = product.live === true;
 
   const title = document.createElement("h3");
@@ -2635,6 +2635,8 @@ function productCard(product, catalogIndex) {
   status.className = "product-card__status";
   status.textContent = product.cached_listing
     ? "Live status unverified"
+    : product.supplier_listed === true
+    ? "Supplier-listed · review pending"
     : product.live
     ? `${Array.isArray(product.offers) ? product.offers.length : 0} packages listed`
     : product.preview_package_count ? `${product.preview_package_count} packages · preview` : "In review";
@@ -2669,7 +2671,8 @@ function productCard(product, catalogIndex) {
   details.type = "button";
   details.className = "product-card__details";
   const action = product.cached_listing ? "Check availability"
-    : product.live || product.reference_detail_available === true ? "View packages" : "View status";
+    : product.supplier_listed === true ? "View listing"
+      : product.live || product.reference_detail_available === true ? "View packages" : "View status";
   details.textContent = `${action} ›`;
   details.setAttribute("aria-label", `${action} for ${product.name}`);
   details.addEventListener("click", () => showProduct(product));
@@ -2744,6 +2747,8 @@ function safeCatalogProduct(product) {
     name: product.name.trim(),
     category: typeof product.category === "string" && product.category.length <= 80 ? product.category : "Game top-up",
     category_ids: categoryIds,
+    ...(product.supplier_listed === true ? { supplier_listed: true } : {}),
+    ...(product.status === "supplier_review" ? { status: "supplier_review" } : {}),
     ...(typeof product.artwork_slug === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/.test(product.artwork_slug)
       ? { artwork_slug: product.artwork_slug } : {}),
   };
@@ -2761,12 +2766,12 @@ function safeCatalogCategories(categories) {
 function readCatalogCache() {
   try {
     const saved = JSON.parse(globalThis.localStorage?.getItem(GAME_LIST_CACHE_KEY) || "null");
-    if (!saved || saved.version !== 1 || !Number.isSafeInteger(saved.saved_at)
+    if (!saved || saved.version !== 2 || !Number.isSafeInteger(saved.saved_at)
         || Date.now() - saved.saved_at < 0 || Date.now() - saved.saved_at > GAME_LIST_CACHE_MAX_AGE
         || !Array.isArray(saved.products) || saved.products.length > 300) return null;
     return {
       savedAt: saved.saved_at,
-      source: saved.source === "live" ? "live" : "reference",
+      source: ["live", "supplier"].includes(saved.source) ? saved.source : "reference",
       products: saved.products.map(safeCatalogProduct).filter(Boolean),
       categories: safeCatalogCategories(saved.categories),
     };
@@ -2778,7 +2783,7 @@ function saveCatalogCache(products, categories, source = "reference") {
   catalogCache = { savedAt: Date.now(), source, products: safeProducts, categories: safeCatalogCategories(categories) };
   try {
     globalThis.localStorage?.setItem(GAME_LIST_CACHE_KEY, JSON.stringify({
-      version: 1, saved_at: catalogCache.savedAt, source, products: catalogCache.products, categories: catalogCache.categories,
+      version: 2, saved_at: catalogCache.savedAt, source, products: catalogCache.products, categories: catalogCache.categories,
     }));
   } catch { /* Keep the in-memory catalog when browser storage is unavailable. */ }
 }
@@ -2786,7 +2791,7 @@ function saveCatalogCache(products, categories, source = "reference") {
 function renderCatalogProducts(products, categories, { liveMode = false, totalCount = products.length, cached = false } = {}) {
   if (catalogSection) {
     catalogSection.dataset.catalogMode = cached
-      ? catalogCache?.source === "live" ? "live" : "reference"
+      ? catalogCache?.source === "live" ? "live" : catalogCache?.source === "supplier" ? "supplier" : "reference"
       : liveMode ? "live" : "reference";
   }
   productGrid.replaceChildren();
@@ -2797,7 +2802,7 @@ function renderCatalogProducts(products, categories, { liveMode = false, totalCo
     ? new Set(products.flatMap((product) => Array.isArray(product.category_ids) ? product.category_ids : []))
     : null;
   const visibleCategories = liveMode
-    ? categories.filter((item) => item.id === "live-offers" || availableLiveCategoryIds?.has(item.id))
+    ? categories.filter((item) => item.id === "live-offers" || availableLiveCategoryIds?.has(item.id) || item.id === activeCategory)
     : categories;
   const currentListingsCategory = visibleCategories.find((item) => item.id === "live-offers");
   const orderedCategories = [{ ...(currentListingsCategory || { id: "live-offers", name: "Current Listings" }),
@@ -2824,10 +2829,18 @@ function renderCatalogProducts(products, categories, { liveMode = false, totalCo
     return;
   }
   visibleProducts.forEach(({ product, index }) => productGrid.append(productCard(product, index)));
+  const supplierTitleCount = visibleProducts.filter(({ product }) => product.supplier_listed === true).length;
+  const approvedListingCount = visibleProducts.filter(({ product }) => product.live === true).length;
   setStatus(cached
     ? `${visibleProducts.length} cached title${visibleProducts.length === 1 ? "" : "s"} · checking availability`
     : savedOnly ? `${visibleProducts.length} saved game${visibleProducts.length === 1 ? "" : "s"} · on this device` : liveMode
-      ? `${totalCount} games · prices from the latest approved supplier snapshot`
+      ? activeCategory === "supplier-review"
+        ? `${totalCount} supplier-listed title${totalCount === 1 ? "" : "s"} · offers and regions under review`
+        : activeCategory === "live-offers"
+          ? `${totalCount} current listings · prices from the latest approved snapshot`
+          : supplierTitleCount
+            ? `${supplierTitleCount} supplier-listed title${supplierTitleCount === 1 ? "" : "s"} · ${approvedListingCount} current listing${approvedListingCount === 1 ? "" : "s"}`
+            : `${totalCount} current listings · prices from the latest approved snapshot`
       : `${totalCount} titles · checkout unavailable`, cached ? "cached" : "ready");
   if (catalogReset) catalogReset.hidden = !(savedOnly || activeCategory || searchInput.value.trim());
 }
@@ -2910,7 +2923,7 @@ async function loadCatalog() {
       catch (discoveryError) { if (discoveryError.name === "AbortError") throw discoveryError; }
       if (controller !== activeLoadController) return;
       if (discovery) {
-        saveCatalogCache(discovery.products, discovery.categories);
+        saveCatalogCache(discovery.products, discovery.categories, "supplier");
         renderCachedCatalog();
         updateCatalogContext("refreshing");
         setStatus("Cached titles · checking availability…", "cached");
@@ -2933,10 +2946,11 @@ async function loadCatalog() {
         const livePage = await liveResponse.json();
         // Once operator controls apply, an empty live projection is intentional.
         const liveCategoryRequested = activeCategory === "live-offers";
-        if (livePage.status === "live" && typeof livePage.checkout_enabled === "boolean" &&
+        const acceptedCatalogStatuses = new Set(["live", "supplier_listed"]);
+        if (acceptedCatalogStatuses.has(livePage.status) && typeof livePage.checkout_enabled === "boolean" &&
             Array.isArray(livePage.categories) && Array.isArray(livePage.products) &&
             Number.isInteger(livePage.total_count) &&
-            (livePage.total_count > 0 || liveCategoryRequested || livePage.catalog_controls_active === true)) {
+            (livePage.total_count > 0 || liveCategoryRequested || livePage.catalog_controls_active === true || livePage.status === "supplier_listed")) {
           liveMode = true;
           firstPage = livePage;
           products.push(...livePage.products);
@@ -2954,7 +2968,7 @@ async function loadCatalog() {
             });
             if (!nextResponse.ok) throw new Error("Live catalog page failed");
             const nextPage = await nextResponse.json();
-            if (nextPage.status !== "live" || !Array.isArray(nextPage.products)) {
+            if (nextPage.status !== livePage.status || !Array.isArray(nextPage.products)) {
               throw new Error("Live catalog response did not match the contract");
             }
             products.push(...nextPage.products);
@@ -2992,7 +3006,11 @@ async function loadCatalog() {
       offset = page.next_offset;
     }
     if (controller !== activeLoadController) return;
-    if (!activeCategory && !query) saveCatalogCache(products, firstPage.categories, liveMode ? "live" : "reference");
+    if (!activeCategory && !query) {
+      const source = liveMode && firstPage.status === "supplier_listed" ? "supplier"
+        : liveMode ? "live" : "reference";
+      saveCatalogCache(products, firstPage.categories, source);
+    }
     renderCatalogProducts(products, firstPage.categories, { liveMode, totalCount: firstPage.total_count });
   } catch (error) {
     if (error.name === "AbortError" || controller !== activeLoadController) return;
@@ -3056,7 +3074,20 @@ async function showProduct(product) {
       return;
     }
     title.textContent = detail.product.name;
-    if (Array.isArray(detail.supplier_preview?.regions) && detail.supplier_preview.regions.length) {
+    if (detail.status === "supplier_review") {
+      copy.hidden = false;
+      copy.textContent = detail.notice || "FazerCards lists this title, but package and region review is pending. No order or payment has started.";
+      setDetailLiveStatus("Supplier-listed · quantity unreported · not orderable yet");
+      detailHeroMeta.textContent = "Supplier listing · review pending";
+      detailSelection.textContent = "Packages not approved for sale yet";
+      detailClear.hidden = true;
+      detailRetry.hidden = true;
+      dialog.dataset.offerState = "supplier-review";
+      detailStockHeading.textContent = "Supplier listing under review";
+      detailStockCopy.textContent = "The supplier does not report unit quantities. This title is not orderable yet.";
+      clearStockRegions();
+      appendStockEmpty("Packages, supported regions, pricing, and account requirements still need verification. No order or payment has started.");
+    } else if (Array.isArray(detail.supplier_preview?.regions) && detail.supplier_preview.regions.length) {
       copy.textContent = "Browse supplier packages in this preview. Prices and account eligibility are pending.";
       setDetailLiveStatus("Supplier package preview · prices and eligibility pending");
       renderReferenceSnapshot(detail.supplier_preview, true);

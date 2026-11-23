@@ -866,6 +866,11 @@ test("storefront renders an approved live price and promotion disclosure", async
       required_input_labels: ["player_id", "server_id"], fulfillment_kind: "direct_topup",
     }],
   };
+  const supplierReviewProduct = {
+    slug: "stumble-guys", name: "Stumble Guys", category_ids: ["supplier-review"],
+    category: "Supplier top-up", supplier_listed: true, status: "supplier_review",
+    live: false, purchase_enabled: false, offers: [],
+  };
   const document = {
     querySelector: (selector) => elements.get(selector) || [...elements.values()]
       .flatMap((root) => {
@@ -917,16 +922,25 @@ test("storefront renders an approved live price and promotion disclosure", async
       return makeResponse({ schema_version: 1, status: "preview", checkout_enabled: false, items: [] });
     }
     if (url.pathname === "/api/v1/live-catalog") {
+      const requestedCategory = url.searchParams.get("category");
+      const listedProducts = requestedCategory === "live-offers" ? [liveProduct]
+        : requestedCategory === "supplier-review" ? [supplierReviewProduct]
+          : [liveProduct, supplierReviewProduct];
       return makeResponse({
         schema_version: 1, status: "live", checkout_enabled: false,
-        categories: [{ id: "live-offers", name: "Live Offers" }], products: [liveProduct],
-        result_count: 1, total_count: 1, next_offset: null,
+        categories: [{ id: "live-offers", name: "Live Offers" }, { id: "supplier-review", name: "In review" }],
+        products: listedProducts, result_count: listedProducts.length, total_count: listedProducts.length, next_offset: null,
       });
     }
     if (url.pathname === "/api/v1/catalog/products/mobile-legends") {
       if (productStatusUnavailable) return { ok: false, status: 503 };
       return makeResponse({ status: "live", checkout_enabled: false, purchase_enabled: true,
         product: liveProduct, offers: liveProduct.offers });
+    }
+    if (url.pathname === "/api/v1/catalog/products/stumble-guys") {
+      return makeResponse({ status: "supplier_review", checkout_enabled: false,
+        product: supplierReviewProduct, offers: [], purchase_enabled: false,
+        notice: "This supplier-listed game is under review. Quantity is unreported. No order or payment has started." });
     }
     throw new Error(`unexpected request: ${url.pathname}`);
   };
@@ -946,9 +960,9 @@ test("storefront renders an approved live price and promotion disclosure", async
   assert.match(vm.runInContext('mlbbRankingsFreshnessPresentation({status:"unknown"}).copy', context), /Live rankings are paused until source terms and data freshness are verified/);
   assert.match(vm.runInContext('mlbbRankingsFreshnessPresentation({status:"future_dated"}).copy', context), /Live rankings are paused until source terms and data freshness are verified/);
   assert.equal(vm.runInContext('mlbbRankingsFreshnessPresentation({status:"fresh",age_days:3,freshness_window_days:7}).status', context), "withheld");
-  assert.equal(elements.get("#product-grid").children.length, 1);
+  assert.equal(elements.get("#product-grid").children.length, 2);
   assert.equal(elements.get(".catalog").dataset.catalogMode, "live");
-  assert.equal(elements.get("#catalog-status").textContent, "1 games · prices from the latest approved supplier snapshot");
+  assert.equal(elements.get("#catalog-status").textContent, "1 supplier-listed title · 1 current listing");
   const card = elements.get("#product-grid").children[0];
   const livePrice = card.children.find((child) => child.className === "product-card__price-row");
   assert.ok(livePrice);
@@ -1116,6 +1130,29 @@ test("storefront renders an approved live price and promotion disclosure", async
   await settle();
   assert.equal(elements.get("#detail-retry").hidden, true);
   assert.equal(calls.filter((url) => new URL(url, "http://aurix.test").pathname === "/api/v1/catalog/products/mobile-legends").length, productRequestCount + 2);
+
+  const supplierCategory = elements.get("#category-list").children.find((button) => button.dataset.category === "supplier-review");
+  assert.ok(supplierCategory, "supplier-listed titles have a separate review filter");
+  supplierCategory.listeners.click();
+  await settle();
+  assert.ok(elements.get("#category-list").children.some((button) => button.dataset.category === "supplier-review"),
+    "the selected supplier review filter remains visible after rendering");
+  assert.equal(elements.get("#product-grid").children.length, 1);
+  const supplierCard = elements.get("#product-grid").children[0];
+  const supplierStatus = supplierCard.children.find((child) => child.className === "product-card__status-row")
+    .children.find((child) => child.className === "product-card__status");
+  assert.match(supplierStatus.textContent, /Supplier-listed/);
+  assert.equal(supplierCard.children.find((child) => child.className === "product-card__price-row"), undefined,
+    "supplier category rows never invent prices");
+  assert.match(supplierCard.children.find((child) => child.className === "product-card__details").textContent, /View listing/);
+  const supplierCommandCount = commands.length;
+  await supplierCard.children.find((child) => child.className === "product-card__details").listeners.click();
+  await settle();
+  assert.equal(elements.get("#dialog-title").textContent, "Stumble Guys");
+  assert.match(elements.get("#detail-live-status").textContent, /quantity unreported.*not orderable/i);
+  assert.equal(elements.get("#detail-offers").children.length, 0);
+  assert.equal(elements.get("#detail-buy").disabled, true);
+  assert.equal(commands.length, supplierCommandCount, "opening a supplier-only title creates no order or payment");
 });
 
 test("screenshot-derived reference surfaces remain wired to the preview shell", async () => {
@@ -1213,18 +1250,18 @@ test("screenshot-derived reference surfaces remain wired to the preview shell", 
   assert.match(markup, /id="auxiliary-header-actions"/);
   assert.match(markup, /storefront-refinements\.css\?v=20261115-preview-card-layout-1/);
   assert.match(markup, /theme\.css\?v=20261117-leaderboard-sheet-7/);
-  assert.match(markup, /app\.js\?v=20261118-detail-view-1/);
+  assert.match(markup, /app\.js\?v=20261123-supplier-catalog-1/);
   assert.match(markup, /class="dialog-state" hidden/);
   assert.match(markup, /auth\.js\?v=20261117-theme-1/);
   assert.ok(markup.indexOf("styles.css?v=20261117-compact-detail-1") < markup.indexOf("storefront-refinements.css?v=20261115-preview-card-layout-1"));
-  assert.match(serviceWorker, /aurix-game-store-shell-v181/);
+  assert.match(serviceWorker, /aurix-game-store-shell-v182/);
   assert.match(serviceWorker, /styles\.css\?v=20261117-compact-detail-1/);
   assert.match(serviceWorker, /storefront-refinements\.css\?v=20261115-preview-card-layout-1/);
   assert.match(serviceWorker, /theme\.css\?v=20261117-leaderboard-sheet-7/);
   assert.match(serviceWorker, /premium-theme\.css\?v=20261118-detail-views-1/);
   assert.match(theme, /data-surface="leaderboard"\] \.auxiliary-empty \{[\s\S]*grid-template-columns: 40px minmax\(0, 1fr\);[\s\S]*text-align: left/);
   assert.match(theme, /\.auxiliary-dialog \.store-leaderboard-join:active \{[\s\S]*transform: translateY\(1px\) scale\(\.99\)/);
-  assert.match(serviceWorker, /app\.js\?v=20261118-detail-view-1/);
+  assert.match(serviceWorker, /app\.js\?v=20261123-supplier-catalog-1/);
   assert.match(serviceWorker, /auth\.js\?v=20261117-theme-1/);
   assert.match(source, /"mobile-legends-region-checker", "leaderboard"/);
   assert.doesNotMatch(markup, /checkout-dialog|Simulate Paid Order/);
