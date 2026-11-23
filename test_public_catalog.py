@@ -111,14 +111,14 @@ class PublicCatalogTests(unittest.TestCase):
                 "valid_until": (now + timedelta(minutes=10)).isoformat(),
                 "offers": [{
                     "offer_id": "mlbb-pack", "product_slug": "mobile-legends",
-                    "product_name": "Mobile Legends", "fulfillment_kind": "direct_topup",
+                    "product_name": "Mobile Legends (Global)", "fulfillment_kind": "direct_topup",
                     "denomination_label": "14 Diamonds", "retail_amount_minor": 1300,
                     "currency": "MMK", "region": {"type": "global", "label": "Global"},
                     "required_input_labels": ["Player ID", "Zone ID"],
                 }],
             }), encoding="utf-8")
             discovery_path.write_text(json.dumps(build_supplier_discovery([
-                {"category_id": "mlbb", "name": "Mobile Legends"},
+                {"category_id": "mlbb-global", "name": "Mobile Legends (Global)"},
                 {"category_id": "free-fire", "name": "Free Fire"},
             ], generated_at=now)), encoding="utf-8")
             discovery_path.chmod(0o600)
@@ -132,8 +132,13 @@ class PublicCatalogTests(unittest.TestCase):
             self.assertTrue(by_slug["mobile-legends"]["live"])
             self.assertEqual(by_slug["free-fire"]["status"], "supplier_review")
             self.assertEqual(by_slug["free-fire"]["offers"], [])
+            self.assertEqual(len({row["name"].casefold() for row in payload["products"]}), 2)
             self.assertEqual(store.response(category="supplier-review")["total_count"], 1)
             self.assertEqual(store.response(category="live-offers")["total_count"], 1)
+            discovery = store.discovery()
+            self.assertEqual(discovery["total_count"], 2)
+            self.assertNotIn("mobile-legends-global", {row["slug"] for row in discovery["products"]})
+            self.assertIsNone(store.product_detail("mobile-legends-global"))
             self.assertNotIn("private-b", json.dumps(payload))
 
     def test_status_uses_metadata_and_offers_from_the_same_read(self):
