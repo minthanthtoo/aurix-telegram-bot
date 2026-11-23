@@ -1,6 +1,6 @@
 "use strict";
 
-const VERSION = "aurix-game-store-shell-v182";
+const VERSION = "aurix-game-store-shell-v183";
 const STATIC_ASSETS = [
   "/game-store/assets/aurix/nav-grid.svg",
   "/game-store/assets/aurix/nav-bookmark.svg",
@@ -29,7 +29,7 @@ const STATIC_ASSETS = [
   "/game-store/terms.html",
   "/game-store/styles.css?v=20261117-compact-detail-1",
   "/game-store/storefront-refinements.css?v=20261115-preview-card-layout-1",
-  "/game-store/app.js?v=20261123-supplier-catalog-1",
+  "/game-store/app.js?v=20261123-supplier-catalog-2",
   "/game-store/auth.js?v=20261117-theme-1",
   "/game-store/manifest.webmanifest",
   "/game-store/icon.svg",

@@ -3021,6 +3021,9 @@ async function loadCatalog({ refreshDiscovery = false } = {}) {
       }
       offset = page.next_offset;
     }
+    if (!liveMode && firstPage?.status === "live" && firstPage.source === "approved_priced_projection") {
+      liveMode = true;
+    }
     if (controller !== activeLoadController) return;
     if (!activeCategory && !query) {
       const source = liveMode && firstPage.status === "supplier_listed" ? "supplier"

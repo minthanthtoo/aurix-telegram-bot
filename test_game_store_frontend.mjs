@@ -887,6 +887,7 @@ test("storefront renders an approved live price and promotion disclosure", async
   let checkoutPaymentFailure = false;
   let walletAvailable = 0;
   let productStatusUnavailable = false;
+  let liveCatalogUnavailable = false;
   const commands = [];
   const liveProduct = {
     slug: "mobile-legends", name: "Mobile Legends", category_ids: ["live-offers"],
@@ -958,12 +959,25 @@ test("storefront renders an approved live price and promotion disclosure", async
       return makeResponse({ schema_version: 1, status: "preview", checkout_enabled: false, items: [] });
     }
     if (url.pathname === "/api/v1/live-catalog") {
+      if (liveCatalogUnavailable) return { ok: false, status: 503 };
       const requestedCategory = url.searchParams.get("category");
       const listedProducts = requestedCategory === "live-offers" ? [liveProduct]
         : requestedCategory === "supplier-review" ? [supplierReviewProduct]
           : [liveProduct, supplierReviewProduct];
       return makeResponse({
         schema_version: 1, status: "live", checkout_enabled: false,
+        categories: [{ id: "live-offers", name: "Live Offers" }, { id: "supplier-review", name: "In review" }],
+        products: listedProducts, result_count: listedProducts.length, total_count: listedProducts.length, next_offset: null,
+      });
+    }
+    if (url.pathname === "/api/v1/catalog/products") {
+      const requestedCategory = url.searchParams.get("category");
+      const listedProducts = requestedCategory === "live-offers" ? [liveProduct]
+        : requestedCategory === "supplier-review" ? [supplierReviewProduct]
+          : [liveProduct, supplierReviewProduct];
+      return makeResponse({
+        schema_version: 1, status: "live", source: "approved_priced_projection", checkout_enabled: false,
+        catalog_controls_active: true,
         categories: [{ id: "live-offers", name: "Live Offers" }, { id: "supplier-review", name: "In review" }],
         products: listedProducts, result_count: listedProducts.length, total_count: listedProducts.length, next_offset: null,
       });
@@ -1194,6 +1208,16 @@ test("storefront renders an approved live price and promotion disclosure", async
   assert.equal(elements.get("#detail-stock-regions").children.length, 1);
   assert.equal(elements.get("#detail-buy").disabled, true);
   assert.equal(commands.length, supplierCommandCount, "opening a supplier-only title creates no order or payment");
+
+  liveCatalogUnavailable = true;
+  vm.runInContext('activeCategory = ""', context);
+  await vm.runInContext('loadCatalog({refreshDiscovery: true})', context);
+  await settle();
+  const categoriesShown = elements.get("#category-list").children;
+  assert.equal(categoriesShown.find((button) => button.dataset.category === "").textContent, "All Games (2)");
+  assert.equal(categoriesShown.find((button) => button.dataset.category === "live-offers").textContent, "Ready to order (1)");
+  assert.equal(categoriesShown.find((button) => button.dataset.category === "supplier-review").textContent, "In review (1)");
+  assert.equal(elements.get(".catalog").dataset.catalogMode, "live", "the legacy catalog route still identifies live projection data");
 });
 
 test("screenshot-derived reference surfaces remain wired to the preview shell", async () => {
@@ -1291,18 +1315,18 @@ test("screenshot-derived reference surfaces remain wired to the preview shell", 
   assert.match(markup, /id="auxiliary-header-actions"/);
   assert.match(markup, /storefront-refinements\.css\?v=20261115-preview-card-layout-1/);
   assert.match(markup, /theme\.css\?v=20261117-leaderboard-sheet-7/);
-  assert.match(markup, /app\.js\?v=20261123-supplier-catalog-1/);
+  assert.match(markup, /app\.js\?v=20261123-supplier-catalog-2/);
   assert.match(markup, /class="dialog-state" hidden/);
   assert.match(markup, /auth\.js\?v=20261117-theme-1/);
   assert.ok(markup.indexOf("styles.css?v=20261117-compact-detail-1") < markup.indexOf("storefront-refinements.css?v=20261115-preview-card-layout-1"));
-  assert.match(serviceWorker, /aurix-game-store-shell-v182/);
+  assert.match(serviceWorker, /aurix-game-store-shell-v183/);
   assert.match(serviceWorker, /styles\.css\?v=20261117-compact-detail-1/);
   assert.match(serviceWorker, /storefront-refinements\.css\?v=20261115-preview-card-layout-1/);
   assert.match(serviceWorker, /theme\.css\?v=20261117-leaderboard-sheet-7/);
   assert.match(serviceWorker, /premium-theme\.css\?v=20261118-detail-views-1/);
   assert.match(theme, /data-surface="leaderboard"\] \.auxiliary-empty \{[\s\S]*grid-template-columns: 40px minmax\(0, 1fr\);[\s\S]*text-align: left/);
   assert.match(theme, /\.auxiliary-dialog \.store-leaderboard-join:active \{[\s\S]*transform: translateY\(1px\) scale\(\.99\)/);
-  assert.match(serviceWorker, /app\.js\?v=20261123-supplier-catalog-1/);
+  assert.match(serviceWorker, /app\.js\?v=20261123-supplier-catalog-2/);
   assert.match(serviceWorker, /auth\.js\?v=20261117-theme-1/);
   assert.match(source, /"mobile-legends-region-checker", "leaderboard"/);
   assert.doesNotMatch(markup, /checkout-dialog|Simulate Paid Order/);
