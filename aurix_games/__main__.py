@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
+import threading
+import time
 
 from .game_admin import build_env_admin_service, build_env_webhook_reconciler
 from .customer_api import build_env_customer_api
@@ -23,6 +26,33 @@ from .pricing_store import PricingPolicyStore
 from .public_catalog import PublicCatalogStore
 from .supplier_routes import PrivateSupplierRouteStore
 from .store_features import StoreFeatureStore
+
+
+def _supplier_discovery_refresh_loop() -> None:
+    from scripts.refresh_game_store_catalog import (
+        DISCOVERY_RECHECK_INTERVAL,
+        refresh_supplier_discovery_from_environment,
+    )
+
+    logger = logging.getLogger(__name__)
+    while True:
+        try:
+            result = refresh_supplier_discovery_from_environment()
+            if result.get("status") == "published":
+                logger.info("FazerCards supplier title index refreshed (%s titles)", result.get("count"))
+        except Exception as exc:
+            logger.warning("FazerCards supplier title index refresh failed (%s)", type(exc).__name__)
+        time.sleep(DISCOVERY_RECHECK_INTERVAL.total_seconds())
+
+
+def _start_supplier_discovery_refresh() -> None:
+    if not os.environ.get("FAZERCARDS_API_KEY", "").strip():
+        return
+    threading.Thread(
+        target=_supplier_discovery_refresh_loop,
+        name="supplier-title-index-refresh",
+        daemon=True,
+    ).start()
 
 
 def main() -> None:
@@ -92,6 +122,7 @@ def main() -> None:
         store_features=StoreFeatureStore(store_database),
         redirect_live_store=args.live_store,
     )
+    _start_supplier_discovery_refresh()
     print(f"AuriX Game Store preview: http://{args.host}:{server.server_port}/game-store/", flush=True)
     try:
         server.serve_forever()

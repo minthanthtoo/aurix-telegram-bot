@@ -17,6 +17,7 @@ from scripts.refresh_fazercards_public_catalog import refresh_shortlist
 
 
 DISCOVERY_REFRESH_INTERVAL = timedelta(hours=24)
+DISCOVERY_RECHECK_INTERVAL = timedelta(hours=6)
 
 
 def _write_supplier_discovery(path: Path, payload: dict[str, object]) -> None:
@@ -73,6 +74,34 @@ def _refresh_supplier_discovery(path: Path, *, api_key: str, now: datetime) -> d
     if published is None:
         raise ValueError("supplier discovery publication failed validation")
     return {"status": "published", "count": len(published["products"]), "updated_at": published["generated_at"]}
+
+
+def refresh_supplier_discovery_from_environment() -> dict[str, object]:
+    """Refresh only the names-only index, sharing the full catalog's lock."""
+
+    base = Path(os.environ.get("AURIX_GAMES_BASE_DIR", ".local/fazercards"))
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if base.is_symlink() or stat.S_IMODE(base.stat().st_mode) & 0o077:
+        raise ValueError("Catalog state directory must be private.")
+    key = os.environ.get("FAZERCARDS_API_KEY", "").strip()
+    if not key:
+        raise ValueError("Supplier key is unavailable.")
+    path = Path(os.environ.get(
+        "AURIX_GAMES_SUPPLIER_DISCOVERY", str(base / "supplier-discovery.json")
+    ))
+    lock = os.open(
+        base / "catalog-refresh.lock",
+        os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"status": "already_running"}
+        return _refresh_supplier_discovery(path, api_key=key, now=datetime.now(timezone.utc))
+    finally:
+        os.close(lock)
 
 
 def refresh_from_environment():
