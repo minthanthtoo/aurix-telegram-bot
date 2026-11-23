@@ -93,6 +93,34 @@ class FazerCardsCatalogRefreshTests(unittest.TestCase):
                 self.assertEqual(cached["status"], "current")
                 client.assert_called_once()
 
+    def test_environment_supplier_refresh_publishes_without_refreshing_prices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            discovery = root / "supplier-discovery.json"
+            now = datetime.now(timezone.utc)
+            expected = {"status": "published", "count": 7, "updated_at": now.isoformat()}
+            with patch.dict(os.environ, {
+                "AURIX_GAMES_BASE_DIR": str(root),
+                "AURIX_GAMES_SUPPLIER_DISCOVERY": str(discovery),
+                "FAZERCARDS_API_KEY": "fixture-secret",
+            }), patch.object(scheduled, "_refresh_supplier_discovery", return_value=expected) as refresh, patch.object(
+                scheduled, "refresh_shortlist"
+            ) as prices:
+                with (root / "catalog-refresh.lock").open("w") as lock_file:
+                    fcntl.flock(lock_file, fcntl.LOCK_EX)
+                    self.assertEqual(
+                        scheduled.refresh_supplier_discovery_from_environment(),
+                        {"status": "already_running"},
+                    )
+                    refresh.assert_not_called()
+
+                self.assertEqual(scheduled.refresh_supplier_discovery_from_environment(), expected)
+                refresh.assert_called_once_with(
+                    discovery, api_key="fixture-secret", now=refresh.call_args.kwargs["now"]
+                )
+                prices.assert_not_called()
+
     def test_failed_supplier_discovery_read_preserves_previous_index(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
