@@ -183,6 +183,7 @@ class PublicCatalogStore:
         catalog_policy_store: CatalogPolicyStore | None = None,
         pricing_policy_store: PricingPolicyStore | None = None,
         discovery_path: str | Path | None = None,
+        topup_preview: dict[str, Any] | None = None,
     ) -> None:
         if not isinstance(max_age, timedelta) or max_age < timedelta(0):
             raise ValueError("public catalog max_age must be non-negative")
@@ -199,6 +200,7 @@ class PublicCatalogStore:
             Path(discovery_path) if discovery_path else
             (self.path.with_name("supplier-discovery.json") if self.path else None)
         )
+        self.topup_preview = topup_preview if isinstance(topup_preview, dict) else None
 
     def controls_active(self) -> bool:
         if self.catalog_policy_store is None:
@@ -217,6 +219,7 @@ class PublicCatalogStore:
         """Return supplier-listed names and previously approved names, never offers."""
         current = now or self._now or datetime.now(UTC)
         supplier_catalog = load_supplier_discovery(self.discovery_path, now=current)
+        supplier_catalog = self._with_supplier_preview_metadata(supplier_catalog)
         products: dict[str, dict[str, Any]] = {
             item["slug"]: item for item in (supplier_catalog or {}).get("products", [])
         }
@@ -257,6 +260,13 @@ class PublicCatalogStore:
         if any("live-offers" in item.get("category_ids", []) for item in products.values()):
             categories.insert(0, {"id": "live-offers", "name": "Previously listed"})
         ordered = sorted(products.values(), key=lambda item: (item["name"].casefold(), item["slug"]))
+        for product in ordered:
+            preview = self._topup_preview_for_product(product)
+            if preview:
+                product["preview_package_count"] = sum(
+                    len(group.get("offers", [])) for group in preview["regions"]
+                )
+                product["preview_region_count"] = len(preview["regions"])
         if len(ordered) > _DISCOVERY_MAX_PRODUCTS:
             ordered = ordered[:_DISCOVERY_MAX_PRODUCTS]
         return {
@@ -292,7 +302,9 @@ class PublicCatalogStore:
         if not 1 <= limit <= MAX_PAGE_SIZE or not 0 <= offset <= MAX_OFFSET or len(query) > MAX_QUERY_LENGTH:
             raise ValueError('catalog query or page is out of range')
         now = self._now or datetime.now(UTC)
-        supplier_catalog = load_supplier_discovery(self.discovery_path, now=now)
+        supplier_catalog = self._with_supplier_preview_metadata(
+            load_supplier_discovery(self.discovery_path, now=now)
+        )
         try:
             _, offers = self._load_catalog(now=now)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, PublicCatalogError):
@@ -426,22 +438,62 @@ class PublicCatalogStore:
         }
 
     def _supplier_product_detail(self, slug: str, *, now: datetime) -> dict[str, Any] | None:
-        discovery = load_supplier_discovery(self.discovery_path, now=now)
+        discovery = self._with_supplier_preview_metadata(
+            load_supplier_discovery(self.discovery_path, now=now)
+        )
         if discovery is None:
             return None
         product = next((item for item in discovery["products"] if item["slug"] == slug), None)
         if product is None:
             return None
+        preview_groups = self._topup_preview_for_product(product)
+        if preview_groups:
+            preview_groups = preview_groups["regions"]
         return {
             "schema_version": 1, "status": "supplier_review", "checkout_enabled": False,
             "source": "supplier_category_index", "last_updated_at": discovery["generated_at"],
             "generated_at": discovery["generated_at"], "product": product, "regions": [],
             "offers": [], "purchase_enabled": False,
+            **({"supplier_preview": {"regions": preview_groups}}
+                if preview_groups else {}),
             "notice": (
                 "This supplier-listed game is still under product, region, pricing, and account-check review. "
-                "Quantity is unreported. No order or payment has started."
+                "Package names are from a read-only supplier snapshot. Quantity is unreported. "
+                "No order or payment has started."
             ),
         }
+
+    def _topup_preview_for_product(self, product: dict[str, Any]) -> dict[str, Any] | None:
+        if self.topup_preview is None or product.get("supplier_listed") is not True:
+            return None
+        target = product.get("name")
+        if not isinstance(target, str):
+            return None
+        for candidate in self.topup_preview.values():
+            if not isinstance(candidate, dict) or not isinstance(candidate.get("regions"), list):
+                continue
+            matching = [
+                group for group in candidate["regions"]
+                if isinstance(group, dict) and isinstance(group.get("name"), str)
+                and group["name"].strip().casefold() == target.strip().casefold()
+            ]
+            if matching:
+                return {"regions": matching}
+        return None
+
+    def _with_supplier_preview_metadata(
+        self, discovery: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if discovery is None:
+            return None
+        for product in discovery["products"]:
+            preview = self._topup_preview_for_product(product)
+            if preview:
+                product["preview_package_count"] = sum(
+                    len(group.get("offers", [])) for group in preview["regions"]
+                )
+                product["preview_region_count"] = len(preview["regions"])
+        return discovery
 
     def product_offers(
         self,

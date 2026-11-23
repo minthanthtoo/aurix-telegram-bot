@@ -4,12 +4,13 @@ from datetime import datetime
 import json
 from pathlib import Path
 import re
+import stat
 
 from .catalog import list_products
 from .catalog_matching import normalize_title
 
 
-def load_topup_preview(paths):
+def load_topup_preview(paths, *, require_private=False):
     references = {
         normalize_title(product["name"]): product
         for product in list_products() + list_products(offset=50)
@@ -22,7 +23,15 @@ def load_topup_preview(paths):
 
     categories = {}
     for path in paths:
-        snapshot = json.loads(Path(path).read_text(encoding="utf-8"))
+        source = Path(path)
+        if source.is_symlink() or not source.is_file():
+            raise ValueError("Top-up preview snapshot is unavailable.")
+        info = source.stat()
+        if info.st_size > 64_000_000 or (
+            require_private and stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise ValueError("Top-up preview snapshot is not safely stored.")
+        snapshot = json.loads(source.read_text(encoding="utf-8"))
         topups = snapshot["families"]["topups"]
         for category_id, detail in topups["details_by_id"].items():
             stamp = topups.get("details_observed_at_by_id", {}).get(category_id, snapshot["captured_at"])

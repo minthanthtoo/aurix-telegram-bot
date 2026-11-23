@@ -794,12 +794,15 @@ test("storefront loads all pages, filters categories, and fetches product status
   };`, context);
   let resolveLiveCatalog;
   context.fetch = async (requestUrl) => {
-    assert.equal(new URL(requestUrl, "http://aurix.test").pathname, "/api/v1/live-catalog");
+    const pathname = new URL(requestUrl, "http://aurix.test").pathname;
+    if (pathname === "/api/v1/catalog/discovery") return { ok: false, status: 503 };
+    assert.equal(pathname, "/api/v1/live-catalog");
     return new Promise((resolve) => { resolveLiveCatalog = resolve; });
   };
   const refresh = vm.runInContext("loadCatalog()", context);
   assert.equal(elements.get("#store-stage").textContent, "Updating listings");
   assert.equal(elements.get("#availability-copy").children[0].textContent, "Checking listings. ");
+  await settle();
   resolveLiveCatalog(makeResponse({
     schema_version: 1, status: "live", checkout_enabled: true,
     categories: [{ id: "live-offers", name: "Live Offers" }],
@@ -813,6 +816,39 @@ test("storefront loads all pages, filters categories, and fetches product status
   await vm.runInContext("loadCatalog()", context);
   assert.equal(elements.get("#store-stage").textContent, "Browse only");
   assert.equal(elements.get("#availability-copy").children[0].textContent, "Browse only. ");
+
+  const discoveredProducts = products.map((product) => ({
+    ...product, category_ids: ["supplier-review"], supplier_listed: true, status: "supplier_review",
+  }));
+  vm.runInContext(`catalogCache = {
+    savedAt: Date.now(), source: "live",
+    products: ${JSON.stringify(discoveredProducts.slice(0, 3))},
+    categories: [{ id: "supplier-review", name: "In review" }],
+  }; activeCategory = ""; savedOnly = false; catalogDiscoveryAttemptedAt = 0`, context);
+  elements.get("#search").value = "";
+  const discoveryCalls = [];
+  context.fetch = async (requestUrl) => {
+    const url = new URL(requestUrl, "http://aurix.test");
+    discoveryCalls.push(url.pathname);
+    if (url.pathname === "/api/v1/catalog/discovery") {
+      return makeResponse({ schema_version: 1, status: "cached", checkout_enabled: false,
+        categories: [{ id: "supplier-review", name: "In review" }],
+        products: discoveredProducts, total_count: discoveredProducts.length });
+    }
+    if (url.pathname === "/api/v1/live-catalog") {
+      return makeResponse({ schema_version: 1, status: "supplier_listed", checkout_enabled: false,
+        categories: [{ id: "supplier-review", name: "In review" }], products: discoveredProducts,
+        result_count: discoveredProducts.length, total_count: discoveredProducts.length, next_offset: null });
+    }
+    throw new Error(`unexpected request: ${url.pathname}`);
+  };
+  const staleCacheRefresh = vm.runInContext("loadCatalog()", context);
+  assert.equal(elements.get("#product-grid").children.length, 3, "the stale cache remains visible while discovery refreshes");
+  await staleCacheRefresh;
+  assert.ok(discoveryCalls.includes("/api/v1/catalog/discovery"), "discovery refreshes even with a saved cache");
+  assert.equal(vm.runInContext("catalogCache.products.length", context), discoveredProducts.length);
+  assert.equal(elements.get("#product-grid").children.length, discoveredProducts.length,
+    "a three-title cache is replaced by the full supplier discovery list");
 });
 
 test("storefront renders an approved live price and promotion disclosure", async () => {
@@ -869,7 +905,7 @@ test("storefront renders an approved live price and promotion disclosure", async
   const supplierReviewProduct = {
     slug: "stumble-guys", name: "Stumble Guys", category_ids: ["supplier-review"],
     category: "Supplier top-up", supplier_listed: true, status: "supplier_review",
-    live: false, purchase_enabled: false, offers: [],
+    live: false, purchase_enabled: false, preview_package_count: 2, offers: [],
   };
   const document = {
     querySelector: (selector) => elements.get(selector) || [...elements.values()]
@@ -940,7 +976,9 @@ test("storefront renders an approved live price and promotion disclosure", async
     if (url.pathname === "/api/v1/catalog/products/stumble-guys") {
       return makeResponse({ status: "supplier_review", checkout_enabled: false,
         product: supplierReviewProduct, offers: [], purchase_enabled: false,
-        notice: "This supplier-listed game is under review. Quantity is unreported. No order or payment has started." });
+        supplier_preview: { regions: [{ id: "group-1", name: "Stumble Guys", observed_at: "2026-11-15T00:00:00Z",
+          offers: [{ id: "preview-1", name: "250 Gems", stock_label: "Quantity unreported" }] }] },
+        notice: "This supplier-listed game is under review. No order or payment has started." });
     }
     throw new Error(`unexpected request: ${url.pathname}`);
   };
@@ -962,7 +1000,7 @@ test("storefront renders an approved live price and promotion disclosure", async
   assert.equal(vm.runInContext('mlbbRankingsFreshnessPresentation({status:"fresh",age_days:3,freshness_window_days:7}).status', context), "withheld");
   assert.equal(elements.get("#product-grid").children.length, 2);
   assert.equal(elements.get(".catalog").dataset.catalogMode, "live");
-  assert.equal(elements.get("#catalog-status").textContent, "1 supplier-listed title · 1 current listing");
+  assert.equal(elements.get("#catalog-status").textContent, "1 supplier-listed title · 1 orderable now");
   const card = elements.get("#product-grid").children[0];
   const livePrice = card.children.find((child) => child.className === "product-card__price-row");
   assert.ok(livePrice);
@@ -1141,16 +1179,19 @@ test("storefront renders an approved live price and promotion disclosure", async
   const supplierCard = elements.get("#product-grid").children[0];
   const supplierStatus = supplierCard.children.find((child) => child.className === "product-card__status-row")
     .children.find((child) => child.className === "product-card__status");
-  assert.match(supplierStatus.textContent, /Supplier-listed/);
+  assert.match(supplierStatus.textContent, /2 package options · snapshot/);
   assert.equal(supplierCard.children.find((child) => child.className === "product-card__price-row"), undefined,
     "supplier category rows never invent prices");
-  assert.match(supplierCard.children.find((child) => child.className === "product-card__details").textContent, /View listing/);
+  assert.match(supplierCard.children.find((child) => child.className === "product-card__details").textContent, /Browse packages/);
   const supplierCommandCount = commands.length;
   await supplierCard.children.find((child) => child.className === "product-card__details").listeners.click();
   await settle();
   assert.equal(elements.get("#dialog-title").textContent, "Stumble Guys");
   assert.match(elements.get("#detail-live-status").textContent, /quantity unreported.*not orderable/i);
   assert.equal(elements.get("#detail-offers").children.length, 0);
+  assert.match(elements.get("#detail-stock-heading").textContent, /Supplier snapshot/);
+  assert.match(elements.get("#detail-stock-copy").textContent, /not approved for sale/);
+  assert.equal(elements.get("#detail-stock-regions").children.length, 1);
   assert.equal(elements.get("#detail-buy").disabled, true);
   assert.equal(commands.length, supplierCommandCount, "opening a supplier-only title creates no order or payment");
 });
