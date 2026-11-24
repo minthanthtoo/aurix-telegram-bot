@@ -10,6 +10,7 @@ from unittest.mock import patch
 from aurix_games.public_catalog import PublicCatalogStore, build_supplier_discovery
 from aurix_games.pricing import PricingPolicy
 from aurix_games.pricing_store import PricingPolicyStore, catalog_config_revision
+from aurix_games.catalog_policy import CatalogPolicyStore
 from aurix_games.customer_checkout import PublicCatalogOfferResolver
 
 
@@ -27,6 +28,118 @@ def approve_catalog_fixture(path: Path, *, now: datetime | None = None) -> Prici
 
 
 class PublicCatalogTests(unittest.TestCase):
+    def test_supplier_discovery_deduplicates_unicode_equivalent_names(self):
+        now = datetime.now(timezone.utc)
+        artifact = build_supplier_discovery([
+            {"category_id": "accented-nfc", "name": "Caf\u00e9"},
+            {"category_id": "accented-nfd", "name": "Cafe\u0301"},
+        ], generated_at=now)
+        self.assertEqual(artifact["total_count"], 1)
+        self.assertEqual(artifact["products"][0]["name"], "Caf\u00e9")
+
+    def test_supplier_detail_suppresses_unicode_and_whitespace_duplicate_slugs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            now = datetime.now(timezone.utc)
+            artifact = build_supplier_discovery([
+                {"category_id": "cafe", "name": "Caf\u00e9"},
+            ], generated_at=now)
+            canonical_slug = artifact["products"][0]["slug"]
+            artifact["products"].append({
+                "slug": "cafe-alias", "name": "Cafe\u0301   ",
+                "category": "Supplier top-up", "category_ids": ["supplier-review"],
+                "supplier_listed": True,
+            })
+            artifact["total_count"] = 2
+            discovery_path = root / "supplier-discovery.json"
+            discovery_path.write_text(json.dumps(artifact), encoding="utf-8")
+            discovery_path.chmod(0o600)
+
+            store = PublicCatalogStore(root / "missing-public-catalog.json", now=now,
+                                       discovery_path=discovery_path)
+            self.assertIsNotNone(store.product_detail(canonical_slug))
+            self.assertIsNone(store.product_detail("cafe-alias"))
+
+    def test_discovery_uses_only_current_approved_and_policy_allowed_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            now = datetime.now(timezone.utc)
+            catalog_path = root / "public.json"
+            discovery_path = root / "supplier-discovery.json"
+            catalog_path.write_text(json.dumps({
+                "schema_version": 1,
+                "status": "approved_projection",
+                "generated_at": now.isoformat(),
+                "source_observed_at": now.isoformat(),
+                "valid_until": (now + timedelta(minutes=10)).isoformat(),
+                "offers": [{
+                    "offer_id": "mlbb-pack", "product_slug": "mlbb-current",
+                    "product_name": "Mobile Legends (Global)", "fulfillment_kind": "direct_topup",
+                    "denomination_label": "14 Diamonds", "retail_amount_minor": 1300,
+                    "currency": "MMK", "region": {"type": "global", "label": "Global"},
+                    "required_input_labels": ["Player ID", "Zone ID"],
+                }],
+            }), encoding="utf-8")
+            policy = approve_catalog_fixture(catalog_path, now=now)
+            discovery_path.write_text(json.dumps(build_supplier_discovery([
+                {"category_id": "mlbb", "name": "Mobile Legends (Global)"},
+            ], generated_at=now)), encoding="utf-8")
+            discovery_path.chmod(0o600)
+
+            store = PublicCatalogStore(catalog_path, now=now, discovery_path=discovery_path,
+                                       pricing_policy_store=policy)
+            self.assertEqual([item["slug"] for item in store.discovery()["products"]], ["mlbb-current"])
+
+            catalog_policy = CatalogPolicyStore(root / "catalog-policy.sqlite3")
+            catalog_policy.save({
+                "enabled_families": ["topups"],
+                "excluded_products": ["mlbb-current"],
+                "excluded_offers": [],
+            }, expected_revision=0)
+            policy_filtered = PublicCatalogStore(
+                catalog_path, now=now, discovery_path=discovery_path,
+                pricing_policy_store=policy, catalog_policy_store=catalog_policy,
+            )
+            self.assertEqual([item["slug"] for item in policy_filtered.discovery()["products"]],
+                             ["mobile-legends-global"])
+
+            config = json.loads(policy.path.read_text(encoding="utf-8"))
+            policy.path.write_text(json.dumps({
+                **config, "policy": {**config["policy"], "fx_rate": "5000"},
+            }), encoding="utf-8")
+            self.assertEqual([item["slug"] for item in store.discovery()["products"]],
+                             ["mobile-legends-global"])
+
+    def test_supplier_category_disappears_when_all_names_duplicate_live_offers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            now = datetime.now(timezone.utc)
+            catalog_path = root / "public.json"
+            discovery_path = root / "supplier-discovery.json"
+            catalog_path.write_text(json.dumps({
+                "schema_version": 1, "status": "approved_projection",
+                "generated_at": now.isoformat(), "source_observed_at": now.isoformat(),
+                "valid_until": (now + timedelta(minutes=10)).isoformat(),
+                "offers": [{
+                    "offer_id": "mlbb-pack", "product_slug": "mlbb-current",
+                    "product_name": "Mobile Legends", "fulfillment_kind": "direct_topup",
+                    "denomination_label": "14 Diamonds", "retail_amount_minor": 1300,
+                    "currency": "MMK", "region": {"type": "global", "label": "Global"},
+                    "required_input_labels": ["Player ID", "Zone ID"],
+                }],
+            }), encoding="utf-8")
+            policy = approve_catalog_fixture(catalog_path, now=now)
+            discovery_path.write_text(json.dumps(build_supplier_discovery([
+                {"category_id": "mlbb", "name": "Mobile Legends"},
+            ], generated_at=now)), encoding="utf-8")
+            discovery_path.chmod(0o600)
+            store = PublicCatalogStore(catalog_path, now=now, discovery_path=discovery_path,
+                                       pricing_policy_store=policy)
+
+            response = store.response()
+            self.assertNotIn("supplier-review", {item["id"] for item in response["categories"]})
+            self.assertEqual(store.response(category="supplier-review")["total_count"], 0)
+
     def test_supplier_titles_show_snapshot_package_names_without_enabling_checkout(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -111,14 +224,14 @@ class PublicCatalogTests(unittest.TestCase):
                 "valid_until": (now + timedelta(minutes=10)).isoformat(),
                 "offers": [{
                     "offer_id": "mlbb-pack", "product_slug": "mobile-legends",
-                    "product_name": "Mobile Legends", "fulfillment_kind": "direct_topup",
+                    "product_name": "Mobile Legends (Global)", "fulfillment_kind": "direct_topup",
                     "denomination_label": "14 Diamonds", "retail_amount_minor": 1300,
                     "currency": "MMK", "region": {"type": "global", "label": "Global"},
                     "required_input_labels": ["Player ID", "Zone ID"],
                 }],
             }), encoding="utf-8")
             discovery_path.write_text(json.dumps(build_supplier_discovery([
-                {"category_id": "mlbb", "name": "Mobile Legends"},
+                {"category_id": "mlbb-global", "name": "Mobile Legends (Global)"},
                 {"category_id": "free-fire", "name": "Free Fire"},
             ], generated_at=now)), encoding="utf-8")
             discovery_path.chmod(0o600)
@@ -132,8 +245,13 @@ class PublicCatalogTests(unittest.TestCase):
             self.assertTrue(by_slug["mobile-legends"]["live"])
             self.assertEqual(by_slug["free-fire"]["status"], "supplier_review")
             self.assertEqual(by_slug["free-fire"]["offers"], [])
+            self.assertEqual(len({row["name"].casefold() for row in payload["products"]}), 2)
             self.assertEqual(store.response(category="supplier-review")["total_count"], 1)
             self.assertEqual(store.response(category="live-offers")["total_count"], 1)
+            discovery = store.discovery()
+            self.assertEqual(discovery["total_count"], 2)
+            self.assertNotIn("mobile-legends-global", {row["slug"] for row in discovery["products"]})
+            self.assertIsNone(store.product_detail("mobile-legends-global"))
             self.assertNotIn("private-b", json.dumps(payload))
 
     def test_status_uses_metadata_and_offers_from_the_same_read(self):

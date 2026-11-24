@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import stat
 from typing import Any
+import unicodedata
 
 from .commerce_settings import env_commerce_settings
 
@@ -50,6 +51,29 @@ def _purchase_enabled(offers: list[dict[str, Any]], settings: dict[str, Any]) ->
     )
 
 
+def _product_name_key(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = " ".join(unicodedata.normalize("NFC", value).split()).casefold()
+    return unicodedata.normalize("NFC", normalized)
+
+
+def _supplier_products_without_duplicates(
+    products: list[dict[str, Any]], *, approved_name_keys: set[str] | None = None
+) -> list[dict[str, Any]]:
+    """Keep one browse-only supplier title and suppress its approved live twin."""
+
+    seen = set(approved_name_keys or ())
+    result = []
+    for product in products:
+        key = _product_name_key(product.get("name"))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(product)
+    return result
+
+
 def build_supplier_discovery(
     categories: list[dict[str, Any]], *, generated_at: datetime | None = None
 ) -> dict[str, Any]:
@@ -76,7 +100,7 @@ def build_supplier_discovery(
                 or any(ord(char) < 32 or ord(char) == 127 for char in name)):
             raise ValueError("supplier category identifier or name is invalid")
         seen_ids.add(category_id)
-        names.setdefault(name.casefold(), name)
+        names.setdefault(_product_name_key(name), unicodedata.normalize("NFC", name))
     if not names:
         raise ValueError("supplier category list contains no displayable games")
 
@@ -215,48 +239,44 @@ class PublicCatalogStore:
             self.discovery_path, now=now or self._now or datetime.now(UTC)
         ) is not None
 
+    def supplier_slug_exists(self, slug: str, *, now: datetime | None = None) -> bool:
+        """Identify supplier slugs even when de-duplication suppresses their detail."""
+        if not isinstance(slug, str) or not _DISCOVERY_SLUG.fullmatch(slug):
+            return False
+        discovery = load_supplier_discovery(
+            self.discovery_path, now=now or self._now or datetime.now(UTC)
+        )
+        return discovery is not None and any(item["slug"] == slug for item in discovery["products"])
+
     def discovery(self, *, now: datetime | None = None) -> dict[str, Any] | None:
         """Return supplier-listed names and previously approved names, never offers."""
         current = now or self._now or datetime.now(UTC)
         supplier_catalog = load_supplier_discovery(self.discovery_path, now=current)
         supplier_catalog = self._with_supplier_preview_metadata(supplier_catalog)
-        products: dict[str, dict[str, Any]] = {
-            item["slug"]: item for item in (supplier_catalog or {}).get("products", [])
-        }
-        categories: list[dict[str, str]] = []
-        if products:
-            categories.append({"id": "supplier-review", "name": "In review"})
-
-        if self.path is not None and not self.path.is_symlink() and self.path.is_file():
-            try:
-                payload = json.loads(self.path.read_text(encoding="utf-8"))
-                if isinstance(payload, dict) and type(payload.get("schema_version")) is int and payload["schema_version"] == 1:
-                    generated = _aware_timestamp(payload.get("generated_at"), "generated_at")
-                    current_utc = current.astimezone(UTC)
-                    offers = payload.get("offers")
-                    if (generated <= current_utc + timedelta(minutes=5)
-                            and current_utc - generated <= _DISCOVERY_MAX_AGE
-                            and isinstance(offers, list) and len(offers) <= 5000):
-                        approved: dict[str, str] = {}
-                        for offer in offers:
-                            if not isinstance(offer, dict):
-                                continue
-                            slug, name = offer.get("product_slug"), offer.get("product_name")
-                            if (not isinstance(slug, str) or not _DISCOVERY_SLUG.fullmatch(slug)
-                                    or not isinstance(name, str) or not name.strip() or len(name) > 120
-                                    or any(ord(char) < 32 or ord(char) == 127 for char in name)):
-                                continue
-                            approved[slug] = name.strip()
-                        for slug, name in approved.items():
-                            products[slug] = {
-                                "slug": slug, "name": name, "category": "Game top-up",
-                                "category_ids": ["live-offers"],
-                            }
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError, PublicCatalogError, TypeError, ValueError):
-                pass
+        supplier_products = list((supplier_catalog or {}).get("products", []))
+        try:
+            _, approved_offers = self._load_catalog(now=current)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, PublicCatalogError, TypeError, ValueError):
+            approved_offers = None
+        approved: dict[str, str] = {}
+        for offer in approved_offers or []:
+            approved[offer["product_slug"]] = offer["product_name"]
+        approved_name_keys = {_product_name_key(name) for name in approved.values()}
+        supplier_products = _supplier_products_without_duplicates(
+            supplier_products, approved_name_keys=approved_name_keys
+        )
+        products: dict[str, dict[str, Any]] = {item["slug"]: item for item in supplier_products}
+        for slug, name in approved.items():
+            products[slug] = {
+                "slug": slug, "name": name, "category": "Game top-up",
+                "category_ids": ["live-offers"],
+            }
 
         if not products:
             return None
+        categories: list[dict[str, str]] = []
+        if supplier_products:
+            categories.append({"id": "supplier-review", "name": "In review"})
         if any("live-offers" in item.get("category_ids", []) for item in products.values()):
             categories.insert(0, {"id": "live-offers", "name": "Previously listed"})
         ordered = sorted(products.values(), key=lambda item: (item["name"].casefold(), item["slug"]))
@@ -280,7 +300,7 @@ class PublicCatalogStore:
     ) -> dict[str, Any] | None:
         if discovery is None:
             return None
-        products = discovery["products"]
+        products = _supplier_products_without_duplicates(discovery["products"])
         if category not in (None, "supplier-review"):
             products = []
         if query.strip():
@@ -289,11 +309,13 @@ class PublicCatalogStore:
         total = len(products)
         page = products[offset:offset + limit]
         next_offset = offset + len(page)
+        categories = ([{"id": "supplier-review", "name": "In review"}]
+                      if products else [])
         return {
             "schema_version": 1, "status": "supplier_listed", "checkout_enabled": False,
             "source": "supplier_category_index", "last_updated_at": discovery["generated_at"],
             "generated_at": discovery["generated_at"], "catalog_controls_active": self.controls_active(),
-            "categories": [{"id": "supplier-review", "name": "In review"}], "products": page,
+            "categories": categories, "products": page,
             "result_count": len(page), "total_count": total,
             "next_offset": next_offset if next_offset < total else None,
         }
@@ -316,8 +338,6 @@ class PublicCatalogStore:
         controlled = self.controls_active()
         categories = _categories()[-1:] if controlled else _categories()
         review_products = list((supplier_catalog or {}).get("products", []))
-        if review_products:
-            categories = [*categories, {"id": "supplier-review", "name": "In review"}]
         if category is not None and category not in {item["id"] for item in CATEGORIES} and category not in {"live-offers", "supplier-review"}:
             return {"schema_version": 1, "status": "live", "checkout_enabled": False, "catalog_controls_active": controlled, "categories": categories, "products": [], "result_count": 0, "total_count": 0, "next_offset": None}
         grouped: dict[str, dict[str, Any]] = {}
@@ -355,7 +375,13 @@ class PublicCatalogStore:
         if not approved_products:
             categories = [item for item in categories if item["id"] != "live-offers"]
         approved_slugs = set(grouped)
-        review_products = [product for product in review_products if product["slug"] not in approved_slugs]
+        approved_name_keys = {_product_name_key(product.get("name")) for product in approved_products}
+        review_products = _supplier_products_without_duplicates(
+            [product for product in review_products if product["slug"] not in approved_slugs],
+            approved_name_keys=approved_name_keys,
+        )
+        if review_products:
+            categories = [*categories, {"id": "supplier-review", "name": "In review"}]
         products = approved_products + review_products
         if normalized_query:
             products = [
@@ -421,7 +447,10 @@ class PublicCatalogStore:
             return self._supplier_product_detail(slug.strip(), now=current)
         matching = [offer for offer in offers if offer["product_slug"] == slug.strip()]
         if not matching:
-            return self._supplier_product_detail(slug.strip(), now=current)
+            approved_names = {_product_name_key(offer.get("product_name")) for offer in offers}
+            return self._supplier_product_detail(
+                slug.strip(), now=current, excluded_name_keys=approved_names
+            )
         settings = _commerce_state()
         purchase_enabled = _purchase_enabled(matching, settings)
         product = _live_product(matching, purchase_enabled=purchase_enabled)
@@ -437,14 +466,21 @@ class PublicCatalogStore:
             else "Browsing only. Checkout is unavailable; do not transfer until an order shows payment instructions.",
         }
 
-    def _supplier_product_detail(self, slug: str, *, now: datetime) -> dict[str, Any] | None:
+    def _supplier_product_detail(
+        self, slug: str, *, now: datetime, excluded_name_keys: set[str] | None = None
+    ) -> dict[str, Any] | None:
         discovery = self._with_supplier_preview_metadata(
             load_supplier_discovery(self.discovery_path, now=now)
         )
         if discovery is None:
             return None
-        product = next((item for item in discovery["products"] if item["slug"] == slug), None)
+        products = _supplier_products_without_duplicates(
+            discovery["products"], approved_name_keys=excluded_name_keys
+        )
+        product = next((item for item in products if item["slug"] == slug), None)
         if product is None:
+            return None
+        if _product_name_key(product.get("name")) in (excluded_name_keys or set()):
             return None
         preview_groups = self._topup_preview_for_product(product)
         if preview_groups:
@@ -475,7 +511,7 @@ class PublicCatalogStore:
             matching = [
                 group for group in candidate["regions"]
                 if isinstance(group, dict) and isinstance(group.get("name"), str)
-                and group["name"].strip().casefold() == target.strip().casefold()
+                and _product_name_key(group["name"]) == _product_name_key(target)
             ]
             if matching:
                 return {"regions": matching}

@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 from unittest.mock import Mock, patch
 
 from aurix_games.game_admin import GameAdminAuthError, GameStoreAdminService
+from aurix_games.catalog import product_detail as preview_product_detail
 from aurix_games.fazercards_account import WalletFundingIntentStore
 from aurix_games.customer_api import CustomerOrderService
 from aurix_games.customer_api import SignedCustomerTokenVerifier, issue_test_token
@@ -172,6 +173,51 @@ class GameStoreWebAPITests(unittest.TestCase):
                     self.assertEqual(detail["status"], "supplier_review")
                     self.assertFalse(detail["purchase_enabled"])
                     self.assertEqual(detail["offers"], [])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=2)
+
+    def test_suppressed_supplier_duplicate_cannot_fall_back_to_static_detail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            discovery = build_supplier_discovery([
+                {"category_id": "first", "name": "Mobile Legends"},
+            ])
+            # Model a valid older discovery artifact containing two aliases for
+            # the same display title. The second slug is hidden by de-duplication,
+            # but also exists in the static reference catalog.
+            discovery["products"][0]["slug"] = "mobile-legends-alias"
+            discovery["products"].append({
+                "slug": "mobile-legends", "name": "Mobile Legends",
+                "category": "Supplier top-up", "category_ids": ["supplier-review"],
+                "supplier_listed": True,
+            })
+            discovery["total_count"] = 2
+            discovery_path = state / "supplier-discovery.json"
+            discovery_path.write_text(json.dumps(discovery), encoding="utf-8")
+            discovery_path.chmod(0o600)
+            catalog_path = state / "not-yet-approved.json"
+
+            self.assertIsNotNone(preview_product_detail("mobile-legends"))
+            with patch.dict(os.environ, {"AURIX_GAMES_BASE_DIR": str(state)}):
+                server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(
+                    public_catalog_path=catalog_path,
+                ))
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    origin = f"http://127.0.0.1:{server.server_port}"
+                    for path in (
+                        "/api/v1/catalog/products/mobile-legends",
+                        "/api/v1/catalog/mobile-legends",
+                    ):
+                        with self.subTest(path=path), self.assertRaises(HTTPError) as error:
+                            urlopen(origin + path)
+                        self.assertEqual(error.exception.code, 404)
+                        error.exception.close()
                 finally:
                     server.shutdown()
                     server.server_close()
