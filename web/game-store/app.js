@@ -2639,11 +2639,11 @@ function productCard(product, catalogIndex) {
     ? "Live status unverified"
     : product.supplier_listed === true
     ? Number.isSafeInteger(product.preview_package_count) && product.preview_package_count > 0
-      ? `${product.preview_package_count} package options · snapshot`
-      : "Supplier-listed · review pending"
+      ? `${product.preview_package_count} package previews · not orderable`
+      : "Browse only · not for sale"
     : product.live
     ? `${Array.isArray(product.offers) ? product.offers.length : 0} packages listed`
-    : product.preview_package_count ? `${product.preview_package_count} packages · preview` : "In review";
+    : product.preview_package_count ? `${product.preview_package_count} packages · preview` : "Not orderable";
 
   const statusRow = document.createElement("span");
   statusRow.className = "product-card__status-row";
@@ -2822,7 +2822,7 @@ function renderCatalogProducts(products, categories, { liveMode = false, totalCo
     name: canShowGlobalCounts ? `Ready to order (${orderableCount})` : (currentListingsCategory?.name || "Current Listings"),
     disabled: !liveMode || cached || !currentListingsCategory },
     ...visibleCategories.filter((item) => item.id !== "live-offers").map((item) => item.id === "supplier-review" && canShowGlobalCounts
-      ? { ...item, name: `In review (${supplierReviewCount})` } : item)];
+      ? { ...item, name: `Browse only (${supplierReviewCount})` } : item)];
   categoryList.hidden = false;
   const categoryIds = JSON.stringify(orderedCategories.map(({ id, name, disabled }) => [id, name, Boolean(disabled)]));
   if (categoryList.dataset.catalogIds !== categoryIds) {
@@ -3098,12 +3098,12 @@ async function showProduct(product) {
         : 0;
       copy.hidden = false;
       copy.textContent = hasPreview
-        ? `FazerCards lists ${packageCount} package option${packageCount === 1 ? "" : "s"}. AuriX is reviewing region support, required account fields, MMK price, and delivery. You can inspect this dated supplier snapshot, but ordering remains closed.`
-        : "FazerCards lists this game, but package options have not been confirmed. AuriX is reviewing region support, required account fields, MMK price, and delivery; ordering remains closed.";
+        ? `Supplier snapshot includes ${packageCount} package name${packageCount === 1 ? "" : "s"}; it is not a live stock check and quantities are unreported. These packs are not for sale until regions, player fields, MMK pricing, and delivery are approved.`
+        : "FazerCards lists this game category, but sellable packages are not confirmed. Regions, player fields, MMK pricing, and delivery still need approval. No order or payment has started.";
       setDetailLiveStatus("");
       detailHeroMeta.textContent = hasPreview
-        ? `${packageCount} supplier package option${packageCount === 1 ? "" : "s"} · snapshot only`
-        : "Supplier listing · review pending";
+        ? `${packageCount} package names · preview only`
+        : "Browse only · not for sale";
       detailSelection.textContent = "Packages not approved for sale yet";
       detailBuy.disabled = true;
       detailBuy.textContent = "Not for sale yet";
@@ -3111,10 +3111,10 @@ async function showProduct(product) {
       detailClear.hidden = true;
       detailRetry.hidden = true;
       dialog.dataset.offerState = "supplier-review";
-      detailStockHeading.textContent = hasPreview ? `${packageCount} supplier package options` : "Supplier review pending";
+      detailStockHeading.textContent = hasPreview ? `${packageCount} package names in snapshot` : "No verified package list";
       detailStockCopy.textContent = hasPreview
-        ? "Supplier snapshot only—not current stock. Exact quantities are not reported. Region, account fields, MMK price and delivery still need approval."
-        : "No package snapshot is available yet. Region, account fields, MMK price and delivery still need approval.";
+        ? "Dated supplier snapshot—not live stock. Quantities are unreported. Region, player fields, MMK pricing, and delivery need approval."
+        : "Supplier category listing only. Package names, region, player fields, MMK pricing, and delivery need verification.";
       if (hasPreview) {
         renderSnapshotStock(regions, true);
         setDetailView("stock", false, false);
@@ -3289,11 +3289,19 @@ function renderLiveStock() {
 function renderSnapshotStock(regions, supplierPreview) {
   clearStockRegions();
   const packageCount = regions.reduce((count, region) => count + (Array.isArray(region.offers) ? region.offers.length : 0), 0);
+  if (supplierPreview) {
+    const observedAt = regions.find((region) => typeof region.observed_at === "string")?.observed_at;
+    const observed = observedAt ? formatStockObservation(observedAt) : "time unavailable";
+    referenceNote.hidden = false;
+    referenceNote.textContent = observed === "time unavailable"
+      ? "Supplier snapshot · not a live stock check"
+      : `Supplier snapshot observed ${observed} MMT · not a live stock check`;
+  }
   detailStockHeading.textContent = supplierPreview
-    ? packageCount ? `${packageCount} supplier package options` : "Supplier package snapshot"
+    ? packageCount ? `${packageCount} package names in preview` : "Supplier package snapshot"
     : "Reference only · not live stock";
   detailStockCopy.textContent = supplierPreview
-    ? "Supplier snapshot only—not current stock. Exact quantities are not reported. Region, account fields, MMK price and delivery still need approval."
+    ? "Dated supplier snapshot—not live stock. Quantities are unreported. Region, player fields, MMK pricing, and delivery need approval."
     : "Historical package examples only. They do not show current stock or offers for sale.";
   for (const region of regions) {
     const offers = Array.isArray(region.offers) ? region.offers : [];
@@ -3315,7 +3323,11 @@ function renderSnapshotStock(regions, supplierPreview) {
     item.append(rows);
   }
   if (!regions.length) appendStockEmpty("No stock snapshot is available.");
-  setDetailHeroSummary(supplierPreview ? "Supplier snapshot" : "Reference listings", packageCount, regions.length);
+  if (supplierPreview) {
+    detailHeroMeta.textContent = `${packageCount} package names · preview only`;
+  } else {
+    setDetailHeroSummary("Reference listings", packageCount, regions.length);
+  }
 }
 
 function renderLiveProduct(product) {
@@ -3784,7 +3796,7 @@ function renderReferenceSnapshot(snapshot, supplierPreview = false) {
   dialog.dataset.referenceSnapshot = "true";
   referenceNote.hidden = false;
   referenceNote.textContent = supplierPreview
-    ? "Packages listed by the supplier. Pricing and eligibility are pending."
+    ? "Supplier package names · snapshot only · live stock unverified."
     : `Example packages · captured ${snapshot.observed_on}. Historical prices; purchases unavailable.`;
   referenceDescription.hidden = typeof snapshot.description !== "string" || !snapshot.description.trim();
   referenceDescription.textContent = referenceDescription.hidden ? "" : snapshot.description;
@@ -3798,7 +3810,7 @@ function renderReferenceSnapshot(snapshot, supplierPreview = false) {
   }));
   activeSupplierPreview = supplierPreview;
   activeReferenceRegion = snapshot.regions[0].id;
-  setDetailHeroSummary(supplierPreview ? "Supplier review pending" : "Reference listings",
+  setDetailHeroSummary(supplierPreview ? "Browse-only snapshot" : "Reference listings",
     snapshot.regions.reduce((count, region) => count + (Array.isArray(region.offers) ? region.offers.length : 0), 0), snapshot.regions.length);
   renderReferenceRegions();
   renderReferenceRegion(activeReferenceRegions[0]);
@@ -3807,7 +3819,10 @@ function renderReferenceSnapshot(snapshot, supplierPreview = false) {
 
 function renderReferenceRegion(region) {
   if (region.observed_at) {
-    referenceNote.textContent = `Supplier listing checked ${new Date(region.observed_at).toLocaleString()} · purchases unavailable`;
+    const observed = formatStockObservation(region.observed_at);
+    referenceNote.textContent = observed === "time unavailable"
+      ? "Supplier snapshot · not a live stock check"
+      : `Supplier snapshot observed ${observed} MMT · not a live stock check`;
   }
   referenceDescription.hidden = typeof region.description !== "string" || !region.description.trim();
   referenceDescription.textContent = referenceDescription.hidden ? "" : region.description;

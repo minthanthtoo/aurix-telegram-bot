@@ -225,7 +225,7 @@ class PublicCatalogStore:
         }
         categories: list[dict[str, str]] = []
         if products:
-            categories.append({"id": "supplier-review", "name": "In review"})
+            categories.append({"id": "supplier-review", "name": "Browse only"})
 
         if self.path is not None and not self.path.is_symlink() and self.path.is_file():
             try:
@@ -293,7 +293,7 @@ class PublicCatalogStore:
             "schema_version": 1, "status": "supplier_listed", "checkout_enabled": False,
             "source": "supplier_category_index", "last_updated_at": discovery["generated_at"],
             "generated_at": discovery["generated_at"], "catalog_controls_active": self.controls_active(),
-            "categories": [{"id": "supplier-review", "name": "In review"}], "products": page,
+            "categories": [{"id": "supplier-review", "name": "Browse only"}], "products": page,
             "result_count": len(page), "total_count": total,
             "next_offset": next_offset if next_offset < total else None,
         }
@@ -317,7 +317,7 @@ class PublicCatalogStore:
         categories = _categories()[-1:] if controlled else _categories()
         review_products = list((supplier_catalog or {}).get("products", []))
         if review_products:
-            categories = [*categories, {"id": "supplier-review", "name": "In review"}]
+            categories = [*categories, {"id": "supplier-review", "name": "Browse only"}]
         if category is not None and category not in {item["id"] for item in CATEGORIES} and category not in {"live-offers", "supplier-review"}:
             return {"schema_version": 1, "status": "live", "checkout_enabled": False, "catalog_controls_active": controlled, "categories": categories, "products": [], "result_count": 0, "total_count": 0, "next_offset": None}
         grouped: dict[str, dict[str, Any]] = {}
@@ -457,9 +457,9 @@ class PublicCatalogStore:
             **({"supplier_preview": {"regions": preview_groups}}
                 if preview_groups else {}),
             "notice": (
-                "This supplier-listed game is still under product, region, pricing, and account-check review. "
-                "Package names are from a read-only supplier snapshot. Quantity is unreported. "
-                "No order or payment has started."
+                "FazerCards category listing only. Package names are from a read-only supplier snapshot. "
+                "Quantity is unreported. This title is browse-only until region, account inputs, pricing, "
+                "and delivery are verified. No order or payment has started."
             ),
         }
 

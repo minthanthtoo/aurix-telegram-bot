@@ -96,6 +96,8 @@ class PublicCatalogTests(unittest.TestCase):
             self.assertEqual(detail["status"], "supplier_review")
             self.assertEqual(detail["offers"], [])
             self.assertIn("Quantity is unreported", detail["notice"])
+            self.assertIn("browse-only", detail["notice"])
+            self.assertNotIn("under review", detail["notice"].lower())
 
     def test_supplier_titles_join_current_listings_without_expanding_purchase_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -127,6 +129,7 @@ class PublicCatalogTests(unittest.TestCase):
             payload = store.response()
             by_slug = {product["slug"]: product for product in payload["products"]}
             self.assertEqual(payload["total_count"], 2)
+            self.assertIn({"id": "supplier-review", "name": "Browse only"}, payload["categories"])
             self.assertEqual(set(by_slug), {"mobile-legends", "free-fire"})
             self.assertEqual(len(by_slug["mobile-legends"]["offers"]), 1)
             self.assertTrue(by_slug["mobile-legends"]["live"])

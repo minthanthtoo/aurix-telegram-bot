@@ -455,7 +455,11 @@ def product_detail(slug: str, *, topup_preview: dict[str, Any] | None = None) ->
         "product": product,
         "regions": [],
         "offers": [],
-        "notice": "Supplier authorization and regional availability are under review.",
+        "notice": (
+            "FazerCards lists this title for browsing only. Package names come from a read-only "
+            "supplier snapshot; stock quantities are unreported. It is not approved for sale until "
+            "region, account inputs, pricing, and delivery are verified. No order or payment has started."
+        ),
     }
     if topup_preview and slug in topup_preview:
         response["supplier_preview"] = {"regions": topup_preview[slug]["regions"]}

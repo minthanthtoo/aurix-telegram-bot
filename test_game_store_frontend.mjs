@@ -823,7 +823,7 @@ test("storefront loads all pages, filters categories, and fetches product status
   vm.runInContext(`catalogCache = {
     savedAt: Date.now(), source: "live",
     products: ${JSON.stringify(discoveredProducts.slice(0, 3))},
-    categories: [{ id: "supplier-review", name: "In review" }],
+    categories: [{ id: "supplier-review", name: "Browse only" }],
   }; activeCategory = ""; savedOnly = false; catalogDiscoveryAttemptedAt = 0`, context);
   elements.get("#search").value = "";
   const discoveryCalls = [];
@@ -832,12 +832,12 @@ test("storefront loads all pages, filters categories, and fetches product status
     discoveryCalls.push(url.pathname);
     if (url.pathname === "/api/v1/catalog/discovery") {
       return makeResponse({ schema_version: 1, status: "cached", checkout_enabled: false,
-        categories: [{ id: "supplier-review", name: "In review" }],
+        categories: [{ id: "supplier-review", name: "Browse only" }],
         products: discoveredProducts, total_count: discoveredProducts.length });
     }
     if (url.pathname === "/api/v1/live-catalog") {
       return makeResponse({ schema_version: 1, status: "supplier_listed", checkout_enabled: false,
-        categories: [{ id: "supplier-review", name: "In review" }], products: discoveredProducts,
+        categories: [{ id: "supplier-review", name: "Browse only" }], products: discoveredProducts,
         result_count: discoveredProducts.length, total_count: discoveredProducts.length, next_offset: null });
     }
     throw new Error(`unexpected request: ${url.pathname}`);
@@ -964,7 +964,7 @@ test("storefront renders an approved live price and promotion disclosure", async
           : [liveProduct, supplierReviewProduct];
       return makeResponse({
         schema_version: 1, status: "live", checkout_enabled: false,
-        categories: [{ id: "live-offers", name: "Live Offers" }, { id: "supplier-review", name: "In review" }],
+        categories: [{ id: "live-offers", name: "Live Offers" }, { id: "supplier-review", name: "Browse only" }],
         products: listedProducts, result_count: listedProducts.length, total_count: listedProducts.length, next_offset: null,
       });
     }
@@ -1173,16 +1173,16 @@ test("storefront renders an approved live price and promotion disclosure", async
   assert.equal(calls.filter((url) => new URL(url, "http://aurix.test").pathname === "/api/v1/catalog/products/mobile-legends").length, productRequestCount + 2);
 
   const supplierCategory = elements.get("#category-list").children.find((button) => button.dataset.category === "supplier-review");
-  assert.ok(supplierCategory, "supplier-listed titles have a separate review filter");
+  assert.ok(supplierCategory, "supplier-listed titles have a separate browse-only filter");
   supplierCategory.listeners.click();
   await settle();
-  assert.ok(elements.get("#category-list").children.some((button) => button.dataset.category === "supplier-review"),
-    "the selected supplier review filter remains visible after rendering");
+  assert.equal(elements.get("#category-list").children.find((button) => button.dataset.category === "supplier-review").textContent,
+    "Browse only", "the selected browse-only filter keeps customer-facing wording after rendering");
   assert.equal(elements.get("#product-grid").children.length, 1);
   const supplierCard = elements.get("#product-grid").children[0];
   const supplierStatus = supplierCard.children.find((child) => child.className === "product-card__status-row")
     .children.find((child) => child.className === "product-card__status");
-  assert.match(supplierStatus.textContent, /2 package options · snapshot/);
+  assert.equal(supplierStatus.textContent, "2 package previews · not orderable");
   assert.equal(supplierCard.children.find((child) => child.className === "product-card__price-row"), undefined,
     "supplier category rows never invent prices");
   assert.match(supplierCard.children.find((child) => child.className === "product-card__details").textContent, /Browse packages/);
@@ -1190,13 +1190,16 @@ test("storefront renders an approved live price and promotion disclosure", async
   await supplierCard.children.find((child) => child.className === "product-card__details").listeners.click();
   await settle();
   assert.equal(elements.get("#dialog-title").textContent, "Stumble Guys");
-  assert.match(elements.get("#dialog-copy").textContent, /FazerCards lists 2 package options/i);
-  assert.match(elements.get("#dialog-copy").textContent, /region.*account.*price.*delivery/i);
+  assert.match(elements.get("#dialog-copy").textContent, /supplier snapshot includes 2 package names/i);
+  assert.match(elements.get("#dialog-copy").textContent, /not a live stock check/i);
+  assert.equal(elements.get("#detail-hero-meta").textContent, "2 package names · preview only");
+  assert.match(elements.get("#dialog-copy").textContent, /not for sale.*regions.*player fields.*pricing.*delivery/i);
   assert.equal(elements.get("#detail-tab-stock").attributes["aria-selected"], "true",
     "supplier snapshots open in the visible Availability panel");
   assert.equal(elements.get("#detail-offers").children.length, 0);
-  assert.equal(elements.get("#detail-stock-heading").textContent, "2 supplier package options");
-  assert.match(elements.get("#detail-stock-copy").textContent, /not current stock.*quantities are not reported/i);
+  assert.equal(elements.get("#detail-stock-heading").textContent, "2 package names in preview");
+  assert.match(elements.get("#detail-stock-copy").textContent, /not live stock.*quantities are unreported/i);
+  assert.match(elements.get("#detail-reference-note").textContent, /Supplier snapshot observed .* MMT · not a live stock check/);
   assert.equal(elements.get("#detail-stock-regions").children.length, 1);
   const snapshotRows = elements.get("#detail-stock-regions").children[0].children
     .find((child) => child.className === "detail-stock-region__offers").children;
@@ -1307,16 +1310,16 @@ test("screenshot-derived reference surfaces remain wired to the preview shell", 
   assert.match(markup, /class="dialog-state" hidden/);
   assert.match(markup, /auth\.js\?v=20261117-theme-1/);
   assert.ok(markup.indexOf("styles.css?v=20261117-compact-detail-1") < markup.indexOf("storefront-refinements.css?v=20261115-preview-card-layout-1"));
-  assert.match(serviceWorker, /aurix-game-store-shell-v183/);
+  assert.match(serviceWorker, /aurix-game-store-shell-v184/);
   assert.match(serviceWorker, /styles\.css\?v=20261117-compact-detail-1/);
   assert.match(serviceWorker, /storefront-refinements\.css\?v=20261115-preview-card-layout-1/);
   assert.match(serviceWorker, /theme\.css\?v=20261117-leaderboard-sheet-7/);
   assert.match(serviceWorker, /premium-theme\.css\?v=20261118-detail-views-1/);
   assert.match(theme, /data-surface="leaderboard"\] \.auxiliary-empty \{[\s\S]*grid-template-columns: 40px minmax\(0, 1fr\);[\s\S]*text-align: left/);
   assert.match(theme, /\.auxiliary-dialog \.store-leaderboard-join:active \{[\s\S]*transform: translateY\(1px\) scale\(\.99\)/);
-  assert.match(markup, /app\.js\?v=20261124-supplier-preview-1/);
-  assert.match(serviceWorker, /aurix-game-store-shell-v183/);
-  assert.match(serviceWorker, /app\.js\?v=20261124-supplier-preview-1/);
+  assert.match(markup, /app\.js\?v=20261125-supplier-status-clarity-1/);
+  assert.match(serviceWorker, /aurix-game-store-shell-v184/);
+  assert.match(serviceWorker, /app\.js\?v=20261125-supplier-status-clarity-1/);
   assert.match(serviceWorker, /auth\.js\?v=20261117-theme-1/);
   assert.match(source, /"mobile-legends-region-checker", "leaderboard"/);
   assert.doesNotMatch(markup, /checkout-dialog|Simulate Paid Order/);
