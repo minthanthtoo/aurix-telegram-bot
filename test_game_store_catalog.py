@@ -39,6 +39,8 @@ class GameStoreCatalogTests(unittest.TestCase):
             self.assertNotIn("regions", listing["products"][0])
             detail = product_detail("pubg-mobile", topup_preview=preview)
             self.assertEqual(detail["offers"], [])
+            self.assertIn("read-only supplier snapshot", detail["notice"].lower())
+            self.assertNotIn("under review", detail["notice"].lower())
             self.assertEqual(detail["supplier_preview"]["regions"][0]["offers"], [
                 {"id": "preview-1", "name": "New pack", "stock_label": "Quantity unreported"},
             ])

@@ -162,7 +162,7 @@ class GameStoreWebAPITests(unittest.TestCase):
                     self.assertFalse(products["checkout_enabled"])
                     with urlopen(origin + "/api/v1/catalog/categories") as response:
                         categories = json.load(response)
-                    self.assertIn({"id": "supplier-review", "name": "In review"}, categories["categories"])
+                    self.assertIn({"id": "supplier-review", "name": "Browse only"}, categories["categories"])
                     with urlopen(origin + "/api/v1/live-catalog?limit=50&offset=0") as response:
                         live_catalog = json.load(response)
                     self.assertEqual(live_catalog["status"], "supplier_listed")
