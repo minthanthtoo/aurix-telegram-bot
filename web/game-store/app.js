@@ -3091,18 +3091,33 @@ async function showProduct(product) {
     }
     title.textContent = detail.product.name;
     if (detail.status === "supplier_review") {
+      const regions = detail.supplier_preview?.regions;
+      const hasPreview = Array.isArray(regions) && regions.length > 0;
+      const packageCount = hasPreview
+        ? regions.reduce((count, region) => count + (Array.isArray(region.offers) ? region.offers.length : 0), 0)
+        : 0;
       copy.hidden = false;
-      copy.textContent = detail.notice || "FazerCards lists this title, but package and region review is pending. No order or payment has started.";
-      setDetailLiveStatus("Supplier-listed · quantity unreported · not orderable yet");
-      detailHeroMeta.textContent = "Supplier listing · review pending";
+      copy.textContent = hasPreview
+        ? `FazerCards lists ${packageCount} package option${packageCount === 1 ? "" : "s"}. AuriX is reviewing region support, required account fields, MMK price, and delivery. You can inspect this dated supplier snapshot, but ordering remains closed.`
+        : "FazerCards lists this game, but package options have not been confirmed. AuriX is reviewing region support, required account fields, MMK price, and delivery; ordering remains closed.";
+      setDetailLiveStatus("");
+      detailHeroMeta.textContent = hasPreview
+        ? `${packageCount} supplier package option${packageCount === 1 ? "" : "s"} · snapshot only`
+        : "Supplier listing · review pending";
       detailSelection.textContent = "Packages not approved for sale yet";
+      detailBuy.disabled = true;
+      detailBuy.textContent = "Not for sale yet";
+      detailBuy.setAttribute("aria-disabled", "true");
       detailClear.hidden = true;
       detailRetry.hidden = true;
       dialog.dataset.offerState = "supplier-review";
-      detailStockHeading.textContent = "Supplier listing under review";
-      detailStockCopy.textContent = "Supplier package names are for browsing only. Unit quantities are not reported, and this title is not orderable yet.";
-      if (Array.isArray(detail.supplier_preview?.regions) && detail.supplier_preview.regions.length) {
-        renderSnapshotStock(detail.supplier_preview.regions, true);
+      detailStockHeading.textContent = hasPreview ? `${packageCount} supplier package options` : "Supplier review pending";
+      detailStockCopy.textContent = hasPreview
+        ? "Supplier snapshot only—not current stock. Exact quantities are not reported. Region, account fields, MMK price and delivery still need approval."
+        : "No package snapshot is available yet. Region, account fields, MMK price and delivery still need approval.";
+      if (hasPreview) {
+        renderSnapshotStock(regions, true);
+        setDetailView("stock", false, false);
       } else {
         clearStockRegions();
         appendStockEmpty("Packages, supported regions, pricing, and account requirements still need verification. No order or payment has started.");
@@ -3274,9 +3289,11 @@ function renderLiveStock() {
 function renderSnapshotStock(regions, supplierPreview) {
   clearStockRegions();
   const packageCount = regions.reduce((count, region) => count + (Array.isArray(region.offers) ? region.offers.length : 0), 0);
-  detailStockHeading.textContent = supplierPreview ? "Supplier snapshot · not live stock" : "Reference only · not live stock";
+  detailStockHeading.textContent = supplierPreview
+    ? packageCount ? `${packageCount} supplier package options` : "Supplier package snapshot"
+    : "Reference only · not live stock";
   detailStockCopy.textContent = supplierPreview
-    ? "Saved supplier listings are for review only. They are not approved for sale, and exact quantities are not included."
+    ? "Supplier snapshot only—not current stock. Exact quantities are not reported. Region, account fields, MMK price and delivery still need approval."
     : "Historical package examples only. They do not show current stock or offers for sale.";
   for (const region of regions) {
     const offers = Array.isArray(region.offers) ? region.offers : [];
@@ -3298,7 +3315,7 @@ function renderSnapshotStock(regions, supplierPreview) {
     item.append(rows);
   }
   if (!regions.length) appendStockEmpty("No stock snapshot is available.");
-  setDetailHeroSummary(supplierPreview ? "Supplier review pending" : "Reference listings", packageCount, regions.length);
+  setDetailHeroSummary(supplierPreview ? "Supplier snapshot" : "Reference listings", packageCount, regions.length);
 }
 
 function renderLiveProduct(product) {
