@@ -38,7 +38,13 @@ from .customer_api import (
 )
 from .customer_ledger import InsufficientFundsError, LedgerConflictError, LedgerInputError, LedgerOperationError
 from .customer_checkout import CheckoutInputError, CustomerCheckoutService
-from .checkout_journey import CheckoutJourney, GameAccountLookup, read_receiver_qr
+from .checkout_journey import (
+    CheckoutJourney,
+    GameAccountLookup,
+    PaymentReviewSetupUnavailable,
+    SupplierPreflightUnavailable,
+    read_receiver_qr,
+)
 from .game_admin import GameAdminAuthError, GameAdminInputError, GameStoreAdminService
 from .order_reconciliation import (
     SupplierWebhookReconciler,
@@ -129,6 +135,11 @@ def make_handler(
     # Every private route must use the same revocation boundary as sign-in.
     if customer_identity_service is not None:
         customer_auth = customer_identity_service.verifier
+    external_payment_review_ready = bool(
+        payment_review is not None
+        and payment_review.reviewers
+        and payment_review.evidence_cipher is not None
+    )
     staff_owner = os.environ.get("AURIX_GAMES_SUPER_ADMIN_CUSTOMER_ID", "").strip()
     qr_directory = receiver_qr_dir
     if qr_directory is None:
@@ -291,10 +302,13 @@ def make_handler(
                 self._payment_evidence(parsed, upload=False)
                 return
             if parsed.path == "/api/v1/checkout/config":
-                rails = sorted(checkout_journey.payment_receivers) if checkout_journey and not commerce_paused("payments_enabled") else []
+                rails = sorted(checkout_journey.payment_receivers) if (
+                    checkout_journey and external_payment_review_ready and not commerce_paused("payments_enabled")
+                ) else []
                 self._json(200, {"account_check_enabled": mlbb_lookup is not None and not commerce_paused("account_checks_enabled"),
                     "recipient_review_enabled": checkout_journey is not None and not commerce_paused("account_checks_enabled") and not commerce_paused("checkout_enabled"),
-                    "payments_enabled": bool(rails), "payment_rails": rails})
+                    "payments_enabled": bool(rails), "payment_rails": rails,
+                    "receipt_review_ready": external_payment_review_ready})
                 return
             if parsed.path == "/api/v1/games/mlbb/zones":
                 self._json(200, {"zones": mlbb_lookup.zones if mlbb_lookup else []})
@@ -400,7 +414,13 @@ def make_handler(
                         "customer_orders": customer_order_service is not None and customer_checkout_service is not None,
                         "recipient_lookup": mlbb_lookup is not None,
                         "payment_receivers": bool(checkout_journey and checkout_journey.payment_receivers),
+                        "supplier_payment_preflight": bool(
+                            checkout_journey and getattr(checkout_journey, "payment_preflight", None)
+                        ),
                         "payment_review": bool(payment_review and getattr(payment_review, "reviewers", {})),
+                        "encrypted_receipt_storage": bool(
+                            payment_review and getattr(payment_review, "evidence_cipher", None)
+                        ),
                         "wallet_ledger": customer_wallet_service is not None,
                         "wallet_checkout": bool(checkout_journey and checkout_journey.wallet_payment_service),
                         "supplier_reconciliation": order_reconciler is not None or poll_status_is_fresh(
@@ -630,7 +650,10 @@ def make_handler(
                     )
                     self._json(
                         200,
-                        customer_order_service.get_order(principal, customer_order_match.group(1), payment_review=payment_review),
+                        customer_order_service.get_order(
+                            principal, customer_order_match.group(1), payment_review=payment_review,
+                            show_transfer_instructions=external_payment_review_ready,
+                        ),
                     )
                 except CustomerAuthError as exc:
                     self._json(401, {"error": str(exc)})
@@ -654,7 +677,10 @@ def make_handler(
                     principal = customer_auth.verify(
                         self.headers.get("Authorization"), cookie_header=self.headers.get("Cookie")
                     )
-                    order = customer_order_service.get_order(principal, customer_qr_match.group(1))
+                    order = customer_order_service.get_order(
+                        principal, customer_qr_match.group(1),
+                        show_transfer_instructions=external_payment_review_ready,
+                    )
                     payment = order.get("payment")
                     if (order.get("state") != "awaiting_payment" or not isinstance(payment, dict)
                             or payment.get("expired") or not isinstance(payment.get("qr_asset"), str)
@@ -1254,6 +1280,8 @@ def make_handler(
                         self._json(409, {"error": "wallet balance is below the order total"})
                 except (LedgerConflictError, PaymentBoundaryError):
                     self._json(409, {"error": "wallet payment conflicts with the current order state"})
+                except SupplierPreflightUnavailable as exc:
+                    self._json(503, {"error": str(exc)})
                 except CheckoutInputError as exc:
                     self._json(400, {"error": str(exc)})
                 except (LedgerOperationError, OSError):
@@ -1270,11 +1298,22 @@ def make_handler(
                     return
                 try:
                     principal = customer_auth.verify(self.headers.get("Authorization"), cookie_header=self.headers.get("Cookie"))
+                    action_name = parsed.path.rsplit("/", 1)[-1]
                     action = {"review": checkout_journey.review, "confirm": checkout_journey.confirm,
-                              "payment": checkout_journey.payment}[parsed.path.rsplit("/", 1)[-1]]
-                    self._json(200, action(principal, self._read_json_body(), now=datetime.now(UTC)))
+                              "payment": checkout_journey.payment}[action_name]
+                    payload = self._read_json_body()
+                    if action_name == "payment":
+                        result = action(principal, payload, now=datetime.now(UTC),
+                            receipt_review_ready=external_payment_review_ready)
+                    else:
+                        result = action(principal, payload, now=datetime.now(UTC))
+                    self._json(200, result)
                 except CustomerAuthError:
                     self._json(401, {"error": "customer sign-in required"})
+                except PaymentReviewSetupUnavailable as exc:
+                    self._json(503, {"error": str(exc)})
+                except SupplierPreflightUnavailable as exc:
+                    self._json(503, {"error": str(exc)})
                 except CheckoutInputError as exc:
                     self._json(400, {"error": str(exc)})
                 except SupplierCommandError as exc:

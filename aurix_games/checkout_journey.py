@@ -24,6 +24,25 @@ from .supplier_routes import SupplierRouteError, fazercards_order_payload
 from .commerce_settings import commerce_paused, env_commerce_settings
 
 
+class SupplierPreflightUnavailable(CheckoutInputError):
+    """The supplier gate could not be checked, so payment must remain unopened."""
+
+    def __init__(self):
+        super().__init__(
+            "Supplier availability could not be confirmed. No payment was started; please try again later."
+        )
+
+
+class PaymentReviewSetupUnavailable(CheckoutInputError):
+    """External payment must stay unopened until receipts can be reviewed."""
+
+    def __init__(self):
+        super().__init__(
+            "Payment instructions are unavailable because receipt review is not ready. "
+            "Do not send or repeat a transfer; if you already paid, keep your receipt and contact support."
+        )
+
+
 class GameAccountLookup:
     """Verify a game recipient before package selection using approved routes."""
 
@@ -369,7 +388,8 @@ class CheckoutJourney:
             now=now, validation={"valid": True, "checked_at": record["checked_at"], "binding": binding})
         return result.as_dict()
 
-    def open_payment(self, principal, quote_id, *, rail, receiver_id, receiver_revision, now, instructions=None):
+    def open_payment(self, principal, quote_id, *, rail, receiver_id, receiver_revision, now, instructions=None,
+                     receipt_review_ready=False):
         """Open payment with a receiver selected from trusted server configuration."""
         _validate_principal(principal, now=now)
         if any(commerce_paused(flag) for flag in (
@@ -380,6 +400,8 @@ class CheckoutJourney:
         for value in (rail, receiver_id, receiver_revision):
             if not isinstance(value, str) or not value or value != value.strip() or len(value) > 128 or any(ord(c) < 32 for c in value):
                 raise CheckoutInputError("approved payment receiver is invalid")
+        if receipt_review_ready is not True:
+            raise PaymentReviewSetupUnavailable()
         _record, order, _offer, _fields, _route = self._validated_payment_order(principal, quote_id, now=now)
         try:
             intent = self.checkout.repository.freeze_payment_intent(order_id=order.order_id,
@@ -419,13 +441,14 @@ class CheckoutJourney:
             private = self.checkout.recipient_vault.get(order_id=order.order_id, customer_id=principal.customer_id)
             if private != record["fulfillment_payload"]:
                 raise CheckoutInputError("confirmed fulfillment details are unavailable")
-            if self.payment_preflight is not None:
-                try:
-                    supplier_payload = fazercards_order_payload(route=route,
-                        fulfillment_kind=offer.fulfillment_kind, fields=fields)
-                    self.payment_preflight.check_payment(supplier_payload, now=now)
-                except Exception:
-                    raise CheckoutInputError("supplier availability cannot be confirmed; payment instructions remain unavailable") from None
+            if self.payment_preflight is None:
+                raise SupplierPreflightUnavailable()
+            try:
+                supplier_payload = fazercards_order_payload(route=route,
+                    fulfillment_kind=offer.fulfillment_kind, fields=fields)
+                self.payment_preflight.check_payment(supplier_payload, now=now)
+            except Exception:
+                raise SupplierPreflightUnavailable() from None
             return record, order, offer, fields, route
         except (RecipientVaultError, OrderRepositoryError) as exc:
             raise CheckoutInputError("payment cannot be opened for this order") from exc
@@ -511,7 +534,7 @@ class CheckoutJourney:
             "replayed": replayed,
         }
 
-    def payment(self, principal, payload, *, now):
+    def payment(self, principal, payload, *, now, receipt_review_ready=False):
         _validate_principal(principal, now=now)
         if not isinstance(payload, dict) or set(payload) not in ({"quote_id", "rail"}, {"order_id", "rail"}):
             raise CheckoutInputError("payment request is invalid")
@@ -528,6 +551,8 @@ class CheckoutJourney:
         order = self.checkout.repository.get_by_customer_key(principal.customer_id, quote_id)
         if order is not None and order.state.value != "awaiting_payment":
             raise CheckoutInputError("this order no longer accepts payment")
+        if receipt_review_ready is not True:
+            raise PaymentReviewSetupUnavailable()
         existing = self.checkout.repository.get_payment_intent(order.order_id) if order else None
         if existing is not None:
             if existing["rail"] != rail:
@@ -549,7 +574,7 @@ class CheckoutJourney:
             instructions["qr_sha256"] = hashlib.sha256(image[1]).hexdigest()
         intent = self.open_payment(principal, quote_id, rail=rail,
             receiver_id=receiver["id"], receiver_revision=receiver["revision"], now=now,
-            instructions=instructions)
+            instructions=instructions, receipt_review_ready=receipt_review_ready)
         return {"payment": {"order_id": intent["order_id"], "rail": rail, "amount_minor": intent["amount_minor"],
             "currency": intent["currency"], "expires_at": intent["expires_at"], "expired": False, "order_state": "awaiting_payment",
             **instructions}}

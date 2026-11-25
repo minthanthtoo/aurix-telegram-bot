@@ -96,8 +96,9 @@ class CustomerApiTests(unittest.TestCase):
                 with urlopen(detail) as response:
                     payload = json.loads(response.read())
                 self.assertEqual(payload["order_id"], "order-1")
-                self.assertEqual(payload["payment"]["account"], "091234")
-                self.assertEqual(payload["payment"]["account_name"], "AuriX Shop")
+                self.assertTrue(payload["payment"]["instructions_unavailable"])
+                self.assertNotIn("account", payload["payment"])
+                self.assertNotIn("account_name", payload["payment"])
                 self.assertEqual(payload["payment"]["rail"], "kpay")
                 self.assertNotIn("merchant-1", json.dumps(payload))
                 foreign = Request(base + "/api/v1/orders/order-2", headers={"Authorization": f"Bearer {token}"})

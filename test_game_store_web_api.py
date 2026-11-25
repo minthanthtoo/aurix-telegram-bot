@@ -1007,8 +1007,19 @@ class CustomerPaymentQrAPITests(unittest.TestCase):
             journey = CheckoutJourney(None, None, receiver_qr_dir=qr_dir)
             self.assertIsNone(journey.read_receiver_qr("../outside.png"))
             self.assertIsNone(journey.read_receiver_qr("bad.png"))
+            from cryptography.fernet import Fernet
+            from aurix_games.customer_ledger import CustomerLedger
+            from aurix_games.payment_review import PaymentReviewService
+            from aurix_games.payment_service import CustomerPaymentService
+
+            review = PaymentReviewService(
+                CustomerPaymentService(repository, CustomerLedger(root / "ledger.sqlite3")),
+                {"staff:reviewer": hashlib.sha256(b"review-token").hexdigest()},
+                evidence_key=Fernet.generate_key(),
+            )
             server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(
-                customer_order_service=service, customer_auth=verifier, receiver_qr_dir=qr_dir))
+                customer_order_service=service, customer_auth=verifier, receiver_qr_dir=qr_dir,
+                payment_review=review))
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             base = f"http://127.0.0.1:{server.server_port}"

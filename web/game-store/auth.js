@@ -194,6 +194,29 @@
     return body;
   }
 
+  async function requestAuthJson(url) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await requestJson(url, { timeoutMs: 5_000 });
+      } catch (error) {
+        const statusCode = Number.isInteger(error?.status) ? error.status : 0;
+        const retryable = !statusCode || [408, 500, 502, 503, 504].includes(statusCode);
+        if (attempt > 0 || !retryable) throw error;
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+      }
+    }
+    throw new Error("Account service is temporarily unavailable.");
+  }
+
+  async function loadAuthConfig() {
+    const value = await requestAuthJson(configUrl);
+    if (!value || typeof value.providers !== "object" || value.providers === null || Array.isArray(value.providers)) {
+      throw new Error("Authentication configuration is invalid.");
+    }
+    config = value;
+    return value;
+  }
+
   async function postJson(url, payload, timeoutMs = 12_000) {
     return requestJson(url, {
       method: "POST",
@@ -263,9 +286,14 @@
 
   async function loadAccount() {
     const revision = ++sessionRevision;
-    const session = await requestJson("/api/v1/auth/session");
+    const session = await requestAuthJson("/api/v1/auth/session");
+    if (!session || typeof session.authenticated !== "boolean"
+        || (session.authenticated && typeof session.user?.customer_id !== "string")
+        || (!session.authenticated && session.user != null)) {
+      throw new Error("Customer session response is invalid.");
+    }
     if (revision !== sessionRevision) return account;
-    const next = session.authenticated && typeof session.user?.customer_id === "string" ? session.user : null;
+    const next = session.authenticated ? session.user : null;
     if (next?.customer_id !== account?.customer_id || !next) {
       linkingCustomer = null;
       clearPrivateViews();
@@ -528,21 +556,29 @@
       accountRetry.hidden = true;
       accountRetry.disabled = true;
     }
+    status.textContent = "Checking account connection…";
     try {
-      if (!config) config = await requestJson(configUrl);
+      if (!config) await loadAuthConfig();
       await loadAccount();
-      await renderProviders();
     } catch {
-      sessionRevision += 1;
-      account = null;
-      linkingCustomer = null;
-      clearPrivateViews();
-      walletNote.textContent = "Account unavailable. Open Account to retry.";
-      status.textContent = "Account service is temporarily unavailable.";
+      status.textContent = accountServiceUnavailableMessage();
       if (accountRetry) accountRetry.hidden = false;
+      return;
     } finally {
       if (accountRetry) accountRetry.disabled = false;
     }
+    try {
+      await renderProviders();
+    } catch {
+      status.textContent = "Sign-in options could not be refreshed. Retry the connection.";
+      if (accountRetry) accountRetry.hidden = false;
+    }
+  }
+
+  function accountServiceUnavailableMessage() {
+    return account
+      ? "Your account could not be refreshed. Your current account view is kept; retry to refresh."
+      : "Account service is temporarily unavailable. Check your connection and retry.";
   }
 
   function profileNode(tag, className, text) {
@@ -701,7 +737,7 @@
   async function openProfile() {
     window.AurixStore?.setTab("profile");
     try {
-      if (!config) config = await requestJson(configUrl);
+      if (!config) await loadAuthConfig();
       await loadAccount();
     } catch {
       await openAccount();
@@ -925,6 +961,10 @@
           const submitted = document.createElement("p");
           submitted.textContent = "Receipt saved. Do not transfer again.";
           panel.append(submitted);
+        } else if (order.state === "awaiting_payment" && payment.instructions_unavailable) {
+          const unavailable = document.createElement("p");
+          unavailable.textContent = "Payment instructions are temporarily unavailable. If you already transferred, keep your receipt and do not pay again.";
+          panel.append(unavailable);
         } else if (order.state === "awaiting_payment") {
           const instructions = document.createElement("div");
           instructions.className = "customer-payment-instructions";
@@ -1279,9 +1319,8 @@
   }
 
   paintWallet();
-  requestJson(configUrl)
-    .then(async (value) => {
-      config = value;
+  loadAuthConfig()
+    .then(async () => {
       await loadAccount();
       if (accountRetry) accountRetry.hidden = true;
       if (signInDestination) {
@@ -1292,7 +1331,7 @@
       status.textContent = account ? "Your private account is ready." : "Choose a sign-in method to continue.";
     })
     .catch(() => {
-      status.textContent = "Account service is temporarily unavailable.";
+      status.textContent = accountServiceUnavailableMessage();
       if (accountRetry) accountRetry.hidden = false;
     });
 })();

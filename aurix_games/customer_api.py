@@ -564,7 +564,8 @@ class CustomerOrderService:
             results.append(result)
         return results
 
-    def get_order(self, principal: CustomerPrincipal, order_id: str, *, payment_review=None) -> dict[str, Any]:
+    def get_order(self, principal: CustomerPrincipal, order_id: str, *, payment_review=None,
+                  show_transfer_instructions: bool = True) -> dict[str, Any]:
         try:
             order = self.repository.get(order_id, customer_id=principal.customer_id)
         except OrderNotFoundError:
@@ -595,7 +596,10 @@ class CustomerOrderService:
                 "expired": datetime.now(UTC) >= datetime.fromisoformat(intent["expires_at"]),
             }
             if order.state == OrderState.AWAITING_PAYMENT:
-                payment.update(json.loads(intent["instructions_json"]))
+                if show_transfer_instructions:
+                    payment.update(json.loads(intent["instructions_json"]))
+                else:
+                    payment["instructions_unavailable"] = True
             result["payment"] = payment
         elif self.ledger is not None:
             wallet_event = self.ledger.event_by_key(f"wallet:{order_id}")

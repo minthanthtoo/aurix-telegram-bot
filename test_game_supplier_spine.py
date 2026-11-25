@@ -38,7 +38,7 @@ class SupplierSpineTests(unittest.TestCase):
         self.order_id = self.journey.confirm(self.principal,
             {"quote_id": quote["quote_id"], "confirmed": True}, now=NOW)["order"]["order_id"]
         intent = self.journey.open_payment(self.principal, quote["quote_id"], rail="kpay",
-            receiver_id="receiver-1", receiver_revision="v1", now=NOW)
+            receiver_id="receiver-1", receiver_revision="v1", now=NOW, receipt_review_ready=True)
         return quote, intent
 
     def _service(self):
@@ -93,7 +93,8 @@ class SupplierSpineTests(unittest.TestCase):
                     fixture.journey.payment_receivers = {"kpay": {"id": "receiver-1", "revision": "v1",
                         "account": "test-account", "account_name": "Test merchant"}}
                     instructions = fixture.journey.payment(fixture.principal,
-                        {"order_id": order["order_id"], "rail": "kpay"}, now=NOW)["payment"]
+                        {"order_id": order["order_id"], "rail": "kpay"}, now=NOW,
+                        receipt_review_ready=True)["payment"]
                     self.assertEqual(instructions["amount_minor"], 5000)
                     payments = CustomerPaymentService(fixture.checkout.repository,
                         CustomerLedger(Path(fixture.temp.name) / "ledger.db"))
@@ -191,16 +192,17 @@ class SupplierSpineTests(unittest.TestCase):
             self.offers["offer-1"] = offer
             with self.assertRaises(CheckoutInputError):
                 self.journey.open_payment(self.principal, quote["quote_id"], rail="kpay",
-                    receiver_id="receiver-1", receiver_revision="v1", now=NOW)
+                    receiver_id="receiver-1", receiver_revision="v1", now=NOW, receipt_review_ready=True)
         self.offers["offer-1"] = self.offer
         with self.assertRaises(CheckoutInputError):
             self.journey.open_payment(self.principal, quote["quote_id"], rail="kpay",
-                receiver_id="receiver-2", receiver_revision="v2", now=NOW)
+                receiver_id="receiver-2", receiver_revision="v2", now=NOW, receipt_review_ready=True)
         saved = self.checkout.repository.get_payment_intent(self.order_id)
         self.assertEqual(saved["receiver_id"], "receiver-1")
         with self.assertRaises(CheckoutInputError):
             self.journey.open_payment(self.principal, quote["quote_id"], rail="kpay",
-                receiver_id="receiver-1", receiver_revision="v1", now=NOW + timedelta(seconds=111))
+                receiver_id="receiver-1", receiver_revision="v1", now=NOW + timedelta(seconds=111),
+                receipt_review_ready=True)
 
     def test_concurrent_settlement_allocates_and_reserves_once(self):
         self._payment()
@@ -226,11 +228,13 @@ class SupplierSpineTests(unittest.TestCase):
         self.journey.payment_receivers = {"kpay": {"id": "receiver-1", "revision": "v1",
             "account": "091234", "account_name": "Approved shop"}}
         payload = {"quote_id": quote["quote_id"], "rail": "kpay"}
-        first = self.journey.payment(self.principal, payload, now=NOW)["payment"]
+        first = self.journey.payment(self.principal, payload, now=NOW, receipt_review_ready=True)["payment"]
         self.journey.payment_receivers["kpay"]["account"] = "099999"
-        replay = self.journey.payment(self.principal, payload, now=NOW + timedelta(minutes=2))["payment"]
+        replay = self.journey.payment(self.principal, payload, now=NOW + timedelta(minutes=2),
+            receipt_review_ready=True)["payment"]
         self.assertEqual(first, replay)
-        expired = self.journey.payment(self.principal, payload, now=NOW + timedelta(minutes=11))["payment"]
+        expired = self.journey.payment(self.principal, payload, now=NOW + timedelta(minutes=11),
+            receipt_review_ready=True)["payment"]
         self.assertTrue(expired["expired"])
         self.assertEqual(expired["account"], "091234")
         self.journey.payment_receivers = {}
