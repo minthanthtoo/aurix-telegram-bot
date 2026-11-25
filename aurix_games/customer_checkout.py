@@ -40,7 +40,7 @@ from .supplier_routes import (
     PrivateSupplierRoute,
     PrivateSupplierRouteStore,
     SupplierRouteError,
-    fazercards_order_payload,
+    supplier_order_payload,
 )
 
 
@@ -182,6 +182,10 @@ def build_env_customer_checkout(
         "FAZERCARDS_PUBLIC_CATALOG_CONFIG",
         str(base / "public-catalog-config.json"),
     )
+    shop2topup_mapping_path = os.environ.get(
+        "SHOP2TOPUP_MAPPING_CONFIG",
+        str(base / "shop2topup-mapping-config.json"),
+    )
     vault_path = os.environ.get(
         "AURIX_GAMES_RECIPIENT_VAULT_DATABASE",
         str(base / "game-recipient-vault.sqlite3"),
@@ -207,7 +211,9 @@ def build_env_customer_checkout(
         offer_resolver=resolver,
         recipient_vault=RecipientVault(vault_path, encryption_key=vault_key),
         fingerprint_secret=fingerprint_secret,
-        supplier_route_store=PrivateSupplierRouteStore(mapping_config_path),
+        supplier_route_store=PrivateSupplierRouteStore(
+            mapping_config_path, additional_paths=(shop2topup_mapping_path,)
+        ),
     )
 
 
@@ -465,7 +471,7 @@ class CustomerCheckoutService:
         if route_value != route.as_vault_dict():
             raise CheckoutInputError("private supplier route changed after order preparation")
         try:
-            return fazercards_order_payload(
+            return supplier_order_payload(
                 route=route,
                 fulfillment_kind=order.snapshot.fulfillment_kind,
                 fields=private_payload.get("fields", {}),

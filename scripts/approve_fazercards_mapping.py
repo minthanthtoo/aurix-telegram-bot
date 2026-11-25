@@ -2,11 +2,10 @@
 """Approve one exact supplier SKU mapping in the private review queue.
 
 This command is an explicit operator action, not an automatic rights or region
-inference.  It reads and atomically updates a private local mapping file only;
-it never contacts FazerCards, publishes a customer catalog, or enables a
-supplier order.  The caller must provide the exact provider key, AuriX
-identity, account-side region rule, rights evidence, reviewer, timestamp, and
-``--confirm-approval``.
+inference. It reads and atomically updates a private local mapping file only;
+it never contacts a supplier or publishes a customer catalog. The caller must
+provide the exact provider key, AuriX identity, account-side region rule,
+rights evidence, reviewer, timestamp, and ``--confirm-approval``.
 """
 
 from __future__ import annotations
@@ -96,9 +95,16 @@ def approve_mapping(payload: dict[str, Any], args: argparse.Namespace) -> dict[s
     family = _text(args.family, "family", max_length=32)
     category = _text(args.category, "provider-category-id")
     sku = _text(args.sku, "provider-offer-id")
+    supplier_provider = getattr(args, "supplier_provider", "fazercards")
+    if supplier_provider not in {"fazercards", "shop2topup"}:
+        raise MappingApprovalError("supplier-provider is unsupported")
     key = (family, category, sku)
     rows = payload["mappings"]
-    matches = [row for row in rows if tuple(row.get(field) for field in ("family", "provider_category_id", "provider_offer_id")) == key]
+    matches = [
+        row for row in rows
+        if row.get("supplier_provider", "fazercards") == supplier_provider
+        and tuple(row.get(field) for field in ("family", "provider_category_id", "provider_offer_id")) == key
+    ]
     if len(matches) != 1:
         raise MappingApprovalError("exact provider key must match one mapping row")
     row = matches[0]
@@ -136,6 +142,8 @@ def approve_mapping(payload: dict[str, Any], args: argparse.Namespace) -> dict[s
         "reviewer": reviewer,
         "approved_at": approved_at,
     })
+    if supplier_provider == "shop2topup":
+        row["supplier_provider"] = supplier_provider
     result = dict(payload)
     result["mappings"] = rows
     history = payload.get("approval_history", [])
@@ -143,6 +151,7 @@ def approve_mapping(payload: dict[str, Any], args: argparse.Namespace) -> dict[s
         raise MappingApprovalError("approval_history must be an array of objects")
     event_basis = json.dumps(
         {
+            "supplier_provider": supplier_provider,
             "provider_key": key,
             "offer_id": offer_id,
             "reviewer": reviewer,
@@ -154,6 +163,7 @@ def approve_mapping(payload: dict[str, Any], args: argparse.Namespace) -> dict[s
     event_id = hashlib.sha256(event_basis).hexdigest()[:24]
     event = {
         "event_id": event_id,
+        "supplier_provider": supplier_provider,
         "provider_key": list(key),
         "offer_id": offer_id,
         "product_slug": product_slug,
@@ -169,6 +179,7 @@ def approve_mapping(payload: dict[str, Any], args: argparse.Namespace) -> dict[s
     result["queue_status"] = "operator_reviewed"
     result["last_reviewed_at"] = approved_at
     result["last_reviewed_provider_key"] = list(key)
+    result["last_reviewed_supplier_provider"] = supplier_provider
     result["mapping_rows"] = len(rows)
     return result
 
@@ -198,6 +209,7 @@ def _write_private(path: Path, payload: dict[str, Any]) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--supplier-provider", choices=("fazercards", "shop2topup"), default="fazercards")
     parser.add_argument(
         "--family", required=True,
         choices=("topups", "giftcards", "gamekeys", "manual_services"),
@@ -232,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(json.dumps({
         "status": "approved_row",
+        "supplier_provider": args.supplier_provider,
         "provider_key": [args.family, args.category, args.sku],
         "output": str(args.config),
         "mapping_rows": updated["mapping_rows"],

@@ -205,6 +205,9 @@ def mapping_history(
             region_rule = {}
         events.append({
             "event_id": raw["event_id"],
+            "supplier_provider": raw.get("supplier_provider", "fazercards")
+            if raw.get("supplier_provider", "fazercards") in {"fazercards", "shop2topup"}
+            else "fazercards",
             "provider_key": list(provider_key),
             "offer_id": raw["offer_id"],
             "product_slug": raw["product_slug"],

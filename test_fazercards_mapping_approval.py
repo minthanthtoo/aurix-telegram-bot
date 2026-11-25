@@ -89,6 +89,27 @@ class FazerCardsMappingApprovalTests(unittest.TestCase):
             args[args.index("--sku") + 1] = "missing"
             self.assertEqual(main(args), 2)
 
+    def test_supplier_provider_scopes_same_numeric_key_to_shop_mapping_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.json"
+            payload = self._config()
+            payload["mappings"].append({
+                **payload["mappings"][0],
+                "supplier_provider": "shop2topup",
+            })
+            config.write_text(json.dumps(payload), encoding="utf-8")
+            config.chmod(0o600)
+            args = self._args(config)
+            args[2:2] = ["--supplier-provider", "shop2topup"]
+            self.assertEqual(main(args), 0)
+            saved = json.loads(config.read_text(encoding="utf-8"))
+
+        fazer, shop = saved["mappings"]
+        self.assertEqual(fazer["review_state"], "blocked")
+        self.assertEqual(shop["review_state"], "approved")
+        self.assertEqual(shop["supplier_provider"], "shop2topup")
+        self.assertEqual(saved["approval_history"][0]["supplier_provider"], "shop2topup")
+
     def test_mapping_history_is_read_only_and_redacts_evidence_reference(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "config.json"
@@ -109,6 +130,7 @@ class FazerCardsMappingApprovalTests(unittest.TestCase):
             result = mapping_history(config_path=config)
             self.assertEqual(result["status"], "available")
             self.assertEqual(result["count"], 1)
+            self.assertEqual(result["events"][0]["supplier_provider"], "fazercards")
             self.assertTrue(result["events"][0]["rights_evidence_recorded"])
             self.assertNotIn('"rights_evidence":', json.dumps(result))
             self.assertNotIn("private.example", json.dumps(result))

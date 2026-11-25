@@ -9,7 +9,7 @@
   <title>AuriX Game Store · Operator</title>
   <link rel="stylesheet" href="../styles.css?v=20261116-warm-material-1">
   <link rel="stylesheet" href="admin.css?v=20261117-mapping-review-clarity-1">
-  <script src="admin.js?v=20261117-mapping-review-clarity-1" defer></script>
+  <script src="admin.js?v=20261126-provider-review-1" defer></script>
 </head>
 <body>
   <header class="topbar admin-topbar">
@@ -199,6 +199,12 @@
           <div><dt>Projection</dt><dd id="inventory-projection">—</dd></div>
         </dl>
         <form id="inventory-search-form" class="admin-inventory-filters">
+          <label>Supplier
+            <select id="supplier-provider-filter">
+              <option value="fazercards">FazerCards</option>
+              <option value="shop2topup">SHOP2TOPUP</option>
+            </select>
+          </label>
           <label>Family
             <select id="inventory-family-filter">
               <option value="">All families</option>
@@ -206,6 +212,8 @@
               <option value="giftcards">Gift cards</option>
               <option value="gamekeys">Game keys</option>
               <option value="manual_services">Manual services</option>
+              <option value="vouchers">Vouchers · browse only</option>
+              <option value="unsupported">Unsupported types</option>
             </select>
           </label>
           <label>Category ID
@@ -273,7 +281,7 @@
                 </label>
               </details>
               <label class="admin-checkbox"><input id="mapping-allow-all-region" type="checkbox"> Supplier/publisher evidence confirms this item works in every region</label>
-              <p class="admin-warning admin-mapping-editor__warning">Approving records resale, region, SKU, and fulfillment review in the private mapping file. It does not call FazerCards, generate a customer catalog, or enable checkout. “All regions” must be backed by evidence, not guessed from a supplier label.</p>
+              <p class="admin-warning admin-mapping-editor__warning">This records an exact provider-specific private route. It does not call a supplier, publish a customer listing, or activate checkout. “All regions” must be backed by evidence, not guessed from a supplier label.</p>
               <label class="admin-checkbox"><input id="mapping-approval-confirm" type="checkbox" required> I reviewed the exact provider row, product, recipient fields, region rule, fulfillment, and resale-rights evidence.</label>
               <div class="admin-heading__actions">
                 <button id="mapping-approval-submit" class="admin-button admin-button--primary" type="submit">Record private mapping approval</button>

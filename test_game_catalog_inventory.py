@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
-from aurix_games.catalog_inventory import load_catalog_inventory
+from aurix_games.catalog_inventory import load_catalog_inventory, load_shop2topup_catalog_inventory
 
 
 class GameCatalogInventoryTests(unittest.TestCase):
@@ -160,6 +160,71 @@ class GameCatalogInventoryTests(unittest.TestCase):
         self.assertEqual(item["mapping_gate"], "ready")
         self.assertEqual(item["projection_status"], "not_projected")
         self.assertEqual(item["mapping_reasons"], [])
+
+    def test_shop2topup_audit_is_private_provider_scoped_and_route_ready_only_when_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            audit_path = root / "shop2topup.json"
+            report = {
+                "provider": "shop2topup", "schema_version": 1,
+                "captured_at": "2026-11-26T00:00:00+00:00", "complete": True,
+                "category_complete_by_id": {"12": True},
+                "account": {"enabled": True, "verified": True},
+                "requirements_by_category": {"12": [{"field_name": "player_id", "data_type": "text"}]},
+                "products": [{"category_id": 12, "category": "Mobile Legends", "item_id": 999,
+                    "name": "86 Diamonds", "product_type": "topup", "in_stock": True, "listed_price": "0.95"}],
+            }
+            audit_path.write_text(json.dumps(report), encoding="utf-8")
+            audit_path.chmod(0o600)
+            mapping_path = root / "mapping.json"
+            mapping_path.write_text(json.dumps({"mappings": [
+                {"family": "topups", "provider_category_id": "12", "provider_offer_id": "999",
+                 "offer_id": "fazer-offer", "review_state": "blocked", "customer_visible": False,
+                 "supplier_enabled": False, "resale_authorized": False,
+                 "region_rule": {"verified": False, "allow_all": False}},
+                {"supplier_provider": "shop2topup", "family": "topups", "provider_category_id": "12",
+                 "provider_offer_id": "999", "offer_id": "shop2topup-offer", "review_state": "approved",
+                 "customer_visible": True, "supplier_enabled": True, "resale_authorized": True,
+                 "region_rule": {"verified": True, "allow_all": True}},
+            ]}), encoding="utf-8")
+            mapping_path.chmod(0o600)
+            inventory = load_shop2topup_catalog_inventory(
+                audit_path, mapping_path=mapping_path,
+                now=datetime(2026, 11, 26, 0, 5, tzinfo=timezone.utc),
+            )
+
+        item = inventory["items"][0]
+        self.assertEqual(item["supplier_provider"], "shop2topup")
+        self.assertEqual(item["price_source"], "supplier_catalog_listing")
+        self.assertEqual(item["stock_label"], "available")
+        self.assertEqual(item["mapping_gate"], "ready")
+        self.assertTrue(item["source_category_complete"])
+        self.assertEqual(item["mapping_offer_id"], "shop2topup-offer")
+
+    def test_shop2topup_vouchers_are_visible_but_never_approvable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            audit_path = root / "shop2topup.json"
+            audit_path.write_text(json.dumps({
+                "provider": "shop2topup", "schema_version": 1,
+                "captured_at": "2026-11-26T00:00:00+00:00", "complete": True,
+                "requirements_by_category": {}, "products": [{"category_id": 21, "category": "Steam",
+                    "item_id": 102, "name": "Steam Voucher", "product_type": "voucher",
+                    "in_stock": True, "listed_price": "10.00"}],
+            }), encoding="utf-8")
+            audit_path.chmod(0o600)
+            inventory = load_shop2topup_catalog_inventory(
+                audit_path, now=datetime(2026, 11, 26, 0, 5, tzinfo=timezone.utc),
+            )
+        self.assertEqual(inventory["items"][0]["family"], "vouchers")
+        self.assertEqual(inventory["items"][0]["mapping_status"], "unsupported")
+        self.assertEqual(inventory["items"][0]["mapping_gate"], "unsupported")
+
+    def test_shop2topup_missing_audit_is_reported_not_guessed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = load_shop2topup_catalog_inventory(Path(directory) / "missing.json")
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["items"], [])
 
     def test_fresh_category_observation_overrides_stale_global_snapshot_only_for_that_category(self):
         with tempfile.TemporaryDirectory() as directory:

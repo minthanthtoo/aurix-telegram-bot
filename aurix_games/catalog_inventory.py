@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
+import re
 import stat
 from typing import Any
 
@@ -137,9 +139,9 @@ def load_catalog_inventory(
                 "chat_enabled": metadata.get("chat"),
                 "info": metadata.get("info", ""),
             }
-        mapping = mapping_index.get(
-            (offer.get("family"), offer.get("provider_category_id"), offer.get("provider_offer_id"))
-        )
+        mapping = mapping_index.get((
+            "fazercards", offer.get("family"), offer.get("provider_category_id"), offer.get("provider_offer_id")
+        ))
         mapping_gate, mapping_reasons, mapping_offer_id = _mapping_gate(offer, mapping, mapping_config_status)
         item["mapping_status"] = _mapping_status(mapping_gate, row_freshness)
         item["mapping_gate"] = mapping_gate
@@ -199,6 +201,175 @@ def load_catalog_inventory(
     }
 
 
+def load_shop2topup_catalog_inventory(
+    snapshot_path: Path | str,
+    *,
+    mapping_path: Path | str | None = None,
+    max_age_minutes: int = DEFAULT_MAPPING_MAX_AGE_MINUTES,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Load the private SHOP2TOPUP audit as blocked admin review rows.
+
+    This reads only a previously captured report. It does not call the supplier,
+    approve mappings, enable listings, or make customer data public.
+    """
+    if not isinstance(max_age_minutes, int) or isinstance(max_age_minutes, bool) or max_age_minutes < 0:
+        raise CatalogInventoryError("mapping max age must be a non-negative integer")
+    path = Path(snapshot_path)
+    if not path.exists():
+        return {
+            "schema_version": 1, "supplier_provider": "shop2topup", "status": "unavailable",
+            "source_sha256": None, "captured_at": None, "source_status": "missing",
+            "freshness_status": "unknown", "mapping_config_status": _load_mapping_index(mapping_path)[1],
+            "counts": {}, "items": [], "mapping_status_counts": {},
+            "mapping_gate_counts": {}, "projection_status_counts": {},
+        }
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise CatalogInventoryError("SHOP2TOPUP audit must be a regular private file")
+        if stat.S_IMODE(path.parent.stat().st_mode) & 0o077 or stat.S_IMODE(path.stat().st_mode) & 0o077:
+            raise CatalogInventoryError("SHOP2TOPUP audit permissions are too broad")
+        if path.stat().st_size > 64 * 1024 * 1024:
+            raise CatalogInventoryError("SHOP2TOPUP audit exceeded the size limit")
+        raw = path.read_bytes()
+        report = json.loads(raw)
+    except CatalogInventoryError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CatalogInventoryError("SHOP2TOPUP audit could not be loaded") from exc
+    if (not isinstance(report, dict) or report.get("provider") != "shop2topup"
+            or report.get("schema_version") != 1 or not isinstance(report.get("products"), list)
+            or type(report.get("complete")) is not bool):
+        raise CatalogInventoryError("SHOP2TOPUP audit schema is invalid")
+    captured_at = _captured_at(report)
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    freshness = _freshness_status(captured_at, current, timedelta(minutes=max_age_minutes))
+    mapping_index, mapping_status = _load_mapping_index(mapping_path)
+    requirements_by_category = report.get("requirements_by_category")
+    if not isinstance(requirements_by_category, dict):
+        requirements_by_category = {}
+    category_complete_by_id = report.get("category_complete_by_id")
+    if not isinstance(category_complete_by_id, dict):
+        category_complete_by_id = {}
+    items: list[dict[str, Any]] = []
+    for product in report["products"]:
+        if not isinstance(product, dict):
+            continue
+        category_raw = product.get("category_id")
+        sku_raw = product.get("item_id")
+        if (isinstance(category_raw, bool) or not isinstance(category_raw, int) or category_raw <= 0
+                or isinstance(sku_raw, bool) or not isinstance(sku_raw, int) or sku_raw <= 0):
+            continue
+        product_type = product.get("product_type")
+        family = "topups" if product_type == "topup" else "vouchers" if product_type == "voucher" else "unsupported"
+        category_id, sku = str(category_raw), str(sku_raw)
+        schema = _shop2topup_requirement_schema(requirements_by_category.get(category_id))
+        schema_valid = schema is not None
+        has_player_id = schema_valid and any(field["field_name"] == "player_id" for field in schema)
+        available = product.get("in_stock") if type(product.get("in_stock")) is bool else None
+        listed_price = product.get("listed_price")
+        if not isinstance(listed_price, str) or not re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,12})?", listed_price):
+            listed_price = None
+        base = {
+            "supplier_provider": "shop2topup",
+            "family": family,
+            "category_id": category_id,
+            "category_name": str(product.get("category", ""))[:160],
+            "sku": sku,
+            "name": str(product.get("name", ""))[:200],
+            "price_usd": listed_price,
+            "price_source": "supplier_catalog_listing",
+            "stock": None,
+            "stock_label": "available" if available is True else "unavailable" if available is False else "unreported",
+            "supplier_available": available,
+            "product_type": product_type if product_type in {"topup", "voucher"} else "unknown",
+            "input_schema": schema,
+            "source_category_complete": (
+                category_complete_by_id.get(category_id) is True
+                and schema_valid and (family != "topups" or has_player_id)
+            ),
+            "source_observed_at": report.get("captured_at"),
+            "source_status": "complete" if report["complete"] else "partial",
+            "review_state": "blocked",
+        }
+        if family != "topups":
+            base.update(
+                mapping_status="unsupported",
+                mapping_gate="unsupported",
+                mapping_reasons=["SHOP2TOPUP route supports direct top-ups only"],
+                freshness_status=freshness,
+                projection_status="not_projected",
+            )
+        else:
+            mapping = mapping_index.get(("shop2topup", family, category_id, sku))
+            gate, reasons, mapped_offer_id = _mapping_gate(base, mapping, mapping_status)
+            row_mapping_status = (
+                "approved_private_route" if gate == "ready" and freshness == "fresh"
+                else _mapping_status(gate, freshness)
+            )
+            base.update(
+                mapping_status=row_mapping_status,
+                mapping_gate=gate,
+                mapping_reasons=reasons,
+                freshness_status=freshness,
+                projection_status="not_projected",
+            )
+            if mapped_offer_id:
+                base["mapping_offer_id"] = mapped_offer_id
+        items.append(base)
+    counts = _status_counts(items, "family")
+    return {
+        "schema_version": 1,
+        "supplier_provider": "shop2topup",
+        "status": "private_snapshot",
+        "source_sha256": hashlib.sha256(raw).hexdigest(),
+        "captured_at": report.get("captured_at"),
+        "source_status": "complete" if report["complete"] else "partial",
+        "freshness_status": freshness,
+        "mapping_config_status": mapping_status,
+        "mapping_status_counts": _status_counts(items, "mapping_status"),
+        "mapping_gate_counts": _status_counts(items, "mapping_gate"),
+        "projection_status_counts": _status_counts(items, "projection_status"),
+        "counts": counts,
+        "items": items,
+        "auxiliary": {
+            "account_enabled": report.get("account", {}).get("enabled") is True
+                if isinstance(report.get("account"), dict) else False,
+            "account_verified": report.get("account", {}).get("verified") is True
+                if isinstance(report.get("account"), dict) else False,
+            "audit_complete": report["complete"],
+        },
+    }
+
+
+def _shop2topup_requirement_schema(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list) or len(value) > 32:
+        return None
+    schema = []
+    for field in value:
+        if not isinstance(field, dict):
+            return None
+        name, data_type = field.get("field_name"), field.get("data_type")
+        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", name)
+                or data_type not in {"text", "number", "single_select", "multi_select"}):
+            return None
+        item = {"field_name": name, "data_type": data_type}
+        placeholder = field.get("placeholder")
+        if isinstance(placeholder, str) and len(placeholder) <= 256:
+            item["placeholder"] = placeholder
+        options = field.get("select_options")
+        if options is not None:
+            if not isinstance(options, list) or len(options) > 128 or not all(
+                isinstance(option, str) and 0 < len(option) <= 128 and not any(ord(ch) < 32 for ch in option)
+                for option in options
+            ):
+                return None
+            item["select_options"] = options
+        schema.append(item)
+    names = [field["field_name"] for field in schema]
+    return schema if len(names) == len(set(names)) else None
+
+
 def _captured_at(snapshot: dict[str, Any]) -> datetime | None:
     value = snapshot.get("captured_at")
     if not isinstance(value, str) or not value.strip():
@@ -255,7 +426,7 @@ def _freshness_status(
     return "fresh" if now - captured_at <= max_age else "stale"
 
 
-def _load_mapping_index(path_value: Path | str | None) -> tuple[dict[tuple[str, str, str], dict[str, Any]], str]:
+def _load_mapping_index(path_value: Path | str | None) -> tuple[dict[tuple[str, str, str, str], dict[str, Any]], str]:
     if path_value is None:
         return {}, "unconfigured"
     path = Path(path_value)
@@ -273,13 +444,16 @@ def _load_mapping_index(path_value: Path | str | None) -> tuple[dict[tuple[str, 
         return {}, "invalid"
     if not isinstance(payload, dict) or not isinstance(payload.get("mappings"), list):
         return {}, "invalid"
-    result: dict[tuple[str, str, str], dict[str, Any]] = {}
+    result: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for row in payload["mappings"]:
         if not isinstance(row, dict):
             return {}, "invalid"
-        key = tuple(row.get(field) for field in ("family", "provider_category_id", "provider_offer_id"))
-        if not all(isinstance(value, str) and value.strip() for value in key):
+        provider = row.get("supplier_provider", "fazercards")
+        provider_key = tuple(row.get(field) for field in ("family", "provider_category_id", "provider_offer_id"))
+        if (provider not in {"fazercards", "shop2topup"}
+                or not all(isinstance(value, str) and value.strip() for value in provider_key)):
             return {}, "invalid"
+        key = (provider, *provider_key)
         if key in result:
             return {}, "invalid"
         result[key] = row
@@ -310,6 +484,8 @@ def _mapping_gate(
     ):
         reasons.append("region_rule_incomplete")
     stock = offer.get("stock")
+    if offer.get("supplier_provider") == "shop2topup" and offer.get("supplier_available") is not True:
+        reasons.append("supplier_unavailable" if offer.get("supplier_available") is False else "supplier_stock_unreported")
     if isinstance(stock, int) and not isinstance(stock, bool) and stock <= 0:
         reasons.append("supplier_unavailable")
     if offer.get("family") in {"giftcards", "gamekeys"}:
@@ -324,6 +500,8 @@ def _mapping_gate(
 
 
 def _mapping_status(mapping_gate: str, freshness_status: str) -> str:
+    if mapping_gate == "unsupported":
+        return "unsupported"
     if mapping_gate == "missing":
         return "missing"
     if freshness_status != "fresh":

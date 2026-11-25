@@ -6,6 +6,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 from urllib.request import Request
@@ -423,6 +424,99 @@ class GameAdminTests(unittest.TestCase):
                 {candidate["product_slug"] for candidate in ambiguous["items"][0]["mapping_candidate"]["candidates"]},
                 {"mobile-legends", "pubg-mobile"},
             )
+
+    def test_catalog_inventory_filters_provider_and_keeps_s2t_rows_unprojected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = GameStoreAdminService(
+                admin_token="admin-secret",
+                supplier_client=FazerCardsCommandClient("secret"),
+                wallet_alert_store=SupplierWalletAlertStore(Path(directory) / "alerts.sqlite3"),
+                catalog_inventory_provider=lambda: {
+                    "status": "private_snapshot", "source_status": "complete",
+                    "freshness_status": "fresh", "mapping_config_status": "loaded",
+                    "items": [{"family": "topups", "category_id": "mlbb", "sku": "1", "name": "Fazer offer"}],
+                },
+                shop2topup_catalog_inventory_provider=lambda: {
+                    "status": "private_snapshot", "source_status": "complete",
+                    "freshness_status": "fresh", "mapping_config_status": "missing",
+                    "captured_at": "2026-11-26T00:00:00+00:00",
+                    "source_sha256": "shop-hash",
+                    "items": [{"family": "topups", "category_id": "12", "sku": "1",
+                        "name": "Shop offer", "mapping_status": "approved_private_route",
+                        "mapping_gate": "ready", "projection_status": "not_projected"}],
+                },
+            )
+            selected = service.catalog_inventory(supplier_provider="shop2topup")
+            combined = service.catalog_inventory()
+
+        self.assertEqual([row["supplier_provider"] for row in selected["items"]], ["shop2topup"])
+        self.assertEqual(selected["items"][0]["name"], "Shop offer")
+        self.assertEqual(selected["items"][0]["projection_status"], "not_projected")
+        self.assertEqual(selected["providers"]["shop2topup"]["mapping_config_status"], "missing")
+        self.assertEqual({row["supplier_provider"] for row in combined["items"]}, {"fazercards", "shop2topup"})
+        with self.assertRaisesRegex(GameAdminInputError, "unsupported supplier"):
+            service.catalog_inventory(supplier_provider="unknown")
+
+    def test_shop2topup_approval_creates_provider_private_route_not_public_catalog_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "private"
+            base.mkdir(mode=0o700)
+            base.chmod(0o700)
+            audit_path = base / "shop2topup-catalog-audit.json"
+            audit_path.write_text(json.dumps({
+                "provider": "shop2topup", "schema_version": 1,
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "complete": True, "truncated": False,
+                "category_complete_by_id": {"12": True},
+                "requirements_by_category": {"12": [
+                    {"field_name": "player_id", "data_type": "text"},
+                    {"field_name": "server_id", "data_type": "text"},
+                ]},
+                "account": {"enabled": True, "verified": True, "wallet": "0"},
+                "products": [{
+                    "category_id": 12, "category": "Mobile Legends", "item_id": 99,
+                    "name": "86 Diamonds", "product_type": "topup", "in_stock": True,
+                    "listed_price": "0.95",
+                }],
+            }), encoding="utf-8")
+            audit_path.chmod(0o600)
+            public_mapping_path = base / "public-catalog-config.json"
+            private_shop_mapping_path = base / "shop2topup-mapping-config.json"
+            env = {
+                "AURIX_GAMES_ADMIN_TOKEN": "admin-secret",
+                "AURIX_GAMES_BASE_DIR": str(base),
+                "FAZERCARDS_PUBLIC_CATALOG_CONFIG": str(public_mapping_path),
+                "SHOP2TOPUP_CATALOG_AUDIT_FILE": str(audit_path),
+                "SHOP2TOPUP_MAPPING_CONFIG": str(private_shop_mapping_path),
+            }
+            request = {
+                "supplier_provider": "shop2topup",
+                "family": "topups", "category_id": "12", "sku": "99",
+                "offer_id": "shop2topup-mobile-legends-99",
+                "product_slug": "mobile-legends",
+                "fulfillment_kind": "direct_topup",
+                "region_rule": {"allow_all": True},
+                "required_input_labels": ["player_id", "server_id"],
+                "validation_category_id": "12",
+                "validation_field_map": {"player_id": "player_id", "server_id": "server_id"},
+                "rights_evidence": "private://approved-reseller-terms",
+                "reviewer": "owner", "confirm_approval": True,
+            }
+            with patch.dict(os.environ, env, clear=True):
+                service = build_env_admin_service(root=base)
+                assert service is not None
+                result = service.approve_catalog_mapping(request)
+                inventory = service.catalog_inventory(supplier_provider="shop2topup")
+
+            saved = json.loads(private_shop_mapping_path.read_text(encoding="utf-8"))
+            self.assertEqual(stat.S_IMODE(private_shop_mapping_path.stat().st_mode), 0o600)
+            self.assertEqual(saved["mappings"][0]["supplier_provider"], "shop2topup")
+            self.assertEqual(saved["mappings"][0]["review_state"], "approved")
+            self.assertEqual(result["mapping_approval"]["supplier_provider"], "shop2topup")
+            self.assertFalse(result["mapping_approval"]["customer_publication"])
+            self.assertFalse(public_mapping_path.exists())
+            self.assertEqual(inventory["items"][0]["mapping_status"], "approved_private_route")
+            self.assertEqual(inventory["items"][0]["projection_status"], "not_projected")
 
     def test_environment_builder_uses_persistent_games_base_for_operator_state(self):
         with tempfile.TemporaryDirectory() as directory:

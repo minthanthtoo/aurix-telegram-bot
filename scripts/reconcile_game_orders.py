@@ -15,6 +15,8 @@ import time
 from aurix_games.order_repository import GameOrderRepository
 from aurix_games.order_reconciliation import drain_provider_events, reconcile_order, write_poll_status
 from aurix_games.providers.fazercards_commands import FazerCardsCommandClient
+from aurix_games.providers.shop2topup_commands import Shop2TopupCommandClient
+from aurix_games.fulfillment import SupplierOrderRouter
 
 
 def main():
@@ -26,23 +28,33 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.limit <= 100:
         parser.error("--limit must be between 1 and 100")
-    key = os.environ.get("FAZERCARDS_API_KEY", "")
-    if not key:
-        parser.error("FAZERCARDS_API_KEY is required")
+    fazer_key = os.environ.get("FAZERCARDS_API_KEY", "").strip()
+    shop2topup_key = os.environ.get("SHOP2TOPUP_API_KEY", "").strip()
+    if not fazer_key and not shop2topup_key:
+        parser.error("FAZERCARDS_API_KEY or SHOP2TOPUP_API_KEY is required")
     repository = GameOrderRepository(args.orders_db)
-    client = FazerCardsCommandClient(key, allow_writes=False)
-    inbox = drain_provider_events(repository, now=datetime.now(timezone.utc), limit=args.limit)
+    client = SupplierOrderRouter(
+        FazerCardsCommandClient(fazer_key, allow_writes=False) if fazer_key else None,
+        Shop2TopupCommandClient(shop2topup_key) if shop2topup_key else None,
+    )
+    batch_time = datetime.now(timezone.utc)
+    inbox = drain_provider_events(repository, now=batch_time, limit=args.limit)
     results = []
-    for order in repository.reconciliation_batch(limit=args.limit):
+    for order in repository.reconciliation_batch(
+        limit=args.limit, now=batch_time, minimum_interval_seconds=20,
+    ):
+        checked_at = datetime.now(timezone.utc)
+        if not repository.claim_poll_check(
+            order.order_id, now=checked_at, minimum_interval_seconds=20,
+        ):
+            continue
         if results:
             time.sleep(1)
         try:
-            result = reconcile_order(repository, client, order.order_id, now=datetime.now(timezone.utc))
+            result = reconcile_order(repository, client, order.order_id, now=checked_at)
             results.append(result.as_dict())
         except Exception:
             results.append({"order_id": order.order_id, "error": "supplier reconciliation pending; local state retained"})
-        finally:
-            repository.record_poll_check(order.order_id, now=datetime.now(timezone.utc))
     errors = sum("error" in row for row in results)
     status_path = Path(os.environ.get(
         "AURIX_GAMES_RECONCILIATION_STATUS_FILE", str(base / "supplier-reconciliation-status.json")

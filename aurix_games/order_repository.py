@@ -379,17 +379,67 @@ class GameOrderRepository:
         except sqlite3.Error:
             raise OrderRepositoryError("order transition failed") from None
 
-    def reconciliation_batch(self, *, limit: int) -> tuple[GameOrder, ...]:
+    def reconciliation_batch(
+        self, *, limit: int, now: datetime | None = None, minimum_interval_seconds: int = 0,
+    ) -> tuple[GameOrder, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise OrderRepositoryError("order batch limit is invalid")
+        if (type(minimum_interval_seconds) is not int
+                or not 0 <= minimum_interval_seconds <= 3600):
+            raise OrderRepositoryError("order poll interval is invalid")
+        if now is not None:
+            self._require_time(now)
+        if minimum_interval_seconds and now is None:
+            raise OrderRepositoryError("order poll interval requires a current time")
         self.initialize()
         with self._connect() as connection:
-            rows = connection.execute("""SELECT orders.order_id FROM game_orders orders
+            query = """SELECT orders.order_id FROM game_orders orders
                 LEFT JOIN game_order_poll_checks checks USING(order_id)
                 WHERE orders.provider_order_id IS NOT NULL
                   AND orders.state IN ('submitted','processing','unknown','reconciliation','failed','delivered')
-                ORDER BY COALESCE(checks.checked_at, ''), orders.created_at, orders.order_id LIMIT ?""", (limit,)).fetchall()
+            """
+            params: list[Any] = []
+            if minimum_interval_seconds:
+                cutoff = (now.astimezone(UTC) - timedelta(seconds=minimum_interval_seconds)).isoformat()
+                query += " AND (checks.checked_at IS NULL OR checks.checked_at <= ?)"
+                params.append(cutoff)
+            query += " ORDER BY COALESCE(checks.checked_at, ''), orders.created_at, orders.order_id LIMIT ?"
+            params.append(limit)
+            rows = connection.execute(query, tuple(params)).fetchall()
             return tuple(self._load(connection, row["order_id"]) for row in rows)
+
+    def claim_poll_check(
+        self, order_id: str, *, now: datetime, minimum_interval_seconds: int = 20,
+    ) -> bool:
+        """Atomically reserve a provider status read across concurrent workers."""
+        self._require_time(now)
+        if (not isinstance(order_id, str) or not order_id or len(order_id) > 128
+                or type(minimum_interval_seconds) is not int
+                or not 1 <= minimum_interval_seconds <= 3600):
+            raise OrderRepositoryError("order poll claim is invalid")
+        current = now.astimezone(UTC)
+        timestamp = current.isoformat(timespec="microseconds")
+        self.initialize()
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT checked_at FROM game_order_poll_checks WHERE order_id = ?", (order_id,),
+                ).fetchone()
+                if row is not None:
+                    try:
+                        previous = datetime.fromisoformat(row["checked_at"])
+                    except (TypeError, ValueError):
+                        previous = None
+                    if (previous is not None and previous.tzinfo is not None
+                            and current - previous.astimezone(UTC) < timedelta(seconds=minimum_interval_seconds)):
+                        return False
+                connection.execute("""INSERT INTO game_order_poll_checks (order_id, checked_at)
+                    VALUES (?, ?) ON CONFLICT(order_id) DO UPDATE SET checked_at=excluded.checked_at""",
+                    (order_id, timestamp))
+                return True
+        except sqlite3.Error:
+            raise OrderRepositoryError("supplier poll claim failed") from None
 
     def record_poll_check(self, order_id: str, *, now: datetime) -> None:
         self._require_time(now)

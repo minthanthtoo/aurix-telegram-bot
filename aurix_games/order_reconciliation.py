@@ -5,11 +5,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 from typing import Any, Protocol
+import uuid
 
 from .order_repository import GameOrderRepository, ProviderEventResult
 from .order_state import GameOrder, OrderState
@@ -166,6 +169,93 @@ class SupplierWebhookReconciler:
         return _apply_event(self.repository, event, now=now, from_inbox=False)
 
 
+class Shop2TopupWebhookReconciler:
+    """Verify SHOP2TOPUP's raw-body HMAC and queue normalized order events."""
+
+    _SIGNATURE = re.compile(r"^sha256=[a-f0-9]{64}$")
+    _EVENTS = {"order.completed", "order.refunded", "webhook.test"}
+    _STATUSES = {"pending", "completed", "refunded", "partial"}
+
+    def __init__(self, repository: GameOrderRepository, *, webhook_secret: str) -> None:
+        if not isinstance(webhook_secret, str) or not webhook_secret or len(webhook_secret) > 512:
+            raise ValueError("webhook_secret is required")
+        self.repository = repository
+        self.webhook_secret = webhook_secret
+
+    def receive(
+        self, raw_body: bytes, signature: str, event_header: str, *, now: datetime,
+    ) -> SupplierWebhookEvent:
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise WebhookReconciliationError("reconciliation time must be timezone-aware")
+        if not isinstance(raw_body, bytes) or not raw_body or len(raw_body) > 4 * 1024 * 1024:
+            raise WebhookReconciliationError("webhook body is invalid")
+        if not isinstance(signature, str) or not self._SIGNATURE.fullmatch(signature):
+            raise WebhookAuthenticationError("invalid supplier webhook signature")
+        expected = "sha256=" + hmac.new(
+            self.webhook_secret.encode("utf-8"), raw_body, hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise WebhookAuthenticationError("invalid supplier webhook signature")
+        try:
+            payload = json.loads(raw_body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise WebhookReconciliationError("webhook body is not valid JSON") from None
+        if not isinstance(payload, dict):
+            raise WebhookReconciliationError("webhook payload must be an object")
+        event_name = payload.get("event")
+        if (not isinstance(event_name, str) or event_name not in self._EVENTS
+                or event_name != event_header):
+            raise WebhookReconciliationError("webhook event header does not match its payload")
+        timestamp = payload.get("timestamp")
+        if not isinstance(timestamp, str) or not timestamp or len(timestamp) > 80:
+            raise WebhookReconciliationError("webhook timestamp is invalid")
+        try:
+            occurred_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            raise WebhookReconciliationError("webhook timestamp is invalid") from None
+        if (occurred_at.tzinfo is None or occurred_at.utcoffset() is None
+                or occurred_at > now + timedelta(minutes=5)):
+            raise WebhookReconciliationError("webhook timestamp is invalid")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise WebhookReconciliationError("webhook data is invalid")
+        raw_order_id = data.get("order_id")
+        if raw_order_id is None:
+            if event_name != "webhook.test":
+                raise WebhookReconciliationError("webhook order ID is missing")
+            provider_order_id = None
+        else:
+            if not isinstance(raw_order_id, str):
+                raise WebhookReconciliationError("webhook order ID is invalid")
+            try:
+                parsed_order_id = uuid.UUID(raw_order_id)
+            except (ValueError, AttributeError):
+                raise WebhookReconciliationError("webhook order ID is invalid") from None
+            provider_order_id = "s2t-" + parsed_order_id.hex
+        status = data.get("status")
+        if provider_order_id is not None and (not isinstance(status, str) or status not in self._STATUSES):
+            raise WebhookReconciliationError("webhook order status is invalid")
+        event_id = "s2t-webhook-" + hashlib.sha256(raw_body).hexdigest()
+        event = SupplierWebhookEvent(
+            event_id=event_id,
+            event_type="order.status_changed",
+            timestamp=timestamp,
+            order_id=provider_order_id,
+            supplier_kind="shop2topup",
+            status=status if isinstance(status, str) else None,
+            previous_status=None,
+        )
+        if provider_order_id is not None:
+            self.repository.store_provider_event(
+                event_id=event.event_id,
+                provider_order_id=provider_order_id,
+                event_json=json.dumps(asdict(event), sort_keys=True),
+                occurred_at=occurred_at,
+                received_at=now,
+            )
+        return event
+
+
 def drain_provider_events(repository: GameOrderRepository, *, now: datetime, limit: int) -> tuple[ReconciliationOutcome, ...]:
     return tuple(_apply_event(repository, SupplierWebhookEvent(**json.loads(encoded)), now=now)
                  for encoded in repository.pending_provider_events(limit=limit))
@@ -225,11 +315,13 @@ def _target_for_status(status: str | None) -> OrderState | None:
     if not isinstance(status, str):
         return None
     return {
+        "pending": OrderState.PROCESSING,
         "processing": OrderState.PROCESSING,
         "completed": OrderState.DELIVERED,
         "failed": OrderState.FAILED,
         "refund": OrderState.RECONCILIATION,
         "refunded": OrderState.RECONCILIATION,
+        "partial": OrderState.RECONCILIATION,
     }.get(status)
 
 def _outcome(event: SupplierWebhookEvent, result: ProviderEventResult) -> ReconciliationOutcome:
@@ -247,6 +339,7 @@ def _outcome(event: SupplierWebhookEvent, result: ProviderEventResult) -> Reconc
 
 __all__ = [
     "ReconciliationOutcome",
+    "Shop2TopupWebhookReconciler",
     "SupplierWebhookReconciler",
     "WebhookAuthenticationError",
     "WebhookReconciliationError",

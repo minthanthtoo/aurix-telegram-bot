@@ -11,13 +11,19 @@ from pathlib import Path
 import threading
 import time
 
-from .game_admin import build_env_admin_service, build_env_webhook_reconciler
+from .game_admin import (
+    build_env_admin_service,
+    build_env_shop2topup_webhook_reconciler,
+    build_env_webhook_reconciler,
+)
 from .customer_api import build_env_customer_api
 from .customer_checkout import build_env_customer_checkout
 from .checkout_journey import GameAccountLookup, build_env_checkout_journey
 from .payment_service import CustomerPaymentService
 from .order_repository import GameOrderRepository
 from .providers.fazercards_commands import FazerCardsCommandClient
+from .providers.shop2topup_commands import Shop2TopupCommandClient
+from .fulfillment import SupplierOrderRouter
 from .web_api import create_server
 from .payment_review import build_env_payment_review
 from .topup_preview import load_topup_preview
@@ -90,9 +96,10 @@ def main() -> None:
     journey = build_env_checkout_journey(customer_checkout, wallet_payment_service=wallet_payments)
     mlbb_lookup = None
     if args.local_mlbb_lookup or os.environ.get("AURIX_GAMES_RECIPIENT_VALIDATION_ENABLED") == "1":
-        key = os.environ.get("FAZERCARDS_API_KEY", "")
-        if not key:
-            parser.error("account checks require FAZERCARDS_API_KEY")
+        fazer_key = os.environ.get("FAZERCARDS_API_KEY", "").strip()
+        shop2topup_key = os.environ.get("SHOP2TOPUP_API_KEY", "").strip()
+        if not fazer_key and not shop2topup_key:
+            parser.error("account checks require FAZERCARDS_API_KEY or SHOP2TOPUP_API_KEY")
         base = Path(os.environ.get("AURIX_GAMES_BASE_DIR", ".local/fazercards"))
         repository = customer_api.service.repository if customer_api is not None else GameOrderRepository(
             base / "local-account-lookup.sqlite3",
@@ -102,19 +109,32 @@ def main() -> None:
         if not isinstance(zones, list):
             parser.error("MLBB zone directory must be a JSON list of id and name entries")
         config_path = Path(os.environ.get("FAZERCARDS_PUBLIC_CATALOG_CONFIG", str(base / "public-catalog-config.json")))
+        shop2topup_mapping_path = Path(os.environ.get(
+            "SHOP2TOPUP_MAPPING_CONFIG", str(base / "shop2topup-mapping-config.json")
+        ))
         public_catalog_path = Path(os.environ.get("AURIX_GAMES_PUBLIC_CATALOG", str(base / "public-catalog.json")))
         public_catalog = PublicCatalogStore(
             public_catalog_path,
             catalog_policy_store=env_catalog_policy_store(base),
             pricing_policy_store=PricingPolicyStore(config_path),
         )
+        supplier_router = SupplierOrderRouter(
+            FazerCardsCommandClient(fazer_key, allow_recipient_validation=True, timeout=10) if fazer_key else None,
+            Shop2TopupCommandClient(
+                shop2topup_key,
+                allow_player_validation=os.environ.get("SHOP2TOPUP_PLAYER_VALIDATION_ENABLED") == "1",
+            ) if shop2topup_key else None,
+        )
+        fingerprint_key = fazer_key or shop2topup_key
         mlbb_lookup = GameAccountLookup(
-            FazerCardsCommandClient(key, allow_recipient_validation=True, timeout=10),
+            supplier_router,
             repository, fingerprint_secret=os.environ.get("AURIX_GAMES_CHECKOUT_FINGERPRINT_SECRET")
-            or hashlib.sha256(key.encode()).digest(),
+            or hashlib.sha256(fingerprint_key.encode()).digest(),
             local_guest=args.local_mlbb_lookup, zones=zones,
             catalog_store=public_catalog,
-            supplier_route_store=PrivateSupplierRouteStore(config_path),
+            supplier_route_store=PrivateSupplierRouteStore(
+                config_path, additional_paths=(shop2topup_mapping_path,)
+            ),
         )
     store_database = Path(os.environ.get("AURIX_GAMES_ORDER_DATABASE", str(store_base / "game-orders.sqlite3")))
     server = create_server(
@@ -122,6 +142,7 @@ def main() -> None:
         args.port,
         admin_service=build_env_admin_service(),
         order_reconciler=build_env_webhook_reconciler(),
+        shop2topup_webhook_reconciler=build_env_shop2topup_webhook_reconciler(),
         customer_order_service=None if customer_api is None else customer_api.service,
         customer_auth=None if customer_api is None else customer_api.verifier,
         customer_identity_service=None if customer_api is None else customer_api.identity_service,

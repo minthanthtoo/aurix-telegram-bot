@@ -18,6 +18,7 @@ import re
 import sqlite3
 import stat
 from typing import Any, Mapping, Protocol
+import uuid
 
 from cryptography.fernet import Fernet, InvalidToken
 from persistence import open_sqlite_connection
@@ -31,10 +32,12 @@ from .providers.fazercards_commands import (
     SupplierCommandError,
     SupplierWriteDisabledError,
 )
+from .providers.shop2topup_commands import Shop2TopupCommandClient, Shop2TopupCommandError
+from .supplier_routes import PrivateSupplierRoute
 
 
 UTC = timezone.utc
-_PROVIDER_ORDER_ID = re.compile(r"^ord-[0-9]+$")
+_PROVIDER_ORDER_ID = re.compile(r"^(?:ord-[0-9]+|s2t-[0-9a-f]{32})$")
 
 
 class FulfillmentInputError(ValueError):
@@ -248,7 +251,7 @@ class FulfillmentTaskStore:
         self._claimed_update(task, "dispatch_started_at = ?", (_time(now).isoformat(),))
 
     def defer_disabled_dispatch(self, task: FulfillmentTask, *, now: datetime) -> None:
-        self._claimed_update(task, "dispatch_started_at = NULL, status = 'retry', last_error = ?, "
+        self._claimed_update(task, "dispatch_started_at = NULL, provider_order_id = NULL, status = 'retry', last_error = ?, "
             "available_at = ?, updated_at = ?, claimed_at = NULL", ("supplier writes are disabled",
             (now + _backoff(task.attempts)).isoformat(), now.isoformat()))
 
@@ -488,6 +491,119 @@ class FazerCardsOrderAdapter:
         raise FulfillmentInputError("fulfillment kind requires an explicit operator workflow")
 
 
+class SupplierOrderRouter:
+    """Keep provider-specific IDs and API shapes behind one private boundary."""
+
+    def __init__(self, fazercards: FazerCardsCommandClient | None,
+                 shop2topup: Shop2TopupCommandClient | None = None) -> None:
+        if fazercards is not None and not isinstance(fazercards, FazerCardsCommandClient):
+            raise FulfillmentInputError("FazerCards command client is invalid")
+        if shop2topup is not None and not isinstance(shop2topup, Shop2TopupCommandClient):
+            raise FulfillmentInputError("SHOP2TOPUP command client is invalid")
+        self.fazercards = fazercards
+        self.shop2topup = shop2topup
+        self._fazercards_adapter = None if fazercards is None else FazerCardsOrderAdapter(fazercards)
+
+    def validate_route(self, *, route: PrivateSupplierRoute, fields: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(route, PrivateSupplierRoute) or not isinstance(fields, Mapping):
+            raise FulfillmentInputError("supplier validation route is invalid")
+        if route.supplier_provider == "fazercards":
+            if self.fazercards is None or route.validation_category_id is None:
+                raise SupplierCommandError("FazerCards account validation is unavailable")
+            return self.fazercards.validate_topup_recipient(route.validation_category_id, fields)
+        if route.supplier_provider != "shop2topup" or self.shop2topup is None:
+            raise SupplierCommandError("approved supplier account validation is unavailable")
+        player_id = fields.get("player_id")
+        requirements = {key: value for key, value in fields.items() if key != "player_id"}
+        if not isinstance(player_id, str) or not player_id.strip():
+            raise FulfillmentInputError("approved player_id mapping is missing")
+        response = self.shop2topup.validate_player(
+            sub_category_id=int(route.sku), player_id=player_id, requirements=requirements,
+        )
+        player = response.get("player")
+        if not isinstance(player, dict):
+            raise Shop2TopupCommandError("SHOP2TOPUP player response was malformed")
+        return {
+            "ok": True,
+            "valid": True,
+            "category_id": route.validation_category_id,
+            "player_id": player.get("player_id"),
+            "player_name": player.get("player_name"),
+            "region": player.get("region"),
+        }
+
+    def attempt_reference(self, *, payload: Mapping[str, Any], idempotency_key: str) -> str | None:
+        if payload.get("supplier_provider", "fazercards") != "shop2topup":
+            return None
+        return "s2t-" + _shop2topup_uuid(idempotency_key).replace("-", "")
+
+    def submit(self, *, fulfillment_kind: str, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
+        provider = payload.get("supplier_provider", "fazercards")
+        if provider != "shop2topup":
+            if self._fazercards_adapter is None:
+                raise SupplierCommandError("FazerCards order service is unavailable")
+            return self._fazercards_adapter.submit(
+                fulfillment_kind=fulfillment_kind, payload=payload, idempotency_key=idempotency_key,
+            )
+        if self.shop2topup is None or fulfillment_kind != "direct_topup":
+            raise SupplierCommandError("SHOP2TOPUP order service is unavailable for this product")
+        order_uuid = _shop2topup_uuid(idempotency_key)
+        receipt = "s2t-" + order_uuid.replace("-", "")
+        expected_price = payload.get("expected_unit_price")
+        if expected_price is None:
+            raise SupplierCommandError("SHOP2TOPUP order is missing its live price lock")
+        response = self.shop2topup.create_order(
+            order_id=order_uuid,
+            sub_category_id=_required_payload_int(payload, "sub_category_id"),
+            quantity=_required_payload_int(payload, "quantity"),
+            requirements=_shop2topup_requirements(payload),
+            expected_unit_price=expected_price,
+        )
+        order = response.get("order")
+        if not isinstance(order, dict) or order.get("order_id") != order_uuid:
+            raise Shop2TopupCommandError("SHOP2TOPUP order response did not match the submitted order")
+        status = order.get("status")
+        if not isinstance(status, str) or not status.strip() or len(status) > 80:
+            raise Shop2TopupCommandError("SHOP2TOPUP order status was malformed")
+        return {"ok": True, "order": {"id": receipt, "status": status}}
+
+    def get_order(self, provider_order_id: str) -> dict[str, Any]:
+        if provider_order_id.startswith("s2t-"):
+            if self.shop2topup is None:
+                raise SupplierCommandError("SHOP2TOPUP status reads are unavailable")
+            order_uuid = _uuid_from_shop2topup_receipt(provider_order_id)
+            response = self.shop2topup.get_order(order_uuid)
+            order = response.get("order")
+            if not isinstance(order, dict) or order.get("order_id") != order_uuid:
+                raise Shop2TopupCommandError("SHOP2TOPUP status response did not match the accepted order")
+            status = order.get("status")
+            if not isinstance(status, str) or not status.strip() or len(status) > 80:
+                raise Shop2TopupCommandError("SHOP2TOPUP order status was malformed")
+            return {"ok": True, "order": {"id": provider_order_id, "status": status}}
+        if self.fazercards is None:
+            raise SupplierCommandError("FazerCards status reads are unavailable")
+        return self.fazercards.get_order(provider_order_id)
+
+
+def _shop2topup_uuid(idempotency_key: str) -> str:
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 255:
+        raise FulfillmentInputError("supplier idempotency key is invalid")
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, "aurix-games/shop2topup/" + idempotency_key))
+
+
+def _uuid_from_shop2topup_receipt(value: str) -> str:
+    match = re.fullmatch(r"s2t-([0-9a-f]{32})", value)
+    if not match:
+        raise FulfillmentInputError("SHOP2TOPUP order receipt is invalid")
+    return str(uuid.UUID(hex=match.group(1)))
+
+
+def _shop2topup_requirements(payload: Mapping[str, Any]) -> dict[str, Any]:
+    player_id = _required_payload_text(payload, "player_id")
+    requirements = _required_payload_mapping(payload, "requirements") if payload.get("requirements") else {}
+    return {"player_id": player_id, **requirements}
+
+
 class GameFulfillmentWorker:
     """Claim durable tasks and submit with the order's stable provider key."""
 
@@ -562,7 +678,11 @@ class GameFulfillmentWorker:
         status = None
         if not receipt:
             if task.dispatch_started_at is not None:
-                return self._hold_uncertain(task, order, current)
+                reference_builder = getattr(self.supplier, "attempt_reference", None)
+                candidate = reference_builder(
+                    payload=task.payload, idempotency_key=order.provider_idempotency_key,
+                ) if callable(reference_builder) else None
+                return self._hold_uncertain(task, order, current, provider_order_id=candidate)
             if order.state == OrderState.PAID_RESERVED:
                 message = "order queue transition is pending"
                 self.tasks.mark_retry(task, error=message, next_at=current + _backoff(task.attempts), now=current)
@@ -586,6 +706,12 @@ class GameFulfillmentWorker:
                     self.tasks.mark_retry(task, error="supplier preflight unavailable; no purchase sent",
                         next_at=current + _backoff(task.attempts), now=current)
                     return FulfillmentRun(task.order_id, "preflight_retry", error="supplier preflight unavailable; no purchase sent")
+            attempt_reference = None
+            reference_builder = getattr(self.supplier, "attempt_reference", None)
+            if callable(reference_builder):
+                attempt_reference = reference_builder(
+                    payload=task.payload, idempotency_key=order.provider_idempotency_key,
+                )
             self.tasks.begin_dispatch(task, now=current)
             try:
                 receipt, status = _provider_response(self.supplier.submit(
@@ -599,7 +725,7 @@ class GameFulfillmentWorker:
                 self.tasks.defer_disabled_dispatch(task, now=current)
                 return FulfillmentRun(task.order_id, "retry", error=message)
             except Exception:
-                return self._hold_uncertain(task, order, current)
+                return self._hold_uncertain(task, order, current, provider_order_id=attempt_reference)
             self.tasks.record_acceptance(task, receipt)
 
         if self.spend_guard is not None:
@@ -629,10 +755,13 @@ class GameFulfillmentWorker:
         self.tasks.mark_submitted(task, provider_order_id=receipt, now=current)
         return FulfillmentRun(task.order_id, "submitted", receipt)
 
-    def _hold_uncertain(self, task: FulfillmentTask, order: GameOrder, now: datetime) -> FulfillmentRun:
+    def _hold_uncertain(self, task: FulfillmentTask, order: GameOrder, now: datetime,
+                        *, provider_order_id: str | None = None) -> FulfillmentRun:
         message = "supplier outcome is uncertain; reconcile before retry or refund"
+        attempt_reference = provider_order_id or task.provider_order_id
         if order.state == OrderState.FULFILLMENT_QUEUED:
-            self.orders.transition(order.order_id, OrderState.UNKNOWN, at=now, reason=message)
+            self.orders.transition(order.order_id, OrderState.UNKNOWN, at=now, reason=message,
+                                   provider_order_id=attempt_reference)
         self.tasks.mark_failed(task, error=message, now=now)
         return FulfillmentRun(task.order_id, "failed", error=message)
 
@@ -734,6 +863,7 @@ def _backoff(attempts: int) -> timedelta:
 
 __all__ = [
     "FazerCardsOrderAdapter",
+    "SupplierOrderRouter",
     "FulfillmentInputError",
     "FulfillmentRun",
     "FulfillmentTask",

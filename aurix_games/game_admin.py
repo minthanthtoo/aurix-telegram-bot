@@ -28,11 +28,11 @@ from .pricing import PricingPolicy
 from .pricing_store import PricingPolicyStore
 from .catalog_policy import CatalogPolicyStore, env_catalog_policy_store
 from .wallet_monitor import SupplierWalletAlertStore
-from .order_reconciliation import SupplierWebhookReconciler
+from .order_reconciliation import Shop2TopupWebhookReconciler, SupplierWebhookReconciler
 from .order_repository import GameOrderRepository
 from .fulfillment_audit import audit_money_integrity
 from .mapping_review import mapping_history, review_mapping
-from .catalog_inventory import load_catalog_inventory
+from .catalog_inventory import load_catalog_inventory, load_shop2topup_catalog_inventory
 from .catalog import MAX_PAGE_SIZE, list_products
 from .catalog_matching import candidate_match_method
 from .supplier_routes import SupplierRouteError, validation_settings
@@ -181,6 +181,7 @@ class GameStoreAdminService:
         *,
         admin_token: str,
         supplier_client: FazerCardsCommandClient | None,
+        supplier_order_client: Any = None,
         wallet_alert_store: SupplierWalletAlertStore,
         wallet_policy: SupplierWalletPolicy | None = None,
         pricing_policy_store: PricingPolicyStore | None = None,
@@ -188,6 +189,7 @@ class GameStoreAdminService:
         mapping_review_provider: Callable[[], dict[str, Any]] | None = None,
         mapping_history_provider: Callable[[], dict[str, Any]] | None = None,
         catalog_inventory_provider: Callable[[], dict[str, Any]] | None = None,
+        shop2topup_catalog_inventory_provider: Callable[[], dict[str, Any]] | None = None,
         catalog_refresh_provider: Callable[[], dict[str, Any]] | None = None,
         mapping_approval_provider: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         treasury_reviewers: dict[str, str] | None = None,
@@ -200,6 +202,7 @@ class GameStoreAdminService:
         self.catalog_policy_store = catalog_policy_store
         self.integrity_paths = integrity_paths
         self.supplier_client = supplier_client
+        self.supplier_order_client = supplier_order_client
         self.wallet_alert_store = wallet_alert_store
         self.wallet_policy = wallet_policy or SupplierWalletPolicy()
         self.pricing_policy_store = pricing_policy_store
@@ -207,6 +210,7 @@ class GameStoreAdminService:
         self.mapping_review_provider = mapping_review_provider
         self.mapping_history_provider = mapping_history_provider
         self.catalog_inventory_provider = catalog_inventory_provider
+        self.shop2topup_catalog_inventory_provider = shop2topup_catalog_inventory_provider
         self.catalog_refresh_provider = catalog_refresh_provider
         self.mapping_approval_provider = mapping_approval_provider
         self._mapping_approval_lock = threading.RLock()
@@ -397,6 +401,7 @@ class GameStoreAdminService:
     def catalog_inventory(
         self,
         *,
+        supplier_provider: str | None = None,
         family: str | None = None,
         query: str = "",
         category: str | None = None,
@@ -405,9 +410,11 @@ class GameStoreAdminService:
     ) -> dict[str, Any]:
         """Return exact private API SKU rows through an authenticated boundary."""
 
-        if self.catalog_inventory_provider is None:
+        if self.catalog_inventory_provider is None and self.shop2topup_catalog_inventory_provider is None:
             raise GameAdminInputError("catalog inventory is not configured")
-        if family is not None and family not in {"topups", "giftcards", "gamekeys", "manual_services"}:
+        if supplier_provider is not None and supplier_provider not in {"fazercards", "shop2topup"}:
+            raise GameAdminInputError("unsupported supplier provider")
+        if family is not None and family not in {"topups", "giftcards", "gamekeys", "manual_services", "vouchers", "unsupported"}:
             raise GameAdminInputError("unsupported catalog family")
         for value, label in ((query, "query"), (category, "category")):
             if value is not None and (not isinstance(value, str) or len(value) > 80):
@@ -416,27 +423,54 @@ class GameStoreAdminService:
             raise GameAdminInputError("limit is out of range")
         if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 1_000_000:
             raise GameAdminInputError("offset is out of range")
-        payload = self.catalog_inventory_provider()
-        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
-            raise GameAdminInputError("catalog inventory response was malformed")
+        provider_payloads: dict[str, dict[str, Any]] = {}
+        if self.catalog_inventory_provider is not None:
+            try:
+                fazer_payload = self.catalog_inventory_provider()
+            except Exception as exc:
+                if self.shop2topup_catalog_inventory_provider is None:
+                    raise
+                fazer_payload = {"status": "unavailable", "items": [], "source_status": "unavailable",
+                    "freshness_status": "unknown", "mapping_config_status": "unavailable"}
+            if not isinstance(fazer_payload, dict) or not isinstance(fazer_payload.get("items"), list):
+                raise GameAdminInputError("FazerCards catalog inventory response was malformed")
+            provider_payloads["fazercards"] = fazer_payload
+        if self.shop2topup_catalog_inventory_provider is not None:
+            try:
+                shop_payload = self.shop2topup_catalog_inventory_provider()
+            except Exception:
+                shop_payload = {"status": "invalid", "items": [], "source_status": "invalid",
+                    "freshness_status": "unknown", "mapping_config_status": "invalid"}
+            if not isinstance(shop_payload, dict) or not isinstance(shop_payload.get("items"), list):
+                shop_payload = {"status": "invalid", "items": [], "source_status": "invalid",
+                    "freshness_status": "unknown", "mapping_config_status": "invalid"}
+            provider_payloads["shop2topup"] = shop_payload
         normalized_query = query.strip().casefold()
         normalized_category = category.strip().casefold() if isinstance(category, str) else ""
         rows = []
-        for item in payload["items"]:
-            if not isinstance(item, dict):
+        for provider, source in provider_payloads.items():
+            if supplier_provider is not None and provider != supplier_provider:
                 continue
-            if family is not None and item.get("family") != family:
-                continue
-            if normalized_category and normalized_category not in str(item.get("category_id", "")).casefold():
-                continue
-            if normalized_query:
-                haystack = " ".join(
-                    str(item.get(key, ""))
-                    for key in ("sku", "name", "category_id", "category_name")
-                ).casefold()
-                if normalized_query not in haystack:
+            for original in source["items"]:
+                if not isinstance(original, dict):
                     continue
-            rows.append(item)
+                item = {**original, "supplier_provider": provider}
+                if family is not None and item.get("family") != family:
+                    continue
+                if normalized_category and normalized_category not in str(item.get("category_id", "")).casefold():
+                    continue
+                if normalized_query:
+                    haystack = " ".join(
+                        str(item.get(key, ""))
+                        for key in ("supplier_provider", "sku", "name", "category_id", "category_name")
+                    ).casefold()
+                    if normalized_query not in haystack:
+                        continue
+                rows.append(item)
+        rows.sort(key=lambda item: (
+            item.get("supplier_provider", ""), item.get("family", ""),
+            str(item.get("category_id", "")), str(item.get("sku", "")),
+        ))
         total = len(rows)
         page = [dict(item) for item in rows[offset : offset + limit]]
         reference_products = _reference_products() if page else []
@@ -451,16 +485,52 @@ class GameStoreAdminService:
         mapping_status_counts = _inventory_status_counts(rows, "mapping_status")
         mapping_gate_counts = _inventory_status_counts(rows, "mapping_gate")
         projection_status_counts = _inventory_status_counts(rows, "projection_status")
+        provider_status = {
+            provider: {
+                "status": source.get("status", "unknown"),
+                "captured_at": source.get("captured_at"),
+                "source_status": source.get("source_status", "unknown"),
+                "freshness_status": source.get("freshness_status", "unknown"),
+                "mapping_config_status": source.get("mapping_config_status", "unknown"),
+                "items": len(source.get("items", [])),
+                "source_sha256": source.get("source_sha256"),
+            }
+            for provider, source in provider_payloads.items()
+        }
+        source_hash = hashlib.sha256(json.dumps(
+            {provider: value.get("source_sha256") for provider, value in provider_status.items()},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest() if provider_status else None
+        captured_values = [
+            value["captured_at"] for value in provider_status.values()
+            if isinstance(value.get("captured_at"), str)
+        ]
+        captured_at = max(captured_values, default=None)
+        freshness_values = [value.get("freshness_status") for value in provider_status.values()]
+        overall_freshness = (
+            freshness_values[0] if len(freshness_values) == 1
+            else "fresh" if freshness_values and all(value == "fresh" for value in freshness_values)
+            else "stale" if "stale" in freshness_values else "partial"
+        )
+        mapping_config_values = {value.get("mapping_config_status") for value in provider_status.values()}
+        mapping_config_status = mapping_config_values.pop() if len(mapping_config_values) == 1 else "partial"
+        counts: dict[str, int] = {}
+        for provider, source in provider_payloads.items():
+            for item in source.get("items", []):
+                if isinstance(item, dict):
+                    key = f"{provider}_{item.get('family', 'unknown')}"
+                    counts[key] = counts.get(key, 0) + 1
         return {
             "schema_version": 1,
             "status": "private_snapshot",
-            "source_sha256": payload.get("source_sha256"),
-            "captured_at": payload.get("captured_at"),
-            "source_status": payload.get("source_status"),
-            "counts": payload.get("counts", {}),
-            "category_counts": payload.get("category_counts", {}),
-            "mapping_config_status": payload.get("mapping_config_status", "unconfigured"),
-            "freshness_status": payload.get("freshness_status", "unknown"),
+            "source_sha256": source_hash,
+            "captured_at": captured_at,
+            "source_status": "complete" if all(value.get("source_status") == "complete" for value in provider_status.values()) else "partial",
+            "providers": provider_status,
+            "counts": dict(sorted(counts.items())),
+            "category_counts": {},
+            "mapping_config_status": mapping_config_status,
+            "freshness_status": overall_freshness,
             "mapping_status_counts": mapping_status_counts,
             "mapping_gate_counts": mapping_gate_counts,
             "projection_status_counts": projection_status_counts,
@@ -474,7 +544,11 @@ class GameStoreAdminService:
                 for product in reference_products
                 if isinstance(product.get("slug"), str) and isinstance(product.get("name"), str)
             ],
-            "auxiliary": payload.get("auxiliary", {}),
+            "auxiliary": {
+                provider: source.get("auxiliary", {})
+                for provider, source in provider_payloads.items()
+                if isinstance(source.get("auxiliary"), dict)
+            },
             "customer_visible": False,
             "checkout_enabled": False,
         }
@@ -510,7 +584,7 @@ class GameStoreAdminService:
             "mapping_approval": {
                 key: result[key]
                 for key in (
-                    "status", "provider_key", "offer_id", "product_slug",
+                    "status", "supplier_provider", "provider_key", "offer_id", "product_slug",
                     "fulfillment_kind", "approved_at", "local_config_updated",
                     "supplier_write", "customer_publication",
                 )
@@ -591,12 +665,19 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
 
     admin_token = os.environ.get("AURIX_GAMES_ADMIN_TOKEN", "").strip()
     api_key = os.environ.get("FAZERCARDS_API_KEY", "").strip()
+    shop2topup_key = os.environ.get("SHOP2TOPUP_API_KEY", "").strip()
     if not admin_token:
         return None
     base = Path(root or os.environ.get("AURIX_GAMES_BASE_DIR", ".local/fazercards"))
     writes = os.environ.get("FAZERCARDS_ENABLE_WRITES") == "1"
     snapshot_path = Path(
         os.environ.get("FAZERCARDS_CATALOG_SNAPSHOT", str(base / "catalog-20260921.json"))
+    )
+    shop2topup_snapshot_path = Path(
+        os.environ.get("SHOP2TOPUP_CATALOG_AUDIT_FILE", str(base / "shop2topup-catalog-audit.json"))
+    )
+    shop2topup_mapping_path = Path(
+        os.environ.get("SHOP2TOPUP_MAPPING_CONFIG", str(base / "shop2topup-mapping-config.json"))
     )
     config_path = Path(
         os.environ.get("FAZERCARDS_PUBLIC_CATALOG_CONFIG", str(base / "public-catalog-config.json"))
@@ -608,7 +689,7 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
     )
     def approve_exact_mapping(request: dict[str, Any]) -> dict[str, Any]:
         allowed_fields = {
-            "family", "category_id", "sku", "offer_id", "product_slug",
+            "supplier_provider", "family", "category_id", "sku", "offer_id", "product_slug",
             "fulfillment_kind", "region_rule", "region_label",
             "required_input_labels", "rights_evidence", "reviewer",
             "confirm_approval",
@@ -617,6 +698,9 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
         }
         if set(request) - allowed_fields:
             raise MappingApprovalError("mapping approval contains unsupported fields")
+        supplier_provider = request.get("supplier_provider", "fazercards")
+        if supplier_provider not in {"fazercards", "shop2topup"}:
+            raise MappingApprovalError("supplier provider is unsupported")
         family = request.get("family")
         category = request.get("category_id")
         sku = request.get("sku")
@@ -628,14 +712,22 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
 
         # A mapping needs current evidence for its exact category, not an
         # unrelated family or the snapshot's global capture time.
-        inventory = load_catalog_inventory(
-            snapshot_path,
-            mapping_path=config_path,
-            max_age_minutes=max_age_minutes,
-        )
+        if supplier_provider == "shop2topup":
+            inventory = load_shop2topup_catalog_inventory(
+                shop2topup_snapshot_path,
+                mapping_path=shop2topup_mapping_path,
+                max_age_minutes=int(os.environ.get("SHOP2TOPUP_CATALOG_MAX_AGE_MINUTES", str(max_age_minutes))),
+            )
+        else:
+            inventory = load_catalog_inventory(
+                snapshot_path,
+                mapping_path=config_path,
+                max_age_minutes=max_age_minutes,
+            )
         exact_rows = [
             item for item in inventory.get("items", [])
-            if (item.get("family"), item.get("category_id"), item.get("sku")) == key
+            if item.get("supplier_provider", "fazercards") == supplier_provider
+            and (item.get("family"), item.get("category_id"), item.get("sku")) == key
         ]
         if len(exact_rows) != 1:
             raise MappingApprovalError("exact supplier SKU must match one current API inventory row")
@@ -646,6 +738,15 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
             raise MappingApprovalError("supplier category listing and exact offer detail must be complete before mapping approval")
         if not isinstance(source_item.get("name"), str) or not source_item["name"].strip():
             raise MappingApprovalError("supplier SKU is missing its exact display name")
+        if supplier_provider == "shop2topup":
+            if family != "topups" or source_item.get("product_type") != "topup":
+                raise MappingApprovalError("SHOP2TOPUP mapping supports direct top-up products only")
+            if source_item.get("supplier_available") is not True:
+                raise MappingApprovalError("SHOP2TOPUP item is not confirmed available in the last audit")
+            schema = source_item.get("input_schema")
+            schema_labels = [field.get("field_name") for field in schema] if isinstance(schema, list) else []
+            if not schema_labels or source_item.get("source_category_complete") is not True:
+                raise MappingApprovalError("SHOP2TOPUP exact category needs a complete player requirements schema")
 
         products = {
             product["slug"]: product["name"]
@@ -664,6 +765,8 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
         fulfillment = request.get("fulfillment_kind")
         if family_fulfillment.get(family) != fulfillment:
             raise MappingApprovalError("fulfillment must match the supplier family")
+        if supplier_provider == "shop2topup" and fulfillment != "direct_topup":
+            raise MappingApprovalError("SHOP2TOPUP supports direct top-up fulfillment only")
 
         region = request.get("region_rule")
         if not isinstance(region, dict) or set(region) - {"allow_all", "dimension", "allowed_values"}:
@@ -691,6 +794,8 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
             raise MappingApprovalError("no more than 12 recipient field labels may be recorded")
         if any(len(label) > 96 or "\n" in label or "\r" in label for label in labels):
             raise MappingApprovalError("recipient field labels must be single-line and at most 96 characters")
+        if supplier_provider == "shop2topup" and labels != schema_labels:
+            raise MappingApprovalError("recipient fields must exactly match the SHOP2TOPUP requirements schema")
 
         offer_id = request.get("offer_id")
         if not isinstance(offer_id, str) or not offer_id.strip() or len(offer_id.strip()) > 160:
@@ -700,6 +805,7 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
 
         args = Namespace(
             confirm_approval=True,
+            supplier_provider=supplier_provider,
             family=family,
             category=category,
             sku=sku,
@@ -717,16 +823,44 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
             reviewer=request.get("reviewer"),
             approved_at=approved_at,
         )
-        config = _read_private_mapping(config_path)
+        mapping_path = shop2topup_mapping_path if supplier_provider == "shop2topup" else config_path
+        if supplier_provider == "shop2topup" and not mapping_path.exists():
+            if mapping_path.is_symlink() or mapping_path.parent.is_symlink():
+                raise MappingApprovalError("SHOP2TOPUP mapping config path must not be a symlink")
+            try:
+                parent_mode = mapping_path.parent.stat().st_mode
+            except OSError as exc:
+                raise MappingApprovalError("SHOP2TOPUP mapping directory is unavailable") from exc
+            if stat.S_IMODE(parent_mode) & 0o077:
+                raise MappingApprovalError("SHOP2TOPUP mapping directory must be private")
+            initial = json.dumps({"schema_version": 1, "mappings": []}, sort_keys=True).encode("utf-8") + b"\n"
+            try:
+                descriptor = os.open(mapping_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                descriptor = None
+            except OSError as exc:
+                raise MappingApprovalError("SHOP2TOPUP mapping config could not be initialized") from exc
+            if descriptor is not None:
+                try:
+                    with os.fdopen(descriptor, "wb") as handle:
+                        handle.write(initial)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                except OSError as exc:
+                    mapping_path.unlink(missing_ok=True)
+                    raise MappingApprovalError("SHOP2TOPUP mapping config could not be initialized") from exc
+        config = _read_private_mapping(mapping_path)
         existing_rows = [
             row for row in config["mappings"]
-            if tuple(row.get(field) for field in (
+            if row.get("supplier_provider", "fazercards") == supplier_provider
+            and tuple(row.get(field) for field in (
                 "family", "provider_category_id", "provider_offer_id"
             )) == key
         ]
         if not existing_rows:
             digest = hashlib.sha256("\x1f".join(key).encode("utf-8")).hexdigest()[:24]
             config["mappings"].append({
+                **({"supplier_provider": supplier_provider} if supplier_provider != "fazercards" else {}),
                 "family": family,
                 "provider_category_id": category,
                 "provider_offer_id": sku,
@@ -750,15 +884,17 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
                       "validation_region_map", "validation_region_policy"):
             if field in request:
                 approved_row[field] = request[field]
-        if any(field in request for field in ("validation_category_id", "validation_field_map",
-                                              "validation_region_map", "validation_region_policy")):
+        if supplier_provider == "shop2topup" or any(field in request for field in (
+            "validation_category_id", "validation_field_map", "validation_region_map", "validation_region_policy"
+        )):
             try:
                 validation_settings(approved_row)
             except SupplierRouteError as exc:
                 raise MappingApprovalError(str(exc)) from exc
-        _write_private_mapping(config_path, updated)
+        _write_private_mapping(mapping_path, updated)
         return {
             "status": "approved_row",
+            "supplier_provider": supplier_provider,
             "provider_key": list(key),
             "offer_id": offer_id.strip(),
             "product_slug": product_slug,
@@ -767,6 +903,30 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
             "local_config_updated": True,
             "supplier_write": False,
             "customer_publication": False,
+        }
+
+    from .fulfillment import SupplierOrderRouter
+    from .providers.shop2topup_commands import Shop2TopupCommandClient
+    from .mapping_review import mapping_history
+    supplier_client = FazerCardsCommandClient(api_key, allow_writes=writes) if api_key else None
+    shop2topup_client = Shop2TopupCommandClient(shop2topup_key) if shop2topup_key else None
+    supplier_order_client = SupplierOrderRouter(supplier_client, shop2topup_client) if (supplier_client or shop2topup_client) else None
+
+    def combined_mapping_history() -> dict[str, Any]:
+        sources = [
+            mapping_history(config_path=config_path),
+            mapping_history(config_path=shop2topup_mapping_path),
+        ]
+        events = [event for source in sources for event in source.get("events", [])]
+        events.sort(key=lambda event: str(event.get("approved_at", "")))
+        timestamps = [source.get("last_reviewed_at") for source in sources
+                      if isinstance(source.get("last_reviewed_at"), str)]
+        return {
+            "status": "available" if events else "empty" if any(source.get("status") == "empty" for source in sources) else "missing",
+            "count": sum(source.get("count", 0) for source in sources),
+            "events": events[-100:],
+            "last_reviewed_at": max(timestamps, default=None),
+            "writes": False,
         }
 
     return GameStoreAdminService(
@@ -778,7 +938,8 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
             Path(os.environ.get("AURIX_GAMES_FULFILLMENT_DATABASE", str(base / "fulfillment.sqlite3"))),
         ),
         treasury_reviewers=json.loads(os.environ.get("AURIX_GAMES_TREASURY_REVIEWERS", "{}")),
-        supplier_client=FazerCardsCommandClient(api_key, allow_writes=writes) if api_key else None,
+        supplier_client=supplier_client,
+        supplier_order_client=supplier_order_client,
         wallet_alert_store=SupplierWalletAlertStore(base / "wallet-alerts.sqlite3"),
         wallet_policy=policy,
         pricing_policy_store=PricingPolicyStore(config_path),
@@ -790,11 +951,16 @@ def build_env_admin_service(*, root: str | Path | None = None) -> GameStoreAdmin
             config_path=config_path,
             max_age_minutes=max_age_minutes,
         ),
-        mapping_history_provider=lambda: mapping_history(config_path=config_path),
+        mapping_history_provider=combined_mapping_history,
         catalog_inventory_provider=lambda: load_catalog_inventory(
             snapshot_path,
             mapping_path=config_path,
             max_age_minutes=max_age_minutes,
+        ),
+        shop2topup_catalog_inventory_provider=lambda: load_shop2topup_catalog_inventory(
+            shop2topup_snapshot_path,
+            mapping_path=shop2topup_mapping_path,
+            max_age_minutes=int(os.environ.get("SHOP2TOPUP_CATALOG_MAX_AGE_MINUTES", str(max_age_minutes))),
         ),
         catalog_refresh_provider=lambda: _catalog_refresh_diagnostics(
             base / "catalog-refresh-evidence", config_path,
@@ -812,6 +978,22 @@ def build_env_webhook_reconciler(*, root: str | Path | None = None) -> SupplierW
     base = Path(root or os.environ.get("AURIX_GAMES_BASE_DIR", ".local/fazercards"))
     database = os.environ.get("AURIX_GAMES_ORDER_DATABASE", str(base / "game-orders.sqlite3"))
     return SupplierWebhookReconciler(
+        GameOrderRepository(database),
+        webhook_secret=secret,
+    )
+
+
+def build_env_shop2topup_webhook_reconciler(
+    *, root: str | Path | None = None,
+) -> Shop2TopupWebhookReconciler | None:
+    """Build the separate SHOP2TOPUP callback boundary when its secret exists."""
+
+    secret = os.environ.get("SHOP2TOPUP_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        return None
+    base = Path(root or os.environ.get("AURIX_GAMES_BASE_DIR", ".local/fazercards"))
+    database = os.environ.get("AURIX_GAMES_ORDER_DATABASE", str(base / "game-orders.sqlite3"))
+    return Shop2TopupWebhookReconciler(
         GameOrderRepository(database),
         webhook_secret=secret,
     )
@@ -946,6 +1128,9 @@ def _safe_mapping_history(payload: dict[str, Any]) -> dict[str, Any]:
             key: event[key]
             for key in required
         } | {
+            "supplier_provider": event.get("supplier_provider", "fazercards")
+            if event.get("supplier_provider", "fazercards") in {"fazercards", "shop2topup"}
+            else "fazercards",
             "provider_key": list(provider_key),
             "region_rule": safe_region,
             "rights_evidence_recorded": event.get("rights_evidence_recorded") is True,
@@ -984,5 +1169,6 @@ __all__ = [
     "GameAdminInputError",
     "GameStoreAdminService",
     "build_env_admin_service",
+    "build_env_shop2topup_webhook_reconciler",
     "build_env_webhook_reconciler",
 ]
