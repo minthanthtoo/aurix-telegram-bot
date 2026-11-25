@@ -46,6 +46,15 @@ class SupplierRecoveryTests(unittest.TestCase):
         self.remote={**deepcopy(self.payload),'id':'ord-123','kind':'topup','status':'completed','created_at':self.now.isoformat()}
         self.client=Mock();self.client.get_order.side_effect=lambda _: {'ok':True,'order':deepcopy(self.remote)}
 
+    def test_timeout_without_declared_attempt_reference_is_held_for_reconciliation(self):
+        order = self.orders.get('one')
+        task = self.tasks.get('one')
+        self.assertEqual(order.state, OrderState.UNKNOWN)
+        self.assertIsNone(order.provider_order_id)
+        self.assertEqual(task.status, 'failed')
+        self.assertIsNone(task.provider_order_id)
+        self.assertIsNotNone(task.dispatch_started_at)
+
     def recover(self,request=None):
         return recover_original_topup(self.orders,self.tasks,self.payments,self.client,order_id='one',
             request=request or self.request,reviewer='staff:treasury',now=self.now)

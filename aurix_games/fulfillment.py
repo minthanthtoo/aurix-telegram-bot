@@ -678,10 +678,10 @@ class GameFulfillmentWorker:
         status = None
         if not receipt:
             if task.dispatch_started_at is not None:
-                reference_builder = getattr(self.supplier, "attempt_reference", None)
-                candidate = reference_builder(
-                    payload=task.payload, idempotency_key=order.provider_idempotency_key,
-                ) if callable(reference_builder) else None
+                candidate = _supplier_attempt_reference(
+                    self.supplier, payload=task.payload,
+                    idempotency_key=order.provider_idempotency_key,
+                )
                 return self._hold_uncertain(task, order, current, provider_order_id=candidate)
             if order.state == OrderState.PAID_RESERVED:
                 message = "order queue transition is pending"
@@ -706,12 +706,10 @@ class GameFulfillmentWorker:
                     self.tasks.mark_retry(task, error="supplier preflight unavailable; no purchase sent",
                         next_at=current + _backoff(task.attempts), now=current)
                     return FulfillmentRun(task.order_id, "preflight_retry", error="supplier preflight unavailable; no purchase sent")
-            attempt_reference = None
-            reference_builder = getattr(self.supplier, "attempt_reference", None)
-            if callable(reference_builder):
-                attempt_reference = reference_builder(
-                    payload=task.payload, idempotency_key=order.provider_idempotency_key,
-                )
+            attempt_reference = _supplier_attempt_reference(
+                self.supplier, payload=task.payload,
+                idempotency_key=order.provider_idempotency_key,
+            )
             self.tasks.begin_dispatch(task, now=current)
             try:
                 receipt, status = _provider_response(self.supplier.submit(
@@ -794,6 +792,16 @@ def _provider_response(value: object) -> tuple[str, str | None]:
     if status is not None and (not isinstance(status, str) or len(status) > 80):
         raise SupplierCommandError("supplier order response contained invalid status")
     return provider_id, status
+
+def _supplier_attempt_reference(
+    supplier: SupplierOrderPort, *, payload: Mapping[str, Any], idempotency_key: str,
+) -> str | None:
+    # Inspect the class so dynamic mocks cannot invent a callable method.
+    builder = getattr(type(supplier), "attempt_reference", None)
+    if not callable(builder):
+        return None
+    value = builder(supplier, payload=payload, idempotency_key=idempotency_key)
+    return value if isinstance(value, str) and _PROVIDER_ORDER_ID.fullmatch(value) else None
 
 
 def _payload(value: Mapping[str, Any]) -> str:
