@@ -1,7 +1,7 @@
 """Private pilot preflight and durable USD budget for first supplier dispatch."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
 import json
@@ -12,6 +12,7 @@ import time
 from persistence import open_sqlite_connection
 from .commerce_settings import env_commerce_settings
 from .fazercards_account import _decimal, parse_supplier_wallet_snapshot
+from .providers.shop2topup_commands import Shop2TopupCommandClient
 
 
 class SpendPreflightError(ValueError):
@@ -111,12 +112,15 @@ class PilotSpendGuard:
             raise SpendPreflightError("supplier cost exceeds the approved dispatch ceiling")
         if (stock is None and not allow_unknown) or (stock is not None and (type(stock) is not int or stock < 1)):
             raise SpendPreflightError("supplier stock does not meet the approved policy")
-        balance = parse_supplier_wallet_snapshot(self.client.get_balance(), observed_at=now)
+        balance = self._fresh_balance(now=now)
         if time.monotonic() - started > 30:
             raise SpendPreflightError("supplier preflight exceeded its 30-second freshness window")
-        if balance.balance_usd < cap + self.minimum_balance:
+        if balance < cap + self.minimum_balance:
             raise SpendPreflightError("supplier balance is below the purchase ceiling and required reserve")
         return cap, started
+
+    def _fresh_balance(self, *, now):
+        return parse_supplier_wallet_snapshot(self.client.get_balance(), observed_at=now).balance_usd
 
     def check_payment(self, payload, *, now):
         cap, _ = self.check_supplier(payload, now=now)
@@ -166,8 +170,8 @@ class PilotSpendGuard:
                 (order.order_id, payload_hash, day, str(cap), now.isoformat()))
         # Hold the budget before the final balance read so another local purchase cannot pass on the same stale float.
         try:
-            fresh_balance = parse_supplier_wallet_snapshot(self.client.get_balance(), observed_at=now)
-            if fresh_balance.balance_usd < cap + self.minimum_balance:
+            fresh_balance = self._fresh_balance(now=now)
+            if fresh_balance < cap + self.minimum_balance:
                 raise SpendPreflightError("supplier balance changed before dispatch")
             if time.monotonic() - started > 30:
                 raise SpendPreflightError("supplier preflight exceeded its 30-second freshness window")
@@ -189,3 +193,114 @@ class PilotSpendGuard:
     def disabled(self, order_id):
         with open_sqlite_connection(self.tasks.path) as db:
             db.execute("UPDATE game_supplier_spend SET state='disabled' WHERE order_id=? AND state='held'", (order_id,))
+
+
+class Shop2TopupPilotSpendGuard(PilotSpendGuard):
+    """SHOP2TOPUP read-only account, price and stock preflight with USD spend caps."""
+
+    def __init__(self, *, tasks, client: Shop2TopupCommandClient, checkout, policy):
+        if not isinstance(client, Shop2TopupCommandClient):
+            raise ValueError("SHOP2TOPUP command client is required")
+        super().__init__(tasks=tasks, client=client, catalog_client=None, checkout=checkout, policy=policy)
+
+    def check_supplier(self, payload, *, now):
+        if now.utcoffset() is None:
+            raise SpendPreflightError("timezone-aware preflight time required")
+        if payload.get("supplier_provider") != "shop2topup":
+            raise SpendPreflightError("SHOP2TOPUP preflight received a different provider route")
+        if not self.client.orders_enabled:
+            raise SpendPreflightError("SHOP2TOPUP order writes are not enabled")
+        if payload.get("quantity") != 1:
+            raise SpendPreflightError("pilot spend policy permits one top-up unit per order")
+        key = (payload.get("category_id"), payload.get("offer_id"))
+        approved = self.offers.get(key)
+        if approved is None:
+            raise SpendPreflightError("offer has no approved SHOP2TOPUP dispatch cost ceiling")
+        cap, allow_unknown, expected_schema = approved
+        if allow_unknown:
+            raise SpendPreflightError("SHOP2TOPUP dispatch policy cannot allow unreported stock")
+        started = time.monotonic()
+        try:
+            account_response = self.client.get_account()
+            account = account_response.get("account")
+            if (not isinstance(account, dict) or account.get("enabled") is not True
+                    or account.get("verified") is not True):
+                raise ValueError()
+            balance = _decimal(account.get("wallet"), "supplier wallet")
+        except (TypeError, ValueError):
+            raise SpendPreflightError("SHOP2TOPUP account is disabled, unverified or unavailable") from None
+
+        try:
+            requirements_response = self.client.get_requirements(int(key[0]))
+            fields = requirements_response.get("requirements")
+            if not isinstance(fields, list) or schema_fingerprint(fields) != expected_schema:
+                raise ValueError()
+            price_response = self.client.get_price(int(key[1]))
+            price = price_response.get("price")
+            if (not isinstance(price, dict) or price.get("item_id") != int(key[1])
+                    or price.get("currency") != "USD" or price.get("in_stock") is not True):
+                raise ValueError()
+            unit_price = _decimal(price.get("unit_price"), "live cost")
+            timestamp = datetime.fromisoformat(str(price.get("timestamp", "")).replace("Z", "+00:00"))
+            age = now.astimezone(timezone.utc) - timestamp.astimezone(timezone.utc)
+            if timestamp.utcoffset() is None or age < timedelta(seconds=-5) or age > timedelta(seconds=30):
+                raise ValueError()
+        except (TypeError, ValueError, OverflowError):
+            raise SpendPreflightError("SHOP2TOPUP price, stock or requirement schema could not be verified") from None
+        if unit_price <= 0 or unit_price > cap:
+            raise SpendPreflightError("SHOP2TOPUP cost exceeds the approved dispatch ceiling")
+        if balance < cap + self.minimum_balance:
+            raise SpendPreflightError("SHOP2TOPUP wallet is below the purchase ceiling and required reserve")
+        if time.monotonic() - started > 30:
+            raise SpendPreflightError("SHOP2TOPUP preflight exceeded its 30-second freshness window")
+        payload["expected_unit_price"] = str(price["unit_price"])
+        return cap, started
+
+    def _fresh_balance(self, *, now):
+        try:
+            response = self.client.get_account()
+            account = response.get("account")
+            if not isinstance(account, dict) or account.get("enabled") is not True or account.get("verified") is not True:
+                raise ValueError()
+            return _decimal(account.get("wallet"), "supplier wallet")
+        except (TypeError, ValueError):
+            raise SpendPreflightError("SHOP2TOPUP account balance could not be confirmed") from None
+
+
+class ProviderSpendGuard:
+    """Route preflight and spend-ledger operations to the frozen order provider."""
+
+    def __init__(self, guards):
+        if not isinstance(guards, dict) or not guards or any(
+            name not in {"fazercards", "shop2topup"} or not isinstance(guard, PilotSpendGuard)
+            for name, guard in guards.items()
+        ):
+            raise ValueError("provider spend guards are invalid")
+        self.guards = dict(guards)
+        self._order_providers = {}
+
+    def check_payment(self, payload, *, now):
+        guard = self._guard_for(payload.get("supplier_provider", "fazercards"))
+        guard.check_payment(payload, now=now)
+
+    def prepare(self, task, order, *, now):
+        provider = task.payload.get("supplier_provider", "fazercards")
+        guard = self._guard_for(provider)
+        self._order_providers[order.order_id] = provider
+        guard.prepare(task, order, now=now)
+
+    def accepted(self, order_id, provider_order_id):
+        provider = "shop2topup" if provider_order_id.startswith("s2t-") else "fazercards"
+        self._guard_for(provider).accepted(order_id, provider_order_id)
+        self._order_providers.pop(order_id, None)
+
+    def disabled(self, order_id):
+        provider = self._order_providers.pop(order_id, "fazercards")
+        guard = self.guards.get(provider)
+        if guard is not None:
+            guard.disabled(order_id)
+
+    def _guard_for(self, provider):
+        if not isinstance(provider, str) or provider not in self.guards:
+            raise SpendPreflightError("the selected supplier has no approved spend preflight")
+        return self.guards[provider]

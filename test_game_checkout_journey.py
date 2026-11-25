@@ -22,6 +22,7 @@ from aurix_games.order_repository import GameOrderRepository, OrderRepositoryErr
 from aurix_games.recipient_vault import RecipientVault, RecipientVaultError
 from aurix_games.supplier_routes import PrivateSupplierRouteStore, SupplierRouteError
 from aurix_games.payment_service import CustomerPaymentService
+from aurix_games.payment_review import PaymentReviewService
 from aurix_games.providers.fazercards_commands import FazerCardsCommandClient, SupplierWriteDisabledError
 from test_fazercards_commands import _Opener
 from aurix_games.web_api import create_server
@@ -29,6 +30,14 @@ from aurix_games.customer_api import SignedCustomerTokenVerifier, issue_test_tok
 
 
 NOW = datetime.now(timezone.utc)
+
+
+class _SyntheticPaymentPreflight:
+    """Explicit no-network preflight for successful unit-test journeys."""
+
+    def check_payment(self, _payload, *, now):
+        if now.utcoffset() is None:
+            raise AssertionError("test preflight requires an aware timestamp")
 
 
 class CheckoutJourneyTests(unittest.TestCase):
@@ -63,7 +72,7 @@ class CheckoutJourneyTests(unittest.TestCase):
                 self.assertEqual(category, "validation-cat")
                 self.assertEqual(fields, self.payload["fields"])
                 return self.response
-        self.journey = CheckoutJourney(self.checkout, Supplier())
+        self.journey = CheckoutJourney(self.checkout, Supplier(), payment_preflight=_SyntheticPaymentPreflight())
 
     def test_unapproved_account_check_route_returns_safe_checkout_error(self):
         class Catalog:
@@ -175,17 +184,96 @@ class CheckoutJourneyTests(unittest.TestCase):
         guard.check_payment.side_effect = RuntimeError("supplier temporarily unavailable")
         self.journey.payment_preflight = guard
         args = dict(rail="kpay", receiver_id="receiver-1", receiver_revision="v1", now=NOW,
-            instructions={"account": "private-receiver", "account_name": "shop"})
-        with self.assertRaisesRegex(CheckoutInputError, "payment instructions remain unavailable"):
+            instructions={"account": "private-receiver", "account_name": "shop"}, receipt_review_ready=True)
+        with self.assertRaisesRegex(CheckoutInputError, "No payment was started"):
             self.journey.open_payment(self.principal, quote["quote_id"], **args)
         self.assertIsNone(self.checkout.repository.get_payment_intent(order["order_id"]))
         guard.check_payment.side_effect = None
         self.journey.open_payment(self.principal, quote["quote_id"], **args)
         guard.check_payment.side_effect = RuntimeError("supplier unavailable after saved instructions")
         before = guard.check_payment.call_count
-        saved = self.journey.payment(self.principal, {"order_id": order["order_id"], "rail": "kpay"}, now=NOW)
+        saved = self.journey.payment(self.principal, {"order_id": order["order_id"], "rail": "kpay"},
+            now=NOW, receipt_review_ready=True)
         self.assertEqual(saved["payment"]["account"], "private-receiver")
         self.assertEqual(guard.check_payment.call_count, before)
+
+    def test_missing_supplier_preflight_blocks_external_payment_instructions(self):
+        journey = CheckoutJourney(self.checkout, self.journey.supplier)
+        journey.payment_receivers = {"kpay": {"id": "receiver-1", "revision": "v1",
+            "account": "private-receiver", "account_name": "shop"}}
+        quote = journey.review(self.principal, self.payload, now=NOW)["quote"]
+        order = journey.confirm(self.principal,
+            {"quote_id": quote["quote_id"], "confirmed": True}, now=NOW)["order"]
+        with self.assertRaisesRegex(CheckoutInputError, "No payment was started"):
+            journey.payment(self.principal, {"quote_id": quote["quote_id"], "rail": "kpay"}, now=NOW,
+                receipt_review_ready=True)
+        self.assertIsNone(self.checkout.repository.get_payment_intent(order["order_id"]))
+
+    def test_missing_supplier_preflight_blocks_wallet_reservation(self):
+        ledger = CustomerLedger(Path(self.temp.name) / "wallet-no-preflight.sqlite3")
+        ledger.credit(customer_id="customer-1", amount_minor=5000, currency="MMK",
+            event_key="verified-credit-no-preflight", actor="staff:reviewer", reason="verified credit",
+            occurred_at=NOW)
+        journey = CheckoutJourney(self.checkout, self.journey.supplier,
+            wallet_payment_service=CustomerPaymentService(self.checkout.repository, ledger))
+        quote = journey.review(self.principal, self.payload, now=NOW)["quote"]
+        order = journey.confirm(self.principal,
+            {"quote_id": quote["quote_id"], "confirmed": True}, now=NOW)["order"]
+        with self.assertRaisesRegex(CheckoutInputError, "No payment was started"):
+            journey.pay_with_wallet(self.principal, order["order_id"], now=NOW)
+        balance = ledger.balance("customer-1")
+        self.assertEqual((balance.available_minor, balance.reserved_minor), (5000, 0))
+        self.assertIsNone(ledger.event_by_key(f"wallet:{order['order_id']}"))
+
+    def test_supplier_preflight_outage_is_retryable_http_503_for_customer_payment_paths(self):
+        from unittest.mock import Mock
+        secret = "preflight-http-secret-012345678901234567890"
+        ledger = CustomerLedger(Path(self.temp.name) / "wallet-preflight-http.sqlite3")
+        ledger.credit(customer_id="customer-1", amount_minor=5000, currency="MMK",
+            event_key="verified-credit-preflight-http", actor="staff:reviewer", reason="verified credit",
+            occurred_at=NOW)
+        guard = Mock()
+        guard.check_payment.side_effect = RuntimeError("synthetic supplier outage")
+        journey = CheckoutJourney(self.checkout, self.journey.supplier, payment_preflight=guard,
+            payment_receivers={"kpay": {"id": "receiver-1", "revision": "v1",
+                "account": "private-receiver", "account_name": "shop"}},
+            wallet_payment_service=CustomerPaymentService(self.checkout.repository, ledger))
+        quote = journey.review(self.principal, self.payload, now=NOW)["quote"]
+        order = journey.confirm(self.principal,
+            {"quote_id": quote["quote_id"], "confirmed": True}, now=NOW)["order"]
+        verifier = SignedCustomerTokenVerifier(secret, issuer="aurix")
+        review = PaymentReviewService(
+            CustomerPaymentService(self.checkout.repository, ledger),
+            {"staff:reviewer": hashlib.sha256(b"reviewer-secret-0123456789").hexdigest()},
+            evidence_key=Fernet.generate_key(),
+        )
+        server = create_server("127.0.0.1", 0, checkout_journey=journey,
+            customer_auth=verifier, customer_order_service=CustomerOrderService(self.checkout.repository, ledger),
+            customer_wallet_service=CustomerWalletService(ledger), payment_review=review)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(worker.join, 2)
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+        token = issue_test_token("customer-1", secret, expires_at=NOW + timedelta(hours=1), issuer="aurix")
+        headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+
+        for path, body in (
+            ("/api/v1/checkout/payment", {"order_id": order["order_id"], "rail": "kpay"}),
+            (f"/api/v1/orders/{order['order_id']}/wallet-payment", {"confirmed": True}),
+        ):
+            with self.subTest(path=path):
+                request = Request(base + path, data=json.dumps(body).encode(), headers=headers, method="POST")
+                with self.assertRaises(HTTPError) as failure:
+                    urlopen(request)
+                self.assertEqual(failure.exception.code, 503)
+                self.assertIn("No payment was started", json.loads(failure.exception.read())["error"])
+
+        self.assertIsNone(self.checkout.repository.get_payment_intent(order["order_id"]))
+        balance = ledger.balance("customer-1")
+        self.assertEqual((balance.available_minor, balance.reserved_minor), (5000, 0))
+        self.assertIsNone(ledger.event_by_key(f"wallet:{order['order_id']}"))
 
     def test_review_rejects_mismatched_or_incomplete_provider_identity(self):
         for changes in ({"valid": False}, {"category_id": "wrong"}, {"player_name": None},
@@ -381,8 +469,14 @@ class CheckoutJourneyTests(unittest.TestCase):
 
     def test_http_requires_auth_and_cookie_origin_and_confirms_server_quote(self):
         secret = "journey-http-secret-012345678901234567890"
+        payment_review = PaymentReviewService(
+            CustomerPaymentService(self.checkout.repository,
+                CustomerLedger(Path(self.temp.name) / "http-review-ledger.db")),
+            {"staff:reviewer": hashlib.sha256(b"reviewer-secret-0123456789").hexdigest()},
+            evidence_key=Fernet.generate_key(),
+        )
         server = create_server("127.0.0.1", 0, checkout_journey=self.journey,
-            customer_auth=SignedCustomerTokenVerifier(secret, issuer="aurix"))
+            customer_auth=SignedCustomerTokenVerifier(secret, issuer="aurix"), payment_review=payment_review)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         self.addCleanup(server.server_close)
@@ -415,6 +509,10 @@ class CheckoutJourneyTests(unittest.TestCase):
         self.journey.payment_receivers = {"kpay": {"id": "receiver-1", "revision": "v1",
             "account": "091234", "account_name": "Approved shop", "qr_file": "kpay-r1.png"}}
         payment_request = {"quote_id": quote["quote_id"], "rail": "kpay"}
+        with urlopen(base + "/api/v1/checkout/config") as response:
+            config = json.load(response)
+        self.assertTrue(config["payments_enabled"])
+        self.assertEqual(config["payment_rails"], ["kpay"])
         payment = post("/api/v1/checkout/payment", payment_request, headers)["payment"]
         self.assertEqual(payment["account"], "091234")
         self.assertEqual(payment["qr_asset"], "kpay-r1.png")
@@ -434,12 +532,91 @@ class CheckoutJourneyTests(unittest.TestCase):
             post("/api/v1/checkout/payment", {**payment_request, "receiver_id": "forged"}, headers)
         self.assertEqual(failure.exception.code, 400)
 
+    def test_external_payment_is_not_advertised_or_opened_without_receipt_review_storage(self):
+        secret = "receipt-readiness-http-secret-012345678901234567890"
+        qr_dir = Path(self.temp.name) / "unavailable-review-qr"
+        qr_dir.mkdir(mode=0o700)
+        qr_file = qr_dir / "kpay-r1.png"
+        qr_file.write_bytes(b"\x89PNG\r\n\x1a\nreview-guard-qr")
+        qr_file.chmod(0o600)
+        journey = CheckoutJourney(self.checkout, self.journey.supplier,
+            payment_preflight=_SyntheticPaymentPreflight(), payment_receivers={"kpay": {"id": "receiver-1", "revision": "v1",
+            "account": "private-receiver", "account_name": "shop", "qr_file": qr_file.name}},
+            receiver_qr_dir=qr_dir)
+        quote = journey.review(self.principal, self.payload, now=NOW)["quote"]
+        order = journey.confirm(self.principal,
+            {"quote_id": quote["quote_id"], "confirmed": True}, now=NOW)["order"]
+        token = issue_test_token("customer-1", secret, expires_at=NOW + timedelta(hours=1), issuer="aurix")
+        headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+
+        # A reviewer without encrypted receipt storage is not enough to take a
+        # customer's money: the normal customer journey requires a private receipt.
+        review = PaymentReviewService(
+            CustomerPaymentService(self.checkout.repository, CustomerLedger(Path(self.temp.name) / "review-ledger.db")),
+            {"staff:reviewer": hashlib.sha256(b"reviewer-secret-0123456789").hexdigest()},
+        )
+        server = create_server("127.0.0.1", 0, checkout_journey=journey,
+            customer_order_service=CustomerOrderService(self.checkout.repository),
+            customer_auth=SignedCustomerTokenVerifier(secret, issuer="aurix"),
+            payment_review=review)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(worker.join, 2)
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+
+        with urlopen(base + "/api/v1/checkout/config") as response:
+            config = json.load(response)
+        self.assertFalse(config["payments_enabled"])
+        self.assertEqual(config["payment_rails"], [])
+
+        request = Request(base + "/api/v1/checkout/payment",
+            data=json.dumps({"order_id": order["order_id"], "rail": "kpay"}).encode(),
+            headers=headers, method="POST")
+        with self.assertRaises(HTTPError) as failure:
+            urlopen(request)
+        self.assertEqual(failure.exception.code, 503)
+        self.assertIn("Do not send or repeat a transfer", json.loads(failure.exception.read())["error"])
+        self.assertIsNone(self.checkout.repository.get_payment_intent(order["order_id"]))
+
+        # If review storage goes down after instructions were already saved,
+        # the customer API must stop replaying instructions until it recovers.
+        # Keep the frozen intent for operator reconciliation, but don't expose
+        # a fresh transfer screen the service cannot support.
+        saved = journey.payment(self.principal,
+            {"order_id": order["order_id"], "rail": "kpay"}, now=NOW, receipt_review_ready=True)["payment"]
+        request = Request(base + "/api/v1/checkout/payment",
+            data=json.dumps({"order_id": order["order_id"], "rail": "kpay"}).encode(),
+            headers=headers, method="POST")
+        with self.assertRaises(HTTPError) as failure:
+            urlopen(request)
+        self.assertEqual(failure.exception.code, 503)
+        self.assertNotIn("private-receiver", failure.exception.read().decode())
+        with urlopen(Request(base + f"/api/v1/orders/{order['order_id']}", headers=headers)) as response:
+            detail = json.load(response)
+        self.assertEqual(detail["payment"]["rail"], "kpay")
+        self.assertTrue(detail["payment"]["instructions_unavailable"])
+        self.assertNotIn("account", detail["payment"])
+        self.assertNotIn("qr_asset", detail["payment"])
+        self.assertFalse(detail["payment_review"]["receipt_upload_enabled"])
+        qr_request = Request(base + f"/api/v1/orders/{order['order_id']}/payment-qr", headers=headers)
+        with self.assertRaises(HTTPError) as qr_failure:
+            urlopen(qr_request)
+        self.assertEqual(qr_failure.exception.code, 404)
+        qr_failure.exception.close()
+        self.assertEqual(json.loads(self.checkout.repository.get_payment_intent(
+            order["order_id"])["instructions_json"]),
+            {"account": saved["account"], "account_name": saved["account_name"],
+             "qr_asset": qr_file.name, "qr_sha256": hashlib.sha256(qr_file.read_bytes()).hexdigest()})
+
     def test_wallet_payment_is_owner_bound_idempotent_and_visible_in_order_history(self):
         ledger = CustomerLedger(Path(self.temp.name) / "wallet-ledger.sqlite3")
         ledger.credit(customer_id="customer-1", amount_minor=5000, currency="MMK",
             event_key="verified-wallet-credit-1", actor="staff:reviewer", reason="verified refund",
             occurred_at=NOW)
         journey = CheckoutJourney(self.checkout, self.journey.supplier,
+            payment_preflight=_SyntheticPaymentPreflight(),
             wallet_payment_service=CustomerPaymentService(self.checkout.repository, ledger))
         secret = "wallet-http-secret-012345678901234567890"
         verifier = SignedCustomerTokenVerifier(secret, issuer="aurix")
@@ -491,6 +668,7 @@ class CheckoutJourneyTests(unittest.TestCase):
         journey = CheckoutJourney(self.checkout, self.journey.supplier,
             payment_receivers={"kpay": {"id": "receiver-1", "revision": "r1",
                 "account": "091234", "account_name": "Approved shop"}},
+            payment_preflight=_SyntheticPaymentPreflight(),
             wallet_payment_service=CustomerPaymentService(self.checkout.repository, ledger))
         with patch.dict("os.environ", {"AURIX_GAMES_BASE_DIR": self.temp.name}):
             quote = journey.review(self.principal, self.payload, now=NOW)["quote"]
@@ -506,7 +684,8 @@ class CheckoutJourneyTests(unittest.TestCase):
                 journey.pay_with_wallet(self.principal, order["order_id"], now=NOW)
             self.assertEqual(ledger.balance("customer-1").available_minor, 1000)
             payment = journey.payment(self.principal,
-                {"order_id": order["order_id"], "rail": "kpay"}, now=NOW)["payment"]
+                {"order_id": order["order_id"], "rail": "kpay"}, now=NOW,
+                receipt_review_ready=True)["payment"]
         self.assertEqual(payment["account"], "091234")
         self.assertEqual(payment["order_state"], "awaiting_payment")
 
@@ -516,12 +695,14 @@ class CheckoutJourneyTests(unittest.TestCase):
             event_key="verified-wallet-credit-mixed", actor="staff:reviewer", reason="verified refund",
             occurred_at=NOW)
         journey = CheckoutJourney(self.checkout, self.journey.supplier,
+            payment_preflight=_SyntheticPaymentPreflight(),
             wallet_payment_service=CustomerPaymentService(self.checkout.repository, ledger))
         with patch.dict("os.environ", {"AURIX_GAMES_BASE_DIR": self.temp.name}):
             quote = journey.review(self.principal, self.payload, now=NOW)["quote"]
             order = journey.confirm(self.principal, {"quote_id": quote["quote_id"], "confirmed": True}, now=NOW)["order"]
             journey.open_payment(self.principal, quote["quote_id"], rail="kpay", receiver_id="receiver-1",
-                receiver_revision="r1", instructions={"account": "091234", "account_name": "Approved shop"}, now=NOW)
+                receiver_revision="r1", instructions={"account": "091234", "account_name": "Approved shop"}, now=NOW,
+                receipt_review_ready=True)
             with self.assertRaises(CheckoutInputError):
                 journey.pay_with_wallet(self.principal, order["order_id"], now=NOW)
         self.assertEqual(ledger.balance("customer-1").available_minor, 5000)

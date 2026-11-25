@@ -94,8 +94,9 @@ class CommerceSettingsTests(unittest.TestCase):
             fixture.journey.payment_receivers = {"kpay": {"id": "receiver", "revision": "r1",
                 "account": "test", "account_name": "test"}}
             request = {"order_id": order["order_id"], "rail": "kpay"}
-            original = fixture.journey.payment(fixture.principal, request, now=NOW)
+            original = fixture.journey.payment(fixture.principal, request, now=NOW, receipt_review_ready=True)
             self.store.save({**self.settings, "payments_enabled": False}, expected_revision=2, actor="owner")
-            self.assertEqual(fixture.journey.payment(fixture.principal, request, now=NOW), original)
+            self.assertEqual(fixture.journey.payment(fixture.principal, request, now=NOW,
+                receipt_review_ready=True), original)
         finally:
             fixture.doCleanups()

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 import stat
 from typing import Any, Mapping
 
@@ -33,6 +34,7 @@ class PrivateSupplierRoute:
     category_id: str
     sku: str
     approval_fingerprint: str
+    supplier_provider: str = "fazercards"
     validation_category_id: str | None = None
     validation_field_map: tuple[tuple[str, str], ...] = ()
     validation_region_map: tuple[tuple[str, str], ...] = ()
@@ -46,6 +48,8 @@ class PrivateSupplierRoute:
             "sku": self.sku,
             "approval_fingerprint": self.approval_fingerprint,
         }
+        if self.supplier_provider != "fazercards":
+            result["supplier_provider"] = self.supplier_provider
         if self.validation_category_id is not None:
             result["validation_category_id"] = self.validation_category_id
         if self.validation_field_map:
@@ -60,8 +64,9 @@ class PrivateSupplierRoute:
 class PrivateSupplierRouteStore:
     """Resolve only one fully approved, exact mapping from a private config."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, additional_paths: tuple[str | Path, ...] = ()) -> None:
         self.path = Path(path)
+        self.additional_paths = tuple(Path(value) for value in additional_paths)
 
     def resolve(
         self,
@@ -79,17 +84,21 @@ class PrivateSupplierRouteStore:
         expected_family = _FAMILY_BY_KIND.get(fulfillment_kind)
         if expected_family is None:
             raise SupplierRouteError("fulfillment kind has no FazerCards mapping route")
-        payload = self._read()
-        mappings = payload.get("mappings")
-        if not isinstance(mappings, list):
-            raise SupplierRouteError("private mapping config is malformed")
-        matches = [
-            row for row in mappings
-            if isinstance(row, dict) and row.get("offer_id") == offer_id
-        ]
+        matches = []
+        for index, payload in enumerate(self._read_all()):
+            mappings = payload.get("mappings")
+            if not isinstance(mappings, list):
+                raise SupplierRouteError("private mapping config is malformed")
+            matches.extend(
+                row for row in mappings
+                if isinstance(row, dict) and row.get("offer_id") == offer_id
+            )
         if len(matches) != 1:
             raise SupplierRouteError("offer does not have one exact private supplier mapping")
         row = matches[0]
+        supplier_provider = row.get("supplier_provider", "fazercards")
+        if supplier_provider not in {"fazercards", "shop2topup"}:
+            raise SupplierRouteError("private supplier provider is unsupported")
         stored_region_rule = row.get("region_rule")
         if (
             row.get("product_slug") != product_slug
@@ -123,6 +132,12 @@ class PrivateSupplierRouteStore:
         sku = row.get("provider_offer_id")
         if not all(isinstance(value, str) and value.strip() and len(value) <= 255 for value in (category, sku)):
             raise SupplierRouteError("private supplier mapping identifiers are malformed")
+        if supplier_provider == "shop2topup" and (
+            fulfillment_kind != "direct_topup"
+            or not re.fullmatch(r"[1-9][0-9]{0,14}", category)
+            or not re.fullmatch(r"[1-9][0-9]{0,14}", sku)
+        ):
+            raise SupplierRouteError("SHOP2TOPUP routes require numeric direct top-up category and product IDs")
         try:
             fingerprint = hashlib.sha256(
                 json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -130,19 +145,31 @@ class PrivateSupplierRouteStore:
         except (TypeError, ValueError) as exc:
             raise SupplierRouteError("private supplier mapping is malformed") from exc
         return PrivateSupplierRoute(expected_family, category.strip(), sku.strip(), fingerprint,
-            *validation_settings(row))
+            supplier_provider, *validation_settings(row))
 
     def _read(self) -> dict[str, Any]:
-        if self.path.is_symlink():
+        return self._read_path(self.path)
+
+    def _read_all(self) -> tuple[dict[str, Any], ...]:
+        payloads = [self._read_path(self.path)]
+        for path in self.additional_paths:
+            if not path.exists() and not path.is_symlink():
+                continue
+            payloads.append(self._read_path(path))
+        return tuple(payloads)
+
+    @staticmethod
+    def _read_path(path: Path) -> dict[str, Any]:
+        if path.is_symlink() or path.parent.is_symlink():
             raise SupplierRouteError("private mapping config must not be a symlink")
         try:
-            info = self.path.stat()
-            parent_info = self.path.parent.stat()
+            info = path.stat()
+            parent_info = path.parent.stat()
             if not stat.S_ISREG(info.st_mode):
                 raise SupplierRouteError("private mapping config is not a regular file")
             if stat.S_IMODE(info.st_mode) & 0o077 or stat.S_IMODE(parent_info.st_mode) & 0o077:
                 raise SupplierRouteError("private mapping config permissions are too broad")
-            value = json.loads(self.path.read_text(encoding="utf-8"))
+            value = json.loads(path.read_text(encoding="utf-8"))
         except SupplierRouteError:
             raise
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -189,7 +216,7 @@ def _matches_region_projection(
     )
 
 
-def fazercards_order_payload(
+def supplier_order_payload(
     *,
     route: PrivateSupplierRoute,
     fulfillment_kind: str,
@@ -212,6 +239,23 @@ def fazercards_order_payload(
     if fulfillment_kind == "direct_topup":
         if not recipient_fields:
             raise SupplierRouteError("top-up recipient fields are required")
+        if route.supplier_provider == "shop2topup":
+            field_map = dict(route.validation_field_map)
+            if not field_map or set(field_map.values()) != set(recipient_fields):
+                raise SupplierRouteError("SHOP2TOPUP recipient fields need a complete approved provider map")
+            mapped = {target: recipient_fields[source] for target, source in field_map.items()}
+            player_id = mapped.pop("player_id", None)
+            if not isinstance(player_id, str) or not player_id:
+                raise SupplierRouteError("SHOP2TOPUP mapping must identify the player_id field")
+            return {
+                "supplier_provider": "shop2topup",
+                "category_id": route.category_id,
+                "offer_id": route.sku,
+                "sub_category_id": int(route.sku),
+                "quantity": 1,
+                "player_id": player_id,
+                "requirements": mapped,
+            }
         return {"category_id": route.category_id, "offer_id": route.sku, "fields": recipient_fields}
     if fulfillment_kind == "gift_card":
         return {"category_id": route.category_id, "card_id": route.sku, "quantity": 1}
@@ -233,7 +277,11 @@ __all__ = [
     "PrivateSupplierRouteStore",
     "SupplierRouteError",
     "fazercards_order_payload",
+    "supplier_order_payload",
 ]
+
+
+fazercards_order_payload = supplier_order_payload
 
 
 def validation_settings(row):
@@ -252,9 +300,15 @@ def validation_settings(row):
     field_map = row.get("validation_field_map", {})
     if not isinstance(field_map, dict) or (field_map and validation_category is None):
         raise SupplierRouteError("private validation field map is malformed")
+    supplier_provider = row.get("supplier_provider", "fazercards")
     for target, source in field_map.items():
-        if not all(isinstance(value, str) and value and len(value) <= 128
-                   and value.replace("_", "").isalnum() for value in (target, source)):
+        target_valid = (
+            isinstance(target, str)
+            and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", target))
+            if supplier_provider == "shop2topup"
+            else isinstance(target, str) and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", target))
+        )
+        if not target_valid or not isinstance(source, str) or not source or len(source) > 128:
             raise SupplierRouteError("private validation field map is malformed")
         if source not in row.get("required_input_labels", []):
             raise SupplierRouteError("private validation field source is not an approved input")
@@ -291,5 +345,14 @@ def validation_settings(row):
         exclusions = tuple(sorted({value.strip().casefold() for value in detected["excluded_values"]}))
     if category.strip() == "mobile_legends_global" and not normalized_regions and detected is None:
         raise SupplierRouteError("MLBB Global requires explicit offer-level validation regions")
+    if supplier_provider == "shop2topup":
+        if (expected_family != "topups" or validation_category != category
+                or not re.fullmatch(r"[1-9][0-9]{0,14}", category)
+                or not re.fullmatch(r"[1-9][0-9]{0,14}", str(row.get("provider_offer_id", "")))
+                or not field_map or set(field_map.values()) != set(row.get("required_input_labels", []))
+                or sum(target == "player_id" for target in field_map) != 1):
+            raise SupplierRouteError(
+                "SHOP2TOPUP routes require numeric IDs, the exact category lookup route, and a complete player field map"
+            )
     return (validation_category, tuple(sorted(field_map.items())),
             tuple(sorted(normalized_regions.items())), detected is not None, exclusions)

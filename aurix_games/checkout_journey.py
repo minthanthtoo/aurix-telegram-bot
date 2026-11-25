@@ -20,8 +20,27 @@ from .customer_ledger import InsufficientFundsError
 from .providers.fazercards_commands import FazerCardsCommandClient
 from .recipient_vault import RecipientVaultError
 from .payment_service import CustomerPaymentService, PaymentBoundaryError
-from .supplier_routes import SupplierRouteError, fazercards_order_payload
+from .supplier_routes import SupplierRouteError, supplier_order_payload
 from .commerce_settings import commerce_paused, env_commerce_settings
+
+
+class SupplierPreflightUnavailable(CheckoutInputError):
+    """The supplier gate could not be checked, so payment must remain unopened."""
+
+    def __init__(self):
+        super().__init__(
+            "Supplier availability could not be confirmed. No payment was started; please try again later."
+        )
+
+
+class PaymentReviewSetupUnavailable(CheckoutInputError):
+    """External payment must stay unopened until receipts can be reviewed."""
+
+    def __init__(self):
+        super().__init__(
+            "Payment instructions are unavailable because receipt review is not ready. "
+            "Do not send or repeat a transfer; if you already paid, keep your receipt and contact support."
+        )
 
 
 class GameAccountLookup:
@@ -161,7 +180,13 @@ class GameAccountLookup:
         )
         validation_fields = ({target: fields[source] for target, source in route.validation_field_map}
                              if route.validation_field_map else fields)
-        result = self.supplier.validate_topup_recipient(route.validation_category_id, validation_fields)
+        if route.supplier_provider == "shop2topup":
+            validator = getattr(self.supplier, "validate_route", None)
+            if not callable(validator):
+                raise CheckoutInputError("the approved supplier account check is unavailable")
+            result = validator(route=route, fields=validation_fields)
+        else:
+            result = self.supplier.validate_topup_recipient(route.validation_category_id, validation_fields)
         if (not isinstance(result, dict) or result.get("ok") is not True or result.get("valid") is not True
                 or result.get("category_id") != route.validation_category_id):
             raise CheckoutInputError("Account not confirmed. Check your game account details.")
@@ -275,7 +300,13 @@ class CheckoutJourney:
         except RecipientLookupThrottledError:
             raise CheckoutInputError("please wait before checking another account") from None
         validation_fields = {target: fields[source] for target, source in route.validation_field_map} if route.validation_field_map else fields
-        response = self.supplier.validate_topup_recipient(route.validation_category_id, validation_fields)
+        if route.supplier_provider == "shop2topup":
+            validator = getattr(self.supplier, "validate_route", None)
+            if not callable(validator):
+                raise CheckoutInputError("the approved supplier account check is unavailable")
+            response = validator(route=route, fields=validation_fields)
+        else:
+            response = self.supplier.validate_topup_recipient(route.validation_category_id, validation_fields)
         if (not isinstance(response, dict) or response.get("ok") is not True
                 or response.get("valid") is not True or response.get("category_id") != route.validation_category_id):
             raise CheckoutInputError("the game account could not be confirmed")
@@ -369,7 +400,8 @@ class CheckoutJourney:
             now=now, validation={"valid": True, "checked_at": record["checked_at"], "binding": binding})
         return result.as_dict()
 
-    def open_payment(self, principal, quote_id, *, rail, receiver_id, receiver_revision, now, instructions=None):
+    def open_payment(self, principal, quote_id, *, rail, receiver_id, receiver_revision, now, instructions=None,
+                     receipt_review_ready=False):
         """Open payment with a receiver selected from trusted server configuration."""
         _validate_principal(principal, now=now)
         if any(commerce_paused(flag) for flag in (
@@ -380,6 +412,8 @@ class CheckoutJourney:
         for value in (rail, receiver_id, receiver_revision):
             if not isinstance(value, str) or not value or value != value.strip() or len(value) > 128 or any(ord(c) < 32 for c in value):
                 raise CheckoutInputError("approved payment receiver is invalid")
+        if receipt_review_ready is not True:
+            raise PaymentReviewSetupUnavailable()
         _record, order, _offer, _fields, _route = self._validated_payment_order(principal, quote_id, now=now)
         try:
             intent = self.checkout.repository.freeze_payment_intent(order_id=order.order_id,
@@ -419,13 +453,14 @@ class CheckoutJourney:
             private = self.checkout.recipient_vault.get(order_id=order.order_id, customer_id=principal.customer_id)
             if private != record["fulfillment_payload"]:
                 raise CheckoutInputError("confirmed fulfillment details are unavailable")
-            if self.payment_preflight is not None:
-                try:
-                    supplier_payload = fazercards_order_payload(route=route,
-                        fulfillment_kind=offer.fulfillment_kind, fields=fields)
-                    self.payment_preflight.check_payment(supplier_payload, now=now)
-                except Exception:
-                    raise CheckoutInputError("supplier availability cannot be confirmed; payment instructions remain unavailable") from None
+            if self.payment_preflight is None:
+                raise SupplierPreflightUnavailable()
+            try:
+                supplier_payload = supplier_order_payload(route=route,
+                    fulfillment_kind=offer.fulfillment_kind, fields=fields)
+                self.payment_preflight.check_payment(supplier_payload, now=now)
+            except Exception:
+                raise SupplierPreflightUnavailable() from None
             return record, order, offer, fields, route
         except (RecipientVaultError, OrderRepositoryError) as exc:
             raise CheckoutInputError("payment cannot be opened for this order") from exc
@@ -511,7 +546,7 @@ class CheckoutJourney:
             "replayed": replayed,
         }
 
-    def payment(self, principal, payload, *, now):
+    def payment(self, principal, payload, *, now, receipt_review_ready=False):
         _validate_principal(principal, now=now)
         if not isinstance(payload, dict) or set(payload) not in ({"quote_id", "rail"}, {"order_id", "rail"}):
             raise CheckoutInputError("payment request is invalid")
@@ -528,6 +563,8 @@ class CheckoutJourney:
         order = self.checkout.repository.get_by_customer_key(principal.customer_id, quote_id)
         if order is not None and order.state.value != "awaiting_payment":
             raise CheckoutInputError("this order no longer accepts payment")
+        if receipt_review_ready is not True:
+            raise PaymentReviewSetupUnavailable()
         existing = self.checkout.repository.get_payment_intent(order.order_id) if order else None
         if existing is not None:
             if existing["rail"] != rail:
@@ -549,7 +586,7 @@ class CheckoutJourney:
             instructions["qr_sha256"] = hashlib.sha256(image[1]).hexdigest()
         intent = self.open_payment(principal, quote_id, rail=rail,
             receiver_id=receiver["id"], receiver_revision=receiver["revision"], now=now,
-            instructions=instructions)
+            instructions=instructions, receipt_review_ready=receipt_review_ready)
         return {"payment": {"order_id": intent["order_id"], "rail": rail, "amount_minor": intent["amount_minor"],
             "currency": intent["currency"], "expires_at": intent["expires_at"], "expired": False, "order_state": "awaiting_payment",
             **instructions}}
@@ -558,9 +595,18 @@ class CheckoutJourney:
 def build_env_checkout_journey(checkout, *, wallet_payment_service=None):
     if checkout is None or os.environ.get("AURIX_GAMES_RECIPIENT_VALIDATION_ENABLED") != "1":
         return None
-    key = os.environ.get("FAZERCARDS_API_KEY", "")
-    if not key:
-        raise CheckoutInputError("recipient validation requires a supplier key")
+    fazer_key = os.environ.get("FAZERCARDS_API_KEY", "").strip()
+    shop2topup_key = os.environ.get("SHOP2TOPUP_API_KEY", "").strip()
+    if not fazer_key and not shop2topup_key:
+        raise CheckoutInputError("recipient validation requires a configured supplier key")
+    from .fulfillment import SupplierOrderRouter
+    from .providers.shop2topup_commands import Shop2TopupCommandClient
+    fazer_client = FazerCardsCommandClient(fazer_key, allow_writes=False, allow_recipient_validation=True) if fazer_key else None
+    shop2topup_client = Shop2TopupCommandClient(
+        shop2topup_key,
+        allow_orders=os.environ.get("SHOP2TOPUP_ENABLE_WRITES") == "1",
+        allow_player_validation=os.environ.get("SHOP2TOPUP_PLAYER_VALIDATION_ENABLED") == "1",
+    ) if shop2topup_key else None
     receivers = {}
     qr_dir = os.environ.get("AURIX_GAMES_RECEIVER_QR_DIR")
     if os.environ.get("AURIX_GAMES_ACCEPT_TRANSFERS") == "1":
@@ -596,23 +642,32 @@ def build_env_checkout_journey(checkout, *, wallet_payment_service=None):
             raise CheckoutInputError("approved payment QR directory is unavailable")
     if any("qr_file" in receiver for receiver in receivers.values()) and qr_path is None:
         raise CheckoutInputError("approved payment QR directory is unavailable")
-    journey = CheckoutJourney(checkout, FazerCardsCommandClient(key,
-        allow_writes=False, allow_recipient_validation=True), payment_receivers=receivers,
+    journey = CheckoutJourney(checkout, SupplierOrderRouter(fazer_client, shop2topup_client), payment_receivers=receivers,
         receiver_qr_dir=qr_path, wallet_payment_service=wallet_payment_service)
     if any("qr_file" in receiver and journey.read_receiver_qr(receiver["qr_file"]) is None
            for receiver in receivers.values()):
         raise CheckoutInputError("approved payment QR asset is unavailable")
     if receivers:
-        from .spend_guard import PilotSpendGuard
+        from .spend_guard import PilotSpendGuard, ProviderSpendGuard, Shop2TopupPilotSpendGuard
         from .fulfillment import FulfillmentTaskStore
-        from .providers.fazercards import FazerCardsReadOnlyClient
+        guards = {}
         base = Path(os.environ.get("AURIX_GAMES_BASE_DIR", ".local/fazercards"))
-        policy = os.environ.get("AURIX_GAMES_SPEND_POLICY", "")
+        fazer_policy = os.environ.get("AURIX_GAMES_SPEND_POLICY", "")
+        shop2topup_policy = os.environ.get("SHOP2TOPUP_SPEND_POLICY", "")
         encryption_key = os.environ.get("AURIX_GAMES_FULFILLMENT_KEY", "")
-        if not policy or not encryption_key:
-            raise CheckoutInputError("payment opening requires a supplier spend policy and fulfillment key")
+        if not encryption_key:
+            raise CheckoutInputError("payment opening requires a fulfillment encryption key")
         tasks = FulfillmentTaskStore(os.environ.get("AURIX_GAMES_FULFILLMENT_DATABASE", str(base / "fulfillment.sqlite3")),
             encryption_key=encryption_key)
-        journey.payment_preflight = PilotSpendGuard.from_file(policy, tasks=tasks, client=journey.supplier,
-            catalog_client=FazerCardsReadOnlyClient(key), checkout=checkout)
+        if fazer_policy and fazer_client is not None:
+            from .providers.fazercards import FazerCardsReadOnlyClient
+            guards["fazercards"] = PilotSpendGuard.from_file(fazer_policy, tasks=tasks, client=fazer_client,
+                catalog_client=FazerCardsReadOnlyClient(fazer_key), checkout=checkout)
+        if shop2topup_policy and shop2topup_client is not None:
+            guards["shop2topup"] = Shop2TopupPilotSpendGuard.from_file(
+                shop2topup_policy, tasks=tasks, client=shop2topup_client, checkout=checkout,
+            )
+        if not guards:
+            raise CheckoutInputError("payment opening requires an approved provider spend policy")
+        journey.payment_preflight = next(iter(guards.values())) if len(guards) == 1 else ProviderSpendGuard(guards)
     return journey

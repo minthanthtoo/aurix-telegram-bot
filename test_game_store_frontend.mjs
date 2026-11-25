@@ -1308,9 +1308,9 @@ test("screenshot-derived reference surfaces remain wired to the preview shell", 
   assert.match(markup, /storefront-refinements\.css\?v=20261115-preview-card-layout-1/);
   assert.match(markup, /theme\.css\?v=20261117-leaderboard-sheet-7/);
   assert.match(markup, /class="dialog-state" hidden/);
-  assert.match(markup, /auth\.js\?v=20261117-theme-1/);
+  assert.match(markup, /auth\.js\?v=20261126-pilot-readiness-1/);
   assert.ok(markup.indexOf("styles.css?v=20261117-compact-detail-1") < markup.indexOf("storefront-refinements.css?v=20261115-preview-card-layout-1"));
-  assert.match(serviceWorker, /aurix-game-store-shell-v184/);
+  assert.match(serviceWorker, /aurix-game-store-shell-v229/);
   assert.match(serviceWorker, /styles\.css\?v=20261117-compact-detail-1/);
   assert.match(serviceWorker, /storefront-refinements\.css\?v=20261115-preview-card-layout-1/);
   assert.match(serviceWorker, /theme\.css\?v=20261117-leaderboard-sheet-7/);
@@ -1318,9 +1318,9 @@ test("screenshot-derived reference surfaces remain wired to the preview shell", 
   assert.match(theme, /data-surface="leaderboard"\] \.auxiliary-empty \{[\s\S]*grid-template-columns: 40px minmax\(0, 1fr\);[\s\S]*text-align: left/);
   assert.match(theme, /\.auxiliary-dialog \.store-leaderboard-join:active \{[\s\S]*transform: translateY\(1px\) scale\(\.99\)/);
   assert.match(markup, /app\.js\?v=20261125-supplier-status-clarity-1/);
-  assert.match(serviceWorker, /aurix-game-store-shell-v184/);
+  assert.match(serviceWorker, /aurix-game-store-shell-v229/);
   assert.match(serviceWorker, /app\.js\?v=20261125-supplier-status-clarity-1/);
-  assert.match(serviceWorker, /auth\.js\?v=20261117-theme-1/);
+  assert.match(serviceWorker, /auth\.js\?v=20261126-pilot-readiness-1/);
   assert.match(source, /"mobile-legends-region-checker", "leaderboard"/);
   assert.doesNotMatch(markup, /checkout-dialog|Simulate Paid Order/);
   assert.doesNotMatch(source, /Synthetic leaderboard data|Synthetic code generated|Gift code creation is simulated/);

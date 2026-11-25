@@ -15,7 +15,7 @@ test("customer sign-in offers Telegram and Google with accessible status and log
   assert.match(html, /id="telegram-login-slot"/);
   assert.match(html, /id="google-login-slot"/);
   assert.match(html, /id="account-logout"/);
-  assert.match(html, /auth\.js\?v=20261117-theme-1/);
+  assert.match(html, /auth\.js\?v=20261126-pilot-readiness-1/);
   assert.match(auth, /accountRetry\?\.addEventListener\("click", \(\) => void openAccount\(\)\)/);
   assert.match(auth, /accountRetry\.hidden = false/);
   assert.match(auth, /\/api\/v1\/auth\/google\/challenge/);
@@ -23,6 +23,64 @@ test("customer sign-in offers Telegram and Google with accessible status and log
   assert.match(auth, /https:\/\/accounts\.google\.com\/gsi\/client/);
   assert.match(auth, /https:\/\/telegram\.org\/js\/telegram-widget\.js\?22/);
   assert.doesNotMatch(auth, /localStorage|sessionStorage/);
+});
+
+test("authentication reads retry transient failures once but do not retry client errors", async () => {
+  let calls = 0;
+  const delays = [];
+  const context = vm.createContext({
+    AbortSignal,
+    fetch: async () => {
+      calls += 1;
+      return calls === 1
+        ? { ok: false, status: 503, json: async () => ({ error: "temporarily unavailable" }) }
+        : { ok: true, status: 200, json: async () => ({ providers: {} }) };
+    },
+    window: { setTimeout(callback, delay) { delays.push(delay); callback(); } },
+  });
+  vm.runInContext(auth.slice(auth.indexOf("  async function requestJson"), auth.indexOf("  function money")), context);
+
+  const response = await context.requestAuthJson("/api/v1/auth/config");
+  assert.equal(response.providers && typeof response.providers, "object");
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [300]);
+
+  calls = 0;
+  context.fetch = async () => {
+    calls += 1;
+    return { ok: false, status: 401, json: async () => ({ error: "unauthorized" }) };
+  };
+  await assert.rejects(context.requestAuthJson("/api/v1/auth/session"), /unauthorized/);
+  assert.equal(calls, 1);
+});
+
+test("temporary account refresh failure preserves an already loaded customer view", async () => {
+  const account = { customer_id: "customer-1", providers: ["google"] };
+  const dialog = { open: false, showModal() { this.open = true; } };
+  const retry = { hidden: false, disabled: false };
+  const status = { textContent: "" };
+  const context = vm.createContext({
+    account,
+    config: { providers: {} },
+    dialog,
+    accountRetry: retry,
+    status,
+    walletNote: { textContent: "" },
+    sessionRevision: 0,
+    linkingCustomer: "customer-1",
+    clearPrivateViews() {},
+    pendingCheckoutReturn: false,
+    loadAccount: async () => { throw new Error("session endpoint unavailable"); },
+    renderProviders: async () => {},
+  });
+  vm.runInContext(auth.slice(auth.indexOf("  async function openAccount"), auth.indexOf("  function profileNode")), context);
+
+  await context.openAccount();
+
+  assert.equal(context.account, account);
+  assert.equal(retry.hidden, false);
+  assert.equal(retry.disabled, false);
+  assert.match(status.textContent, /current account view is kept/);
 });
 
 test("concurrent Google renders initialize one challenge and one button", async () => {

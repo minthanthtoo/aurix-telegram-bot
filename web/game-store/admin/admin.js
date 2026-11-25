@@ -686,8 +686,10 @@ function beginMappingReview(item, products, approvalReady) {
   selectedInventoryItem = item;
   const editor = $("mapping-review-editor");
   editor.hidden = false;
-  const providerKey = `${item.family} · ${item.category_id} · ${item.sku}`;
-  $("mapping-review-source").textContent = `${providerKey} · ${item.name || "Unnamed supplier item"} · exact supplier cost ${item.price_usd || "—"} USD · snapshot ${item.freshness_status || "unknown"}/${item.source_status || "unknown"}.`;
+  const supplier = item.supplier_provider === "shop2topup" ? "SHOP2TOPUP" : "FazerCards";
+  const providerKey = `${supplier} · ${item.family} · ${item.category_id} · ${item.sku}`;
+  const priceSource = item.price_source === "supplier_catalog_listing" ? "supplier-listed price" : "supplier cost";
+  $("mapping-review-source").textContent = `${providerKey} · ${item.name || "Unnamed supplier item"} · ${priceSource} ${item.price_usd || "—"} USD · snapshot ${item.freshness_status || "unknown"}/${item.source_status || "unknown"}.`;
   $("mapping-review-schema").textContent = item.input_schema == null
     ? "No recipient schema was included for this exact offer. Verify the recipient fields from the supplier/publisher fulfillment instructions before entering them below."
     : JSON.stringify(item.input_schema, null, 2);
@@ -711,7 +713,8 @@ function beginMappingReview(item, products, approvalReady) {
     manual_services: "manual_service",
   };
   $("mapping-fulfillment").value = fulfillmentByFamily[item.family] || "";
-  $("mapping-offer-id").value = `${item.family}-${item.sku}`.toLowerCase().replace(/[^a-z0-9._:-]+/g, "-").slice(0, 160);
+  const offerNamespace = item.supplier_provider === "shop2topup" ? "shop2topup-" : "";
+  $("mapping-offer-id").value = `${offerNamespace}${item.family}-${item.sku}`.toLowerCase().replace(/[^a-z0-9._:-]+/g, "-").slice(0, 160);
   $("mapping-region-dimension").value = "game_server";
   $("mapping-region-values").value = "";
   $("mapping-region-label").value = "";
@@ -720,6 +723,10 @@ function beginMappingReview(item, products, approvalReady) {
   $("mapping-input-labels").value = "";
   for (const field of ["category", "fields", "regions", "policy"]) {
     $("mapping-validation-" + field).value = "";
+  }
+  if (item.supplier_provider === "shop2topup" && Array.isArray(item.input_schema)) {
+    $("mapping-input-labels").value = item.input_schema.map((field) => field.field_name).join("\n");
+    $("mapping-validation-category").value = String(item.category_id || "");
   }
   $("mapping-allow-all-region").checked = false;
   $("mapping-approval-confirm").checked = false;
@@ -739,8 +746,11 @@ function renderInventoryReviewRows(rows, products, approvalConfigured) {
   for (const item of rows) {
     if (!item || typeof item !== "object") continue;
     const card = makeElement("article", "", "admin-inventory-row");
+    const supplier = item.supplier_provider === "shop2topup" ? "SHOP2TOPUP" : "FazerCards";
     const title = makeElement("strong", `${item.name || "Unnamed supplier item"} · ${item.family || "unknown family"}`);
-    const identifiers = makeElement("p", `Category ${item.category_id || "—"} · SKU ${item.sku || "—"} · ${item.price_usd || "—"} USD · stock ${item.stock == null ? "unknown" : item.stock}`);
+    const stock = item.stock_label || (item.stock == null ? "unknown" : String(item.stock));
+    const priceSource = item.price_source === "supplier_catalog_listing" ? "listed" : "cost";
+    const identifiers = makeElement("p", `${supplier} · category ${item.category_id || "—"} · SKU ${item.sku || "—"} · ${priceSource} ${item.price_usd || "—"} USD · stock ${stock}`);
     const alreadyApproved = item.mapping_gate === "ready";
     const approvalReady = approvalConfigured && item.freshness_status === "fresh" && item.source_category_complete === true;
     const state = makeElement("p", `Mapping ${item.mapping_status || "unmapped"} · region ${item.region_restriction || item.region || "not specified"} · ${alreadyApproved ? `AuriX offer ${item.mapping_offer_id || "mapped"}` : "mapping review required"}${item.catalog_family_enabled === false ? " · family hidden from customers" : ""}`);
@@ -763,7 +773,10 @@ function renderInventoryReviewRows(rows, products, approvalConfigured) {
       : null;
     const button = makeElement("button", alreadyApproved ? "Already approved" : "Review exact SKU", "admin-button admin-button--quiet");
     button.type = "button";
-    button.disabled = alreadyApproved || !approvalReady || !["topups", "giftcards", "gamekeys", "manual_services"].includes(item.family);
+    const supportedFamily = item.supplier_provider === "shop2topup"
+      ? item.family === "topups" && item.supplier_available === true
+      : ["topups", "giftcards", "gamekeys", "manual_services"].includes(item.family);
+    button.disabled = alreadyApproved || !approvalReady || !supportedFamily;
     button.addEventListener("click", () => beginMappingReview(item, products, approvalReady));
     card.append(title, identifiers, state);
     if (hint) card.append(hint);
@@ -793,11 +806,16 @@ function renderInventory(payload) {
   $("inventory-projection").textContent = summarize(projectionStatuses);
   const rows = Array.isArray(payload.items) ? payload.items : [];
   currentInventoryProducts = Array.isArray(payload.reference_products) ? payload.reference_products : [];
+  const supplierProvider = $("supplier-provider-filter").value || "fazercards";
+  const selectedProviderStatus = payload.providers && typeof payload.providers === "object"
+    ? payload.providers[supplierProvider] || {}
+    : { mapping_config_status: payload.mapping_config_status };
+  const providerConfigStatus = selectedProviderStatus.mapping_config_status || payload.mapping_config_status;
   const approvalConfigured = payload.status === "private_snapshot"
-    && payload.mapping_config_status === "loaded";
+    && (providerConfigStatus === "loaded" || (supplierProvider === "shop2topup" && providerConfigStatus === "missing"));
   for (const item of rows) {
     if (item && typeof item === "object") {
-      item.source_status = payload.source_status;
+      item.source_status = item.source_status || selectedProviderStatus.source_status || payload.source_status;
     }
   }
   renderInventoryReviewRows(rows, currentInventoryProducts, approvalConfigured);
@@ -810,14 +828,21 @@ function renderInventory(payload) {
   $("inventory-previous").disabled = Number(payload.offset || 0) <= 0;
   $("inventory-next").disabled = payload.next_offset == null;
   $("inventory-next").dataset.nextOffset = payload.next_offset == null ? "" : String(payload.next_offset);
-  $("inventory-state").textContent = payload.status === "private_snapshot"
-    ? `Exact snapshot rows loaded through the protected API; mapping queue ${payload.mapping_config_status || "unconfigured"}; snapshot ${payload.freshness_status || "unknown"}; no customer publication.`
-    : "Inventory unavailable.";
+  if (supplierProvider === "shop2topup" && selectedProviderStatus.status === "unavailable") {
+    $("inventory-state").textContent = "No SHOP2TOPUP audit snapshot yet. Configure the server key, then run scripts/audit_shop2topup_catalog.py. This screen does not call the supplier or start orders.";
+  } else {
+    const captured = selectedProviderStatus.captured_at || payload.captured_at;
+    const freshness = selectedProviderStatus.freshness_status || payload.freshness_status || "unknown";
+    $("inventory-state").textContent = payload.status === "private_snapshot"
+      ? `${supplierProvider === "shop2topup" ? "SHOP2TOPUP private audit" : "FazerCards private snapshot"} · ${selectedProviderStatus.source_status || payload.source_status || "unknown"} · ${freshness} · captured ${formatDate(captured)}. No customer publication.`
+      : "Inventory unavailable.";
+  }
 }
 
 function inventoryRequestPath() {
   const parameters = new URLSearchParams();
   parameters.set("limit", String(INVENTORY_PAGE_SIZE));
+  parameters.set("supplier_provider", $("supplier-provider-filter").value || "fazercards");
   const family = $("inventory-family-filter").value;
   const category = $("inventory-category-filter").value.trim();
   const query = $("inventory-query-filter").value.trim();
@@ -1283,6 +1308,11 @@ $("inventory-search-form").addEventListener("submit", async (event) => {
   inventoryOffset = 0;
   await loadInventory();
 });
+$("supplier-provider-filter").addEventListener("change", async () => {
+  inventoryOffset = 0;
+  closeMappingReview();
+  await loadInventory();
+});
 $("inventory-previous").addEventListener("click", async () => {
   inventoryOffset = Math.max(0, inventoryOffset - INVENTORY_PAGE_SIZE);
   await loadInventory();
@@ -1306,7 +1336,8 @@ $("mapping-product-select").addEventListener("change", () => {
   const slug = $("mapping-product-select").value;
   if (!slug || !selectedInventoryItem) return;
   const suffix = String(selectedInventoryItem.sku || "").toLowerCase().replace(/[^a-z0-9._:-]+/g, "-");
-  $("mapping-offer-id").value = `${slug}-${suffix}`.slice(0, 160);
+  const namespace = selectedInventoryItem.supplier_provider === "shop2topup" ? "shop2topup-" : "";
+  $("mapping-offer-id").value = `${namespace}${slug}-${suffix}`.slice(0, 160);
 });
 $("mapping-review-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1317,6 +1348,7 @@ $("mapping-review-form").addEventListener("submit", async (event) => {
   const allowAll = $("mapping-allow-all-region").checked;
   const regionValues = $("mapping-region-values").value.split(",").map((value) => value.trim()).filter(Boolean);
   const body = {
+    supplier_provider: selectedInventoryItem.supplier_provider || "fazercards",
     family: selectedInventoryItem.family,
     category_id: selectedInventoryItem.category_id,
     sku: selectedInventoryItem.sku,

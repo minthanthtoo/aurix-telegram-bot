@@ -69,7 +69,7 @@ test("operator console authenticates in memory, loads status, and gates writes",
     "mapping-projected", "mapping-captured", "mapping-reason", "mapping-block-reasons", "mapping-review-summary", "inventory-count",
     "mapping-history-state", "mapping-history-count", "mapping-history-last", "mapping-history-events",
     "inventory-families", "inventory-captured", "inventory-hash", "inventory-state", "inventory-mapping-status",
-    "inventory-mapping-gates", "inventory-projection", "inventory-search-form",
+    "inventory-mapping-gates", "inventory-projection", "inventory-search-form", "supplier-provider-filter",
     "inventory-family-filter", "inventory-category-filter", "inventory-query-filter", "inventory-previous",
     "inventory-next", "inventory-page-status", "inventory-review-rows", "mapping-review-editor",
     "mapping-review-title", "mapping-review-source", "mapping-review-schema", "mapping-review-form",
@@ -105,6 +105,7 @@ test("operator console authenticates in memory, loads status, and gates writes",
   const policyInputs = new Map(policyKeys.map((key) => [key, new ElementStub()]));
   elements.get("funding-method").value = "usdt";
   elements.get("funding-amount").value = "50";
+  elements.get("supplier-provider-filter").value = "fazercards";
   const calls = [];
   let liveCatalogUnavailable = false;
   let attentionState = "unknown";
@@ -261,6 +262,30 @@ test("operator console authenticates in memory, loads status, and gates writes",
     if (url.includes("/catalog-inventory?")) {
       const params = new URL(url, "http://local.test").searchParams;
       const offset = Number(params.get("offset") || 0);
+      if (params.get("supplier_provider") === "shop2topup") {
+        const shopItem = {
+          supplier_provider: "shop2topup", family: "topups", category_id: "12", sku: "999",
+          name: "86 Diamonds", price_usd: "0.95", price_source: "supplier_catalog_listing",
+          stock_label: "available", supplier_available: true,
+          input_schema: [{ field_name: "player_id", data_type: "text" }],
+          source_category_complete: true, source_status: "complete", freshness_status: "fresh",
+          mapping_status: "missing", mapping_gate: "missing", projection_status: "not_projected",
+          mapping_candidate: { status: "single_title_candidate", candidates: [
+            { product_slug: "mobile-legends", product_name: "Mobile Legends", match_method: "exact_title" },
+          ] },
+        };
+        return makeResponse({
+          status: "private_snapshot", total_count: 1, offset: 0, limit: 20, next_offset: null,
+          counts: { shop2topup_topups: 1 }, captured_at: "2026-11-26T00:00:00Z",
+          source_status: "complete", freshness_status: "fresh", mapping_config_status: "partial",
+          providers: { shop2topup: { status: "private_snapshot", source_status: "complete",
+            freshness_status: "fresh", mapping_config_status: "missing", captured_at: "2026-11-26T00:00:00Z" } },
+          source_sha256: "0123456789abcdef", items: [shopItem], reference_products: [
+            { slug: "mobile-legends", name: "Mobile Legends" },
+          ], mapping_status_counts: { missing: 1 }, mapping_gate_counts: { missing: 1 },
+          projection_status_counts: { not_projected: 1 }, customer_visible: false, checkout_enabled: false,
+        });
+      }
       return makeResponse({
         status: "private_snapshot", total_count: 10510, offset, limit: 20,
         next_offset: offset < 20 ? offset + 20 : null,
@@ -390,7 +415,7 @@ test("operator console authenticates in memory, loads status, and gates writes",
   assert.equal(elements.get("inventory-review-rows").children[1].children[4].disabled, true);
   assert.match(elements.get("inventory-review-rows").children[1].children[3].textContent, /Service game-service · supplier chat available · Requires an account ID/);
   assert.match(elements.get("inventory-review-rows").children[1].children[1].textContent, /stock unknown/);
-  assert.match(elements.get("inventory-state").textContent, /Exact snapshot rows/);
+  assert.match(elements.get("inventory-state").textContent, /FazerCards private snapshot/);
   assert.ok(calls.every(({ options }) => options.headers.get("Authorization") === "Bearer admin-secret"));
 
   elements.get("mapping-validation-category").value = "mobile_legends";
@@ -413,11 +438,26 @@ test("operator console authenticates in memory, loads status, and gates writes",
   elements.get("inventory-category-filter").value = "mlbb";
   elements.get("inventory-query-filter").value = "55 Diamonds";
   await elements.get("inventory-search-form").listeners.submit({ preventDefault() {} });
-  assert.ok(calls.some(({ url }) => url.includes("catalog-inventory?limit=20&family=topups&category=mlbb&q=55+Diamonds")), calls.map(({ url }) => url).join("\n"));
+  assert.ok(calls.some(({ url }) => url.includes("catalog-inventory?limit=20&supplier_provider=fazercards&family=topups&category=mlbb&q=55+Diamonds")), calls.map(({ url }) => url).join("\n"));
   assert.equal(elements.get("inventory-next").disabled, false);
   await elements.get("inventory-next").listeners.click();
-  assert.ok(calls.some(({ url }) => url.includes("catalog-inventory?limit=20&family=topups&category=mlbb&q=55+Diamonds&offset=20")));
+  assert.ok(calls.some(({ url }) => url.includes("catalog-inventory?limit=20&supplier_provider=fazercards&family=topups&category=mlbb&q=55+Diamonds&offset=20")));
   assert.match(elements.get("inventory-page-status").textContent, /Showing 21–21 of 10,510/);
+
+  elements.get("supplier-provider-filter").value = "shop2topup";
+  await elements.get("supplier-provider-filter").listeners.change();
+  assert.match(elements.get("inventory-state").textContent, /SHOP2TOPUP private audit/);
+  assert.equal(elements.get("inventory-review-rows").children.length, 1);
+  assert.equal(elements.get("inventory-review-rows").children[0].children[4].disabled, false);
+  await elements.get("inventory-review-rows").children[0].children[4].listeners.click();
+  assert.equal(elements.get("mapping-input-labels").value, "player_id");
+  assert.equal(elements.get("mapping-validation-category").value, "12");
+  elements.get("mapping-validation-fields").value = '{"player_id":"player_id"}';
+  await elements.get("mapping-review-form").listeners.submit({ preventDefault() {} });
+  const shopApprovalCall = calls.filter(({ url }) => url.endsWith("/mapping-approval")).at(-1);
+  const shopApproval = JSON.parse(shopApprovalCall.options.body);
+  assert.equal(shopApproval.supplier_provider, "shop2topup");
+  assert.equal(shopApproval.validation_category_id, "12");
 
   elements.get("pricing-fx-source").value = "approved source";
   elements.get("pricing-fx-observed-at").value = "2026-11-13T12:00:00+06:30";

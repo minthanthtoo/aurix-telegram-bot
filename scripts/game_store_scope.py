@@ -14,6 +14,7 @@ LOCK_FILE = "config/games/requirements.lock"
 PUBLIC_GAME_CONFIG_FILES = frozenset({"config/games/mlbb-strategy.json"})
 GAME_SCRIPTS = frozenset({
     "scripts/approve_fazercards_mapping.py",
+    "scripts/audit_shop2topup_catalog.py",
     "scripts/audit_games_fulfillment.py",
     "scripts/aurix_games_backup.py",
     "scripts/aurix_games_backup_job.py",

@@ -38,9 +38,16 @@ from .customer_api import (
 )
 from .customer_ledger import InsufficientFundsError, LedgerConflictError, LedgerInputError, LedgerOperationError
 from .customer_checkout import CheckoutInputError, CustomerCheckoutService
-from .checkout_journey import CheckoutJourney, GameAccountLookup, read_receiver_qr
+from .checkout_journey import (
+    CheckoutJourney,
+    GameAccountLookup,
+    PaymentReviewSetupUnavailable,
+    SupplierPreflightUnavailable,
+    read_receiver_qr,
+)
 from .game_admin import GameAdminAuthError, GameAdminInputError, GameStoreAdminService
 from .order_reconciliation import (
+    Shop2TopupWebhookReconciler,
     SupplierWebhookReconciler,
     WebhookAuthenticationError,
     WebhookReconciliationError,
@@ -110,6 +117,7 @@ def make_handler(
     public_catalog_path: str | Path | None = None,
     admin_service: GameStoreAdminService | None = None,
     order_reconciler: SupplierWebhookReconciler | None = None,
+    shop2topup_webhook_reconciler: Shop2TopupWebhookReconciler | None = None,
     customer_order_service: CustomerOrderService | None = None,
     customer_wallet_service: CustomerWalletService | None = None,
     customer_auth: SignedCustomerTokenVerifier | None = None,
@@ -129,6 +137,11 @@ def make_handler(
     # Every private route must use the same revocation boundary as sign-in.
     if customer_identity_service is not None:
         customer_auth = customer_identity_service.verifier
+    external_payment_review_ready = bool(
+        payment_review is not None
+        and payment_review.reviewers
+        and payment_review.evidence_cipher is not None
+    )
     staff_owner = os.environ.get("AURIX_GAMES_SUPER_ADMIN_CUSTOMER_ID", "").strip()
     qr_directory = receiver_qr_dir
     if qr_directory is None:
@@ -291,10 +304,13 @@ def make_handler(
                 self._payment_evidence(parsed, upload=False)
                 return
             if parsed.path == "/api/v1/checkout/config":
-                rails = sorted(checkout_journey.payment_receivers) if checkout_journey and not commerce_paused("payments_enabled") else []
+                rails = sorted(checkout_journey.payment_receivers) if (
+                    checkout_journey and external_payment_review_ready and not commerce_paused("payments_enabled")
+                ) else []
                 self._json(200, {"account_check_enabled": mlbb_lookup is not None and not commerce_paused("account_checks_enabled"),
                     "recipient_review_enabled": checkout_journey is not None and not commerce_paused("account_checks_enabled") and not commerce_paused("checkout_enabled"),
-                    "payments_enabled": bool(rails), "payment_rails": rails})
+                    "payments_enabled": bool(rails), "payment_rails": rails,
+                    "receipt_review_ready": external_payment_review_ready})
                 return
             if parsed.path == "/api/v1/games/mlbb/zones":
                 self._json(200, {"zones": mlbb_lookup.zones if mlbb_lookup else []})
@@ -400,10 +416,16 @@ def make_handler(
                         "customer_orders": customer_order_service is not None and customer_checkout_service is not None,
                         "recipient_lookup": mlbb_lookup is not None,
                         "payment_receivers": bool(checkout_journey and checkout_journey.payment_receivers),
+                        "supplier_payment_preflight": bool(
+                            checkout_journey and getattr(checkout_journey, "payment_preflight", None)
+                        ),
                         "payment_review": bool(payment_review and getattr(payment_review, "reviewers", {})),
+                        "encrypted_receipt_storage": bool(
+                            payment_review and getattr(payment_review, "evidence_cipher", None)
+                        ),
                         "wallet_ledger": customer_wallet_service is not None,
                         "wallet_checkout": bool(checkout_journey and checkout_journey.wallet_payment_service),
-                        "supplier_reconciliation": order_reconciler is not None or poll_status_is_fresh(
+                        "supplier_reconciliation": order_reconciler is not None or shop2topup_webhook_reconciler is not None or poll_status_is_fresh(
                             os.environ.get(
                                 "AURIX_GAMES_RECONCILIATION_STATUS_FILE",
                                 str(Path(os.environ.get("AURIX_GAMES_BASE_DIR", ".local/fazercards"))
@@ -476,7 +498,7 @@ def make_handler(
                     admin_service.authenticate(self.headers.get("Authorization"))
                     repository = customer_order_service.repository
                     rows = []
-                    supplier_read_available = getattr(admin_service, "supplier_client", None) is not None
+                    supplier_read_available = getattr(admin_service, "supplier_order_client", None) is not None or getattr(admin_service, "supplier_client", None) is not None
                     pollable_states = {
                         OrderState.SUBMITTED, OrderState.PROCESSING, OrderState.UNKNOWN,
                         OrderState.RECONCILIATION, OrderState.FAILED, OrderState.DELIVERED,
@@ -630,7 +652,10 @@ def make_handler(
                     )
                     self._json(
                         200,
-                        customer_order_service.get_order(principal, customer_order_match.group(1), payment_review=payment_review),
+                        customer_order_service.get_order(
+                            principal, customer_order_match.group(1), payment_review=payment_review,
+                            show_transfer_instructions=external_payment_review_ready,
+                        ),
                     )
                 except CustomerAuthError as exc:
                     self._json(401, {"error": str(exc)})
@@ -654,7 +679,10 @@ def make_handler(
                     principal = customer_auth.verify(
                         self.headers.get("Authorization"), cookie_header=self.headers.get("Cookie")
                     )
-                    order = customer_order_service.get_order(principal, customer_qr_match.group(1))
+                    order = customer_order_service.get_order(
+                        principal, customer_qr_match.group(1),
+                        show_transfer_instructions=external_payment_review_ready,
+                    )
                     payment = order.get("payment")
                     if (order.get("state") != "awaiting_payment" or not isinstance(payment, dict)
                             or payment.get("expired") or not isinstance(payment.get("qr_asset"), str)
@@ -777,11 +805,12 @@ def make_handler(
                     self._json(503, {"error": "admin operations are not configured"})
                     return
                 parameters = parse_qs(parsed.query, keep_blank_values=True)
-                if set(parameters) - {"family", "category", "q", "limit", "offset"}:
+                if set(parameters) - {"supplier_provider", "family", "category", "q", "limit", "offset"}:
                     self._json(400, {"error": "unsupported query parameter"})
                     return
                 try:
                     admin_service.authenticate(self.headers.get("Authorization"))
+                    supplier_provider = _one(parameters, "supplier_provider")
                     family = _one(parameters, "family")
                     category = _one(parameters, "category")
                     query = _one(parameters, "q") or ""
@@ -792,6 +821,7 @@ def make_handler(
                     self._json(
                         200,
                         admin_service.catalog_inventory(
+                            supplier_provider=supplier_provider,
                             family=family,
                             category=category,
                             query=query,
@@ -1254,6 +1284,8 @@ def make_handler(
                         self._json(409, {"error": "wallet balance is below the order total"})
                 except (LedgerConflictError, PaymentBoundaryError):
                     self._json(409, {"error": "wallet payment conflicts with the current order state"})
+                except SupplierPreflightUnavailable as exc:
+                    self._json(503, {"error": str(exc)})
                 except CheckoutInputError as exc:
                     self._json(400, {"error": str(exc)})
                 except (LedgerOperationError, OSError):
@@ -1270,11 +1302,22 @@ def make_handler(
                     return
                 try:
                     principal = customer_auth.verify(self.headers.get("Authorization"), cookie_header=self.headers.get("Cookie"))
+                    action_name = parsed.path.rsplit("/", 1)[-1]
                     action = {"review": checkout_journey.review, "confirm": checkout_journey.confirm,
-                              "payment": checkout_journey.payment}[parsed.path.rsplit("/", 1)[-1]]
-                    self._json(200, action(principal, self._read_json_body(), now=datetime.now(UTC)))
+                              "payment": checkout_journey.payment}[action_name]
+                    payload = self._read_json_body()
+                    if action_name == "payment":
+                        result = action(principal, payload, now=datetime.now(UTC),
+                            receipt_review_ready=external_payment_review_ready)
+                    else:
+                        result = action(principal, payload, now=datetime.now(UTC))
+                    self._json(200, result)
                 except CustomerAuthError:
                     self._json(401, {"error": "customer sign-in required"})
+                except PaymentReviewSetupUnavailable as exc:
+                    self._json(503, {"error": str(exc)})
+                except SupplierPreflightUnavailable as exc:
+                    self._json(503, {"error": str(exc)})
                 except CheckoutInputError as exc:
                     self._json(400, {"error": str(exc)})
                 except SupplierCommandError as exc:
@@ -1350,6 +1393,28 @@ def make_handler(
                     # database/provider details into a signed callback.
                     self._json(500, {"error": "supplier webhook processing failed"})
                 return
+            if parsed.path == "/api/v1/webhooks/shop2topup":
+                if shop2topup_webhook_reconciler is None:
+                    self._json(503, {"error": "supplier webhook is not configured"})
+                    return
+                try:
+                    body = self._read_raw_body(maximum=4 * 1024 * 1024)
+                    event = shop2topup_webhook_reconciler.receive(
+                        body,
+                        self.headers.get("X-Shop2Topup-Signature", ""),
+                        self.headers.get("X-Shop2Topup-Event", ""),
+                        now=datetime.now(UTC),
+                    )
+                    self._json(200, {"accepted": True, "event_id": event.event_id})
+                except WebhookAuthenticationError as exc:
+                    self._json(401, {"error": str(exc)})
+                except (SupplierCommandError, ValueError) as exc:
+                    self._json(400, {"error": str(exc)})
+                except Exception:
+                    # A signed callback can be recovered through provider polling;
+                    # do not leak database or provider details into the response.
+                    self._json(500, {"error": "supplier webhook processing failed"})
+                return
             if not parsed.path.startswith("/api/v1/admin/"):
                 self._json(501, {"error": "order and payment writes are not available"})
                 return
@@ -1395,13 +1460,22 @@ def make_handler(
                     if customer_order_service is None:
                         self._json(503, {"error": "game order storage is not configured"})
                         return
-                    supplier_client = getattr(admin_service, "supplier_client", None)
+                    supplier_client = (getattr(admin_service, "supplier_order_client", None)
+                        or getattr(admin_service, "supplier_client", None))
                     if supplier_client is None:
                         self._json(503, {"error": "supplier read access is not configured"})
                         return
                     repository = customer_order_service.repository
                     order_id = reconcile_match.group(1)
                     try:
+                        local_order = repository.get(order_id)
+                        if (isinstance(local_order.provider_order_id, str)
+                                and local_order.provider_order_id.startswith("s2t-")
+                                and not repository.claim_poll_check(
+                                    order_id, now=datetime.now(UTC), minimum_interval_seconds=20,
+                                )):
+                            self._json(429, {"error": "supplier status was checked recently; try again in 20 seconds"})
+                            return
                         result = reconcile_order(
                             repository,
                             supplier_client,
@@ -1928,6 +2002,7 @@ def create_server(
     public_catalog_path: str | Path | None = None,
     admin_service: GameStoreAdminService | None = None,
     order_reconciler: SupplierWebhookReconciler | None = None,
+    shop2topup_webhook_reconciler: Shop2TopupWebhookReconciler | None = None,
     customer_order_service: CustomerOrderService | None = None,
     customer_wallet_service: CustomerWalletService | None = None,
     customer_auth: SignedCustomerTokenVerifier | None = None,
@@ -1950,6 +2025,7 @@ def create_server(
             public_catalog_path=public_catalog_path,
             admin_service=admin_service,
             order_reconciler=order_reconciler,
+            shop2topup_webhook_reconciler=shop2topup_webhook_reconciler,
             customer_order_service=customer_order_service,
             customer_wallet_service=customer_wallet_service,
             customer_auth=customer_auth,
