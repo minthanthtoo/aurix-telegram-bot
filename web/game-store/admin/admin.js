@@ -829,7 +829,7 @@ function renderInventory(payload) {
   $("inventory-next").disabled = payload.next_offset == null;
   $("inventory-next").dataset.nextOffset = payload.next_offset == null ? "" : String(payload.next_offset);
   if (supplierProvider === "shop2topup" && selectedProviderStatus.status === "unavailable") {
-    $("inventory-state").textContent = "No SHOP2TOPUP audit snapshot yet. Configure the server key, then run scripts/audit_shop2topup_catalog.py. This screen does not call the supplier or start orders.";
+    $("inventory-state").textContent = "No SHOP2TOPUP audit snapshot yet. Configure the server key, then run python -m aurix_games.shop2topup_catalog_audit. This screen does not call the supplier or start orders.";
   } else {
     const captured = selectedProviderStatus.captured_at || payload.captured_at;
     const freshness = selectedProviderStatus.freshness_status || payload.freshness_status || "unknown";

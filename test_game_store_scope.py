@@ -3,11 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.game_store_scope import changed_scope, classify
+from scripts.game_store_scope import changed_scope, classify, is_release_input
 from scripts.run_product_checks import product_test_modules
 
 
 class GameStoreScopeTests(unittest.TestCase):
+    def test_supplier_audit_module_fits_existing_games_release_allowlist(self):
+        self.assertTrue(is_release_input("aurix_games/shop2topup_catalog_audit.py"))
+        self.assertFalse(is_release_input("scripts/audit_shop2topup_catalog.py"))
+
     def test_ownership_and_conservative_fallback(self):
         for paths, expected in (
             (["web/game-store/app.js", "test_game_order_status_ui.mjs"], (True, False)),
