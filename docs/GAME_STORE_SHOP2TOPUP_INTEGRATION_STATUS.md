@@ -43,7 +43,7 @@ not enter the public catalog response.
   outcomes and completed supplier statuses remain in operator reconciliation
   where needed; they are not automatically treated as a safe customer refund
   or as a verified wallet capture.
-- Read-only `scripts/audit_shop2topup_catalog.py` enumerates account, categories,
+- Read-only `aurix_games.shop2topup_catalog_audit` enumerates account, categories,
   subcategories, item types and reported stock. It does not validate players or
   place orders; it can write a private mode-0600 JSON audit file.
 - The authenticated admin SKU inventory now accepts a supplier filter and can
@@ -66,7 +66,7 @@ not enter the public catalog response.
    allowlist, and set SHOP2TOPUP_CATALOG_AUDIT_FILE if the default
    .local/fazercards/shop2topup-catalog-audit.json is not suitable. Then run
    the read-only audit with output in a mode-0700 directory:
-   python scripts/audit_shop2topup_catalog.py --output .local/fazercards/shop2topup-catalog-audit.json.
+   python -m aurix_games.shop2topup_catalog_audit --output .local/fazercards/shop2topup-catalog-audit.json.
    Inspect the reseller account flags, wallet and exact product coverage in
    the protected admin inventory.
 2. Review each exact game, region, dynamic player-field schema, provider
