@@ -5,7 +5,7 @@ import stat
 import tempfile
 import unittest
 
-from scripts.audit_shop2topup_catalog import _write_private, audit
+from aurix_games.shop2topup_catalog_audit import _write_private, audit
 
 
 class _ReadOnlyCatalog:
